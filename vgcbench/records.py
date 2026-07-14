@@ -59,6 +59,8 @@ def standings(rows: list[dict]) -> list[dict]:
         p1 = row["players"]["p1"]
         p2 = row["players"]["p2"]
         winner = row.get("winner")
+        if winner not in {p1, p2}:
+            winner = None
         score1 = 0.5 if winner is None else float(winner == p1)
         score2 = 1.0 - score1
         if p1 != p2:
@@ -92,6 +94,8 @@ def h2h(rows: list[dict]) -> dict[str, dict[str, tuple[int, int, int]]]:
     for row in rows:
         p1, p2 = row["players"]["p1"], row["players"]["p2"]
         winner = row.get("winner")
+        if winner not in {p1, p2}:
+            winner = None
         if p1 == p2:
             current = matrix[p1][p1]
             if winner is None:

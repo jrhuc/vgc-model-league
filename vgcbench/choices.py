@@ -58,13 +58,15 @@ def _move_items(
             ally = 2 if slot == 1 else 1
             targets.append((f" -{ally}", _target_label("ally", ally, names)))
     elif active_count > 1 and target == "adjacentAlly":
-        ally = 2 if slot == 1 else 1
-        targets = [(f" -{ally}", _target_label("ally", ally, names))]
-    elif active_count > 1 and target == "adjacentAllyOrSelf":
         targets = []
-        for number in (1, 2):
-            label = " -> itself" if number == slot else _target_label("ally", number, names)
-            targets.append((f" -{number}", label))
+        if has_ally:
+            ally = 2 if slot == 1 else 1
+            targets = [(f" -{ally}", _target_label("ally", ally, names))]
+    elif active_count > 1 and target == "adjacentAllyOrSelf":
+        targets = [(f" -{slot}", " -> itself")]
+        if has_ally:
+            ally = 2 if slot == 1 else 1
+            targets.append((f" -{ally}", _target_label("ally", ally, names)))
 
     menu: SlotMenu = []
     spread = " (spread)" if target in _SPREAD else ""

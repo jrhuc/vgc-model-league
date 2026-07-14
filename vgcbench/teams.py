@@ -59,15 +59,22 @@ def load_pool(name: str = "test", *, teams_dir: str | Path = TEAMS_DIR) -> TeamP
     return TeamPool(pool_id, format_id, tuple(teams))
 
 
+def validate_team(packed: str, format_id: str, *, ps_dir: Path, node: str) -> None:
+    result = subprocess.run(
+        [node, "./pokemon-showdown", "--skip-build", "validate-team", format_id],
+        input=packed + "\n",
+        text=True,
+        capture_output=True,
+        cwd=ps_dir,
+        timeout=30,
+    )
+    if result.returncode:
+        raise ValueError((result.stderr or result.stdout).strip())
+
+
 def validate_pool(pool: TeamPool, *, ps_dir: Path, node: str) -> None:
     for team in pool.teams:
-        result = subprocess.run(
-            [node, "./pokemon-showdown", "--skip-build", "validate-team", pool.format],
-            input=team.packed + "\n",
-            text=True,
-            capture_output=True,
-            cwd=ps_dir,
-        )
-        if result.returncode:
-            detail = (result.stderr or result.stdout).strip()
-            raise ValueError(f"invalid team {team.id!r}: {detail}")
+        try:
+            validate_team(team.packed, pool.format, ps_dir=ps_dir, node=node)
+        except ValueError as exc:
+            raise ValueError(f"invalid team {team.id!r}: {exc}") from exc

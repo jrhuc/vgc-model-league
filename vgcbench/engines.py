@@ -1,6 +1,7 @@
 import json
 import random
 import re
+import threading
 import time
 from abc import ABC, abstractmethod
 from pathlib import Path
@@ -8,7 +9,8 @@ from typing import Any
 
 from .choices import SlotMenu, build_menus, compose
 from .prompts import SYSTEM, render_decision
-from .reference import ShowdownReference
+from .providers import Completion, assistant_tool_message, tool_result_message
+from .reference import DEX_TOOLS, ShowdownReference
 from .state import BattleState
 
 
@@ -30,6 +32,9 @@ class BaseEngine(ABC):
     def decision_stats(self) -> dict[str, int]:
         return {}
 
+    def abandon_decision(self) -> None:
+        pass
+
     def act(self, request: dict, ctx: dict) -> str:
         menus = build_menus(request, self._menu_names(request))
         if not menus:
@@ -40,6 +45,7 @@ class BaseEngine(ABC):
             parts = self._parts(menus, choices)
         except ValueError:
             choices, parts = self._defaults(menus)
+            automatic = False
         self.action_committed(request, ctx, menus, choices, parts, automatic)
         if request.get("teamPreview"):
             return "team " + "".join(parts)
@@ -155,6 +161,7 @@ class LLMEngine(BaseEngine):
         format_id: str = "gen9championsvgc2026regmbbo3",
         ps_dir=None,
         node=None,
+        reference: ShowdownReference | None = None,
     ):
         super().__init__(pid)
         self.spec = spec
@@ -169,13 +176,15 @@ class LLMEngine(BaseEngine):
         self.game_number = 1
         self.series_score: dict[str, int] = {}
         self.format_id = format_id
-        self.reference = ShowdownReference(format_id, ps_dir=ps_dir, node=node)
+        self.reference = reference or ShowdownReference(format_id, ps_dir=ps_dir, node=node)
         self.state = self._new_state()
         self.transcript: list[dict[str, str]] = []
         self.notebook = ""
         self.decision_count = 0
         self.fallback_count = 0
         self._pending: dict = {}
+        self._lock = threading.Lock()
+        self._generation = 0
 
     def begin_game(
         self,
@@ -186,15 +195,15 @@ class LLMEngine(BaseEngine):
         series_score: dict[str, int] | None = None,
         **_: Any,
     ) -> None:
-        self.game_id = game_id
-        self.game_number = game_number
-        self.series_id = series_id
-        self.series_score = dict(series_score or {})
-        self.state = self._new_state()
-        self._pending = {}
-        for entry in self.transcript:
-            entry["full"] = entry["brief"]
-        self._remember(f"[Game {game_number} begins; series score {self._score_text()}]")
+        with self._lock:
+            self.game_id = game_id
+            self.game_number = game_number
+            self.series_id = series_id
+            self.series_score = dict(series_score or {})
+            self.state = self._new_state()
+            self._pending = {}
+            self._compact_transcript()
+            self._remember(f"[Game {game_number} begins; series score {self._score_text()}]")
 
     def end_game(
         self,
@@ -204,45 +213,75 @@ class LLMEngine(BaseEngine):
         series_score: dict[str, int] | None = None,
         **_: Any,
     ) -> None:
-        self.series_score = dict(series_score or self.series_score)
-        winner = outcome.get("winner") or "tie"
-        self._remember(f"[Game {game_number} ended; winner {winner}; series score {self._score_text()}]")
+        with self._lock:
+            self.series_score = dict(series_score or self.series_score)
+            winner = outcome.get("winner") or "tie"
+            self._remember(f"[Game {game_number} ended; winner {winner}; series score {self._score_text()}]")
+            self._compact_transcript()
 
     def observe(self, pov_lines: list[str]) -> None:
         lines = [line for line in pov_lines or [] if isinstance(line, str)]
         if not lines:
             return
-        self.state.feed(lines)
-        self._remember(
-            "Observed after the final decision:\n" + "\n".join(lines),
-            brief="Observed after the final decision: (events elided)",
-        )
+        with self._lock:
+            self.state.feed(lines)
+            self._remember(
+                "Observed after the final decision:\n" + "\n".join(lines),
+                brief="Observed after the final decision: (events elided)",
+            )
+            self._compact_transcript()
+
+    def abandon_decision(self) -> None:
+        with self._lock:
+            self._generation += 1
+            self._pending = {}
 
     def _remember(self, full: str, brief: str | None = None) -> None:
         self.transcript.append({"full": full, "brief": brief if brief is not None else full})
 
     def _transcript_lines(self) -> list[str]:
-        return [entry["full"] for entry in self.transcript]
+        return [entry["brief"] for entry in self.transcript]
+
+    def _compact_transcript(self) -> None:
+        for entry in self.transcript:
+            entry["full"] = entry["brief"]
 
     def act(self, request: dict, ctx: dict) -> str:
         lines = [line for line in ctx.get("pov_lines", []) if isinstance(line, str)]
-        self.state.feed(lines)
-        self._pending = {"events": lines, "raw_response": "", "notes": self.notebook}
-        return super().act(request, ctx)
+        with self._lock:
+            generation = self._generation
+            self.state.feed(lines)
+            self._pending = {
+                "events": lines,
+                "raw_response": "",
+                "notes": self.notebook,
+                "generation": generation,
+            }
+        choice = super().act(request, ctx)
+        with self._lock:
+            if generation != self._generation:
+                return ""
+        return choice
 
     def decide_joint(self, menus: list[SlotMenu], request: dict, ctx: dict) -> list[int]:
         started = time.perf_counter()
         timer = request.get("timer") or {}
         turn_seconds = timer.get("turnSeconds")
         deadline = started + float(turn_seconds) if isinstance(turn_seconds, (int, float)) else None
+        with self._lock:
+            generation = self._generation
+            state_block = self.state.render(request)
+            slot_names = [self.state.slot_name(slot, request) for slot in range(len(menus))]
+            notebook = self.notebook
+            transcript = self._transcript_lines()
+            series_context = f"Series {self.series_id or '?'}; game {self.game_number}; score {self._score_text()}"
         prompt = render_decision(
-            self.state.render(request),
-            [self.state.slot_name(slot, request) for slot in range(len(menus))],
+            state_block,
+            slot_names,
             menus,
-            transcript=self._transcript_lines(),
-            notebook=self.notebook,
-            series_context=f"Series {self.series_id or '?'}; game {self.game_number}; score {self._score_text()}",
-            new_events=self._pending.get("events", []),
+            transcript=transcript,
+            notebook=notebook,
+            series_context=series_context,
         )
         if turn_seconds is not None:
             prompt += (
@@ -256,20 +295,52 @@ class LLMEngine(BaseEngine):
         parsed: tuple[list[int], str] | None = None
         error = "no choices found"
         parse_failures = 0
+        tool_calls = 0
+        max_rounds = 6
+        messages: list[dict] = [{"role": "user", "content": prompt}]
         while parsed is None and parse_failures < 2:
-            user = prompt
+            if generation != self._generation:
+                return [0] * len(menus)
             if parse_failures:
-                user += (
-                    "\n\nYour previous response was invalid:\n"
-                    + raw_response
-                    + f"\nError: {error}. Reply again following the required JSON format."
+                messages.append({"role": "assistant", "content": raw_response})
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": (
+                            f"Your previous response was invalid. Error: {error}. "
+                            "Reply again following the required JSON format."
+                        ),
+                    }
                 )
-            kwargs = {"max_tokens": 8192, "temperature": 0.6}
-            if deadline is not None:
-                kwargs["timeout"] = max(0.1, deadline - time.perf_counter() + 1.0)
-            raw_response, call_usage = self.provider.complete(SYSTEM, user, **kwargs)
-            raw_response = raw_response or ""
-            self._add_usage(usage, call_usage)
+            raw_response = ""
+            for round_index in range(max_rounds):
+                if generation != self._generation:
+                    return [0] * len(menus)
+                final_round = round_index == max_rounds - 1
+                kwargs = {
+                    "max_tokens": 8192,
+                    "temperature": 0.6,
+                    "tools": DEX_TOOLS,
+                    "tool_choice": "none" if final_round else "auto",
+                }
+                if deadline is not None:
+                    kwargs["timeout"] = max(0.1, deadline - time.perf_counter() + 1.0)
+                completion = self.provider.complete(SYSTEM, messages, **kwargs)
+                self._add_usage(usage, completion.usage)
+                if completion.tool_calls and not final_round:
+                    tool_calls += len(completion.tool_calls)
+                    assistant = assistant_tool_message(completion)
+                    messages.append(assistant)
+                    for call, tool_call in zip(completion.tool_calls, assistant["tool_calls"]):
+                        messages.append(
+                            tool_result_message(
+                                tool_call["id"],
+                                self.reference.lookup(call.name, call.arguments),
+                            )
+                        )
+                    continue
+                raw_response = completion.text or ""
+                break
             if not raw_response:
                 error = "empty response"
                 break
@@ -283,22 +354,25 @@ class LLMEngine(BaseEngine):
         fallback = parsed is None
         if fallback:
             choices, _ = self._defaults(menus)
-            notes = self.notebook
+            notes = None
         else:
             choices, notes = parsed
-        self.notebook = notes
-        self.decision_count += 1
-        self.fallback_count += int(fallback)
-        self._pending.update(
-            {
-                "raw_response": raw_response,
-                "notes": notes,
-                "usage": usage,
-                "fallback": fallback,
-                "error": error if fallback else None,
-                "latency_ms": (time.perf_counter() - started) * 1000,
-            }
-        )
+        with self._lock:
+            if generation != self._generation:
+                return choices
+            pending_notes = self.notebook if notes is None else notes
+            self._pending.update(
+                {
+                    "raw_response": raw_response,
+                    "notes": pending_notes,
+                    "usage": usage,
+                    "fallback": fallback,
+                    "error": error if fallback else None,
+                    "latency_ms": (time.perf_counter() - started) * 1000,
+                    "tool_calls": tool_calls,
+                    "generation": generation,
+                }
+            )
         return choices
 
     def action_committed(
@@ -310,35 +384,45 @@ class LLMEngine(BaseEngine):
         parts: list[str],
         automatic: bool,
     ) -> None:
-        pending = self._pending
-        self._pending = {}
-        notes = pending.get("notes", self.notebook)
-        events = pending.get("events", [])
-        entry = []
-        if events:
-            entry.append("Events from your point of view:\n" + "\n".join(events))
-        entry.append("Chosen joint action: " + compose(parts))
-        if automatic:
-            entry.append("(automatic; no model call required)")
-        self._remember("\n".join(entry), brief="\n".join(entry[1:] if events else entry))
-        if automatic:
-            return
-        row = {
-            "game_id": self.game_id,
-            "series_id": self.series_id,
-            "game_number": self.game_number,
-            "turn": self.state.turn,
-            "pid": self.pid,
-            "menus": [[item["label"] for item in menu] for menu in menus],
-            "choices": choices,
-            "parts": parts,
-            "notes": notes,
-            "fallback": pending.get("fallback", False),
-            "error": pending.get("error"),
-            "raw_response": pending.get("raw_response", ""),
-            "usage": pending.get("usage", {}),
-            "latency_ms": pending.get("latency_ms", 0.0),
-        }
+        with self._lock:
+            pending = self._pending
+            if not pending or pending.get("generation") != self._generation:
+                self._pending = {}
+                return
+            self._pending = {}
+            notes = pending.get("notes", self.notebook)
+            if not automatic:
+                self.notebook = notes
+                self.decision_count += 1
+                self.fallback_count += int(pending.get("fallback", False))
+            events = pending.get("events", [])
+            entry = []
+            if events:
+                entry.append("Events from your point of view:\n" + "\n".join(events))
+            entry.append("Chosen joint action: " + compose(parts))
+            if automatic:
+                entry.append("(automatic; no model call required)")
+            self._remember("\n".join(entry), brief="\n".join(entry[1:] if events else entry))
+            self._compact_transcript()
+            if automatic:
+                return
+            row = {
+                "game_id": self.game_id,
+                "series_id": self.series_id,
+                "game_number": self.game_number,
+                "turn": self.state.turn,
+                "pid": self.pid,
+                "menus": [[item["label"] for item in menu] for menu in menus],
+                "choices": choices,
+                "parts": parts,
+                "notes": notes,
+                "fallback": pending.get("fallback", False),
+                "error": pending.get("error"),
+                "raw_response": pending.get("raw_response", ""),
+                "usage": pending.get("usage", {}),
+                "latency_ms": pending.get("latency_ms", 0.0),
+                "tool_calls": pending.get("tool_calls", 0),
+            }
         self._write_decision(row)
 
     def decision_stats(self) -> dict[str, int]:
@@ -362,11 +446,7 @@ class LLMEngine(BaseEngine):
         return names
 
     def _new_state(self) -> BattleState:
-        return BattleState(
-            self.pid,
-            self.format_id,
-            reference=self.reference,
-        )
+        return BattleState(self.pid, self.format_id)
 
     def _score_text(self) -> str:
         return f"p1 {self.series_score.get('p1', 0)}, p2 {self.series_score.get('p2', 0)}"

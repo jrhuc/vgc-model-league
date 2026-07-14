@@ -13,6 +13,7 @@ SYSTEM = "\n".join(
         "Open team sheets reveal sets and stat alignment, but not exact opposing stats.",
         "Mega Evolution, when offered, can be used only once per battle.",
         "Your private notebook is carried across every turn and game in the series.",
+        "Look up move, species, item, ability, or nature facts with the provided tools when you need them.",
         'Reason internally. Respond with exactly one JSON object: {"choices":[N,...],"notes":"brief private notebook"}.',
         "The choices array must contain one zero-based menu index for every displayed slot, in order. Include no prose outside JSON.",
     ]
@@ -27,7 +28,6 @@ def render_decision(
     transcript: list[str] | None = None,
     notebook: str = "",
     series_context: str = "",
-    new_events: list[str] | None = None,
 ) -> str:
     lines: list[str] = []
     if series_context:
@@ -35,8 +35,6 @@ def render_decision(
     if transcript:
         lines.extend(["Persistent private match transcript (your POV):", *transcript, ""])
     lines.extend(["Current authoritative state:", state_block, ""])
-    if new_events:
-        lines.extend(["New events from your point of view:", *new_events, ""])
     lines.extend([f"Private notebook: {notebook or '(empty)'}", ""])
     if len(menus) == 1:
         lines.append(f"Choose for {slot_names[0] if slot_names else 'Pokémon'}:")

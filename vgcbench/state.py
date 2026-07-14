@@ -2,9 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from .reference import ShowdownReference
-
-
 @dataclass
 class MonState:
     ident: str
@@ -42,18 +39,12 @@ class SideState:
 
 
 class BattleState:
-    def __init__(
-        self,
-        pid: str,
-        format_id: str,
-        reference: ShowdownReference | None = None,
-    ):
+    def __init__(self, pid: str, format_id: str = ""):
         self.pid = pid
         self.turn = 0
         self.weather: str | None = None
         self.fields: set[str] = set()
         self.sides = {"p1": SideState(), "p2": SideState()}
-        self.reference = reference or ShowdownReference(format_id)
 
     def feed(self, pov_lines) -> None:
         for raw in pov_lines or []:
@@ -170,9 +161,6 @@ class BattleState:
         lines.extend(self._render_side(self.pid, own=True))
         foe = "p2" if self.pid == "p1" else "p1"
         lines.extend(self._render_side(foe, own=False))
-        reference_lines = self._render_reference()
-        if reference_lines:
-            lines.extend(reference_lines)
         return "\n".join(lines)
 
     def slot_name(self, slot_i: int, request: dict) -> str:
@@ -388,24 +376,6 @@ class BattleState:
         if entry.get("used"):
             details.append(f"used {entry['used']}")
         return entry["name"] + (f" ({'; '.join(details)})" if details else "")
-
-    def _render_reference(self) -> list[str]:
-        mons = []
-        for side in self.sides.values():
-            mons.extend(side.mons.values())
-            if side.showteam:
-                mons.extend(side.sheet)
-        return self.reference.render(
-            species_sets={
-                (mon.species, mon.item, mon.nature, mon.level or 50)
-                for mon in mons
-                if mon.species
-            },
-            moves={entry["name"] for mon in mons for entry in mon.moves.values()},
-            items={mon.item for mon in mons if mon.item},
-            abilities={mon.ability for mon in mons if mon.ability},
-            natures={mon.nature for mon in mons if mon.nature},
-        )
 
     @staticmethod
     def _ident_parts(ident: str) -> tuple[str, str]:

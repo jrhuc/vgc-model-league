@@ -3,12 +3,12 @@ from threading import Barrier
 
 from vgcbench.arena import run_benchmark
 from vgcbench.engines import RandomEngine
-from vgcbench.sim import SimBattle, _default_node, _default_ps_dir
+from vgcbench.sim import SimBattle, default_node, default_ps_dir, route_update_lines
 from vgcbench.teams import load_pool
 
 
-PS = _default_ps_dir()
-NODE = _default_node()
+PS = default_ps_dir()
+NODE = default_node()
 
 
 def test_seeded_random_vgc_game():
@@ -103,3 +103,46 @@ def test_arena_random(tmp_path):
     assert rows[0]["series_index"] == 0
     assert 2 <= len(rows[0]["games"]) <= 3
     assert set(rows[0]["engine_seeds"]) == {"p1", "p2"}
+
+def test_empty_public_split_half_is_consumed_without_leaking():
+    pov = {"p1": [], "p2": []}
+    log: list[str] = []
+    pending: list[str] = []
+    route_update_lines(
+        ["|foo", "|split|p1", "|p1a: Foo|123/200", "", "|bar"],
+        pov=pov,
+        log=log,
+        pending_split=pending,
+        winner=None,
+        turns=0,
+    )
+    assert pov["p1"] == ["|foo", "|p1a: Foo|123/200", "|bar"]
+    assert pov["p2"] == ["|foo", "|bar"]
+    assert pending == []
+
+
+def test_incomplete_split_is_buffered_until_public_half_arrives():
+    pov = {"p1": [], "p2": []}
+    log: list[str] = []
+    pending: list[str] = []
+    route_update_lines(
+        ["|split|p1", "|secret"],
+        pov=pov,
+        log=log,
+        pending_split=pending,
+        winner=None,
+        turns=0,
+    )
+    assert pending == ["|split|p1", "|secret"]
+    route_update_lines(
+        ["|public", "|after"],
+        pov=pov,
+        log=log,
+        pending_split=pending,
+        winner=None,
+        turns=0,
+    )
+    assert pov["p1"] == ["|secret", "|after"]
+    assert pov["p2"] == ["|public", "|after"]
+    assert pending == []
+

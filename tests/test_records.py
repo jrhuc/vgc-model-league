@@ -85,3 +85,11 @@ def test_report_filters_rows_by_pool_and_names_pool_in_meta(tmp_path):
     assert "1 completed series for pool alpha" in report
     assert "included-a" in report
     assert "excluded-c" not in report
+
+def test_unknown_winner_counts_as_a_tie():
+    table = {item["spec"]: item for item in standings([row("a", "b", "ghost")])}
+    assert table["a"]["t"] == 1
+    assert table["b"]["t"] == 1
+    assert table["a"]["w"] == 0
+    assert h2h([row("a", "b", "ghost")])["a"]["b"] == (0, 0, 1)
+

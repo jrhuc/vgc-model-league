@@ -35,15 +35,58 @@ class Agent(Protocol):
     def observe(self, pov_lines: list[str]) -> None: ...
 
 
-def _default_ps_dir() -> Path:
+def default_ps_dir() -> Path:
     return Path(os.environ.get("VGCBENCH_PS", REPO_ROOT / "pokemon-showdown")).expanduser()
 
 
-def _default_node() -> str:
+def default_node() -> str:
     configured = os.environ.get("VGCBENCH_NODE")
     if configured:
         return str(Path(configured).expanduser())
     return shutil.which("node") or str(Path("~/.local/bin/node").expanduser())
+
+
+def route_update_lines(
+    lines: list[str],
+    *,
+    pov: dict[str, list[str]],
+    log: list[str],
+    pending_split: list[str],
+    winner: str | None,
+    turns: int,
+) -> tuple[str | None, int]:
+    if pending_split:
+        lines = pending_split + lines
+        pending_split.clear()
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        if line.startswith("|split|"):
+            owner = line.split("|", 2)[2]
+            if index + 2 >= len(lines):
+                pending_split.extend(lines[index:])
+                return winner, turns
+            secret = lines[index + 1]
+            public = lines[index + 2]
+            if owner in pov:
+                pov[owner].append(secret)
+                log.append(secret)
+                other = "p2" if owner == "p1" else "p1"
+                if public:
+                    pov[other].append(public)
+            index += 3
+            continue
+        for pid in pov:
+            pov[pid].append(line)
+        log.append(line)
+        if line.startswith("|turn|"):
+            turns = int(line.split("|", 2)[2])
+        elif line.startswith("|win|"):
+            winner = line.split("|", 2)[2]
+        elif line == "|tie":
+            winner = None
+        index += 1
+    return winner, turns
 
 
 class SimBattle:
@@ -62,8 +105,8 @@ class SimBattle:
             rng = random.Random(seed)
             seed = [rng.randrange(0x10000) for _ in range(4)]
         self.seed = seed
-        self.ps_dir = Path(ps_dir).expanduser() if ps_dir else _default_ps_dir()
-        self.node = str(Path(node).expanduser()) if node else _default_node()
+        self.ps_dir = Path(ps_dir).expanduser() if ps_dir else default_ps_dir()
+        self.node = str(Path(node).expanduser()) if node else default_node()
 
     def run(self, agents: dict[str, Agent]) -> Outcome:
         proc = subprocess.Popen(
@@ -132,37 +175,14 @@ class SimBattle:
         stderr_buffer = bytearray()
         def route_update(lines: list[str]) -> None:
             nonlocal winner, turns
-            if pending_split:
-                lines = pending_split + lines
-                pending_split.clear()
-            index = 0
-            while index < len(lines):
-                line = lines[index]
-                if line.startswith("|split|"):
-                    owner = line.split("|", 2)[2]
-                    if index + 1 >= len(lines):
-                        pending_split.append(line)
-                        return
-                    secret = lines[index + 1]
-                    public = lines[index + 2] if index + 2 < len(lines) else ""
-                    if owner in pov:
-                        pov[owner].append(secret)
-                        log.append(secret)
-                        other = "p2" if owner == "p1" else "p1"
-                        if public:
-                            pov[other].append(public)
-                    index += 3 if public else 2
-                    continue
-                for pid in pov:
-                    pov[pid].append(line)
-                log.append(line)
-                if line.startswith("|turn|"):
-                    turns = int(line.split("|", 2)[2])
-                elif line.startswith("|win|"):
-                    winner = line.split("|", 2)[2]
-                elif line == "|tie":
-                    winner = None
-                index += 1
+            winner, turns = route_update_lines(
+                lines,
+                pov=pov,
+                log=log,
+                pending_split=pending_split,
+                winner=winner,
+                turns=turns,
+            )
 
         def handle_sideupdate(lines: list[str]) -> None:
             pid = lines[0]
@@ -184,6 +204,9 @@ class SimBattle:
                         if owner == pid:
                             del pending_actions[future]
                             future.cancel()
+                            abandon = getattr(agents[pid], "abandon_decision", None)
+                            if callable(abandon):
+                                abandon()
                     if line == "|timer|autodefault":
                         fallbacks[pid] += 1
                     pov[pid].append(line)
@@ -260,7 +283,6 @@ class SimBattle:
                         turns = data.get("turns", turns)
                     ended = True
                 elif lines[0].startswith("|"):
-                    # An empty public split half can fragment an update block.
                     route_update(lines)
             proc.stdin.close()
             return_code = proc.wait(timeout=10)

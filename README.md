@@ -66,13 +66,13 @@ Showdown format, so there is no separate format switch in the runner.
 
 At each decision the model receives:
 
-- its private match transcript and current notebook;
+- its private match transcript (compacted after each decision) and current notebook;
 - current field, side conditions, HP, status, boosts, revealed information, and
   exact stats for its own Pokémon;
 - both open team sheets;
-- relevant move, item, ability, forme, and Speed facts from the configured
-  Showdown checkout;
-- numbered legal menus for the complete joint action.
+- numbered legal menus for the complete joint action;
+- optional native tool calls to look up move, species, item, ability, and nature
+  facts from the configured Showdown checkout.
 
 It returns one JSON object:
 

@@ -90,3 +90,22 @@ def test_unknown_nature_expands_speed_range_and_wording(monkeypatch):
     rendered = "\n".join(reference.render(species_sets=[("Example", None, None, 50)]))
 
     assert "L50 Speed 94-167 (full legal IV/EV/nature range)" in rendered
+
+
+def test_lookup_helpers_return_single_entries(monkeypatch):
+    reference = ShowdownReference("test")
+    reference._revision = "test"
+    reference._data["moves"]["earthquake"] = {
+        "id": "earthquake",
+        "name": "Earthquake",
+        "type": "Ground",
+        "category": "Physical",
+        "power": 100,
+        "accuracy": 100,
+        "priority": 0,
+        "target": "allAdjacent",
+        "description": "Hits adjacent Pokémon.",
+    }
+    monkeypatch.setattr(reference, "prefetch", lambda **kwargs: None)
+    assert "Earthquake" in reference.lookup_move("Earthquake")
+    assert "No move data" in reference.lookup_move("NotAMove")

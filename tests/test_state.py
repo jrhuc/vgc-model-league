@@ -86,8 +86,8 @@ def test_mega_event_preserves_the_forme_from_detailschange():
 
     rendered = state.render({})
     assert "Gengar-Mega" in rendered
-    assert "base Spe 130; forme Mega" in rendered
     assert "Mega Evolved" in rendered
+    assert "Showdown reference" not in rendered
 
 
 def test_structured_state_does_not_repeat_raw_protocol_lines():

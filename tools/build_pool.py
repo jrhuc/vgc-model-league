@@ -9,7 +9,8 @@ import tempfile
 import urllib.request
 from pathlib import Path
 
-from vgcbench.sim import _default_node, _default_ps_dir
+from vgcbench.sim import default_node, default_ps_dir
+from vgcbench.teams import validate_team
 
 USAGE = "Usage: python tools/build_pool.py teams/<pool>/sources.json"
 
@@ -35,19 +36,6 @@ def pack_team(export_text: str, ps_dir: Path, node: str) -> str:
     if not packed:
         raise ValueError("pack-team produced no output")
     return packed
-
-
-def validate_team(packed: str, format_id: str, ps_dir: Path, node: str) -> None:
-    result = subprocess.run(
-        [node, "./pokemon-showdown", "--skip-build", "validate-team", format_id],
-        input=packed + "\n",
-        text=True,
-        capture_output=True,
-        cwd=ps_dir,
-        timeout=30,
-    )
-    if result.returncode:
-        raise ValueError((result.stderr or result.stdout).strip())
 
 
 def species_key(packed: str) -> tuple[str, ...]:
@@ -84,8 +72,8 @@ def main(manifest_path: str) -> int:
     pool_dir = manifest_file.parent
     pool_id = manifest["id"]
     format_id = manifest["format"]
-    ps_dir = _default_ps_dir()
-    node = _default_node()
+    ps_dir = default_ps_dir()
+    node = default_node()
     team_names = [f"{team['id']}.team" for team in manifest["teams"]]
     output_names = [*team_names, "pool.json"]
     existing = _existing_output([pool_dir / name for name in output_names])
@@ -98,7 +86,7 @@ def main(manifest_path: str) -> int:
     for team in manifest["teams"]:
         team_id = team["id"]
         packed = pack_team(fetch_paste(team["paste"]), ps_dir, node)
-        validate_team(packed, format_id, ps_dir, node)
+        validate_team(packed, format_id, ps_dir=ps_dir, node=node)
         key = species_key(packed)
         if key in seen:
             raise SystemExit(f"{team_id} duplicates the species set of {seen[key]}: {', '.join(key)}")

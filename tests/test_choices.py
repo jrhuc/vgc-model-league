@@ -174,3 +174,46 @@ def test_only_one_slot_can_mega_evolve():
 
     choice = MegaEngine("p1").act(request, {"pov_lines": [], "error": None})
     assert choice.count(" mega") == 1
+
+def test_adjacent_ally_targets_require_a_living_ally():
+    request = load("turn.json")
+    request["active"][1] = None
+    request["active"][0]["moves"][0]["target"] = "adjacentAlly"
+    parts = {item["part"] for item in build_menus(request)[0] if item["kind"] == "move"}
+    assert not any(part.startswith("move 1 -") for part in parts)
+
+    request["active"][0]["moves"][0]["target"] = "adjacentAllyOrSelf"
+    parts = {item["part"] for item in build_menus(request)[0] if item["kind"] == "move"}
+    assert "move 1 -1" in parts
+    assert "move 1 -2" not in parts
+
+def test_conflicting_single_option_joint_action_is_repaired_without_automatic_flag():
+    switch = {"label": "Switch to C", "part": "switch 3", "kind": "switch"}
+    menus = [[switch], [switch]]
+
+    class Probe(BaseEngine):
+        def __init__(self):
+            super().__init__("p1")
+            self.automatic = None
+
+        def decide_joint(self, menus, request, ctx):
+            raise AssertionError("automatic path should not ask the model")
+
+        def action_committed(self, request, ctx, menus, choices, parts, automatic):
+            self.automatic = automatic
+
+        def _menu_names(self, request):
+            return None
+
+    probe = Probe()
+    import vgcbench.engines as engines
+
+    real_build = engines.build_menus
+    engines.build_menus = lambda request, names=None: menus
+    try:
+        choice = probe.act({"active": [{}, {}]}, {})
+    finally:
+        engines.build_menus = real_build
+    assert choice == "switch 3, pass"
+    assert probe.automatic is False
+

@@ -12,7 +12,7 @@ from pathlib import Path
 
 from .engines import LLMEngine, RandomEngine
 from .records import append_row, ps_commit
-from .sim import REPO_ROOT, SimBattle, _default_node, _default_ps_dir
+from .sim import REPO_ROOT, SimBattle, default_node, default_ps_dir
 from .teams import load_pool, validate_pool
 
 
@@ -25,6 +25,7 @@ def make_engine(
     reasoning: str | None,
     ps_dir: Path,
     node: str,
+    reference=None,
 ):
     if spec == "random":
         return RandomEngine(pid, seed)
@@ -40,6 +41,7 @@ def make_engine(
         format_id=format_id,
         ps_dir=ps_dir,
         node=node,
+        reference=reference,
     )
 
 
@@ -72,8 +74,8 @@ def run_benchmark(
     run_dir = Path(run_dir)
     run_dir.mkdir(parents=True, exist_ok=True)
     records_path = Path(records_path) if records_path else REPO_ROOT / "records" / "results.jsonl"
-    ps_dir = Path(ps_dir).expanduser() if ps_dir else _default_ps_dir()
-    node = node or _default_node()
+    ps_dir = Path(ps_dir).expanduser() if ps_dir else default_ps_dir()
+    node = node or default_node()
     pool = load_pool(pool_name)
     validate_pool(pool, ps_dir=ps_dir, node=node)
 
@@ -160,6 +162,13 @@ def _play_series(plan, *, run_dir, pool, run_seed, reasoning, ps_dir, node) -> d
     players = plan["players"]
     team_ids = {pid: plan["teams"][pid].id for pid in ("p1", "p2")}
     names = {pid: f"{pid}-{players[pid]}" for pid in ("p1", "p2")}
+    from .reference import ShowdownReference
+
+    reference = (
+        ShowdownReference(pool.format, ps_dir=ps_dir, node=node)
+        if any(players[pid] != "random" for pid in ("p1", "p2"))
+        else None
+    )
     engines = {
         pid: make_engine(
             pid,
@@ -170,6 +179,7 @@ def _play_series(plan, *, run_dir, pool, run_seed, reasoning, ps_dir, node) -> d
             reasoning,
             ps_dir,
             node,
+            reference=reference,
         )
         for pid in ("p1", "p2")
     }

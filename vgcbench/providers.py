@@ -1,10 +1,25 @@
 from __future__ import annotations
 
+import json
 import os
 import re
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
+
+
+@dataclass
+class ToolCall:
+    id: str
+    name: str
+    arguments: dict[str, Any]
+
+
+@dataclass
+class Completion:
+    text: str
+    usage: dict[str, int]
+    tool_calls: list[ToolCall] = field(default_factory=list)
 
 
 REASONING_LEVELS = ("off", "minimal", "low", "medium", "high", "xhigh", "max")
@@ -151,17 +166,97 @@ def validate_reasoning(spec: ProviderSpec, level: str | None) -> None:
         raise ValueError(f"{spec.provider}:{spec.model} does not support reasoning={level}; supported: {detail}")
 
 
+def _parse_tool_arguments(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str) and value.strip():
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+    return {}
+
+
+def _openai_tools(tools: list[dict] | None) -> list[dict] | None:
+    if not tools:
+        return None
+    return [
+        {
+            "type": "function",
+            "function": {
+                "name": tool["name"],
+                "description": tool["description"],
+                "parameters": tool["parameters"],
+                "strict": True,
+            },
+        }
+        for tool in tools
+    ]
+
+
+def _anthropic_tools(tools: list[dict] | None) -> list[dict] | None:
+    if not tools:
+        return None
+    return [
+        {
+            "name": tool["name"],
+            "description": tool["description"],
+            "input_schema": tool["parameters"],
+        }
+        for tool in tools
+    ]
+
+
+def _tool_name(call: dict) -> str:
+    function = call.get("function")
+    if isinstance(function, dict) and function.get("name"):
+        return str(function["name"])
+    return str(call.get("name") or "")
+
+
+def _tool_arguments(call: dict) -> dict[str, Any]:
+    function = call.get("function")
+    if isinstance(function, dict):
+        return _parse_tool_arguments(function.get("arguments"))
+    return _parse_tool_arguments(call.get("arguments"))
+
+
+def assistant_tool_message(completion: "Completion") -> dict[str, Any]:
+    return {
+        "role": "assistant",
+        "content": completion.text or None,
+        "tool_calls": [
+            {
+                "id": call.id or f"call_{index}",
+                "type": "function",
+                "function": {
+                    "name": call.name,
+                    "arguments": json.dumps(call.arguments or {}),
+                },
+            }
+            for index, call in enumerate(completion.tool_calls)
+        ],
+    }
+
+
+def tool_result_message(call_id: str, content: str) -> dict[str, str]:
+    return {"role": "tool", "tool_call_id": call_id, "content": content}
+
+
 class Provider(ABC):
     @abstractmethod
     def complete(
         self,
         system: str,
-        user: str,
+        messages: list[dict],
         *,
         max_tokens: int = 1200,
         temperature: float = 0.6,
         timeout: float | None = None,
-    ) -> tuple[str, dict[str, int]]:
+        tools: list[dict] | None = None,
+        tool_choice: str | None = None,
+    ) -> Completion:
         raise NotImplementedError
 
 
@@ -186,20 +281,74 @@ class AnthropicProvider(Provider):
     def complete(
         self,
         system: str,
-        user: str,
+        messages: list[dict],
         *,
         max_tokens: int = 1200,
         temperature: float = 0.6,
         timeout: float | None = None,
-    ) -> tuple[str, dict[str, int]]:
+        tools: list[dict] | None = None,
+        tool_choice: str | None = None,
+    ) -> Completion:
         import anthropic
+
+        converted: list[dict[str, Any]] = []
+        for message in messages:
+            role = message.get("role")
+            if role == "tool":
+                converted.append(
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": message.get("tool_call_id") or "",
+                                "content": message.get("content") or "",
+                            }
+                        ],
+                    }
+                )
+                continue
+            if role == "assistant" and message.get("tool_calls"):
+                content = []
+                if message.get("content"):
+                    content.append({"type": "text", "text": message["content"]})
+                for call in message["tool_calls"]:
+                    content.append(
+                        {
+                            "type": "tool_use",
+                            "id": call["id"],
+                            "name": _tool_name(call),
+                            "input": _tool_arguments(call),
+                        }
+                    )
+                converted.append({"role": "assistant", "content": content})
+                continue
+            converted.append({"role": role, "content": message.get("content") or ""})
+
+        merged: list[dict[str, Any]] = []
+        for message in converted:
+            if (
+                merged
+                and message["role"] == "user"
+                and merged[-1]["role"] == "user"
+                and isinstance(merged[-1]["content"], list)
+                and isinstance(message["content"], list)
+            ):
+                merged[-1]["content"].extend(message["content"])
+            else:
+                merged.append(message)
 
         params: dict[str, Any] = {
             "model": self.model,
             "system": system,
             "max_tokens": max_tokens,
-            "messages": [{"role": "user", "content": user}],
+            "messages": merged,
         }
+        anthropic_tools = _anthropic_tools(tools)
+        if anthropic_tools:
+            params["tools"] = anthropic_tools
+            if tool_choice in {"auto", "none"}:
+                params["tool_choice"] = {"type": tool_choice}
         if self.reasoning is None:
             if self._supports_temperature:
                 params["temperature"] = temperature
@@ -221,16 +370,29 @@ class AnthropicProvider(Provider):
                     continue
                 raise
 
-        text = "".join(
-            getattr(block, "text", "")
-            for block in getattr(response, "content", [])
-            if getattr(block, "type", None) == "text" or hasattr(block, "text")
-        )
+        text_parts: list[str] = []
+        tool_calls: list[ToolCall] = []
+        for block in getattr(response, "content", []) or []:
+            block_type = getattr(block, "type", None)
+            if block_type == "text" or (block_type is None and hasattr(block, "text")):
+                text_parts.append(getattr(block, "text", "") or "")
+            elif block_type == "tool_use":
+                tool_calls.append(
+                    ToolCall(
+                        id=str(getattr(block, "id", "") or ""),
+                        name=str(getattr(block, "name", "") or ""),
+                        arguments=_parse_tool_arguments(getattr(block, "input", {})),
+                    )
+                )
         usage = getattr(response, "usage", None)
-        return text, {
-            "input_tokens": int(getattr(usage, "input_tokens", 0) or 0),
-            "output_tokens": int(getattr(usage, "output_tokens", 0) or 0),
-        }
+        return Completion(
+            text="".join(text_parts),
+            usage={
+                "input_tokens": int(getattr(usage, "input_tokens", 0) or 0),
+                "output_tokens": int(getattr(usage, "output_tokens", 0) or 0),
+            },
+            tool_calls=tool_calls,
+        )
 
 
 class OpenAIProvider(Provider):
@@ -275,24 +437,61 @@ class OpenAIProvider(Provider):
     def complete(
         self,
         system: str,
-        user: str,
+        messages: list[dict],
         *,
         max_tokens: int = 1200,
         temperature: float = 0.6,
         timeout: float | None = None,
-    ) -> tuple[str, dict[str, int]]:
+        tools: list[dict] | None = None,
+        tool_choice: str | None = None,
+    ) -> Completion:
         import openai
+
+        converted: list[dict[str, Any]] = [{"role": "system", "content": system}]
+        for message in messages:
+            role = message.get("role")
+            if role == "tool":
+                converted.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": message.get("tool_call_id") or "",
+                        "content": message.get("content") or "",
+                    }
+                )
+                continue
+            if role == "assistant" and message.get("tool_calls"):
+                converted.append(
+                    {
+                        "role": "assistant",
+                        "content": message.get("content") or None,
+                        "tool_calls": [
+                            {
+                                "id": call["id"],
+                                "type": "function",
+                                "function": {
+                                    "name": _tool_name(call),
+                                    "arguments": json.dumps(_tool_arguments(call)),
+                                },
+                            }
+                            for call in message["tool_calls"]
+                        ],
+                    }
+                )
+                continue
+            converted.append({"role": role, "content": message.get("content") or ""})
 
         params: dict[str, Any] = {
             "model": self.model,
-            "messages": [
-                {"role": "system", "content": system},
-                {"role": "user", "content": user},
-            ],
+            "messages": converted,
         }
         params["max_completion_tokens" if self._uses_max_completion_tokens else "max_tokens"] = max_tokens
         if self._supports_temperature:
             params["temperature"] = temperature
+        openai_tools = _openai_tools(tools)
+        if openai_tools:
+            params["tools"] = openai_tools
+            if tool_choice in {"auto", "none", "required"}:
+                params["tool_choice"] = tool_choice
         if self.reasoning is not None:
             if self.reasoning_style == "deepseek" and self.reasoning == "off":
                 params["extra_body"] = {"thinking": {"type": "disabled"}}
@@ -316,13 +515,28 @@ class OpenAIProvider(Provider):
                 if not changed:
                     raise
 
-        message = response.choices[0].message if response.choices else None
+        choice = response.choices[0] if response.choices else None
+        message = getattr(choice, "message", None) if choice is not None else None
         content = getattr(message, "content", "") if message is not None else ""
+        tool_calls: list[ToolCall] = []
+        for call in getattr(message, "tool_calls", None) or []:
+            function = getattr(call, "function", None)
+            tool_calls.append(
+                ToolCall(
+                    id=str(getattr(call, "id", "") or ""),
+                    name=str(getattr(function, "name", "") or ""),
+                    arguments=_parse_tool_arguments(getattr(function, "arguments", {})),
+                )
+            )
         usage = getattr(response, "usage", None)
-        return content or "", {
-            "input_tokens": int(getattr(usage, "prompt_tokens", 0) or 0),
-            "output_tokens": int(getattr(usage, "completion_tokens", 0) or 0),
-        }
+        return Completion(
+            text=content or "",
+            usage={
+                "input_tokens": int(getattr(usage, "prompt_tokens", 0) or 0),
+                "output_tokens": int(getattr(usage, "completion_tokens", 0) or 0),
+            },
+            tool_calls=tool_calls,
+        )
 
 
 class GoogleProvider(Provider):
@@ -345,19 +559,89 @@ class GoogleProvider(Provider):
     def complete(
         self,
         system: str,
-        user: str,
+        messages: list[dict],
         *,
         max_tokens: int = 1200,
         temperature: float = 0.6,
         timeout: float | None = None,
-    ) -> tuple[str, dict[str, int]]:
+        tools: list[dict] | None = None,
+        tool_choice: str | None = None,
+    ) -> Completion:
         from google.genai import types
+
+        contents: list[Any] = []
+        call_names: dict[str, str] = {}
+        index = 0
+        while index < len(messages):
+            message = messages[index]
+            role = message.get("role")
+            if role == "tool":
+                parts = []
+                while index < len(messages) and messages[index].get("role") == "tool":
+                    tool_message = messages[index]
+                    call_id = str(tool_message.get("tool_call_id") or "")
+                    name = call_names.get(call_id) or str(tool_message.get("name") or "")
+                    parts.append(
+                        types.Part.from_function_response(
+                            name=name,
+                            response={"result": tool_message.get("content") or ""},
+                        )
+                    )
+                    index += 1
+                contents.append(types.Content(role="user", parts=parts))
+                continue
+            if role == "assistant" and message.get("tool_calls"):
+                parts = []
+                if message.get("content"):
+                    parts.append(types.Part.from_text(text=message["content"]))
+                for call in message["tool_calls"]:
+                    name = _tool_name(call)
+                    call_names[str(call.get("id") or "")] = name
+                    parts.append(
+                        types.Part.from_function_call(
+                            name=name,
+                            args=_tool_arguments(call),
+                        )
+                    )
+                contents.append(types.Content(role="model", parts=parts))
+                index += 1
+                continue
+            contents.append(
+                types.Content(
+                    role="user" if role == "user" else "model",
+                    parts=[types.Part.from_text(text=message.get("content") or "")],
+                )
+            )
+            index += 1
 
         config: dict[str, Any] = {
             "system_instruction": system,
             "temperature": temperature,
             "max_output_tokens": max_tokens,
         }
+        if tools:
+            declarations = []
+            for tool in tools:
+                parameters = {
+                    key: value
+                    for key, value in tool["parameters"].items()
+                    if key != "additionalProperties"
+                }
+                declarations.append(
+                    types.FunctionDeclaration(
+                        name=tool["name"],
+                        description=tool["description"],
+                        parameters=parameters,
+                    )
+                )
+            config["tools"] = [types.Tool(function_declarations=declarations)]
+            mode = {
+                "none": types.FunctionCallingConfigMode.NONE,
+                "required": types.FunctionCallingConfigMode.ANY,
+            }.get(tool_choice or "", types.FunctionCallingConfigMode.AUTO)
+            config["tool_config"] = types.ToolConfig(
+                function_calling_config=types.FunctionCallingConfig(mode=mode)
+            )
         if timeout is not None:
             config["http_options"] = types.HttpOptions(
                 timeout=max(1, int(timeout * 1000)),
@@ -373,14 +657,34 @@ class GoogleProvider(Provider):
             config["thinking_config"] = types.ThinkingConfig(thinking_level=self.reasoning)
         response = self._get_client().models.generate_content(
             model=self.model,
-            contents=user,
+            contents=contents,
             config=types.GenerateContentConfig(**config),
         )
+        text_out = getattr(response, "text", None) or ""
+        tool_calls: list[ToolCall] = []
+        candidates = getattr(response, "candidates", None) or []
+        if candidates:
+            content = getattr(candidates[0], "content", None)
+            for index, part in enumerate(getattr(content, "parts", None) or []):
+                function_call = getattr(part, "function_call", None)
+                if not function_call:
+                    continue
+                tool_calls.append(
+                    ToolCall(
+                        id=f"call_{index}",
+                        name=str(getattr(function_call, "name", "") or ""),
+                        arguments=_parse_tool_arguments(getattr(function_call, "args", {}) or {}),
+                    )
+                )
         usage = getattr(response, "usage_metadata", None)
-        return getattr(response, "text", None) or "", {
-            "input_tokens": int(getattr(usage, "prompt_token_count", 0) or 0),
-            "output_tokens": int(getattr(usage, "candidates_token_count", 0) or 0),
-        }
+        return Completion(
+            text=text_out,
+            usage={
+                "input_tokens": int(getattr(usage, "prompt_token_count", 0) or 0),
+                "output_tokens": int(getattr(usage, "candidates_token_count", 0) or 0),
+            },
+            tool_calls=tool_calls,
+        )
 
 
 def _google_thinking_budget_max(model: str) -> int:

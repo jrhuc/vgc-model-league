@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 
 from vgcbench.engines import RandomEngine
-from vgcbench.sim import REPO_ROOT, SimBattle, _default_node, _default_ps_dir
+from vgcbench.sim import REPO_ROOT, SimBattle, default_node, default_ps_dir
 from vgcbench.teams import load_pool
 
 
@@ -28,8 +28,8 @@ class CaptureEngine(RandomEngine):
 
 
 def main() -> None:
-    ps_dir = _default_ps_dir()
-    node = _default_node()
+    ps_dir = default_ps_dir()
+    node = default_node()
     pool = load_pool()
     captured: dict[str, dict] = {}
     for seed in range(1, 9):

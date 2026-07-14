@@ -38,8 +38,8 @@ def make_manifest(tmp_path: Path) -> tuple[Path, Path]:
 
 
 def stub_build(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(build_pool, "_default_ps_dir", lambda: Path("unused"))
-    monkeypatch.setattr(build_pool, "_default_node", lambda: "node")
+    monkeypatch.setattr(build_pool, "default_ps_dir", lambda: Path("unused"))
+    monkeypatch.setattr(build_pool, "default_node", lambda: "node")
     monkeypatch.setattr(build_pool, "fetch_paste", lambda url: url)
     monkeypatch.setattr(build_pool, "pack_team", lambda text, ps_dir, node: PACKED[text])
     monkeypatch.setattr(build_pool, "validate_team", lambda packed, format_id, ps_dir, node: None)
