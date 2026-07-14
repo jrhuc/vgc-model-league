@@ -1,0 +1,182 @@
+{
+ "active": [
+  {
+   "moves": [
+    {
+     "disabled": false,
+     "id": "moonblast",
+     "maxpp": 16,
+     "move": "Moonblast",
+     "pp": 16,
+     "target": "normal"
+    },
+    {
+     "disabled": false,
+     "id": "dazzlinggleam",
+     "maxpp": 12,
+     "move": "Dazzling Gleam",
+     "pp": 12,
+     "target": "allAdjacentFoes"
+    },
+    {
+     "disabled": false,
+     "id": "lightofruin",
+     "maxpp": 8,
+     "move": "Light of Ruin",
+     "pp": 8,
+     "target": "normal"
+    },
+    {
+     "disabled": false,
+     "id": "protect",
+     "maxpp": 8,
+     "move": "Protect",
+     "pp": 8,
+     "target": "self"
+    }
+   ]
+  },
+  {
+   "moves": [
+    {
+     "disabled": false,
+     "id": "wavecrash",
+     "maxpp": 12,
+     "move": "Wave Crash",
+     "pp": 12,
+     "target": "normal"
+    },
+    {
+     "disabled": false,
+     "id": "lastrespects",
+     "maxpp": 12,
+     "move": "Last Respects",
+     "pp": 12,
+     "target": "normal"
+    },
+    {
+     "disabled": false,
+     "id": "aquajet",
+     "maxpp": 20,
+     "move": "Aqua Jet",
+     "pp": 20,
+     "target": "normal"
+    },
+    {
+     "disabled": false,
+     "id": "protect",
+     "maxpp": 8,
+     "move": "Protect",
+     "pp": 8,
+     "target": "self"
+    }
+   ]
+  }
+ ],
+ "side": {
+  "id": "p1",
+  "name": "capture-a",
+  "pokemon": [
+   {
+    "ability": "flowerveil",
+    "active": true,
+    "baseAbility": "flowerveil",
+    "commanding": false,
+    "condition": "149/149",
+    "details": "Floette-Mega, L50, F",
+    "ident": "p1: Floette",
+    "item": "floettite",
+    "moves": [
+     "moonblast",
+     "dazzlinggleam",
+     "lightofruin",
+     "protect"
+    ],
+    "pokeball": "pokeball",
+    "reviving": false,
+    "stats": {
+     "atk": 94,
+     "def": 109,
+     "spa": 227,
+     "spd": 168,
+     "spe": 154
+    }
+   },
+   {
+    "ability": "adaptability",
+    "active": true,
+    "baseAbility": "adaptability",
+    "commanding": false,
+    "condition": "219/219",
+    "details": "Basculegion, L50, M",
+    "ident": "p1: Basculegion",
+    "item": "lifeorb",
+    "moves": [
+     "wavecrash",
+     "lastrespects",
+     "aquajet",
+     "protect"
+    ],
+    "pokeball": "pokeball",
+    "reviving": false,
+    "stats": {
+     "atk": 165,
+     "def": 87,
+     "spa": 90,
+     "spd": 103,
+     "spe": 112
+    }
+   },
+   {
+    "ability": "unnerve",
+    "active": false,
+    "baseAbility": "unnerve",
+    "commanding": false,
+    "condition": "163/163",
+    "details": "Pyroar-Mega, L50, F",
+    "ident": "p1: Pyroar",
+    "item": "pyroarite",
+    "moves": [
+     "heatwave",
+     "overheat",
+     "solarbeam",
+     "protect"
+    ],
+    "pokeball": "pokeball",
+    "reviving": false,
+    "stats": {
+     "atk": 97,
+     "def": 112,
+     "spa": 181,
+     "spd": 106,
+     "spe": 195
+    }
+   },
+   {
+    "ability": "prankster",
+    "active": false,
+    "baseAbility": "prankster",
+    "commanding": false,
+    "condition": "137/137",
+    "details": "Whimsicott, L50, F",
+    "ident": "p1: Whimsicott",
+    "item": "focussash",
+    "moves": [
+     "moonblast",
+     "tailwind",
+     "sunnyday",
+     "protect"
+    ],
+    "pokeball": "pokeball",
+    "reviving": false,
+    "stats": {
+     "atk": 78,
+     "def": 105,
+     "spa": 129,
+     "spd": 95,
+     "spe": 184
+    }
+   }
+  ]
+ }
+}

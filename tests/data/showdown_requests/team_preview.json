@@ -1,0 +1,160 @@
+{
+ "maxChosenTeamSize": 4,
+ "side": {
+  "id": "p1",
+  "name": "capture-a",
+  "pokemon": [
+   {
+    "ability": "unnerve",
+    "active": true,
+    "baseAbility": "unnerve",
+    "commanding": false,
+    "condition": "163/163",
+    "details": "Pyroar-Mega, L50, F",
+    "ident": "p1: Pyroar",
+    "item": "pyroarite",
+    "moves": [
+     "heatwave",
+     "overheat",
+     "solarbeam",
+     "protect"
+    ],
+    "pokeball": "pokeball",
+    "reviving": false,
+    "stats": {
+     "atk": 97,
+     "def": 112,
+     "spa": 181,
+     "spd": 106,
+     "spe": 195
+    }
+   },
+   {
+    "ability": "prankster",
+    "active": true,
+    "baseAbility": "prankster",
+    "commanding": false,
+    "condition": "137/137",
+    "details": "Whimsicott, L50, F",
+    "ident": "p1: Whimsicott",
+    "item": "focussash",
+    "moves": [
+     "moonblast",
+     "tailwind",
+     "sunnyday",
+     "protect"
+    ],
+    "pokeball": "pokeball",
+    "reviving": false,
+    "stats": {
+     "atk": 78,
+     "def": 105,
+     "spa": 129,
+     "spd": 95,
+     "spe": 184
+    }
+   },
+   {
+    "ability": "drought",
+    "active": false,
+    "baseAbility": "drought",
+    "commanding": false,
+    "condition": "150/150",
+    "details": "Ninetales, L50, F",
+    "ident": "p1: Ninetales",
+    "item": "choicescarf",
+    "moves": [
+     "overheat",
+     "heatwave",
+     "solarbeam",
+     "faketears"
+    ],
+    "pokeball": "pokeball",
+    "reviving": false,
+    "stats": {
+     "atk": 86,
+     "def": 95,
+     "spa": 146,
+     "spd": 120,
+     "spe": 152
+    }
+   },
+   {
+    "ability": "armortail",
+    "active": false,
+    "baseAbility": "armortail",
+    "commanding": false,
+    "condition": "220/220",
+    "details": "Farigiraf, L50, M",
+    "ident": "p1: Farigiraf",
+    "item": "sitrusberry",
+    "moves": [
+     "thunderbolt",
+     "twinbeam",
+     "trickroom",
+     "helpinghand"
+    ],
+    "pokeball": "pokeball",
+    "reviving": false,
+    "stats": {
+     "atk": 99,
+     "def": 110,
+     "spa": 130,
+     "spd": 114,
+     "spe": 87
+    }
+   },
+   {
+    "ability": "adaptability",
+    "active": false,
+    "baseAbility": "adaptability",
+    "commanding": false,
+    "condition": "219/219",
+    "details": "Basculegion, L50, M",
+    "ident": "p1: Basculegion",
+    "item": "lifeorb",
+    "moves": [
+     "wavecrash",
+     "lastrespects",
+     "aquajet",
+     "protect"
+    ],
+    "pokeball": "pokeball",
+    "reviving": false,
+    "stats": {
+     "atk": 165,
+     "def": 87,
+     "spa": 90,
+     "spd": 103,
+     "spe": 112
+    }
+   },
+   {
+    "ability": "flowerveil",
+    "active": false,
+    "baseAbility": "flowerveil",
+    "commanding": false,
+    "condition": "149/149",
+    "details": "Floette-Mega, L50, F",
+    "ident": "p1: Floette",
+    "item": "floettite",
+    "moves": [
+     "moonblast",
+     "dazzlinggleam",
+     "lightofruin",
+     "protect"
+    ],
+    "pokeball": "pokeball",
+    "reviving": false,
+    "stats": {
+     "atk": 94,
+     "def": 109,
+     "spa": 227,
+     "spd": 168,
+     "spe": 154
+    }
+   }
+  ]
+ },
+ "teamPreview": true
+}

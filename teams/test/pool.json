@@ -1,0 +1,12 @@
+{
+  "id": "test",
+  "format": "gen9championsvgc2026regmbbo3",
+  "teams": [
+    {"id": "boschmans-mega-pyroar", "file": "boschmans-mega-pyroar.team"},
+    {"id": "cybertron-mega-staraptor", "file": "cybertron-mega-staraptor.team"},
+    {"id": "endo-mega-sceptile", "file": "endo-mega-sceptile.team"},
+    {"id": "jpnats-mega-swampert", "file": "jpnats-mega-swampert.team"},
+    {"id": "rios-mega-raichu-x-venusaur", "file": "rios-mega-raichu-x-venusaur.team"},
+    {"id": "wolfe-mega-raichu-y", "file": "wolfe-mega-raichu-y.team"}
+  ]
+}
