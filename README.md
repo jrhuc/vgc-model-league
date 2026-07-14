@@ -14,34 +14,35 @@ the simulator remains the authority on legality and outcomes.
 git clone https://github.com/smogon/pokemon-showdown.git
 cd pokemon-showdown
 npm install
-npm run build
+npm run build-npm
 cd ..
-uv venv --python 3.12
-uv pip install -e '.[dev]'
+npm install
+npm run build
 ```
 
 A built Pokémon Showdown checkout is expected at `./pokemon-showdown`. Override it
-with `VGCBENCH_PS`; override Node with `VGCBENCH_NODE`.
+with `VGCBENCH_PS`. The benchmark loads the configured checkout directly, so changing
+Showdown versions does not require a benchmark rebuild unless its imported API changes.
 
 ## Run
 
 ```sh
-vgcbench selfcheck
+npm run vgcbench -- selfcheck
 
-vgcbench run \
+npm run vgcbench -- run \
   --models anthropic:claude-sonnet-5 openai:gpt-5.2 \
   --reasoning medium \
   --series-per-pair 4 \
   --pool regmb-202607
 
-vgcbench run \
+npm run vgcbench -- run \
   --models anthropic:claude-sonnet-5 openai:gpt-5.2 meta:muse-spark-1.1 \
   --reasoning medium \
   --series-per-pair 2 \
   --pool regmb-202607
 
-vgcbench standings --pool regmb-202607
-vgcbench report --pool regmb-202607
+npm run vgcbench -- standings --pool regmb-202607
+npm run vgcbench -- report --pool regmb-202607
 ```
 
 Two models produce one matchup. Three or more produce a round robin. The reasoning
@@ -57,7 +58,7 @@ existing one, so old records stay reproducible. `teams/regmb-202607` is the
 current Reg M-B snapshot (11 archetype-deduped tournament teams). `test` is a
 disposable set used while the benchmark was being developed.
 
-`python tools/build_pool.py teams/<pool>/sources.json` builds a snapshot from
+`npm run build-pool -- teams/<pool>/sources.json` builds a snapshot from
 pokepaste sources: it packs and validates every team against the manifest format
 and refuses two teams with the same species set. The manifest owns the exact
 Showdown format, so there is no separate format switch in the runner.
