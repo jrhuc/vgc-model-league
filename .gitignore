@@ -12,6 +12,7 @@ dist/
 # Local benchmark output
 runs/
 records/
+pokemon-showdown/
 
 # Local configuration and credentials
 .env

@@ -7,7 +7,7 @@ from vgcbench.teams import load_pool
 
 
 ROOT = Path(__file__).parents[1]
-PS = ROOT.parent / "pokemon-showdown"
+PS = ROOT / "pokemon-showdown"
 NODE = Path.home() / ".local/bin/node"
 
 

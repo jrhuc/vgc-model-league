@@ -95,13 +95,16 @@ def _games_table(rows: list[dict], limit: int = 80) -> str:
     return f"<h3>Games</h3><div class=wrap><table>{head}{''.join(out)}</table></div>"
 
 
-def write_report(records_path, out_path) -> Path:
+def write_report(records_path, out_path, pool=None) -> Path:
     rows = load_rows(records_path)
+    if pool is not None:
+        rows = [row for row in rows if row.get("pool") == pool]
     stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    pool_text = f" for pool {html.escape(str(pool))}" if pool is not None else ""
     doc = (
         "<!doctype html><meta charset=utf-8><title>vgcbench records</title>"
         f"<style>{_CSS}</style><h1>vgcbench records</h1>"
-        f"<p class=meta>{len(rows)} completed series — generated {stamp}</p>"
+        f"<p class=meta>{len(rows)} completed series{pool_text} — generated {stamp}</p>"
         + _standings_table(standings(rows))
         + _h2h_table(h2h(rows))
         + _series_table(rows)

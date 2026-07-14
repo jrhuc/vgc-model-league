@@ -43,9 +43,11 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--concurrency", type=_positive_int, default=2)
     run.add_argument("--reasoning", choices=REASONING_LEVELS)
 
-    commands.add_parser("standings")
+    standings_parser = commands.add_parser("standings")
+    standings_parser.add_argument("--pool", default=None)
     report = commands.add_parser("report")
     report.add_argument("--out", default=str(REPO_ROOT / "records" / "report.html"))
+    report.add_argument("--pool", default=None)
     return parser
 
 
@@ -71,9 +73,11 @@ def main(argv=None) -> int:
     if args.command == "report":
         from .report import write_report
 
-        print(write_report(RESULTS, args.out))
+        print(write_report(RESULTS, args.out, pool=args.pool))
         return 0
-    _print_standings(load_rows(RESULTS))
+    rows = load_rows(RESULTS)
+    rows = [row for row in rows if args.pool is None or row.get("pool") == args.pool]
+    _print_standings(rows)
     return 0
 
 

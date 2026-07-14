@@ -12,6 +12,7 @@ from typing import Protocol, TypedDict
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+TIMER_RUNNER = Path(__file__).with_name("showdown_timer.cjs")
 
 
 class PlayerOpts(TypedDict):
@@ -35,7 +36,7 @@ class Agent(Protocol):
 
 
 def _default_ps_dir() -> Path:
-    return Path(os.environ.get("VGCBENCH_PS", REPO_ROOT.parent / "pokemon-showdown")).expanduser()
+    return Path(os.environ.get("VGCBENCH_PS", REPO_ROOT / "pokemon-showdown")).expanduser()
 
 
 def _default_node() -> str:
@@ -65,9 +66,8 @@ class SimBattle:
         self.node = str(Path(node).expanduser()) if node else _default_node()
 
     def run(self, agents: dict[str, Agent]) -> Outcome:
-        executable = self.ps_dir / "pokemon-showdown"
         proc = subprocess.Popen(
-            [self.node, str(executable), "--skip-build", "simulate-battle"],
+            [self.node, str(TIMER_RUNNER), str(self.ps_dir)],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -87,11 +87,13 @@ class SimBattle:
         retry_count = {"p1": 0, "p2": 0}
         pending_error: dict[str, str | None] = {"p1": None, "p2": None}
         suppress_request = {"p1": False, "p2": False}
-        action_pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="vgcbench-player")
+        action_pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="vgcbench-player")
         pending_actions: dict[Future[str], str] = {}
         winner = None
         turns = 0
         last_activity = time.monotonic()
+
+        pending_split: list[str] = []
 
         def send(line: str) -> None:
             nonlocal last_activity
@@ -130,13 +132,17 @@ class SimBattle:
         stderr_buffer = bytearray()
         def route_update(lines: list[str]) -> None:
             nonlocal winner, turns
+            if pending_split:
+                lines = pending_split + lines
+                pending_split.clear()
             index = 0
             while index < len(lines):
                 line = lines[index]
                 if line.startswith("|split|"):
                     owner = line.split("|", 2)[2]
                     if index + 1 >= len(lines):
-                        break
+                        pending_split.append(line)
+                        return
                     secret = lines[index + 1]
                     public = lines[index + 2] if index + 2 < len(lines) else ""
                     if owner in pov:
@@ -173,6 +179,15 @@ class SimBattle:
                     elif "[Unavailable choice]" not in line and last_request[pid] is not None:
                         schedule_act(pid, last_request[pid], line)
                         pending_error[pid] = None
+                elif line.startswith("|timer|"):
+                    for future, owner in list(pending_actions.items()):
+                        if owner == pid:
+                            del pending_actions[future]
+                            future.cancel()
+                    if line == "|timer|autodefault":
+                        fallbacks[pid] += 1
+                    pov[pid].append(line)
+                    log.append(line)
                 elif line.startswith("|request|"):
                     payload = line[len("|request|") :]
                     if not payload:

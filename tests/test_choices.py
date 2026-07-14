@@ -89,6 +89,53 @@ def test_adjacent_foe_move_cannot_target_an_ally():
     assert parts == {"move 1 +1", "move 1 +2"}
 
 
+def test_target_names_change_labels_but_not_parts():
+    request = load("turn.json")
+    request["active"][0]["moves"][0]["target"] = "normal"
+    names = {
+        "foe": {1: "Charizard", 2: "Pelipper"},
+        "ally": {1: "Whimsicott", 2: "Basculegion"},
+    }
+    unnamed = build_menus(request)[0]
+    named = build_menus(request, names)[0]
+
+    assert [item["part"] for item in named] == [item["part"] for item in unnamed]
+    labels = {item["part"]: item["label"] for item in named}
+    assert labels["move 1 +1"].endswith(" -> foe 1 (Charizard)")
+    assert labels["move 1 +2"].endswith(" -> foe 2 (Pelipper)")
+    assert labels["move 1 -2"].endswith(" -> ally 2 (Basculegion)")
+
+
+@pytest.mark.parametrize("slot, ally", [(1, 2), (2, 1)])
+def test_adjacent_ally_or_self_labels_self_and_ally(slot, ally):
+    request = load("turn.json")
+    request["active"][slot - 1]["moves"][0]["target"] = "adjacentAllyOrSelf"
+    names = {"ally": {1: "Whimsicott", 2: "Basculegion"}}
+
+    unnamed = build_menus(request)[slot - 1]
+    named = build_menus(request, names)[slot - 1]
+    unnamed_items = {item["part"]: item for item in unnamed if item["part"].startswith("move 1")}
+    named_items = {item["part"]: item for item in named if item["part"].startswith("move 1")}
+
+    assert named_items.keys() == unnamed_items.keys()
+    assert named_items[f"move 1 -{slot}"]["label"].endswith(" -> itself")
+    assert unnamed_items[f"move 1 -{slot}"]["label"].endswith(" -> itself")
+    assert named_items[f"move 1 -{ally}"]["label"].endswith(f" -> ally {ally} ({names['ally'][ally]})")
+    assert unnamed_items[f"move 1 -{ally}"]["label"].endswith(f" -> ally {ally}")
+
+
+def test_cannot_pass_a_forced_switch_while_a_replacement_remains():
+    switch = {"label": "Switch to Mon5", "part": "switch 5", "kind": "switch"}
+    passing = {"label": "Pass", "part": "pass", "kind": "pass"}
+    menus = [[switch, passing], [switch, passing]]
+
+    with pytest.raises(ValueError, match="forced switch"):
+        BaseEngine._parts(menus, [1, 1])
+    assert BaseEngine._parts(menus, [0, 1]) == ["switch 5", "pass"]
+    assert BaseEngine._parts(menus, [1, 0]) == ["pass", "switch 5"]
+    assert BaseEngine._defaults(menus)[1] == ["switch 5", "pass"]
+
+
 def test_all_disabled_moves_offer_struggle_and_switches():
     request = load("turn.json")
     for move in request["active"][0]["moves"]:

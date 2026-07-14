@@ -1,15 +1,14 @@
-from pathlib import Path
+import time
 from threading import Barrier
 
 from vgcbench.arena import run_benchmark
 from vgcbench.engines import RandomEngine
-from vgcbench.sim import SimBattle
+from vgcbench.sim import SimBattle, _default_node, _default_ps_dir
 from vgcbench.teams import load_pool
 
 
-ROOT = Path(__file__).parents[1]
-PS = ROOT.parent / "pokemon-showdown"
-NODE = Path.home() / ".local/bin/node"
+PS = _default_ps_dir()
+NODE = _default_node()
 
 
 def test_seeded_random_vgc_game():
@@ -28,6 +27,36 @@ def test_seeded_random_vgc_game():
     assert outcome["turns"] > 0
     assert outcome["errors"] == {"p1": 0, "p2": 0}
     assert not any(line.startswith("|split|") for line in outcome["pov"]["p1"] + outcome["pov"]["p2"])
+
+
+def test_showdown_timer_autochooses_for_a_slow_player():
+    class SlowOnceEngine(RandomEngine):
+        def __init__(self, pid, seed):
+            super().__init__(pid, seed)
+            self.slow = True
+
+        def act(self, request, ctx):
+            if self.slow:
+                self.slow = False
+                time.sleep(11)
+            return super().act(request, ctx)
+
+    pool = load_pool()
+    packed = [team.packed for team in pool.teams[:2]]
+    format_id = pool.format + "@@@!!timermaxfirstturn=10,!!timermaxperturn=10"
+    battle = SimBattle(
+        format_id,
+        {"name": "A-slow", "team": packed[0]},
+        {"name": "B-random", "team": packed[1]},
+        [9, 10, 11, 12],
+        PS,
+        NODE,
+    )
+
+    outcome = battle.run({"p1": SlowOnceEngine("p1", 1), "p2": RandomEngine("p2", 2)})
+
+    assert outcome["fallbacks"]["p1"] >= 1
+    assert "|timer|autodefault" in outcome["pov"]["p1"]
 
 
 def test_players_can_think_concurrently():

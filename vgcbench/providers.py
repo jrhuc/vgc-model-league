@@ -160,6 +160,7 @@ class Provider(ABC):
         *,
         max_tokens: int = 1200,
         temperature: float = 0.6,
+        timeout: float | None = None,
     ) -> tuple[str, dict[str, int]]:
         raise NotImplementedError
 
@@ -179,7 +180,7 @@ class AnthropicProvider(Provider):
                 raise RuntimeError("Missing ANTHROPIC_API_KEY")
             import anthropic
 
-            self._client = anthropic.Anthropic(api_key=api_key, max_retries=4, timeout=120.0)
+            self._client = anthropic.Anthropic(api_key=api_key, max_retries=0, timeout=120.0)
         return self._client
 
     def complete(
@@ -189,6 +190,7 @@ class AnthropicProvider(Provider):
         *,
         max_tokens: int = 1200,
         temperature: float = 0.6,
+        timeout: float | None = None,
     ) -> tuple[str, dict[str, int]]:
         import anthropic
 
@@ -210,7 +212,7 @@ class AnthropicProvider(Provider):
             params["output_config"] = {"effort": self.reasoning}
         while True:
             try:
-                response = self._get_client().messages.create(**params)
+                response = self._get_client().messages.create(timeout=timeout, **params)
                 break
             except anthropic.BadRequestError as exc:
                 if "temperature" in str(exc).lower() and "temperature" in params:
@@ -265,7 +267,7 @@ class OpenAIProvider(Provider):
             self._client = openai.OpenAI(
                 base_url=self.base_url,
                 api_key=api_key,
-                max_retries=4,
+                max_retries=0,
                 timeout=120.0,
             )
         return self._client
@@ -277,6 +279,7 @@ class OpenAIProvider(Provider):
         *,
         max_tokens: int = 1200,
         temperature: float = 0.6,
+        timeout: float | None = None,
     ) -> tuple[str, dict[str, int]]:
         import openai
 
@@ -297,7 +300,7 @@ class OpenAIProvider(Provider):
                 params["reasoning_effort"] = "none" if self.reasoning == "off" else self.reasoning
         while True:
             try:
-                response = self._get_client().chat.completions.create(**params)
+                response = self._get_client().chat.completions.create(timeout=timeout, **params)
                 break
             except openai.BadRequestError as exc:
                 message = str(exc).lower()
@@ -346,6 +349,7 @@ class GoogleProvider(Provider):
         *,
         max_tokens: int = 1200,
         temperature: float = 0.6,
+        timeout: float | None = None,
     ) -> tuple[str, dict[str, int]]:
         from google.genai import types
 
@@ -354,6 +358,11 @@ class GoogleProvider(Provider):
             "temperature": temperature,
             "max_output_tokens": max_tokens,
         }
+        if timeout is not None:
+            config["http_options"] = types.HttpOptions(
+                timeout=max(1, int(timeout * 1000)),
+                retry_options=types.HttpRetryOptions(attempts=1),
+            )
         if self.reasoning == "off":
             config["thinking_config"] = types.ThinkingConfig(thinking_budget=0)
         elif self.reasoning is not None and "2.5" in self.model.lower():

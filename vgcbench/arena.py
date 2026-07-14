@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import random
+import sys
+import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
@@ -56,6 +58,11 @@ def run_benchmark(
 ) -> list[dict]:
     if len(models) < 2:
         raise ValueError("at least two models are required")
+    if series_per_pair % 2:
+        print(
+            "warning: an odd --series-per-pair leaves each pair's last matchup unmirrored",
+            file=sys.stderr,
+        )
 
     from .providers import parse_spec, validate_reasoning
 
@@ -90,8 +97,10 @@ def run_benchmark(
         encoding="utf-8",
     )
 
+    records_lock = threading.Lock()
+
     def play(plan: dict) -> dict:
-        return _play_series(
+        row = _play_series(
             plan,
             run_dir=run_dir,
             pool=pool,
@@ -100,6 +109,9 @@ def run_benchmark(
             ps_dir=ps_dir,
             node=node,
         )
+        with records_lock:
+            append_row(records_path, row)
+        return row
 
     if concurrency == 1:
         rows = [play(plan) for plan in plans]
@@ -110,10 +122,7 @@ def run_benchmark(
             for future in as_completed(futures):
                 rows[futures[future]] = future.result()
 
-    completed = [row for row in rows if row is not None]
-    for row in completed:
-        append_row(records_path, row)
-    return completed
+    return [row for row in rows if row is not None]
 
 
 def _make_plans(models, series_per_pair, teams, rng: random.Random) -> list[dict]:
@@ -221,7 +230,10 @@ def _play_series(plan, *, run_dir, pool, run_seed, reasoning, ps_dir, node) -> d
         if max(score.values()) == 2:
             break
 
-    winner_side = next((pid for pid, wins in score.items() if wins == 2), None)
+    if score["p1"] != score["p2"]:
+        winner_side = "p1" if score["p1"] > score["p2"] else "p2"
+    else:
+        winner_side = None
     return {
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "run_id": run_dir.name,

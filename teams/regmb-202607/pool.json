@@ -1,0 +1,138 @@
+{
+  "id": "regmb-202607",
+  "format": "gen9championsvgc2026regmbbo3",
+  "teams": [
+    {
+      "id": "firefallsmusic-blastoise-camerupt-tr",
+      "file": "firefallsmusic-blastoise-camerupt-tr.team",
+      "source": {
+        "paste": "https://pokepast.es/59949a7fbac6e3fa",
+        "sheet_id": "MB536",
+        "owner": "firefallsmusic",
+        "event": "Grand Champions Festival Encore",
+        "rank": "29th",
+        "date": "13 Jul 2026"
+      }
+    },
+    {
+      "id": "twilite-froslass-scovillain",
+      "file": "twilite-froslass-scovillain.team",
+      "source": {
+        "paste": "https://pokepast.es/dfc30b952b0f4437",
+        "sheet_id": "MB534",
+        "owner": "twilite0",
+        "event": "Grand Champions Festival Encore",
+        "rank": "72nd",
+        "date": "13 Jul 2026"
+      }
+    },
+    {
+      "id": "pokereplays-floette-zard-y",
+      "file": "pokereplays-floette-zard-y.team",
+      "source": {
+        "paste": "https://pokepast.es/c2084b0233d79d4a",
+        "sheet_id": "MB533",
+        "owner": "pokereplaysvgc",
+        "event": "Grand Champions Festival Encore",
+        "rank": "80th",
+        "date": "13 Jul 2026"
+      }
+    },
+    {
+      "id": "zeen-aerodactyl-zard-y",
+      "file": "zeen-aerodactyl-zard-y.team",
+      "source": {
+        "paste": "https://pokepast.es/1b415d637eb7fad3",
+        "sheet_id": "MB493",
+        "owner": "zeen172m",
+        "event": "Ranked Season M-3",
+        "rank": "1st",
+        "date": "8 Jul 2026"
+      }
+    },
+    {
+      "id": "gozira-zard-y-balance",
+      "file": "gozira-zard-y-balance.team",
+      "source": {
+        "paste": "https://pokepast.es/90159766947b173c",
+        "sheet_id": "MB492",
+        "owner": "gozira2004",
+        "event": "Ranked Season M-3",
+        "rank": "2nd",
+        "date": "8 Jul 2026"
+      }
+    },
+    {
+      "id": "alphatoronado-zard-y-rain",
+      "file": "alphatoronado-zard-y-rain.team",
+      "source": {
+        "paste": "https://pokepast.es/48dd1bb49c1e65d9",
+        "sheet_id": "MB399",
+        "owner": "alphatoronado",
+        "event": "Khun's Champions Cup #2",
+        "rank": "3rd",
+        "date": "6 Jul 2026"
+      }
+    },
+    {
+      "id": "crystal-metagross-swampert-rain",
+      "file": "crystal-metagross-swampert-rain.team",
+      "source": {
+        "paste": "https://pokepast.es/48ca91ab5c767b46",
+        "sheet_id": "MB200",
+        "owner": "crystal_0302",
+        "event": "VR June Challenge #2",
+        "rank": "3rd",
+        "date": "21 Jun 2026"
+      }
+    },
+    {
+      "id": "runa-dragonite-scovillain",
+      "file": "runa-dragonite-scovillain.team",
+      "source": {
+        "paste": "https://pokepast.es/b683d04264dfe8c5",
+        "sheet_id": "MB490",
+        "owner": "ru_na807",
+        "event": "Ranked Season M-3",
+        "rank": "7th",
+        "date": "13 Jul 2026"
+      }
+    },
+    {
+      "id": "bravado-mawile-pyroar-sun",
+      "file": "bravado-mawile-pyroar-sun.team",
+      "source": {
+        "paste": "https://pokepast.es/6eb1815de4b3d61d",
+        "sheet_id": "MB403",
+        "owner": "That_Bravado",
+        "event": "BlazyBard Creator Inferno",
+        "rank": "Top 8",
+        "date": "6 Jul 2026"
+      }
+    },
+    {
+      "id": "desu-blastoise-delphox",
+      "file": "desu-blastoise-delphox.team",
+      "source": {
+        "paste": "https://pokepast.es/18296ccd2e5e15dc",
+        "sheet_id": "MB413",
+        "owner": "desuvgc",
+        "event": "VR Champions Arena II",
+        "rank": "8th",
+        "date": "6 Jul 2026"
+      }
+    },
+    {
+      "id": "lysha-gyarados-volcarona",
+      "file": "lysha-gyarados-volcarona.team",
+      "source": {
+        "paste": "https://pokepast.es/b622c86faf9129fa",
+        "sheet_id": "MB517",
+        "owner": "lyshavgc",
+        "event": "Pride Moth 2 Celebration",
+        "rank": "Champion",
+        "date": "12 Jul 2026"
+      }
+    }
+  ]
+}

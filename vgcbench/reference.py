@@ -124,12 +124,14 @@ def _unique_names(values: Iterable[str]) -> list[str]:
 
 
 def _speed_range(base: int, level: int, nature: dict | None) -> tuple[int, int]:
-    def stat(iv: int, ev: int) -> int:
+    def stat(iv: int, ev: int, modifier: float) -> int:
         raw = math.floor(((2 * base + iv + ev // 4) * level) / 100) + 5
-        modifier = 1.1 if nature and nature.get("plus") == "spe" else 0.9 if nature and nature.get("minus") == "spe" else 1.0
         return math.floor(raw * modifier)
 
-    return stat(0, 0), stat(31, 252)
+    if nature is None:
+        return stat(0, 0, 0.9), stat(31, 252, 1.1)
+    modifier = 1.1 if nature.get("plus") == "spe" else 0.9 if nature.get("minus") == "spe" else 1.0
+    return stat(0, 0, modifier), stat(31, 252, modifier)
 
 
 class ShowdownReference:
@@ -150,7 +152,7 @@ class ShowdownReference:
         self.ps_dir = (
             Path(ps_dir).expanduser()
             if ps_dir
-            else Path(os.environ.get("VGCBENCH_PS", REPO_ROOT.parent / "pokemon-showdown")).expanduser()
+            else Path(os.environ.get("VGCBENCH_PS", REPO_ROOT / "pokemon-showdown")).expanduser()
         )
         configured_node = os.environ.get("VGCBENCH_NODE")
         self.node = str(
@@ -294,8 +296,11 @@ class ShowdownReference:
                     continue
                 nature = self.get("natures", nature_name)
                 low, high = _speed_range(species["speed"], level, nature)
-                nature_text = f" with {nature['name']} alignment" if nature else ""
-                detail = f"L{level} Speed {low}-{high}{nature_text} (full legal IV/EV range)"
+                detail = (
+                    f"L{level} Speed {low}-{high} with {nature['name']} alignment (full legal IV/EV range)"
+                    if nature
+                    else f"L{level} Speed {low}-{high} (full legal IV/EV/nature range)"
+                )
                 if detail not in details:
                     details.append(detail)
             for item_name in sorted({item for item, _, _ in visible_sets if item}, key=_id):

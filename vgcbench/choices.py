@@ -35,21 +35,36 @@ def _switches(request: dict, reviving: bool = False) -> SlotMenu:
     return menu
 
 
-def _move_items(move: dict, slot: int, active_count: int, has_ally: bool, mega: bool) -> SlotMenu:
+def _target_label(side: str, number: int, names: dict | None) -> str:
+    species = (names or {}).get(side, {}).get(number)
+    return f" -> {side} {number}" + (f" ({species})" if species else "")
+
+
+def _move_items(
+    move: dict,
+    slot: int,
+    active_count: int,
+    has_ally: bool,
+    mega: bool,
+    names: dict | None = None,
+) -> SlotMenu:
     move_slot = move["slot"]
     name = move.get("move", f"Move {move_slot}")
     target = move.get("target")
     targets: list[tuple[str, str]] = [("", "")]
     if active_count > 1 and target in _TARGETS:
-        targets = [(" +1", " -> foe 1"), (" +2", " -> foe 2")]
+        targets = [(f" +{number}", _target_label("foe", number, names)) for number in (1, 2)]
         if target in {"normal", "any"} and has_ally:
             ally = 2 if slot == 1 else 1
-            targets.append((f" -{ally}", f" -> ally {ally}"))
+            targets.append((f" -{ally}", _target_label("ally", ally, names)))
     elif active_count > 1 and target == "adjacentAlly":
         ally = 2 if slot == 1 else 1
-        targets = [(f" -{ally}", f" -> ally {ally}")]
+        targets = [(f" -{ally}", _target_label("ally", ally, names))]
     elif active_count > 1 and target == "adjacentAllyOrSelf":
-        targets = [(" -1", " -> ally 1"), (" -2", " -> ally 2")]
+        targets = []
+        for number in (1, 2):
+            label = " -> itself" if number == slot else _target_label("ally", number, names)
+            targets.append((f" -{number}", label))
 
     menu: SlotMenu = []
     spread = " (spread)" if target in _SPREAD else ""
@@ -62,7 +77,7 @@ def _move_items(move: dict, slot: int, active_count: int, has_ally: bool, mega: 
     return menu
 
 
-def build_menus(request: dict) -> list[SlotMenu]:
+def build_menus(request: dict, names: dict | None = None) -> list[SlotMenu]:
     side = request.get("side", {})
     pokemon = side.get("pokemon", [])
     if request.get("wait"):
@@ -112,6 +127,7 @@ def build_menus(request: dict) -> list[SlotMenu]:
                         active_count,
                         active_count > 1 and request["active"][1 if slot == 1 else 0] is not None,
                         bool(active.get("canMegaEvo")),
+                        names,
                     )
                 )
             if not enabled_moves and active.get("moves"):

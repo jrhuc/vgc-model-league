@@ -73,3 +73,15 @@ def test_report_renders_series_and_their_nested_games(tmp_path):
     assert "series-1" in report
     assert "game-1.log" in report
     assert "game-2.log" in report
+
+
+def test_report_filters_rows_by_pool_and_names_pool_in_meta(tmp_path):
+    records = tmp_path / "results.jsonl"
+    append_row(records, {**row("included-a", "included-b", "included-a"), "pool": "alpha"})
+    append_row(records, {**row("excluded-c", "excluded-d", "excluded-c"), "pool": "beta"})
+
+    report = write_report(records, tmp_path / "report.html", pool="alpha").read_text()
+
+    assert "1 completed series for pool alpha" in report
+    assert "included-a" in report
+    assert "excluded-c" not in report

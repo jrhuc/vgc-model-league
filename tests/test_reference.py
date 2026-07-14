@@ -1,10 +1,10 @@
 from pathlib import Path
 
-from vgcbench.reference import ShowdownReference
+from vgcbench.reference import ShowdownReference, _speed_range
 
 
 ROOT = Path(__file__).parents[1]
-PS = ROOT.parent / "pokemon-showdown"
+PS = ROOT / "pokemon-showdown"
 NODE = Path.home() / ".local/bin/node"
 
 
@@ -70,3 +70,23 @@ def test_reference_failure_is_fatal_instead_of_silently_removing_mechanics(tmp_p
 
     with pytest.raises(RuntimeError, match="could not query Showdown reference data"):
         reference.render(species_items=[("Gengar", None)])
+
+
+def test_unknown_nature_expands_speed_range_and_wording(monkeypatch):
+    assert _speed_range(100, 50, None) == (94, 167)
+
+    reference = ShowdownReference("test")
+    reference._data["species"]["example"] = {
+        "id": "example",
+        "name": "Example",
+        "types": ["Normal"],
+        "speed": 100,
+        "forme": "",
+        "megaForms": [],
+    }
+    reference._revision = "test"
+    monkeypatch.setattr(reference, "prefetch", lambda **kwargs: None)
+
+    rendered = "\n".join(reference.render(species_sets=[("Example", None, None, 50)]))
+
+    assert "L50 Speed 94-167 (full legal IV/EV/nature range)" in rendered
