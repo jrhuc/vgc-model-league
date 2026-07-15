@@ -1,12 +1,13 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import seedrandom from 'seedrandom';
 
 import type { SlotMenu, TargetNames } from './choices.js';
 import { buildMenus, compose } from './choices.js';
 import { renderDecision, SYSTEM } from './prompts.js';
 import type { ReasoningLevel } from './providers.js';
 import { assistantToolMessage, makeProvider, parseSpec, toolResultMessage } from './providers.js';
+import type { Rng } from './random.js';
+import { seededRng } from './random.js';
 import { DEX_TOOLS, ShowdownReference } from './reference.js';
 import { BattleState } from './state.js';
 import type { AgentContext, BattleAgent, BattleRequest, JsonObject, Pid, Provider, ProviderMessage } from './types.js';
@@ -125,11 +126,11 @@ export abstract class BaseEngine implements BattleAgent {
 }
 
 export class RandomEngine extends BaseEngine {
-  private readonly random: seedrandom.PRNG;
+  private readonly random: Rng;
 
-  constructor(pid: Pid, seed: string | number = String(Math.random())) {
+  constructor(pid: Pid, seed: string | number = Math.random()) {
     super(pid);
-    this.random = seedrandom(String(seed));
+    this.random = seededRng(seed);
   }
 
   protected decideJoint(menus: SlotMenu[]): number[] {

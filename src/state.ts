@@ -1,6 +1,6 @@
 import type { BattleRequest, JsonObject, Pid } from './types.js';
 
-import { asRecord, asRecords, asStrings, text } from './value.js';
+import { afterColon, asRecord, asRecords, asStrings, text } from './value.js';
 
 interface MoveState {
   name: string;
@@ -350,7 +350,7 @@ export class BattleState {
   }
 
   private nickname(ident: string): string {
-    return ident.split(': ', 2).at(-1) || 'Pokémon';
+    return afterColon(ident) || 'Pokémon';
   }
 
   private speciesKey(species: string): string {
@@ -358,10 +358,10 @@ export class BattleState {
   }
 
   private effect(value: string): string {
-    return value.split(': ', 2).at(-1)!;
+    return afterColon(value);
   }
 
   static requestName(pokemon: JsonObject): string {
-    return text(pokemon.ident).split(': ', 2).at(-1) || text(pokemon.details, 'Pokémon').split(',', 1)[0]!;
+    return afterColon(text(pokemon.ident)) || text(pokemon.details, 'Pokémon').split(',', 1)[0]!;
   }
 }

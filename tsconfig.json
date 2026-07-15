@@ -5,6 +5,10 @@
     "moduleResolution": "NodeNext",
     "rootDir": ".",
     "outDir": "dist",
+    "paths": {
+      "pokemon-showdown": ["./pokemon-showdown/dist/sim/index.d.ts"]
+    },
+    "types": ["node"],
     "strict": true,
     "noUncheckedIndexedAccess": true,
     "exactOptionalPropertyTypes": true,

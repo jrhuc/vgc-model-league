@@ -3,8 +3,7 @@ import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import Table from 'cli-table3';
-import { Command, Option } from 'commander';
+import { parseArgs } from 'node:util';
 import { runBenchmark } from './arena.js';
 import { REPO_ROOT, RESULTS_PATH, RUNS_DIR } from './paths.js';
 import type { ReasoningLevel } from './providers.js';
@@ -13,15 +12,18 @@ import type { SeriesRecord } from './records.js';
 import { h2h, loadRows, standings } from './records.js';
 import { writeReport } from './report.js';
 
-function integer(value: string): number {
-  const parsed = Number(value);
-  if (!Number.isSafeInteger(parsed)) throw new Error('must be an integer');
-  return parsed;
-}
+const HELP = `Usage: vgcbench <command>
 
-function positiveInteger(value: string): number {
+Commands:
+  selfcheck                      run one random-vs-random series through the simulator
+  run --models <spec> <spec>...  benchmark models against each other
+      [--series-per-pair <n>] [--pool <name>] [--seed <n>] [--concurrency <n>] [--reasoning <level>]
+  standings [--pool <name>]      print standings and head-to-head from recorded results
+  report [--out <path>] [--pool <name>]  write an HTML report`;
+
+function positiveInteger(name: string, value: string): number {
   const parsed = Number(value);
-  if (!Number.isInteger(parsed) || parsed < 1) throw new Error('must be an integer of at least 1');
+  if (!Number.isInteger(parsed) || parsed < 1) throw new Error(`--${name} must be an integer of at least 1`);
   return parsed;
 }
 
@@ -33,56 +35,60 @@ function runDirectory(): string {
 }
 
 export async function main(argv = process.argv.slice(2)): Promise<number> {
-  const program = new Command()
-    .name('vgcbench')
-    .description('Benchmark language models in Pokémon Showdown VGC battles');
-  let exitCode = 0;
-  program.command('selfcheck').action(async () => {
-    exitCode = await selfcheck();
-  });
-  program
-    .command('run')
-    .requiredOption('--models <models...>')
-    .option('--series-per-pair <count>', '', positiveInteger, 1)
-    .option('--pool <name>', '', 'test')
-    .option('--seed <number>', '', integer)
-    .option('--concurrency <count>', '', positiveInteger, 2)
-    .addOption(new Option('--reasoning <level>').choices([...REASONING_LEVELS]))
-    .action(
-      async (options: {
-        models: string[];
-        seriesPerPair: number;
-        pool: string;
-        seed?: number;
-        concurrency: number;
-        reasoning?: ReasoningLevel;
-      }) => {
-        if (options.models.length < 2) throw new Error('run requires at least two models');
-        const rows = await runBenchmark(options.models, options.seriesPerPair, runDirectory(), {
-          pool: options.pool,
-          concurrency: options.concurrency,
-          recordsPath: RESULTS_PATH,
-          ...(options.seed === undefined ? {} : { seed: options.seed }),
-          ...(options.reasoning === undefined ? {} : { reasoning: options.reasoning }),
-        });
-        printResults(rows);
+  const [command, ...rest] = argv;
+  if (command === 'selfcheck') return selfcheck();
+  if (command === 'run') {
+    const { values, positionals } = parseArgs({
+      args: rest,
+      allowPositionals: true,
+      options: {
+        models: { type: 'string', multiple: true },
+        'series-per-pair': { type: 'string', default: '1' },
+        pool: { type: 'string', default: 'test' },
+        seed: { type: 'string' },
+        concurrency: { type: 'string', default: '2' },
+        reasoning: { type: 'string' },
+      },
+    });
+    const models = [...(values.models ?? []), ...positionals];
+    if (models.length < 2) throw new Error('run requires at least two --models');
+    const reasoning = values.reasoning as ReasoningLevel | undefined;
+    if (reasoning && !REASONING_LEVELS.includes(reasoning))
+      throw new Error(`--reasoning must be one of: ${REASONING_LEVELS.join(', ')}`);
+    const seed = values.seed === undefined ? undefined : Number(values.seed);
+    if (seed !== undefined && !Number.isSafeInteger(seed)) throw new Error('--seed must be an integer');
+    const rows = await runBenchmark(
+      models,
+      positiveInteger('series-per-pair', values['series-per-pair']),
+      runDirectory(),
+      {
+        pool: values.pool,
+        concurrency: positiveInteger('concurrency', values.concurrency),
+        recordsPath: RESULTS_PATH,
+        ...(seed === undefined ? {} : { seed }),
+        ...(reasoning === undefined ? {} : { reasoning }),
       },
     );
-  program
-    .command('standings')
-    .option('--pool <name>')
-    .action((options: { pool?: string }) =>
-      printStandings(loadRows(RESULTS_PATH).filter((row) => options.pool === undefined || row.pool === options.pool)),
-    );
-  program
-    .command('report')
-    .option('--out <path>', '', path.join(REPO_ROOT, 'records', 'report.html'))
-    .option('--pool <name>')
-    .action((options: { out: string; pool?: string }) =>
-      console.log(writeReport(RESULTS_PATH, options.out, options.pool)),
-    );
-  await program.parseAsync(['node', 'vgcbench', ...argv]);
-  return exitCode;
+    printResults(rows);
+    return 0;
+  }
+  if (command === 'standings' || command === 'report') {
+    const { values } = parseArgs({
+      args: rest,
+      options: {
+        pool: { type: 'string' },
+        out: { type: 'string', default: path.join(REPO_ROOT, 'records', 'report.html') },
+      },
+    });
+    if (command === 'report') {
+      console.log(writeReport(RESULTS_PATH, values.out, values.pool));
+      return 0;
+    }
+    printStandings(loadRows(RESULTS_PATH).filter((row) => values.pool === undefined || row.pool === values.pool));
+    return 0;
+  }
+  console.error(HELP);
+  return command === undefined || command === 'help' || command === '--help' ? 0 : 2;
 }
 
 async function selfcheck(): Promise<number> {
@@ -111,26 +117,41 @@ function printResults(rows: SeriesRecord[]): void {
   }
 }
 
+function renderTable(head: string[], rows: string[][]): string {
+  const widths = head.map((title, column) => Math.max(title.length, ...rows.map((row) => row[column]!.length)));
+  const line = (cells: string[]) => `| ${cells.map((cell, column) => cell.padEnd(widths[column]!)).join(' | ')} |`;
+  const rule = `|${widths.map((width) => '-'.repeat(width + 2)).join('|')}|`;
+  return [line(head), rule, ...rows.map(line)].join('\n');
+}
+
 function printStandings(rows: SeriesRecord[]): void {
-  const table = new Table({ head: ['Model', 'Series', 'W', 'L', 'T', 'Win rate', 'Elo'] });
-  for (const item of standings(rows))
-    table.push([
-      item.spec,
-      item.series,
-      item.w,
-      item.l,
-      item.t,
-      `${(100 * item.winrate).toFixed(1)}%`,
-      item.elo.toFixed(1),
-    ]);
-  console.log(table.toString());
+  console.log(
+    renderTable(
+      ['Model', 'Series', 'W', 'L', 'T', 'Win rate', 'Elo'],
+      standings(rows).map((item) => [
+        item.spec,
+        String(item.series),
+        String(item.w),
+        String(item.l),
+        String(item.t),
+        `${(100 * item.winrate).toFixed(1)}%`,
+        item.elo.toFixed(1),
+      ]),
+    ),
+  );
   const matrix = h2h(rows);
   const specs = Object.keys(matrix);
   if (specs.length < 2) return;
-  const head = new Table({ head: ['Model', ...specs] });
-  for (const model of specs)
-    head.push([model, ...specs.map((opponent) => (model === opponent ? '-' : matrix[model]![opponent]!.join('-')))]);
-  console.log(head.toString());
+  console.log('');
+  console.log(
+    renderTable(
+      ['W-L-T', ...specs],
+      specs.map((model) => [
+        model,
+        ...specs.map((opponent) => (model === opponent ? '-' : matrix[model]![opponent]!.join('-'))),
+      ]),
+    ),
+  );
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

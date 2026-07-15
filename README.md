@@ -21,8 +21,15 @@ npm run build
 ```
 
 A built Pokémon Showdown checkout is expected at `./pokemon-showdown`. Override it
-with `VGCBENCH_PS`. The benchmark loads the configured checkout directly, so changing
-Showdown versions does not require a benchmark rebuild unless its imported API changes.
+with `VGCBENCH_PS`. The benchmark loads the configured checkout directly (by path, with
+its types mapped through `tsconfig.json`), so changing Showdown versions does not
+require a benchmark rebuild unless its imported API changes. The checkout must carry
+its own installed runtime dependencies (`npm install` inside it covers this).
+
+The benchmark itself has no runtime npm dependencies: provider APIs are called
+directly over HTTPS. Set `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`,
+or `<PROVIDER>_API_KEY` for the OpenAI-compatible endpoints
+(`MOONSHOT_API_KEY` for kimi, `META_MODEL_API_KEY` for meta).
 
 ## Run
 

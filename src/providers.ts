@@ -1,18 +1,6 @@
-import Anthropic from '@anthropic-ai/sdk';
-import type { Content, GenerateContentConfig } from '@google/genai';
-import { FunctionCallingConfigMode, GoogleGenAI } from '@google/genai';
-import OpenAI from 'openai';
-import type {
-  CompleteOptions,
-  Completion,
-  JsonObject,
-  Provider,
-  ProviderMessage,
-  ToolCall,
-  ToolDefinition,
-} from './types.js';
+import type { CompleteOptions, Completion, JsonObject, Provider, ProviderMessage, ToolCall } from './types.js';
 
-import { isRecord } from './value.js';
+import { isRecord, text } from './value.js';
 
 export const REASONING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const;
 export type ReasoningLevel = (typeof REASONING_LEVELS)[number];
@@ -157,16 +145,50 @@ export function toolResultMessage(callId: string, content: string): ProviderMess
   return { role: 'tool', toolCallId: callId, content };
 }
 
-function anthropicTools(tools: ToolDefinition[] = []): Anthropic.Tool[] {
-  return tools.map((tool) => ({
-    name: tool.name,
-    description: tool.description,
-    input_schema: tool.parameters as Anthropic.Tool.InputSchema,
-  }));
+export class ApiError extends Error {
+  constructor(
+    readonly status: number,
+    message: string,
+  ) {
+    super(message);
+    this.name = 'ApiError';
+  }
 }
 
+async function postJson(
+  url: string,
+  headers: Record<string, string>,
+  body: JsonObject,
+  timeoutSeconds: number,
+): Promise<JsonObject> {
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...headers },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(Math.max(100, timeoutSeconds * 1000)),
+    });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'TimeoutError')
+      throw new ApiError(0, `request to ${url} timed out after ${timeoutSeconds}s`);
+    throw error;
+  }
+  const raw = await response.text();
+  if (!response.ok)
+    throw new ApiError(response.status, `${response.status} ${response.statusText}: ${raw.slice(0, 2000)}`);
+  const data: unknown = JSON.parse(raw);
+  if (!isRecord(data)) throw new ApiError(response.status, `unexpected response from ${url}`);
+  return data;
+}
+
+function usageNumber(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : 0;
+}
+
+const DEFAULT_TIMEOUT = 120;
+
 export class AnthropicProvider implements Provider {
-  private client?: Anthropic;
   private supportsTemperature = true;
 
   constructor(
@@ -175,31 +197,26 @@ export class AnthropicProvider implements Provider {
     readonly reasoning?: ReasoningLevel,
   ) {}
 
-  private getClient(): Anthropic {
+  private key(): string {
     const key = this.apiKey ?? process.env.ANTHROPIC_API_KEY;
     if (!key) throw new Error('Missing ANTHROPIC_API_KEY');
-    if (!this.client) this.client = new Anthropic({ apiKey: key, maxRetries: 0, timeout: 120_000 });
-    return this.client;
+    return key;
   }
 
   async complete(system: string, messages: ProviderMessage[], options: CompleteOptions = {}): Promise<Completion> {
-    const converted: Anthropic.MessageParam[] = [];
+    const converted: JsonObject[] = [];
     for (const message of messages) {
       if (message.role === 'tool') {
-        const block: Anthropic.ToolResultBlockParam = {
-          type: 'tool_result',
-          tool_use_id: message.toolCallId ?? '',
-          content: message.content ?? '',
-        };
+        const block = { type: 'tool_result', tool_use_id: message.toolCallId ?? '', content: message.content ?? '' };
         const previous = converted.at(-1);
         if (previous?.role === 'user' && Array.isArray(previous.content)) previous.content.push(block);
         else converted.push({ role: 'user', content: [block] });
       } else if (message.role === 'assistant' && message.toolCalls?.length) {
-        const content: Anthropic.ContentBlockParam[] = [];
+        const content: JsonObject[] = [];
         if (message.content) content.push({ type: 'text', text: message.content });
         content.push(
           ...message.toolCalls.map((call) => ({
-            type: 'tool_use' as const,
+            type: 'tool_use',
             id: call.id,
             name: call.name,
             input: call.arguments,
@@ -210,15 +227,18 @@ export class AnthropicProvider implements Provider {
         converted.push({ role: message.role === 'assistant' ? 'assistant' : 'user', content: message.content ?? '' });
       }
     }
-    const params: Record<string, unknown> = {
+    const params: JsonObject = {
       model: this.model,
       system,
       max_tokens: options.maxTokens ?? 1200,
       messages: converted,
     };
-    const tools = anthropicTools(options.tools);
-    if (tools.length) {
-      params.tools = tools;
+    if (options.tools?.length) {
+      params.tools = options.tools.map((tool) => ({
+        name: tool.name,
+        description: tool.description,
+        input_schema: tool.parameters,
+      }));
       if (options.toolChoice === 'auto' || options.toolChoice === 'none')
         params.tool_choice = { type: options.toolChoice };
     }
@@ -231,18 +251,21 @@ export class AnthropicProvider implements Provider {
       params.thinking = { type: 'adaptive' };
       params.output_config = { effort: this.reasoning };
     }
-    let response: Anthropic.Message;
+    let response: JsonObject;
     while (true) {
       try {
-        response = await this.getClient().messages.create(
-          params as unknown as Anthropic.MessageCreateParamsNonStreaming,
-          options.timeout === undefined ? undefined : { timeout: Math.max(1, options.timeout * 1000) },
+        response = await postJson(
+          'https://api.anthropic.com/v1/messages',
+          { 'x-api-key': this.key(), 'anthropic-version': '2023-06-01' },
+          params,
+          options.timeout ?? DEFAULT_TIMEOUT,
         );
         break;
       } catch (error) {
         if (
-          error instanceof Anthropic.BadRequestError &&
-          String(error).toLowerCase().includes('temperature') &&
+          error instanceof ApiError &&
+          error.status === 400 &&
+          error.message.toLowerCase().includes('temperature') &&
           'temperature' in params
         ) {
           delete params.temperature;
@@ -252,26 +275,21 @@ export class AnthropicProvider implements Provider {
         throw error;
       }
     }
-    const toolCalls: ToolCall[] = response.content.flatMap((block) =>
-      block.type === 'tool_use' ? [{ id: block.id, name: block.name, arguments: parseToolArguments(block.input) }] : [],
-    );
+    const blocks = Array.isArray(response.content) ? response.content.filter(isRecord) : [];
+    const usage = isRecord(response.usage) ? response.usage : {};
     return {
-      text: response.content.flatMap((block) => (block.type === 'text' ? [block.text] : [])).join(''),
-      usage: { input_tokens: response.usage.input_tokens, output_tokens: response.usage.output_tokens },
-      toolCalls,
+      text: blocks.flatMap((block) => (block.type === 'text' ? [text(block.text)] : [])).join(''),
+      usage: { input_tokens: usageNumber(usage.input_tokens), output_tokens: usageNumber(usage.output_tokens) },
+      toolCalls: blocks.flatMap((block) =>
+        block.type === 'tool_use'
+          ? [{ id: text(block.id), name: text(block.name), arguments: parseToolArguments(block.input) }]
+          : [],
+      ),
     };
   }
 }
 
-function openaiTools(tools: ToolDefinition[] = []): OpenAI.Chat.ChatCompletionTool[] {
-  return tools.map((tool) => ({
-    type: 'function',
-    function: { name: tool.name, description: tool.description, parameters: tool.parameters, strict: true },
-  }));
-}
-
 export class OpenAIProvider implements Provider {
-  private client?: OpenAI;
   private supportsTemperature = true;
   private usesMaxCompletionTokens = true;
 
@@ -286,18 +304,16 @@ export class OpenAIProvider implements Provider {
     } = {},
   ) {}
 
-  private getClient(): OpenAI {
-    if (this.client) return this.client;
+  private key(): string {
     const envKey = this.config.envKey ?? (this.config.baseUrl ? 'OPENAI_COMPAT_API_KEY' : 'OPENAI_API_KEY');
     const apiKey =
       this.config.apiKey ?? process.env[envKey] ?? (envKey === 'OPENAI_COMPAT_API_KEY' ? 'none' : undefined);
     if (!apiKey) throw new Error(`Missing ${envKey}`);
-    this.client = new OpenAI({ apiKey, baseURL: this.config.baseUrl, maxRetries: 0, timeout: 120_000 });
-    return this.client;
+    return apiKey;
   }
 
   async complete(system: string, messages: ProviderMessage[], options: CompleteOptions = {}): Promise<Completion> {
-    const converted: OpenAI.Chat.ChatCompletionMessageParam[] = [{ role: 'system', content: system }];
+    const converted: JsonObject[] = [{ role: 'system', content: system }];
     for (const message of messages) {
       if (message.role === 'tool')
         converted.push({ role: 'tool', tool_call_id: message.toolCallId ?? '', content: message.content ?? '' });
@@ -314,30 +330,35 @@ export class OpenAIProvider implements Provider {
       else
         converted.push({ role: message.role === 'assistant' ? 'assistant' : 'user', content: message.content ?? '' });
     }
-    const params: Record<string, unknown> = { model: this.model, messages: converted };
+    const params: JsonObject = { model: this.model, messages: converted };
     params[this.usesMaxCompletionTokens ? 'max_completion_tokens' : 'max_tokens'] = options.maxTokens ?? 1200;
     if (this.supportsTemperature) params.temperature = options.temperature ?? 0.6;
-    const tools = openaiTools(options.tools);
-    if (tools.length) {
-      params.tools = tools;
+    if (options.tools?.length) {
+      params.tools = options.tools.map((tool) => ({
+        type: 'function',
+        function: { name: tool.name, description: tool.description, parameters: tool.parameters, strict: true },
+      }));
       if (options.toolChoice) params.tool_choice = options.toolChoice;
     }
     if (this.config.reasoning) {
       if (this.config.reasoningStyle === 'deepseek' && this.config.reasoning === 'off')
-        params.extra_body = { thinking: { type: 'disabled' } };
+        params.thinking = { type: 'disabled' };
       else params.reasoning_effort = this.config.reasoning === 'off' ? 'none' : this.config.reasoning;
     }
-    let response: OpenAI.Chat.ChatCompletion;
+    const base = (this.config.baseUrl ?? 'https://api.openai.com/v1').replace(/\/$/, '');
+    let response: JsonObject;
     while (true) {
       try {
-        response = await this.getClient().chat.completions.create(
-          params as unknown as OpenAI.Chat.ChatCompletionCreateParamsNonStreaming,
-          options.timeout === undefined ? undefined : { timeout: Math.max(1, options.timeout * 1000) },
+        response = await postJson(
+          `${base}/chat/completions`,
+          { authorization: `Bearer ${this.key()}` },
+          params,
+          options.timeout ?? DEFAULT_TIMEOUT,
         );
         break;
       } catch (error) {
-        if (!(error instanceof OpenAI.BadRequestError)) throw error;
-        const message = String(error).toLowerCase();
+        if (!(error instanceof ApiError) || error.status !== 400) throw error;
+        const message = error.message.toLowerCase();
         let changed = false;
         if (message.includes('temperature') && 'temperature' in params) {
           delete params.temperature;
@@ -353,46 +374,49 @@ export class OpenAIProvider implements Provider {
         if (!changed) throw error;
       }
     }
-    const message = response.choices[0]?.message;
+    const choices = Array.isArray(response.choices) ? response.choices.filter(isRecord) : [];
+    const message = isRecord(choices[0]?.message) ? choices[0].message : {};
+    const usage = isRecord(response.usage) ? response.usage : {};
+    const toolCalls: ToolCall[] = (
+      Array.isArray(message.tool_calls) ? message.tool_calls.filter(isRecord) : []
+    ).flatMap((call) => {
+      if (call.type !== 'function' || !isRecord(call.function)) return [];
+      return [
+        {
+          id: text(call.id),
+          name: text(call.function.name),
+          arguments: parseToolArguments(call.function.arguments),
+        },
+      ];
+    });
     return {
-      text: message?.content ?? '',
-      usage: {
-        input_tokens: response.usage?.prompt_tokens ?? 0,
-        output_tokens: response.usage?.completion_tokens ?? 0,
-      },
-      toolCalls:
-        message?.tool_calls?.flatMap((call) =>
-          call.type === 'function'
-            ? [{ id: call.id, name: call.function.name, arguments: parseToolArguments(call.function.arguments) }]
-            : [],
-        ) ?? [],
+      text: text(message.content),
+      usage: { input_tokens: usageNumber(usage.prompt_tokens), output_tokens: usageNumber(usage.completion_tokens) },
+      toolCalls,
     };
   }
 }
 
 export class GoogleProvider implements Provider {
-  private client?: GoogleGenAI;
-
   constructor(
     readonly model: string,
     private readonly apiKey?: string,
     readonly reasoning?: ReasoningLevel,
   ) {}
 
-  private getClient(): GoogleGenAI {
+  private key(): string {
     const key = this.apiKey ?? process.env.GEMINI_API_KEY;
     if (!key) throw new Error('Missing GEMINI_API_KEY');
-    if (!this.client) this.client = new GoogleGenAI({ apiKey: key });
-    return this.client;
+    return key;
   }
 
   async complete(system: string, messages: ProviderMessage[], options: CompleteOptions = {}): Promise<Completion> {
-    const contents: Content[] = [];
+    const contents: JsonObject[] = [];
     const callNames: Record<string, string> = {};
     for (let index = 0; index < messages.length; ) {
       const message = messages[index]!;
       if (message.role === 'tool') {
-        const parts = [];
+        const parts: JsonObject[] = [];
         while (messages[index]?.role === 'tool') {
           const tool = messages[index++]!;
           const name = callNames[tool.toolCallId ?? ''] ?? tool.name ?? '';
@@ -400,7 +424,7 @@ export class GoogleProvider implements Provider {
         }
         contents.push({ role: 'user', parts });
       } else if (message.role === 'assistant' && message.toolCalls?.length) {
-        const parts: NonNullable<Content['parts']> = message.content ? [{ text: message.content }] : [];
+        const parts: JsonObject[] = message.content ? [{ text: message.content }] : [];
         for (const call of message.toolCalls) {
           callNames[call.id] = call.name;
           parts.push({ functionCall: { name: call.name, args: call.arguments } });
@@ -412,13 +436,23 @@ export class GoogleProvider implements Provider {
         index += 1;
       }
     }
-    const config: Record<string, unknown> = {
-      systemInstruction: system,
+    const config: JsonObject = {
       temperature: options.temperature ?? 0.6,
       maxOutputTokens: options.maxTokens ?? 1200,
     };
+    if (this.reasoning === 'off') config.thinkingConfig = { thinkingBudget: 0 };
+    else if (this.reasoning && this.model.toLowerCase().includes('2.5')) {
+      const budget = this.reasoning === 'high' ? 16_000 : googleThinkingBudgetMax(this.model.toLowerCase());
+      config.maxOutputTokens = Math.max(options.maxTokens ?? 1200, budget + 1200);
+      config.thinkingConfig = { thinkingBudget: budget };
+    } else if (this.reasoning) config.thinkingConfig = { thinkingLevel: this.reasoning };
+    const params: JsonObject = {
+      systemInstruction: { parts: [{ text: system }] },
+      contents,
+      generationConfig: config,
+    };
     if (options.tools?.length) {
-      config.tools = [
+      params.tools = [
         {
           functionDeclarations: options.tools.map((tool) => ({
             name: tool.name,
@@ -427,41 +461,39 @@ export class GoogleProvider implements Provider {
           })),
         },
       ];
-      config.toolConfig = {
+      params.toolConfig = {
         functionCallingConfig: {
-          mode:
-            options.toolChoice === 'none'
-              ? FunctionCallingConfigMode.NONE
-              : options.toolChoice === 'required'
-                ? FunctionCallingConfigMode.ANY
-                : FunctionCallingConfigMode.AUTO,
+          mode: options.toolChoice === 'none' ? 'NONE' : options.toolChoice === 'required' ? 'ANY' : 'AUTO',
         },
       };
     }
-    if (options.timeout !== undefined)
-      config.httpOptions = { timeout: Math.max(1, options.timeout * 1000), retryOptions: { attempts: 1 } };
-    if (this.reasoning === 'off') config.thinkingConfig = { thinkingBudget: 0 };
-    else if (this.reasoning && this.model.toLowerCase().includes('2.5')) {
-      const budget = this.reasoning === 'high' ? 16_000 : googleThinkingBudgetMax(this.model.toLowerCase());
-      config.maxOutputTokens = Math.max(options.maxTokens ?? 1200, budget + 1200);
-      config.thinkingConfig = { thinkingBudget: budget };
-    } else if (this.reasoning) config.thinkingConfig = { thinkingLevel: this.reasoning };
-    const response = await this.getClient().models.generateContent({
-      model: this.model,
-      contents,
-      config: config as GenerateContentConfig,
-    });
+    const response = await postJson(
+      `https://generativelanguage.googleapis.com/v1beta/models/${this.model}:generateContent`,
+      { 'x-goog-api-key': this.key() },
+      params,
+      options.timeout ?? DEFAULT_TIMEOUT,
+    );
+    const candidates = Array.isArray(response.candidates) ? response.candidates.filter(isRecord) : [];
+    const content = isRecord(candidates[0]?.content) ? candidates[0].content : {};
+    const parts = Array.isArray(content.parts) ? content.parts.filter(isRecord) : [];
+    const usage = isRecord(response.usageMetadata) ? response.usageMetadata : {};
     return {
-      text: response.text ?? '',
+      text: parts.flatMap((part) => (typeof part.text === 'string' ? [part.text] : [])).join(''),
       usage: {
-        input_tokens: response.usageMetadata?.promptTokenCount ?? 0,
-        output_tokens: response.usageMetadata?.candidatesTokenCount ?? 0,
+        input_tokens: usageNumber(usage.promptTokenCount),
+        output_tokens: usageNumber(usage.candidatesTokenCount),
       },
-      toolCalls: (response.functionCalls ?? []).map((call, index) => ({
-        id: `call_${index}`,
-        name: call.name ?? '',
-        arguments: parseToolArguments(call.args),
-      })),
+      toolCalls: parts.flatMap((part, index) =>
+        isRecord(part.functionCall)
+          ? [
+              {
+                id: `call_${index}`,
+                name: text(part.functionCall.name),
+                arguments: parseToolArguments(part.functionCall.args),
+              },
+            ]
+          : [],
+      ),
     };
   }
 }

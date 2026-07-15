@@ -1,6 +1,6 @@
 import type { BattleRequest, JsonObject } from './types.js';
 
-import { asRecords, text } from './value.js';
+import { afterColon, asRecords, text } from './value.js';
 
 export type MenuKind = 'move' | 'switch' | 'team' | 'pass';
 export interface MenuItem {
@@ -15,8 +15,7 @@ const SELECTED_TARGETS = new Set(['normal', 'any', 'adjacentFoe']);
 const SPREAD_TARGETS = new Set(['allySide', 'foeSide', 'all', 'allAdjacent', 'allAdjacentFoes', 'allies']);
 
 function pokemonName(pokemon: JsonObject): string {
-  const ident = text(pokemon.ident);
-  return ident.split(': ', 2).at(-1) || text(pokemon.details, 'Pokémon').split(',', 1)[0]!;
+  return afterColon(text(pokemon.ident)) || text(pokemon.details, 'Pokémon').split(',', 1)[0]!;
 }
 
 function switches(request: BattleRequest, reviving = false): SlotMenu {

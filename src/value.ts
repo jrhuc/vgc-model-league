@@ -20,10 +20,7 @@ export function text(value: unknown, fallback = ''): string {
   return typeof value === 'string' ? value : fallback;
 }
 
-export function finiteNumber(value: unknown): number | undefined {
-  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
-}
-
-export function integer(value: unknown): number | undefined {
-  return typeof value === 'number' && Number.isInteger(value) ? value : undefined;
+export function afterColon(value: string): string {
+  const separator = value.indexOf(': ');
+  return separator < 0 ? value : value.slice(separator + 2);
 }

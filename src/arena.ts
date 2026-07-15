@@ -1,14 +1,14 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import pLimit from 'p-limit';
-import seedrandom from 'seedrandom';
 
 import type { GameEnd, GameStart } from './engines.js';
 import { LLMEngine, RandomEngine } from './engines.js';
 import { defaultPsDir, REPO_ROOT } from './paths.js';
 import type { ReasoningLevel } from './providers.js';
 import { makeProvider, parseSpec, validateReasoning } from './providers.js';
+import type { Rng } from './random.js';
+import { seededRng } from './random.js';
 import type { SeriesRecord } from './records.js';
 import { appendRow, psCommit } from './records.js';
 import { ShowdownReference } from './reference.js';
@@ -71,7 +71,7 @@ export async function runBenchmark(
   const pool = loadPool(options.pool ?? 'test');
   validatePool(pool, psDir);
   const seed = options.seed ?? randomBytes(6).readUIntBE(0, 6);
-  const plans = makePlans(models, seriesPerPair, pool.teams, seedrandom(String(seed)));
+  const plans = makePlans(models, seriesPerPair, pool.teams, seededRng(seed));
   fs.writeFileSync(
     path.join(runDir, 'config.json'),
     `${JSON.stringify(
@@ -90,30 +90,33 @@ export async function runBenchmark(
     'utf8',
   );
 
-  const limit = pLimit(options.concurrency ?? 2);
-  return Promise.all(
-    plans.map((plan) =>
-      limit(async () => {
-        const row = await playSeries(plan, {
-          runDir,
-          pool,
-          runSeed: seed,
-          psDir,
-          ...(options.reasoning === undefined ? {} : { reasoning: options.reasoning }),
-        });
-        appendRow(recordsPath, row);
-        return row;
-      }),
-    ),
-  );
+  return mapLimit(plans, options.concurrency ?? 2, async (plan) => {
+    const row = await playSeries(plan, {
+      runDir,
+      pool,
+      runSeed: seed,
+      psDir,
+      ...(options.reasoning === undefined ? {} : { reasoning: options.reasoning }),
+    });
+    appendRow(recordsPath, row);
+    return row;
+  });
 }
 
-export function makePlans(
-  models: string[],
-  seriesPerPair: number,
-  teams: Team[],
-  random: seedrandom.PRNG,
-): SeriesPlan[] {
+async function mapLimit<T, R>(items: T[], limit: number, task: (item: T) => Promise<R>): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let next = 0;
+  const workers = Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, async () => {
+    while (next < items.length) {
+      const index = next++;
+      results[index] = await task(items[index]!);
+    }
+  });
+  await Promise.all(workers);
+  return results;
+}
+
+export function makePlans(models: string[], seriesPerPair: number, teams: Team[], random: Rng): SeriesPlan[] {
   const plans: SeriesPlan[] = [];
   for (let first = 0; first < models.length; first += 1) {
     for (let second = first + 1; second < models.length; second += 1) {
