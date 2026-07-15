@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { LLMEngine } from '../src/engines.js';
+import { ApiError } from '../src/providers.js';
 import type { BattleRequest, CompleteOptions, Completion, Provider, ProviderMessage } from '../src/types.js';
 
 function request(activeCount = 1): BattleRequest {
@@ -43,7 +44,7 @@ class ScriptedProvider implements Provider {
   }
 }
 
-test('LLM choices parse prose, retry, and record fallbacks', async (t) => {
+test('LLM choices parse prose, retry, and record fallbacks', async () => {
   const cases: Array<[Array<string>, string, boolean, number]> = [
     [['{"choices":[1],"notes":"remember speed"}'], 'move 2', false, 1],
     [['I choose this: {"choices":[1],"notes":"x"}.'], 'move 2', false, 1],
@@ -51,16 +52,15 @@ test('LLM choices parse prose, retry, and record fallbacks', async (t) => {
     [['invalid', '{"choices":[1]}'], 'move 2', false, 2],
     [['invalid', '{"choices":[9]}'], 'move 1', true, 2],
   ];
-  for (const [responses, expected, fallback, calls] of cases)
-    await t.test(expected + responses.join(), async () => {
-      const provider = new ScriptedProvider(responses);
-      const decisions: Record<string, unknown>[] = [];
-      const engine = new LLMEngine('p1', 'scripted', { provider, decisionLog: decisions });
-      assert.equal(await engine.act(request(), { povLines: ['|turn|1'] }), expected);
-      assert.equal(decisions[0]!.fallback, fallback);
-      assert.deepEqual(engine.decisionStats(), { decisions: 1, fallbacks: Number(fallback) });
-      assert.equal(provider.calls.length, calls);
-    });
+  for (const [responses, expected, fallback, calls] of cases) {
+    const provider = new ScriptedProvider(responses);
+    const decisions: Record<string, unknown>[] = [];
+    const engine = new LLMEngine('p1', 'scripted', { provider, decisionLog: decisions });
+    assert.equal(await engine.act(request(), { povLines: ['|turn|1'] }), expected);
+    assert.equal(decisions[0]!.fallback, fallback);
+    assert.deepEqual(engine.decisionStats(), { decisions: 1, fallbacks: Number(fallback) });
+    assert.equal(provider.calls.length, calls);
+  }
 });
 
 test('timer context bounds the provider request', async () => {
@@ -96,11 +96,34 @@ test('provider failures abort and empty responses use a legal fallback', async (
   });
   await assert.rejects(broken.act(request(), { povLines: [] }), /bad credentials/);
   assert.deepEqual(broken.decisionStats(), { decisions: 0, fallbacks: 0 });
+
   const decisions: Record<string, unknown>[] = [];
   const empty = new LLMEngine('p1', 'empty', { provider: new ScriptedProvider(['']), decisionLog: decisions });
   assert.equal(await empty.act(request(), { povLines: [] }), 'move 1');
   assert.equal(decisions[0]!.error, 'empty response');
   assert.deepEqual(empty.decisionStats(), { decisions: 1, fallbacks: 1 });
+});
+
+test('transient API errors retry before falling back', async () => {
+  const decisions: Record<string, unknown>[] = [];
+  const flaky = new LLMEngine('p1', 'flaky', {
+    provider: new ScriptedProvider([new ApiError(503, 'overloaded'), '{"choices":[1]}']),
+    decisionLog: decisions,
+  });
+  assert.equal(await flaky.act(request(), { povLines: [] }), 'move 2');
+  assert.deepEqual(flaky.decisionStats(), { decisions: 1, fallbacks: 0 });
+
+  const persistentProvider = new ScriptedProvider([
+    new ApiError(503, 'overloaded'),
+    new ApiError(503, 'overloaded'),
+    new ApiError(503, 'overloaded'),
+  ]);
+  const persistent = new LLMEngine('p1', 'persistent', {
+    provider: persistentProvider,
+    decisionLog: [],
+  });
+  await assert.rejects(persistent.act(request(), { povLines: [] }), /overloaded/);
+  assert.equal(persistentProvider.calls.length, 3);
 });
 
 test('tool calls resolve before the final choice', async () => {

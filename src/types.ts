@@ -73,6 +73,7 @@ export interface CompleteOptions {
   timeout?: number;
   tools?: ToolDefinition[];
   toolChoice?: 'auto' | 'none' | 'required';
+  signal?: AbortSignal;
 }
 
 export interface Provider {

@@ -32,6 +32,7 @@ export class RunScreen implements Screen {
   private endTime: number | undefined;
   private spinnerIndex = 0;
   private timer: NodeJS.Timeout | undefined;
+  private readonly controller = new AbortController();
 
   constructor(
     private readonly app: App,
@@ -53,6 +54,7 @@ export class RunScreen implements Screen {
   leave(): void {
     clearInterval(this.timer);
     this.timer = undefined;
+    this.controller.abort();
   }
 
   private async launch(): Promise<void> {
@@ -67,12 +69,14 @@ export class RunScreen implements Screen {
         pool: this.config.pool,
         concurrency: this.config.concurrency,
         recordsPath: RESULTS_PATH,
+        signal: this.controller.signal,
         ...(this.config.seed === undefined ? {} : { seed: this.config.seed }),
         ...(this.config.reasoning === undefined ? {} : { reasoning: this.config.reasoning }),
         onEvent: (event) => this.onEvent(event),
       });
       this.state = 'done';
     } catch (error) {
+      if (this.controller.signal.aborted) return;
       this.state = 'failed';
       this.error = error instanceof Error ? error.message : String(error);
     } finally {

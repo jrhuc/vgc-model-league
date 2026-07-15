@@ -69,15 +69,32 @@ export class App {
     input.resume();
     input.on('data', this.handleData);
     this.output.on('resize', this.handleResize);
+    let restored = false;
+    const restore = () => {
+      if (restored) return;
+      restored = true;
+      input.off('data', this.handleData);
+      this.output.off('resize', this.handleResize);
+      if (input.isTTY) input.setRawMode(false);
+      input.pause();
+      this.output.write('\x1b[?25h\x1b[?1049l');
+    };
+    const onCrash = (error: unknown) => {
+      restore();
+      process.off('uncaughtException', onCrash);
+      process.off('unhandledRejection', onCrash);
+      console.error(error instanceof Error ? (error.stack ?? error.message) : String(error));
+      process.exit(1);
+    };
+    process.on('uncaughtException', onCrash);
+    process.on('unhandledRejection', onCrash);
     try {
       this.setScreen(first);
       await this.done;
     } finally {
-      input.off('data', this.handleData);
-      this.output.off('resize', this.handleResize);
-      input.setRawMode(false);
-      input.pause();
-      this.output.write('\x1b[?25h\x1b[?1049l');
+      process.off('uncaughtException', onCrash);
+      process.off('unhandledRejection', onCrash);
+      restore();
     }
   }
 }

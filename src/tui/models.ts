@@ -185,6 +185,7 @@ export class ModelCatalogScreen implements Screen {
   }
 
   leave(): void {
+    this.generation += 1;
     this.controller?.abort();
     clearInterval(this.timer);
     this.timer = undefined;

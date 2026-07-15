@@ -1,16 +1,27 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 
 import type { SlotMenu, TargetNames } from './choices.js';
 import { buildMenus, compose } from './choices.js';
 import { renderDecision, SYSTEM } from './prompts.js';
 import type { ReasoningLevel } from './providers.js';
-import { assistantToolMessage, makeProvider, parseSpec, toolResultMessage } from './providers.js';
+import { ApiError, assistantToolMessage, makeProvider, parseSpec, toolResultMessage } from './providers.js';
 import type { Rng } from './random.js';
 import { seededRng } from './random.js';
 import { DEX_TOOLS, ShowdownReference } from './reference.js';
 import { BattleState } from './state.js';
-import type { AgentContext, BattleAgent, BattleRequest, JsonObject, Pid, Provider, ProviderMessage } from './types.js';
+import type {
+  AgentContext,
+  BattleAgent,
+  BattleRequest,
+  CompleteOptions,
+  Completion,
+  JsonObject,
+  Pid,
+  Provider,
+  ProviderMessage,
+} from './types.js';
 import { isRecord, text } from './value.js';
 
 export interface GameStart {
@@ -182,6 +193,23 @@ export interface LLMEngineOptions {
   psDir?: string;
   reference?: ShowdownReference;
   reasoning?: ReasoningLevel;
+  signal?: AbortSignal;
+}
+
+const RETRY_ATTEMPTS = 3;
+const RETRY_BASE_MS = 400;
+
+function isTransientError(error: unknown): boolean {
+  if (error instanceof ApiError)
+    return (
+      error.status === 0 ||
+      error.status === 408 ||
+      error.status === 409 ||
+      error.status === 425 ||
+      error.status === 429 ||
+      error.status >= 500
+    );
+  return error instanceof TypeError;
 }
 
 export class LLMEngine extends BaseEngine {
@@ -298,13 +326,17 @@ export class LLMEngine extends BaseEngine {
       for (let round = 0; round < 6; round += 1) {
         if (generation !== this.generation) return menus.map(() => 0);
         const finalRound = round === 5;
-        const completion = await this.provider.complete(SYSTEM, messages, {
-          maxTokens: 8192,
-          temperature: 0.6,
-          tools: DEX_TOOLS,
-          toolChoice: finalRound ? 'none' : 'auto',
-          ...(deadline === undefined ? {} : { timeout: Math.max(0.1, (deadline - performance.now()) / 1000 + 1) }),
-        });
+        const completion = await this.completeWithRetry(
+          messages,
+          {
+            maxTokens: 8192,
+            temperature: 0.6,
+            tools: DEX_TOOLS,
+            toolChoice: finalRound ? 'none' : 'auto',
+            ...(deadline === undefined ? {} : { timeout: Math.max(0.1, (deadline - performance.now()) / 1000 + 1) }),
+          },
+          generation,
+        );
         for (const [key, value] of Object.entries(completion.usage)) usage[key] = (usage[key] ?? 0) + Math.trunc(value);
         if (completion.toolCalls.length && !finalRound) {
           toolCalls += completion.toolCalls.length;
@@ -342,6 +374,30 @@ export class LLMEngine extends BaseEngine {
         generation,
       });
     return choices;
+  }
+
+  private async completeWithRetry(
+    messages: ProviderMessage[],
+    options: CompleteOptions,
+    generation: number,
+  ): Promise<Completion> {
+    const signal = this.options.signal;
+    const withSignal: CompleteOptions = signal ? { ...options, signal } : options;
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        return await this.provider.complete(SYSTEM, messages, withSignal);
+      } catch (error) {
+        if (
+          attempt >= RETRY_ATTEMPTS - 1 ||
+          generation !== this.generation ||
+          signal?.aborted ||
+          !isTransientError(error)
+        )
+          throw error;
+        if (signal) await delay(RETRY_BASE_MS * 2 ** attempt, undefined, { signal });
+        else await delay(RETRY_BASE_MS * 2 ** attempt);
+      }
+    }
   }
 
   protected override actionCommitted(

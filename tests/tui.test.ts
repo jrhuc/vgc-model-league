@@ -276,3 +276,19 @@ test('runBenchmark emits ordered arena events', async () => {
   assert.deepEqual(gameEnds.at(-1)!.score, rows[0]!.score);
   fs.rmSync(directory, { recursive: true, force: true });
 });
+
+test('an aborted signal stops the benchmark without throwing or recording', async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'vgcbench-abort-'));
+  const recordsPath = path.join(directory, 'results.jsonl');
+  const controller = new AbortController();
+  controller.abort();
+  const rows = await runBenchmark(['random', 'random', 'random'], 2, directory, {
+    seed: 1,
+    concurrency: 2,
+    recordsPath,
+    signal: controller.signal,
+  });
+  assert.deepEqual(rows, []);
+  assert.equal(fs.existsSync(recordsPath), false);
+  fs.rmSync(directory, { recursive: true, force: true });
+});

@@ -171,16 +171,19 @@ async function postJson(
   headers: Record<string, string>,
   body: JsonObject,
   timeoutSeconds: number,
+  signal?: AbortSignal,
 ): Promise<JsonObject> {
   let response: Response;
+  const timeout = AbortSignal.timeout(Math.max(100, Math.round(timeoutSeconds * 1000)));
   try {
     response = await fetch(url, {
       method: 'POST',
       headers: { 'content-type': 'application/json', ...headers },
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(Math.max(100, timeoutSeconds * 1000)),
+      signal: signal ? AbortSignal.any([timeout, signal]) : timeout,
     });
   } catch (error) {
+    if (signal?.aborted) throw error;
     if (error instanceof DOMException && error.name === 'TimeoutError')
       throw new ApiError(0, `request to ${url} timed out after ${timeoutSeconds}s`);
     throw error;
@@ -270,6 +273,7 @@ export class AnthropicProvider implements Provider {
           { 'x-api-key': this.key(), 'anthropic-version': '2023-06-01' },
           params,
           options.timeout ?? DEFAULT_TIMEOUT,
+          options.signal,
         );
         break;
       } catch (error) {
@@ -365,6 +369,7 @@ export class OpenAIProvider implements Provider {
           { authorization: `Bearer ${this.key()}` },
           params,
           options.timeout ?? DEFAULT_TIMEOUT,
+          options.signal,
         );
         break;
       } catch (error) {
@@ -483,6 +488,7 @@ export class GoogleProvider implements Provider {
       { 'x-goog-api-key': this.key() },
       params,
       options.timeout ?? DEFAULT_TIMEOUT,
+      options.signal,
     );
     const candidates = Array.isArray(response.candidates) ? response.candidates.filter(isRecord) : [];
     const content = isRecord(candidates[0]?.content) ? candidates[0].content : {};

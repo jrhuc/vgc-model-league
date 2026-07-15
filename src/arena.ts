@@ -39,6 +39,7 @@ export interface BenchmarkOptions {
   reasoning?: ReasoningLevel;
   pool?: string;
   onEvent?: (event: ArenaEvent) => void;
+  signal?: AbortSignal;
 }
 
 export function makeRunDirectory(): string {
@@ -57,6 +58,7 @@ export function makeEngine(
   psDir: string,
   reasoning?: ReasoningLevel,
   reference?: ShowdownReference,
+  signal?: AbortSignal,
 ): RandomEngine | LLMEngine {
   if (spec === 'random') return new RandomEngine(pid, seed);
   return new LLMEngine(pid, spec, {
@@ -66,6 +68,7 @@ export function makeEngine(
     psDir,
     ...(reasoning === undefined ? {} : { reasoning }),
     ...(reference === undefined ? {} : { reference }),
+    ...(signal === undefined ? {} : { signal }),
   });
 }
 
@@ -110,7 +113,7 @@ export async function runBenchmark(
     'utf8',
   );
 
-  return mapLimit(plans, options.concurrency ?? 2, async (plan) => {
+  return mapLimit(plans, options.concurrency ?? 2, options.signal, async (plan) => {
     const row = await playSeries(plan, {
       runDir,
       pool,
@@ -118,6 +121,7 @@ export async function runBenchmark(
       psDir,
       ...(options.reasoning === undefined ? {} : { reasoning: options.reasoning }),
       ...(options.onEvent === undefined ? {} : { onEvent: options.onEvent }),
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
     });
     appendRow(recordsPath, row);
     options.onEvent?.({ type: 'series-end', index: plan.index, record: row });
@@ -125,17 +129,27 @@ export async function runBenchmark(
   });
 }
 
-async function mapLimit<T, R>(items: T[], limit: number, task: (item: T) => Promise<R>): Promise<R[]> {
-  const results = new Array<R>(items.length);
+async function mapLimit<T, R>(
+  items: T[],
+  limit: number,
+  signal: AbortSignal | undefined,
+  task: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R | undefined>(items.length);
   let next = 0;
   const workers = Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, async () => {
-    while (next < items.length) {
+    while (next < items.length && !signal?.aborted) {
       const index = next++;
-      results[index] = await task(items[index]!);
+      try {
+        results[index] = await task(items[index]!);
+      } catch (error) {
+        if (signal?.aborted) return;
+        throw error;
+      }
     }
   });
   await Promise.all(workers);
-  return results;
+  return results.filter((result): result is R => result !== undefined);
 }
 
 export function makePlans(models: string[], seriesPerPair: number, teams: Team[], random: Rng): SeriesPlan[] {
@@ -181,8 +195,10 @@ async function playSeries(
     psDir: string;
     reasoning?: ReasoningLevel;
     onEvent?: (event: ArenaEvent) => void;
+    signal?: AbortSignal;
   },
 ): Promise<SeriesRecord> {
+  context.signal?.throwIfAborted();
   context.onEvent?.({ type: 'series-start', index: plan.index });
   const seriesId = randomUUID().replaceAll('-', '').slice(0, 12);
   const seriesDir = path.join(context.runDir, 'series', seriesId);
@@ -203,6 +219,7 @@ async function playSeries(
         context.psDir,
         context.reasoning,
         reference,
+        context.signal,
       ),
     ]),
   ) as Record<Pid, RandomEngine | LLMEngine>;
@@ -210,6 +227,7 @@ async function playSeries(
   const games: JsonObject[] = [];
 
   for (const [index, gameSeed] of plan.gameSeeds.entries()) {
+    context.signal?.throwIfAborted();
     const gameNumber = index + 1;
     const gameId = `${seriesId}-${gameNumber}`;
     const start: GameStart = { gameId, gameNumber, seriesId, seriesScore: { ...score } };
@@ -219,6 +237,7 @@ async function playSeries(
       p2: { name: names.p2, team: plan.teams.p2.packed },
     };
     const outcome = await new SimBattle(context.pool.format, players, gameSeed, context.psDir).run(engines);
+    context.signal?.throwIfAborted();
     const winnerSide = (['p1', 'p2'] as const).find((pid) => names[pid] === outcome.winner);
     if (winnerSide) score[winnerSide] += 1;
     for (const pid of ['p1', 'p2'] as const) {
