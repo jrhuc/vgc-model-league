@@ -91,7 +91,7 @@ export class SimBattle {
     }
   }
 
-  async run(agents: Record<Pid, BattleAgent>): Promise<BattleOutcome> {
+  async run(agents: Record<Pid, BattleAgent>, onUpdate?: (lines: string[]) => void): Promise<BattleOutcome> {
     const { BattleStream } = loadShowdown(this.psDir);
     const stream = new BattleStream({ noCatch: true }) as BattleStream;
     const state: RouteState = {
@@ -109,6 +109,12 @@ export class SimBattle {
     const pendingError: Record<Pid, string | undefined> = { p1: undefined, p2: undefined };
     const suppressRequest: Record<Pid, boolean> = { p1: false, p2: false };
     const pending = new Map<Pid, PendingAction>();
+
+    const route = (lines: string[]) => {
+      const before = state.log.length;
+      routeUpdateLines(lines, state);
+      if (onUpdate && state.log.length > before) onUpdate(state.log.slice(before));
+    };
 
     const timerEvent = (pid: Pid, event: TimerEvent) => {
       const action = pending.get(pid);
@@ -209,7 +215,7 @@ export class SimBattle {
         nextStream = streamEvent(stream);
         const message = timer.receive(event.message);
         const lines = message.split('\n');
-        if (lines[0] === 'update') routeUpdateLines(lines.slice(1), state);
+        if (lines[0] === 'update') route(lines.slice(1));
         else if (lines[0] === 'sideupdate') handleSideUpdate(lines.slice(1));
         else if (lines[0] === 'end') {
           if (lines[1]) {
@@ -218,7 +224,7 @@ export class SimBattle {
             state.turns = data.turns ?? state.turns;
           }
           ended = true;
-        } else if (lines[0]?.startsWith('|')) routeUpdateLines(lines, state);
+        } else if (lines[0]?.startsWith('|')) route(lines);
       }
     } finally {
       timer.end();

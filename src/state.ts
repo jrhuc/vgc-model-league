@@ -1,3 +1,4 @@
+import type { ReferenceQuery } from './reference.js';
 import type { BattleRequest, JsonObject, Pid } from './types.js';
 
 import { afterColon, asRecord, asRecords, asStrings, text } from './value.js';
@@ -17,6 +18,7 @@ export class MonState {
   status: string | undefined;
   stats: Record<string, number> = {};
   boosts: Record<string, number> = {};
+  volatiles = new Set<string>();
   moves = new Map<string, MoveState>();
   item: string | undefined;
   itemConsumed = false;
@@ -82,12 +84,22 @@ export class BattleState {
         this.mergeSheetMon(mon, this.sides[side]);
         const previous = this.sides[side].active[slot];
         const previousMon = previous ? this.sides[side].mons.get(previous) : undefined;
-        if (previousMon) previousMon.boosts = {};
-        if (kind !== 'replace') mon.boosts = {};
+        if (previousMon) {
+          previousMon.boosts = {};
+          previousMon.volatiles.clear();
+        }
+        if (kind !== 'replace') {
+          mon.boosts = {};
+          mon.volatiles.clear();
+        }
         this.sides[side].active[slot] = this.monKey(args[0]!);
       }
-    } else if (kind === 'detailschange' && args.length >= 2) this.setDetails(this.mon(args[0]!), args[1]!);
-    else if (kind === 'poke' && args.length >= 2 && (args[0] === 'p1' || args[0] === 'p2')) {
+    } else if (kind === 'detailschange' && args.length >= 2) {
+      const mon = this.mon(args[0]!);
+      const previous = mon.species;
+      this.setDetails(mon, args[1]!);
+      if (this.speciesKey(previous) !== this.speciesKey(mon.species)) mon.ability = undefined;
+    } else if (kind === 'poke' && args.length >= 2 && (args[0] === 'p1' || args[0] === 'p2')) {
       const species = args[1]!.split(',', 1)[0]!.trim();
       const mon = this.mon(`${args[0]}: ${species}`);
       this.setDetails(mon, args[1]!);
@@ -99,6 +111,7 @@ export class BattleState {
       mon.hpPercent = 0;
       mon.fainted = true;
       mon.boosts = {};
+      mon.volatiles.clear();
     } else if ((kind === '-damage' || kind === '-heal') && args.length >= 2) this.setHp(this.mon(args[0]!), args[1]!);
     else if (kind === '-sethp') {
       for (let index = 0; index < args.length - 1; index += 2) {
@@ -118,6 +131,11 @@ export class BattleState {
     } else if (kind === '-clearnegativeboost' && args[0]) {
       const mon = this.mon(args[0]);
       mon.boosts = Object.fromEntries(Object.entries(mon.boosts).filter(([, value]) => value > 0));
+    } else if ((kind === '-start' || kind === '-end') && args.length >= 2) {
+      const mon = this.mon(args[0]!);
+      const effect = this.effect(args[1]!);
+      if (kind === '-start') mon.volatiles.add(effect);
+      else mon.volatiles.delete(effect);
     } else if (kind === '-weather' && args[0] !== undefined)
       this.weather = args[0] === 'none' || !args[0] ? undefined : this.effect(args[0]);
     else if (kind === '-fieldstart' && args[0]) this.fields.add(this.effect(args[0]));
@@ -138,9 +156,15 @@ export class BattleState {
       if (args[1]) mon.item = args[1];
       mon.itemConsumed = true;
     } else if (kind === '-ability' && args.length >= 2) this.mon(args[0]!).ability = args[1];
-    else if (kind === '-mega' && args[0]) this.mon(args[0]).mega = true;
-    else if (kind === '-formechange' && args.length >= 2) this.mon(args[0]!).species = args[1]!;
-    else if (kind === 'showteam' && args.length >= 2) this.showTeam(args[0]!, args.slice(1).join('|'));
+    else if (kind === '-mega' && args[0]) {
+      const mon = this.mon(args[0]);
+      mon.mega = true;
+      mon.ability = undefined;
+    } else if (kind === '-formechange' && args.length >= 2) {
+      const mon = this.mon(args[0]!);
+      mon.species = args[1]!;
+      mon.ability = undefined;
+    } else if (kind === 'showteam' && args.length >= 2) this.showTeam(args[0]!, args.slice(1).join('|'));
   }
 
   render(request: BattleRequest): string {
@@ -162,6 +186,19 @@ export class BattleState {
     if (mon) return mon.species;
     const active = (request.side?.pokemon ?? []).filter((item) => item.active);
     return active[slot] ? BattleState.requestName(active[slot]) : 'Pokémon';
+  }
+
+  referenceQuery(): ReferenceQuery {
+    const mons = Object.values(this.sides).flatMap((side) =>
+      side.sheet.length ? side.sheet : [...side.mons.values()],
+    );
+    return {
+      speciesSets: mons.map((mon) => [mon.species, mon.item ?? null, mon.nature ?? null, mon.level ?? 50]),
+      moves: mons.flatMap((mon) => [...mon.moves.values()].map((move) => move.name)),
+      items: mons.flatMap((mon) => (mon.item ? [mon.item] : [])),
+      abilities: mons.flatMap((mon) => (mon.ability ? [mon.ability] : [])),
+      natures: mons.flatMap((mon) => (mon.nature ? [mon.nature] : [])),
+    };
   }
 
   private renderSide(pid: Pid, own: boolean): string[] {
@@ -204,6 +241,7 @@ export class BattleState {
         .sort(([a], [b]) => a.localeCompare(b));
       if (boosts.length)
         attrs.push(`boosts ${boosts.map(([stat, value]) => `${stat} ${value >= 0 ? '+' : ''}${value}`).join(', ')}`);
+      if (mon.volatiles.size) attrs.push(`volatile ${[...mon.volatiles].sort().join(', ')}`);
       if (mon.moves.size)
         attrs.push(
           `moves ${[...mon.moves.values()]

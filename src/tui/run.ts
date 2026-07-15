@@ -3,13 +3,15 @@ import path from 'node:path';
 import type { ArenaEvent } from '../arena.js';
 import { makeRunDirectory, runBenchmark } from '../arena.js';
 import { RESULTS_PATH } from '../paths.js';
+import { BattleState } from '../state.js';
 import type { Pid } from '../types.js';
+import { afterColon } from '../value.js';
 import type { App, Screen } from './app.js';
 import type { RunConfig } from './setup.js';
 import { StandingsScreen } from './standings.js';
 import type { Key } from './term.js';
-import { accent, accentBold, bad, bold, dim, good, SPINNER_FRAMES, warn } from './term.js';
-import { formatElapsed, pinFooter, rule, tableLines } from './widgets.js';
+import { accent, accentBold, bad, bold, dim, displayWidth, good, padDisplay, SPINNER_FRAMES, warn } from './term.js';
+import { formatElapsed, pinFooter, rule, tableLines, wrapText } from './widgets.js';
 
 interface SeriesRow {
   players: Record<Pid, string>;
@@ -25,6 +27,10 @@ export class RunScreen implements Screen {
   private state: 'starting' | 'running' | 'done' | 'failed' = 'starting';
   private error = '';
   private notices: string[] = [];
+  private cursor = 0;
+  private browsing = false;
+  private detail: number | undefined;
+  private readonly battles = new Map<number, { game: number; state: BattleState }>();
   private seed: number | undefined;
   private readonly runId: string;
   private readonly runDir: string;
@@ -103,6 +109,16 @@ export class RunScreen implements Screen {
         row.status = 'running';
         row.game = 1;
       }
+      if (!this.browsing) this.cursor = event.index;
+    } else if (event.type === 'game-update') {
+      let entry = this.battles.get(event.index);
+      if (!entry || entry.game !== event.game) {
+        entry = { game: event.game, state: new BattleState('p1') };
+        this.battles.set(event.index, entry);
+      }
+      entry.state.feed(event.lines);
+      const row = this.rows[event.index];
+      if (row && row.status === 'running') row.game = event.game;
     } else if (event.type === 'game-end') {
       const row = this.rows[event.index];
       if (row) {
@@ -127,13 +143,32 @@ export class RunScreen implements Screen {
       this.app.quit();
       return;
     }
+    if (this.detail !== undefined) {
+      if (key.name === 'escape' || key.name === 'enter') {
+        this.detail = undefined;
+        this.app.paint();
+      }
+      return;
+    }
+    if ((key.name === 'up' || key.name === 'down') && this.rows.length) {
+      this.browsing = true;
+      this.cursor = Math.min(this.rows.length - 1, Math.max(0, this.cursor + (key.name === 'down' ? 1 : -1)));
+      this.app.paint();
+      return;
+    }
+    if (key.name === 'enter' && this.rows.length) {
+      this.detail = this.cursor;
+      this.app.paint();
+      return;
+    }
     if (this.state !== 'done' && this.state !== 'failed') return;
     if (key.name === 'char' && key.char === 's') this.app.setScreen(new StandingsScreen(this.app, this.back));
-    else if (key.name === 'enter' || key.name === 'escape') this.app.setScreen(this.back);
+    else if (key.name === 'escape') this.app.setScreen(this.back);
     else if (key.name === 'char' && key.char === 'q') this.app.quit();
   }
 
   render(width: number, height = 24): string[] {
+    if (this.detail !== undefined) return this.renderDetail(width, height);
     const lines: string[] = [];
     const finished = this.rows.filter((row) => row.status === 'done').length;
     const elapsed = formatElapsed((this.endTime ?? Date.now()) - this.startTime);
@@ -156,48 +191,120 @@ export class RunScreen implements Screen {
     lines.push(`  ${status}  ${bar}  ${bold(`${finished}/${total || '?'}`)}  ${dim(elapsed)}`);
     lines.push('');
     lines.push(rule('SERIES BOARD', width));
+    const wrapWidth = Math.max(20, width - 4);
+    const errorLines = this.error ? wrapText(this.error, wrapWidth, 6) : [];
+    const noticeBlocks = this.notices.slice(-2).map((notice) => wrapText(notice, wrapWidth, 3));
     if (this.rows.length) {
-      const notices = this.notices.slice(-2);
-      const reserved = 13 + notices.length * 2 + (this.error ? 2 : 0);
+      const reserved =
+        13 +
+        noticeBlocks.reduce((sum, block) => sum + block.length + 1, 0) +
+        (errorLines.length ? errorLines.length + 1 : 0);
       const rowSlots = Math.max(1, height - reserved);
       const running = this.rows.findIndex((row) => row.status === 'running');
-      const anchor = running >= 0 ? running : Math.max(0, finished - 1);
+      const anchor = this.browsing ? this.cursor : running >= 0 ? running : Math.max(0, finished - 1);
       const start = Math.max(0, Math.min(anchor - Math.floor(rowSlots / 2), this.rows.length - rowSlots));
-      const body = this.rows
-        .slice(start, start + rowSlots)
-        .map((row, index) => [
-          dim(String(start + index + 1)),
+      const body = this.rows.slice(start, start + rowSlots).map((row, index) => {
+        const absolute = start + index;
+        return [
+          absolute === this.cursor ? accentBold(`▸ ${absolute + 1}`) : dim(String(absolute + 1)),
           `${row.players.p1} ${accentBold('VS')} ${row.players.p2}`,
-          this.result(row),
-        ]);
+          this.result(row, absolute),
+        ];
+      });
       lines.push(...tableLines([{ title: '#', align: 'right' }, { title: 'matchup' }, { title: 'result' }], body));
       if (body.length < this.rows.length)
         lines.push(`  ${dim(`showing ${start + 1}–${start + body.length} of ${this.rows.length}`)}`);
     } else {
       lines.push(`  ${dim('preparing seeded series plans…')}`);
     }
-    if (this.error) lines.push('', `  ${bad(this.error)}`);
-    for (const notice of this.notices.slice(-2)) lines.push('', `  ${warn(notice)}`);
+    if (errorLines.length) lines.push('', ...errorLines.map((line) => `  ${bad(line)}`));
+    for (const block of noticeBlocks) lines.push('', ...block.map((line) => `  ${warn(line)}`));
     const footer = [
       '',
       `  ${dim(
         this.state === 'done' || this.state === 'failed'
-          ? 's standings · enter setup · q quit'
-          : 'running · ctrl-c leaves the TUI; completed series remain recorded',
+          ? '↑↓ select · enter game view · s standings · esc setup · q quit'
+          : '↑↓ select · enter game view · ctrl-c leaves the TUI; completed series remain recorded',
       )}`,
     ];
     return pinFooter(lines, footer, height);
   }
 
-  private result(row: SeriesRow): string {
+  private result(row: SeriesRow, index: number): string {
     if (row.status === 'queued') return dim('· queued');
     if (row.status === 'running') {
       const spinner = accent(SPINNER_FRAMES[this.spinnerIndex % SPINNER_FRAMES.length]!);
-      return `${spinner} game ${Math.max(1, row.game)} ${dim(`· ${row.score.p1}-${row.score.p2}`)}`;
+      const battle = this.battles.get(index);
+      const progress = battle ? (battle.state.turn ? `turn ${battle.state.turn}` : 'preview') : 'starting';
+      return `${spinner} game ${Math.max(1, row.game)} ${dim(`· ${progress} · ${row.score.p1}-${row.score.p2}`)}`;
     }
     const score = `${row.score.p1}-${row.score.p2}`;
     const turns = dim(`· ${row.turns} turns`);
     if (!row.winner) return `${warn('− tie')} ${score} ${turns}`;
     return `${good('✓')} ${bold(row.winner)} ${score} ${turns}`;
+  }
+
+  private renderDetail(width: number, height: number): string[] {
+    const index = this.detail!;
+    const row = this.rows[index];
+    const entry = this.battles.get(index);
+    const lines = [''];
+    lines.push(
+      `  ${accentBold('VGCBENCH')}  ${bold('GAME VIEW')}  ${dim(`series ${index + 1} of ${this.rows.length} · ${this.runId}`)}`,
+    );
+    lines.push('');
+    if (row) {
+      const outcome = row.status === 'done' ? (row.winner ? `winner ${row.winner}` : 'tie') : row.status;
+      lines.push(
+        `  ${bold(row.players.p1)} ${accentBold('VS')} ${bold(row.players.p2)}  ${dim(`${outcome} · score ${row.score.p1}-${row.score.p2}`)}`,
+      );
+    }
+    lines.push('');
+    if (!entry) {
+      lines.push(
+        `  ${dim(row?.status === 'queued' ? 'series queued; no game has started' : 'waiting for the first simulator update…')}`,
+      );
+    } else {
+      const battle = entry.state;
+      lines.push(rule(`GAME ${entry.game} · ${battle.turn ? `TURN ${battle.turn}` : 'TEAM PREVIEW'}`, width));
+      lines.push(
+        `  ${dim(`weather ${battle.weather ?? 'none'} · field ${battle.fields.size ? [...battle.fields].sort().join(', ') : 'none'}`)}`,
+      );
+      for (const pid of ['p1', 'p2'] as const) lines.push('', ...this.sideLines(pid, battle, row));
+    }
+    return pinFooter(lines, ['', `  ${dim('esc back to series board')}`], height);
+  }
+
+  private sideLines(pid: Pid, battle: BattleState, row: SeriesRow | undefined): string[] {
+    const side = battle.sides[pid];
+    const activeKeys = new Set(Object.values(side.active));
+    const conditions = side.conditions.size ? `  ${warn([...side.conditions].sort().join(', '))}` : '';
+    const lines = [`  ${bold(`${pid} · ${row?.players[pid] ?? '?'}`)}${conditions}`];
+    const speciesKey = (species: string) => species.toLowerCase().replace(/[^a-z0-9]/g, '');
+    const all = [...side.mons.values()];
+    const rich = new Set(
+      all
+        .filter((mon) => mon.hp !== undefined || mon.moves.size || mon.item || mon.ability)
+        .map((mon) => speciesKey(mon.species)),
+    );
+    const mons = all.filter((mon) => !(mon.preview && mon.hp === undefined && rich.has(speciesKey(mon.species))));
+    if (!mons.length) {
+      lines.push(`    ${dim('nothing revealed yet')}`);
+      return lines;
+    }
+    const nameWidth = Math.max(...mons.map((mon) => displayWidth(mon.species)));
+    for (const mon of mons) {
+      const key = `${pid}:${(afterColon(mon.ident) || 'Pokémon').toLowerCase()}`;
+      const marker = mon.fainted ? bad('✗') : activeKeys.has(key) ? good('▸') : dim('·');
+      const attrs = [mon.fainted ? bad('fainted') : mon.hp ? `HP ${mon.hp}` : dim('unrevealed')];
+      if (mon.status && !mon.fainted) attrs.push(warn(mon.status));
+      const boosts = Object.entries(mon.boosts)
+        .filter(([, value]) => value)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([stat, value]) => `${stat} ${value > 0 ? '+' : ''}${value}`);
+      if (boosts.length) attrs.push(accent(boosts.join(', ')));
+      lines.push(`    ${marker} ${padDisplay(mon.species, nameWidth)}  ${attrs.join('  ')}`);
+    }
+    return lines;
   }
 }

@@ -42,6 +42,7 @@ test('Mega events preserve the detailschange forme', () => {
   const rendered = state.render({});
   assert.match(rendered, /Gengar-Mega/);
   assert.match(rendered, /Mega Evolved/);
+  assert.doesNotMatch(rendered, /ability CursedBody/);
 });
 
 test('state ignores unstructured protocol messages', () => {
@@ -50,4 +51,16 @@ test('state ignores unstructured protocol messages', () => {
   const rendered = state.render({});
   assert.match(rendered, /Turn: 3/);
   assert.doesNotMatch(rendered, /RAW_SENTINEL/);
+});
+
+test('persistent volatile conditions render and clear on switch', () => {
+  const state = new BattleState('p1');
+  state.feed([
+    '|switch|p1a: Gengar|Gengar, L50|100/100',
+    '|-start|p1a: Gengar|move: Taunt',
+    '|-start|p1a: Gengar|Substitute',
+  ]);
+  assert.match(state.render({}), /volatile Substitute, Taunt/);
+  state.feed(['|switch|p1a: Incineroar|Incineroar, L50|100/100']);
+  assert.doesNotMatch(state.render({}), /volatile/);
 });

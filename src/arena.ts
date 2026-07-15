@@ -28,6 +28,7 @@ interface SeriesPlan {
 export type ArenaEvent =
   | { type: 'plans'; plans: Array<{ index: number; players: Record<Pid, string> }>; pool: string; seed: number }
   | { type: 'series-start'; index: number }
+  | { type: 'game-update'; index: number; game: number; lines: string[] }
   | { type: 'game-end'; index: number; game: number; winner: string | null; turns: number; score: Record<Pid, number> }
   | { type: 'series-end'; index: number; record: SeriesRecord };
 
@@ -54,6 +55,7 @@ export function makeEngine(
   spec: string,
   seed: number,
   decisionLog: string,
+  traceLog: string,
   format: string,
   psDir: string,
   reasoning?: ReasoningLevel,
@@ -64,6 +66,7 @@ export function makeEngine(
   return new LLMEngine(pid, spec, {
     provider: makeProvider(parseSpec(spec), { reasoning }),
     decisionLog,
+    traceLog,
     format,
     psDir,
     ...(reasoning === undefined ? {} : { reasoning }),
@@ -215,6 +218,7 @@ async function playSeries(
         plan.players[pid],
         plan.engineSeeds[pid],
         path.join(seriesDir, `${pid}-decisions.jsonl`),
+        path.join(seriesDir, `${pid}-trace.jsonl`),
         context.pool.format,
         context.psDir,
         context.reasoning,
@@ -236,26 +240,30 @@ async function playSeries(
       p1: { name: names.p1, team: plan.teams.p1.packed },
       p2: { name: names.p2, team: plan.teams.p2.packed },
     };
-    const outcome = await new SimBattle(context.pool.format, players, gameSeed, context.psDir).run(engines);
+    const outcome = await new SimBattle(context.pool.format, players, gameSeed, context.psDir).run(engines, (lines) =>
+      context.onEvent?.({ type: 'game-update', index: plan.index, game: gameNumber, lines }),
+    );
     context.signal?.throwIfAborted();
     const winnerSide = (['p1', 'p2'] as const).find((pid) => names[pid] === outcome.winner);
     if (winnerSide) score[winnerSide] += 1;
-    for (const pid of ['p1', 'p2'] as const) {
-      const end: GameEnd = {
-        outcome: {
-          winner: outcome.winner,
-          winner_side: winnerSide ?? null,
-          won: winnerSide === pid,
-          turns: outcome.turns,
-          pov_lines: outcome.pov[pid],
-          errors: outcome.errors[pid],
-          fallbacks: outcome.fallbacks[pid],
-        },
-        gameNumber,
-        seriesScore: { ...score },
-      };
-      engines[pid].endGame(end);
-    }
+    await Promise.all(
+      (['p1', 'p2'] as const).map(async (pid) => {
+        const end: GameEnd = {
+          outcome: {
+            winner: outcome.winner,
+            winner_side: winnerSide ?? null,
+            won: winnerSide === pid,
+            turns: outcome.turns,
+            pov_lines: outcome.pov[pid],
+            errors: outcome.errors[pid],
+            fallbacks: outcome.fallbacks[pid],
+          },
+          gameNumber,
+          seriesScore: { ...score },
+        };
+        await engines[pid].endGame(end);
+      }),
+    );
     const logPath = path.join(seriesDir, `game-${gameNumber}.log`);
     fs.writeFileSync(logPath, `${outcome.log.join('\n')}\n`, 'utf8');
     games.push({

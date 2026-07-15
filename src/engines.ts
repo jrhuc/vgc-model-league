@@ -4,7 +4,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 
 import type { SlotMenu, TargetNames } from './choices.js';
 import { buildMenus, compose } from './choices.js';
-import { renderDecision, SYSTEM } from './prompts.js';
+import { REFLECTION_SYSTEM, renderDecision, SYSTEM } from './prompts.js';
 import type { ReasoningLevel } from './providers.js';
 import { ApiError, assistantToolMessage, makeProvider, parseSpec, toolResultMessage } from './providers.js';
 import type { Rng } from './random.js';
@@ -43,7 +43,7 @@ export abstract class BaseEngine implements BattleAgent {
   constructor(readonly pid: Pid) {}
 
   beginGame(_context: GameStart): void {}
-  endGame(_context: GameEnd): void {}
+  endGame(_context: GameEnd): Promise<void> | void {}
   observe(_lines: string[]): void {}
   abandonDecision(): void {}
   decisionStats(): Record<string, number> {
@@ -170,25 +170,36 @@ export class RandomEngine extends BaseEngine {
   }
 }
 
-interface TranscriptEntry {
-  full: string;
-  brief: string;
+interface ParsedDecision {
+  choices: number[];
+  rationale: string;
+  notebook: string;
 }
+
+interface ToolTrace extends JsonObject {
+  name: string;
+  arguments: JsonObject;
+  result: string;
+}
+
 interface PendingDecision extends JsonObject {
   events?: string[];
+  prompt?: string;
   rawResponse?: string;
-  notes?: string;
+  rationale?: string;
+  notebook?: string;
   generation: number;
   usage?: Record<string, number>;
   fallback?: boolean;
   error?: string;
   latencyMs?: number;
-  toolCalls?: number;
+  toolCalls?: ToolTrace[];
 }
 
 export interface LLMEngineOptions {
   provider?: Provider;
   decisionLog?: DecisionLog;
+  traceLog?: DecisionLog;
   format?: string;
   psDir?: string;
   reference?: ShowdownReference;
@@ -214,10 +225,13 @@ function isTransientError(error: unknown): boolean {
 
 export class LLMEngine extends BaseEngine {
   private static readonly NOTE_LIMIT = 2400;
+  private static readonly RATIONALE_LIMIT = 800;
+  private static readonly TRANSCRIPT_LIMIT = 24;
   readonly provider: Provider;
   readonly reference: ShowdownReference;
   private state: BattleState;
-  private transcript: TranscriptEntry[] = [];
+  private transcript: string[] = [];
+  private mechanics: string[] = [];
   private notebook = '';
   private gameId: string;
   private seriesId?: string;
@@ -225,6 +239,8 @@ export class LLMEngine extends BaseEngine {
   private seriesScore: Record<Pid, number> = { p1: 0, p2: 0 };
   private decisions = 0;
   private fallbacks = 0;
+  private reflections = 0;
+  private reflectionFallbacks = 0;
   private pending: PendingDecision | undefined;
   private generation = 0;
 
@@ -247,28 +263,25 @@ export class LLMEngine extends BaseEngine {
     this.seriesId = context.seriesId;
     this.seriesScore = { ...(context.seriesScore ?? { p1: 0, p2: 0 }) };
     this.state = new BattleState(this.pid);
+    this.mechanics = [];
     this.pending = undefined;
-    this.compactTranscript();
     this.remember(`[Game ${context.gameNumber} begins; series score ${this.scoreText()}]`);
   }
 
-  override endGame(context: GameEnd): void {
+  override async endGame(context: GameEnd): Promise<void> {
     this.seriesScore = { ...(context.seriesScore ?? this.seriesScore) };
-    this.remember(
-      `[Game ${context.gameNumber} ended; winner ${text(context.outcome.winner, 'tie') || 'tie'}; series score ${this.scoreText()}]`,
-    );
-    this.compactTranscript();
+    const winner = text(context.outcome.winner, 'tie') || 'tie';
+    const won = context.outcome.won === true;
+    const result = winner === 'tie' ? 'tied' : won ? 'won' : 'lost';
+    this.remember(`[Game ${context.gameNumber} ended; ${result}; winner ${winner}; series score ${this.scoreText()}]`);
+    await this.reflect(context, result);
   }
 
   override observe(lines: string[]): void {
     const valid = lines.filter((line) => typeof line === 'string');
     if (!valid.length) return;
     this.state.feed(valid);
-    this.remember(
-      `Observed after the final decision:\n${valid.join('\n')}`,
-      'Observed after the final decision: (events elided)',
-    );
-    this.compactTranscript();
+    this.rememberEvents(valid);
   }
 
   override abandonDecision(): void {
@@ -280,7 +293,9 @@ export class LLMEngine extends BaseEngine {
     const events = context.povLines.filter((line) => typeof line === 'string');
     const generation = this.generation;
     this.state.feed(events);
-    this.pending = { events, rawResponse: '', notes: this.notebook, generation };
+    this.rememberEvents(events);
+    if (!this.mechanics.length) this.mechanics = this.reference.render(this.state.referenceQuery());
+    this.pending = { events, rawResponse: '', notebook: this.notebook, generation };
     const choice = await super.act(request, context);
     return generation === this.generation ? choice : '';
   }
@@ -298,9 +313,10 @@ export class LLMEngine extends BaseEngine {
       state: this.state.render(request),
       slotNames: menus.map((_, slot) => this.state.slotName(slot, request)),
       menus,
-      transcript: this.transcript.map((entry) => entry.brief),
+      transcript: this.transcript,
       notebook: this.notebook,
       seriesContext: `Series ${this.seriesId ?? '?'}; game ${this.gameNumber}; score ${this.scoreText()}`,
+      mechanics: this.mechanics,
     });
     if (turnSeconds !== undefined)
       prompt += `\n\nShowdown timer: ${turnSeconds} seconds for this decision; ${request.timer?.seconds ?? turnSeconds} seconds remain in your clock bank.`;
@@ -308,10 +324,10 @@ export class LLMEngine extends BaseEngine {
 
     let rawResponse = '';
     const usage: Record<string, number> = {};
-    let parsed: [number[], string] | undefined;
+    let parsed: ParsedDecision | undefined;
     let error = 'no choices found';
     let parseFailures = 0;
-    let toolCalls = 0;
+    const toolCalls: ToolTrace[] = [];
     const messages: ProviderMessage[] = [{ role: 'user', content: prompt }];
     while (!parsed && parseFailures < 2) {
       if (generation !== this.generation) return menus.map(() => 0);
@@ -339,10 +355,12 @@ export class LLMEngine extends BaseEngine {
         );
         for (const [key, value] of Object.entries(completion.usage)) usage[key] = (usage[key] ?? 0) + Math.trunc(value);
         if (completion.toolCalls.length && !finalRound) {
-          toolCalls += completion.toolCalls.length;
           messages.push(assistantToolMessage(completion));
-          for (const call of completion.toolCalls)
-            messages.push(toolResultMessage(call.id, this.reference.lookup(call.name, call.arguments)));
+          for (const call of completion.toolCalls) {
+            const result = this.reference.lookup(call.name, call.arguments);
+            toolCalls.push({ name: call.name, arguments: call.arguments, result });
+            messages.push(toolResultMessage(call.id, result));
+          }
           continue;
         }
         rawResponse = completion.text;
@@ -354,18 +372,26 @@ export class LLMEngine extends BaseEngine {
       }
       try {
         parsed = LLMEngine.extractChoices(rawResponse, menus);
-        BaseEngine.parts(menus, parsed[0]);
+        BaseEngine.parts(menus, parsed.choices);
       } catch (caught) {
         error = caught instanceof Error ? caught.message : String(caught);
         parseFailures += 1;
       }
     }
     const fallback = !parsed;
-    const [choices, notes] = parsed ?? [BaseEngine.defaults(menus)[0], this.notebook];
+    const decision =
+      parsed ??
+      ({
+        choices: BaseEngine.defaults(menus)[0],
+        rationale: 'Recorded legal fallback.',
+        notebook: this.notebook,
+      } satisfies ParsedDecision);
     if (generation === this.generation && this.pending)
       Object.assign(this.pending, {
+        prompt,
         rawResponse,
-        notes,
+        rationale: decision.rationale,
+        notebook: decision.notebook,
         usage,
         fallback,
         error: fallback ? error : undefined,
@@ -373,19 +399,20 @@ export class LLMEngine extends BaseEngine {
         toolCalls,
         generation,
       });
-    return choices;
+    return decision.choices;
   }
 
   private async completeWithRetry(
     messages: ProviderMessage[],
     options: CompleteOptions,
     generation: number,
+    system = SYSTEM,
   ): Promise<Completion> {
     const signal = this.options.signal;
     const withSignal: CompleteOptions = signal ? { ...options, signal } : options;
     for (let attempt = 0; ; attempt += 1) {
       try {
-        return await this.provider.complete(SYSTEM, messages, withSignal);
+        return await this.provider.complete(system, messages, withSignal);
       } catch (error) {
         if (
           attempt >= RETRY_ATTEMPTS - 1 ||
@@ -401,7 +428,7 @@ export class LLMEngine extends BaseEngine {
   }
 
   protected override actionCommitted(
-    _request: BattleRequest,
+    request: BattleRequest,
     _context: AgentContext,
     menus: SlotMenu[],
     choices: number[],
@@ -411,40 +438,65 @@ export class LLMEngine extends BaseEngine {
     const pending = this.pending;
     this.pending = undefined;
     if (!pending || pending.generation !== this.generation) return;
-    const notes = pending.notes ?? this.notebook;
+    const notebook = pending.notebook ?? this.notebook;
+    const rationale = automatic
+      ? 'Automatic: only one legal joint action.'
+      : pending.rationale || 'No rationale supplied.';
     if (!automatic) {
-      this.notebook = notes;
+      this.notebook = notebook;
       this.decisions += 1;
       if (pending.fallback) this.fallbacks += 1;
     }
-    const entry = pending.events?.length
-      ? [`Events from your point of view:\n${pending.events.join('\n')}`, `Chosen joint action: ${compose(parts)}`]
-      : [`Chosen joint action: ${compose(parts)}`];
-    if (automatic) entry.push('(automatic; no model call required)');
-    this.remember(entry.join('\n'), pending.events?.length ? entry.slice(1).join('\n') : entry.join('\n'));
-    this.compactTranscript();
-    if (automatic) return;
-    this.writeDecision({
+    const action = request.teamPreview ? `team ${parts.join('')}` : compose(parts);
+    this.remember(`Decision: ${action}. Rationale: ${rationale}`);
+    const phase = request.teamPreview ? 'team_preview' : request.forceSwitch ? 'forced_switch' : 'turn';
+    const selection = choices.map((choice, slot) => menus[slot]?.[choice]?.label ?? parts[slot] ?? 'pass');
+    this.writeLog(this.options.decisionLog, {
+      kind: 'decision',
       game_id: this.gameId,
       series_id: this.seriesId ?? null,
       game_number: this.gameNumber,
       turn: this.state.turn,
       pid: this.pid,
+      phase,
+      selection,
+      action,
+      rationale,
+      notebook: this.notebook,
+      automatic,
+      fallback: pending.fallback ?? false,
+      error: pending.error ?? null,
+      tool_lookups: (pending.toolCalls ?? []).map((call) => call.name),
+    });
+    if (automatic) return;
+    this.writeLog(this.options.traceLog, {
+      kind: 'decision_trace',
+      game_id: this.gameId,
+      series_id: this.seriesId ?? null,
+      game_number: this.gameNumber,
+      turn: this.state.turn,
+      pid: this.pid,
+      phase,
+      prompt: pending.prompt ?? '',
       menus: menus.map((menu) => menu.map((item) => item.label)),
       choices,
       parts,
-      notes,
-      fallback: pending.fallback ?? false,
-      error: pending.error ?? null,
       raw_response: pending.rawResponse ?? '',
       usage: pending.usage ?? {},
       latency_ms: pending.latencyMs ?? 0,
-      tool_calls: pending.toolCalls ?? 0,
+      tool_calls: pending.toolCalls ?? [],
+      fallback: pending.fallback ?? false,
+      error: pending.error ?? null,
     });
   }
 
   override decisionStats(): Record<string, number> {
-    return { decisions: this.decisions, fallbacks: this.fallbacks };
+    return {
+      decisions: this.decisions,
+      fallbacks: this.fallbacks,
+      reflections: this.reflections,
+      reflection_fallbacks: this.reflectionFallbacks,
+    };
   }
 
   protected override menuNames(request: BattleRequest): TargetNames | undefined {
@@ -473,7 +525,7 @@ export class LLMEngine extends BaseEngine {
     return names;
   }
 
-  static extractChoices(response: string, menus: SlotMenu[]): [number[], string] {
+  static extractChoices(response: string, menus: SlotMenu[]): ParsedDecision {
     const objects = jsonObjects(response).filter((value) => 'choices' in value || 'choice' in value);
     const object = objects.at(-1);
     if (!object) throw new Error('no JSON object with a choices key');
@@ -487,25 +539,138 @@ export class LLMEngine extends BaseEngine {
         throw new Error(`choice for slot ${slot + 1} must be between 0 and ${menus[slot]!.length - 1}`);
       return index;
     });
-    const notes =
-      typeof object.notes === 'string' ? object.notes : object.notes == null ? '' : JSON.stringify(object.notes);
-    return [choices, notes.slice(0, LLMEngine.NOTE_LIMIT)];
+    const rationale = typeof object.rationale === 'string' ? object.rationale : undefined;
+    const notebook = typeof object.notebook === 'string' ? object.notebook : undefined;
+    if (rationale === undefined || notebook === undefined)
+      throw new Error('response must contain string rationale and notebook fields');
+    return {
+      choices,
+      rationale: rationale.slice(0, LLMEngine.RATIONALE_LIMIT),
+      notebook: notebook.slice(0, LLMEngine.NOTE_LIMIT),
+    };
   }
 
-  private remember(full: string, brief = full): void {
-    this.transcript.push({ full, brief });
+  private async reflect(context: GameEnd, result: string): Promise<void> {
+    const prompt = [
+      `Series ${this.seriesId ?? '?'}; game ${context.gameNumber}; result: ${result}; series score ${this.scoreText()}.`,
+      `Turns: ${String(context.outcome.turns ?? '?')}. Decision errors: ${String(context.outcome.errors ?? 0)}. Legal fallbacks: ${String(context.outcome.fallbacks ?? 0)}.`,
+      '',
+      'Final authoritative state:',
+      this.state.render({}),
+      '',
+      'Compact private battle timeline:',
+      ...this.transcript,
+      '',
+      `Current private notebook: ${this.notebook || '(empty)'}`,
+      '',
+      'Return the required concise game review and updated notebook.',
+    ].join('\n');
+    const messages: ProviderMessage[] = [{ role: 'user', content: prompt }];
+    const usage: Record<string, number> = {};
+    let rawResponse = '';
+    let parsed: { summary: string; adjustment: string; notebook: string } | undefined;
+    let error: string | undefined;
+    try {
+      for (let attempt = 0; attempt < 2 && !parsed; attempt += 1) {
+        const completion = await this.completeWithRetry(
+          messages,
+          { maxTokens: 2048, temperature: 0.4, timeout: 60 },
+          this.generation,
+          REFLECTION_SYSTEM,
+        );
+        for (const [key, value] of Object.entries(completion.usage)) usage[key] = (usage[key] ?? 0) + Math.trunc(value);
+        rawResponse = completion.text;
+        try {
+          parsed = LLMEngine.extractReflection(rawResponse);
+          error = undefined;
+        } catch (caught) {
+          error = caught instanceof Error ? caught.message : String(caught);
+          if (attempt === 0) {
+            messages.push({ role: 'assistant', content: rawResponse });
+            messages.push({
+              role: 'user',
+              content: `Invalid review: ${error}. Reply with exactly the required JSON object.`,
+            });
+          }
+        }
+      }
+    } catch (caught) {
+      error = caught instanceof Error ? caught.message : String(caught);
+    }
+    const fallback = !parsed;
+    const review =
+      parsed ??
+      ({
+        summary: `Game ${result}; model reflection unavailable.`,
+        adjustment: 'Retain the existing series plan and reassess from the next team preview.',
+        notebook: this.notebook,
+      } satisfies { summary: string; adjustment: string; notebook: string });
+    this.reflections += 1;
+    if (fallback) this.reflectionFallbacks += 1;
+    this.notebook = review.notebook;
+    this.remember(`Game review: ${review.summary} Next-game adjustment: ${review.adjustment}`);
+    this.writeLog(this.options.decisionLog, {
+      kind: 'game_reflection',
+      game_id: this.gameId,
+      series_id: this.seriesId ?? null,
+      game_number: context.gameNumber,
+      pid: this.pid,
+      result,
+      summary: review.summary,
+      adjustment: review.adjustment,
+      notebook: this.notebook,
+      fallback,
+      error: error ?? null,
+    });
+    this.writeLog(this.options.traceLog, {
+      kind: 'reflection_trace',
+      game_id: this.gameId,
+      series_id: this.seriesId ?? null,
+      game_number: context.gameNumber,
+      pid: this.pid,
+      prompt,
+      raw_response: rawResponse,
+      usage,
+      fallback,
+      error: error ?? null,
+    });
   }
 
-  private compactTranscript(): void {
-    for (const entry of this.transcript) entry.full = entry.brief;
+  private static extractReflection(response: string): { summary: string; adjustment: string; notebook: string } {
+    const object = jsonObjects(response)
+      .filter((value) => 'summary' in value || 'adjustment' in value)
+      .at(-1);
+    if (!object) throw new Error('no JSON game review found');
+    if (
+      typeof object.summary !== 'string' ||
+      typeof object.adjustment !== 'string' ||
+      typeof object.notebook !== 'string'
+    )
+      throw new Error('review must contain string summary, adjustment, and notebook fields');
+    return {
+      summary: object.summary.slice(0, LLMEngine.RATIONALE_LIMIT),
+      adjustment: object.adjustment.slice(0, LLMEngine.RATIONALE_LIMIT),
+      notebook: object.notebook.slice(0, LLMEngine.NOTE_LIMIT),
+    };
+  }
+
+  private remember(value: string): void {
+    if (!value) return;
+    this.transcript.push(value);
+    if (this.transcript.length > LLMEngine.TRANSCRIPT_LIMIT)
+      this.transcript.splice(0, this.transcript.length - LLMEngine.TRANSCRIPT_LIMIT);
+  }
+
+  private rememberEvents(lines: string[]): void {
+    const summary = summarizeBattleEvents(lines);
+    if (summary.length) this.remember(summary.join('\n'));
   }
 
   private scoreText(): string {
     return `p1 ${this.seriesScore.p1}, p2 ${this.seriesScore.p2}`;
   }
 
-  private writeDecision(row: JsonObject): void {
-    const output = this.options.decisionLog;
+  private writeLog(output: DecisionLog | undefined, row: JsonObject): void {
     if (!output) return;
     if (typeof output === 'function') output(row);
     else if (Array.isArray(output)) output.push(row);
@@ -514,6 +679,47 @@ export class LLMEngine extends BaseEngine {
       fs.appendFileSync(output, `${JSON.stringify(row)}\n`, 'utf8');
     }
   }
+}
+
+function summarizeBattleEvents(lines: string[]): string[] {
+  const summary: string[] = [];
+  const ident = (value = '') => value.replace(/^p[12][a-z]?:\s*/, '');
+  for (const line of lines) {
+    if (!line.startsWith('|')) continue;
+    const [, kind = '', ...args] = line.split('|');
+    if (kind === 'turn') summary.push(`Turn ${args[0]} begins.`);
+    else if ((kind === 'switch' || kind === 'drag' || kind === 'replace') && args.length >= 3)
+      summary.push(`${ident(args[0])} entered as ${args[1]} at ${args[2]}.`);
+    else if (kind === 'move' && args.length >= 2)
+      summary.push(`${ident(args[0])} used ${args[1]}${args[2] ? ` into ${ident(args[2])}` : ''}.`);
+    else if ((kind === '-damage' || kind === '-heal') && args.length >= 2)
+      summary.push(`${ident(args[0])} HP became ${args[1]}${kind === '-heal' ? ' after healing' : ''}.`);
+    else if (kind === 'faint' && args[0]) summary.push(`${ident(args[0])} fainted.`);
+    else if (kind === 'cant' && args.length >= 2) summary.push(`${ident(args[0])} could not act (${args[1]}).`);
+    else if (kind === '-status' && args.length >= 2) summary.push(`${ident(args[0])} became ${args[1]}.`);
+    else if (kind === '-curestatus' && args.length >= 2) summary.push(`${ident(args[0])} was cured of ${args[1]}.`);
+    else if (kind === '-ability' && args.length >= 2) summary.push(`${ident(args[0])} revealed ${args[1]}.`);
+    else if (kind === '-mega' && args[0]) summary.push(`${ident(args[0])} Mega Evolved.`);
+    else if (kind === '-miss' && args.length >= 2) summary.push(`${ident(args[0])} missed ${ident(args[1])}.`);
+    else if (kind === '-immune' && args[0]) summary.push(`${ident(args[0])} was immune.`);
+    else if (kind === '-fail' && args[0]) summary.push(`${ident(args[0])}'s action failed.`);
+    else if (kind === '-crit' && args[0]) summary.push(`A critical hit landed on ${ident(args[0])}.`);
+    else if (kind === '-supereffective' && args[0]) summary.push(`The hit on ${ident(args[0])} was super effective.`);
+    else if (kind === '-resisted' && args[0]) summary.push(`${ident(args[0])} resisted the hit.`);
+    else if (kind === '-activate' && args.length >= 2) summary.push(`${ident(args[0])} activated ${args[1]}.`);
+    else if ((kind === '-start' || kind === '-end') && args.length >= 2)
+      summary.push(`${ident(args[0])} ${kind === '-start' ? 'gained' : 'lost'} ${args[1]}.`);
+    else if ((kind === '-boost' || kind === '-unboost') && args.length >= 3)
+      summary.push(`${ident(args[0])} ${args[1]} ${kind === '-boost' ? 'rose' : 'fell'} by ${args[2]}.`);
+    else if (kind === '-weather' && !args.includes('[upkeep]')) summary.push(`Weather became ${args[0] || 'none'}.`);
+    else if (kind === '-fieldstart' && args[0]) summary.push(`Field started: ${args[0]}.`);
+    else if (kind === '-fieldend' && args[0]) summary.push(`Field ended: ${args[0]}.`);
+    else if ((kind === '-sidestart' || kind === '-sideend') && args.length >= 2)
+      summary.push(`${args[0]} ${kind === '-sidestart' ? 'gained' : 'lost'} ${args[1]}.`);
+    else if (kind === 'win' && args[0]) summary.push(`${args[0]} won the game.`);
+    else if (kind === 'tie') summary.push('The game tied.');
+  }
+  return summary.slice(-60);
 }
 
 function jsonObjects(input: string): JsonObject[] {

@@ -9,9 +9,10 @@ import { makePlans, runBenchmark } from '../src/arena.js';
 import { PROVIDER_OPTIONS } from '../src/model-catalog.js';
 import type { App } from '../src/tui/app.js';
 import { CredentialScreen } from '../src/tui/models.js';
+import { RunScreen } from '../src/tui/run.js';
 import { allowedReasoning, commandPreview, runSize, SetupScreen } from '../src/tui/setup.js';
 import { decodeKeys, displayWidth, padDisplay, stripSgr, truncateDisplay } from '../src/tui/term.js';
-import { pinFooter, tableLines } from '../src/tui/widgets.js';
+import { pinFooter, tableLines, wrapText } from '../src/tui/widgets.js';
 
 function fakeApp(): App & { screens: unknown[]; quits: number } {
   const fake = {
@@ -29,6 +30,13 @@ function fakeApp(): App & { screens: unknown[]; quits: number } {
   };
   return fake as unknown as App & { screens: unknown[]; quits: number };
 }
+
+test('wrapText wraps words, hard-breaks long tokens, and caps lines', () => {
+  assert.deepEqual(wrapText('one two three four', 9), ['one two', 'three', 'four']);
+  assert.deepEqual(wrapText(`x ${'a'.repeat(12)} y`, 5), ['x', 'aaaaa', 'aaaaa', 'aa y']);
+  assert.deepEqual(wrapText('alpha beta gamma delta', 5, 2), ['alpha', 'beta…']);
+  assert.deepEqual(wrapText('  spaced\n\nout  ', 10), ['spaced out']);
+});
 
 test('decodeKeys handles sequences, control characters, and text', () => {
   assert.deepEqual(decodeKeys('\x1b[A\x1b[B\x1b[C\x1b[D'), [
@@ -271,10 +279,66 @@ test('runBenchmark emits ordered arena events', async () => {
   assert.equal(events.at(-1)!.type, 'series-end');
   const gameEnds = events.filter((event) => event.type === 'game-end');
   assert.ok(gameEnds.length >= 2);
+  const updates = events.filter((event) => event.type === 'game-update');
+  assert.ok(updates.length > 0);
+  assert.ok(updates.every((event) => event.lines.length > 0 && event.game >= 1));
   const last = events.at(-1)! as Extract<ArenaEvent, { type: 'series-end' }>;
   assert.deepEqual(last.record.score, rows[0]!.score);
   assert.deepEqual(gameEnds.at(-1)!.score, rows[0]!.score);
   fs.rmSync(directory, { recursive: true, force: true });
+});
+
+test('run screen game view renders live battle state', () => {
+  const app = fakeApp();
+  const back = new SetupScreen(app);
+  const screen = new RunScreen(app, back, {
+    models: ['random', 'random'],
+    seriesPerPair: 1,
+    pool: 'test',
+    concurrency: 1,
+  });
+  const internal = screen as unknown as { onEvent(event: ArenaEvent): void; runDir: string };
+  try {
+    internal.onEvent({
+      type: 'plans',
+      pool: 'test',
+      seed: 1,
+      plans: [{ index: 0, players: { p1: 'model-a', p2: 'model-b' } }],
+    });
+    internal.onEvent({ type: 'series-start', index: 0 });
+    internal.onEvent({
+      type: 'game-update',
+      index: 0,
+      game: 1,
+      lines: [
+        '|poke|p1|Miraidon, L50|',
+        '|poke|p2|Calyrex-Ice, L50|',
+        '|switch|p1a: Miraidon|Miraidon, L50|207/207',
+        '|switch|p2a: Calyrex-Ice|Calyrex-Ice, L50|252/252',
+        '|turn|1',
+        '|-damage|p2a: Calyrex-Ice|126/252',
+        '|turn|2',
+      ],
+    });
+    const board = screen.render(100, 30).map(stripSgr);
+    assert.ok(board.some((line) => line.includes('turn 2')));
+    screen.key({ name: 'enter' });
+    const view = screen.render(100, 30).map(stripSgr);
+    assert.ok(view.some((line) => line.includes('GAME VIEW')));
+    assert.ok(view.some((line) => line.includes('GAME 1 · TURN 2')));
+    assert.ok(view.some((line) => line.includes('model-a')));
+    assert.ok(view.some((line) => line.includes('Miraidon') && line.includes('207/207')));
+    assert.ok(view.some((line) => line.includes('Calyrex-Ice') && line.includes('126/252')));
+    screen.key({ name: 'escape' });
+    assert.ok(
+      screen
+        .render(100, 30)
+        .map(stripSgr)
+        .some((line) => line.includes('SERIES BOARD')),
+    );
+  } finally {
+    fs.rmSync(internal.runDir, { recursive: true, force: true });
+  }
 });
 
 test('an aborted signal stops the benchmark without throwing or recording', async () => {

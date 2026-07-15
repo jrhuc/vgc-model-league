@@ -79,10 +79,12 @@ Showdown format, so there is no separate format switch in the runner.
 
 At each decision the model receives:
 
-- its private match transcript (compacted after each decision) and current notebook;
+- a compact private battle timeline and its durable series notebook;
 - current field, side conditions, HP, status, boosts, revealed information, and
   exact stats for its own Pokémon;
 - both open team sheets;
+- exact Showdown species, move, base/Mega ability, item, nature, and Speed-range context
+  for those sheets;
 - numbered legal menus for the complete joint action;
 - optional native tool calls to look up move, species, item, ability, and nature
   facts from the configured Showdown checkout.
@@ -90,13 +92,23 @@ At each decision the model receives:
 It returns one JSON object:
 
 ```json
-{"choices":[0,2],"notes":"private observations to retain"}
+{"choices":[0,2],"rationale":"brief reason for the joint action","notebook":"durable private series notes"}
 ```
 
+The strategy prompt explicitly checks team modes, intended Mega, the opportunity
+cost of bringing multiple Mega Stones, speed control, positioning, and endgames.
+A non-chosen Mega holder must be evaluated only in its base forme; Mega-only
+stats, typing, abilities, and move boosts cannot be assumed. After each game,
+both players concurrently write a short result review, next-game adjustment, and
+updated notebook. These reviews are outside the Showdown battle clock and add one
+model request per player per completed game.
+
 Malformed decisions get one retry and then a recorded legal fallback. Empty
-responses take the recorded fallback directly. Provider, reference, simulator,
-and team-validation failures stop the run; completed series are already persisted
-when that happens.
+responses take the recorded fallback directly. Provider failures while choosing,
+reference failures, simulator failures, and team-validation failures stop the run;
+completed series are already persisted when that happens. A failed post-game
+review is recorded as a reflection fallback and does not discard a completed
+battle.
 
 The pool's Showdown BO3 format is the authority for timer rules, tiebreaks,
 legality, and battle outcomes. Native timer budgets are included in each model
@@ -105,7 +117,12 @@ clock bank is exhausted. The benchmark does not override its result.
 
 ## Output
 
-`runs/` contains series logs, decision traces, and run configuration.
+`runs/` contains series logs, decision timelines, technical traces, and run
+configuration. Each `pN-decisions.jsonl` is a compact human-readable timeline of
+selected labels, action, short rationale, notebook snapshot, fallbacks, and game
+reflections. The corresponding `pN-trace.jsonl` retains prompts, complete menus,
+raw responses, usage, and every lookup's arguments and returned Showdown data for
+auditing without duplicating that noise in the decision timeline.
 `records/results.jsonl` contains one rated row per completed BO3, with its games
 nested inside. Both directories are local and gitignored.
 

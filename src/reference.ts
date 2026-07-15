@@ -21,14 +21,14 @@ function tool(
 export const DEX_TOOLS: ToolDefinition[] = [
   tool(
     'lookup_species',
-    'Look up a species: typing, base Speed, forme, mega stone outcomes, and optional level/nature Speed range.',
+    'Look up a species: typing, abilities, base stats, forme, Mega Stone outcomes, and optional level/nature Speed range.',
     {
       name: { type: 'string' },
       item: { type: ['string', 'null'] },
       nature: { type: ['string', 'null'] },
       level: { type: ['integer', 'null'] },
     },
-    ['name', 'item', 'nature', 'level'],
+    ['name'],
   ),
   tool(
     'lookup_move',
@@ -71,6 +71,10 @@ function uniqueNames(values: Array<string | null | undefined>): string[] {
 
 function cleanDescription(value: unknown): string {
   return typeof value === 'string' ? value.split(/\s+/).filter(Boolean).join(' ') : '';
+}
+
+function baseStats(stats: Dex.StatsTable): string {
+  return `base stats HP ${stats.hp}, Atk ${stats.atk}, Def ${stats.def}, SpA ${stats.spa}, SpD ${stats.spd}, Spe ${stats.spe}`;
 }
 
 function speedRange(base: number, level: number, nature?: { plus?: string; minus?: string }): [number, number] {
@@ -130,7 +134,12 @@ export class ShowdownReference {
     for (const { species, sets } of [...speciesGroups.values()].sort((a, b) =>
       id(a.species.name).localeCompare(id(b.species.name)),
     )) {
-      const details = [species.types.join('/'), `base Spe ${species.baseStats.spe}`];
+      const abilityNames = uniqueNames(Object.values(species.abilities));
+      const details = [
+        species.types.join('/'),
+        baseStats(species.baseStats),
+        ...(abilityNames.length ? [`abilities ${abilityNames.join('/')}`] : []),
+      ];
       if (species.forme) details.push(`forme ${species.forme}`);
       for (const [, , natureName, level] of sets) {
         if (!level) continue;
@@ -157,8 +166,11 @@ export class ShowdownReference {
             const [low, high] = speedRange(mega.baseStats.spe, level, knownNature);
             return [`L${level} Speed ${low}-${high}${knownNature ? ` with ${knownNature.name} alignment` : ''}`];
           });
+          const megaAbilities = uniqueNames(Object.values(mega.abilities));
+          for (const ability of megaAbilities)
+            if (!abilities.some((current) => id(current) === id(ability))) abilities.push(ability);
           details.push(
-            `with ${item.name} -> ${mega.name} (${mega.types.join('/')}, base Spe ${mega.baseStats.spe}${ranges.length ? `; ${[...new Set(ranges)].sort().join(', ')}` : ''})`,
+            `with ${item.name} -> ${mega.name} (${mega.types.join('/')}, ${baseStats(mega.baseStats)}, abilities ${megaAbilities.join('/')}${ranges.length ? `; ${[...new Set(ranges)].sort().join(', ')}` : ''})`,
           );
         }
       }

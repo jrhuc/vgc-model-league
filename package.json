@@ -23,5 +23,14 @@
     "@biomejs/biome": "^2.5.3",
     "@types/node": "^26.1.1",
     "typescript": "^7.0.2"
+  },
+  "dependencies": {
+    "@ai-sdk/anthropic": "^4.0.15",
+    "@ai-sdk/deepseek": "^3.0.11",
+    "@ai-sdk/google": "^4.0.17",
+    "@ai-sdk/openai": "^4.0.15",
+    "@ai-sdk/openai-compatible": "^3.0.11",
+    "@ai-sdk/xai": "^4.0.14",
+    "ai": "^7.0.28"
   }
 }
