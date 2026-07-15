@@ -30,7 +30,25 @@ function request(activeCount = 1): BattleRequest {
 const decision = (choices: number[], rationale = 'test choice', notebook = '') =>
   JSON.stringify({ choices, rationale, notebook });
 
-const emptyStats = { decisions: 0, fallbacks: 0, reflections: 0, reflection_fallbacks: 0 };
+const emptyStats = {
+  decisions: 0,
+  fallbacks: 0,
+  reflections: 0,
+  reflection_fallbacks: 0,
+  move_selections: 0,
+  switch_selections: 0,
+  protect_selections: 0,
+  consecutive_protect_selections: 0,
+  ally_target_selections: 0,
+  spread_move_selections: 0,
+  mega_selections: 0,
+  tool_lookups: 0,
+  repeated_joint_actions: 0,
+  team_previews: 0,
+  bring_changes: 0,
+  lead_changes: 0,
+};
+const oneMoveStats = { ...emptyStats, decisions: 1, move_selections: 1 };
 
 class ScriptedProvider implements Provider {
   readonly calls: Array<{ system: string; messages: ProviderMessage[]; options: CompleteOptions }> = [];
@@ -64,7 +82,7 @@ test('LLM choices parse prose, retry, and record fallbacks', async () => {
     const engine = new LLMEngine('p1', 'scripted', { provider, decisionLog: decisions });
     assert.equal(await engine.act(request(), { povLines: ['|turn|1'] }), expected);
     assert.equal(decisions[0]!.fallback, fallback);
-    assert.deepEqual(engine.decisionStats(), { ...emptyStats, decisions: 1, fallbacks: Number(fallback) });
+    assert.deepEqual(engine.decisionStats(), { ...oneMoveStats, fallbacks: Number(fallback) });
     assert.equal(provider.calls.length, calls);
   }
 });
@@ -86,13 +104,17 @@ test('doubles use one call and retain compact private context', async () => {
     decision([1, 0], 'Use the speed read.', 'keep the speed read'),
   ]);
   const engine = new LLMEngine('p1', 'scripted', { provider, decisionLog: [] });
-  assert.equal(await engine.act(request(2), { povLines: ['|turn|1'] }), 'move 1, move 2');
+  assert.equal(
+    await engine.act(request(2), { povLines: ['|switch|p2a: Garchomp|Garchomp, L50|100/100', '|turn|1'] }),
+    'move 1, move 2',
+  );
   assert.equal(await engine.act(request(2), { povLines: ['|move|p2a: Garchomp|Rock Slide'] }), 'move 2, move 1');
   const prompt = String(provider.calls[1]!.messages.at(-1)!.content);
   assert.match(prompt, /Garchomp was faster/);
   assert.match(prompt, /Decision: move 1, move 2/);
   assert.match(prompt, /Rock Slide/);
   assert.doesNotMatch(prompt, /\|move\|p2a/);
+  assert.doesNotMatch(prompt, /\bL50\b/);
 });
 
 test('provider failures abort and empty responses use a legal fallback', async () => {
@@ -107,7 +129,7 @@ test('provider failures abort and empty responses use a legal fallback', async (
   const empty = new LLMEngine('p1', 'empty', { provider: new ScriptedProvider(['']), decisionLog: decisions });
   assert.equal(await empty.act(request(), { povLines: [] }), 'move 1');
   assert.equal(decisions[0]!.error, 'empty response');
-  assert.deepEqual(empty.decisionStats(), { ...emptyStats, decisions: 1, fallbacks: 1 });
+  assert.deepEqual(empty.decisionStats(), { ...oneMoveStats, fallbacks: 1 });
 });
 
 test('transient API errors retry before falling back', async () => {
@@ -117,7 +139,7 @@ test('transient API errors retry before falling back', async () => {
     decisionLog: decisions,
   });
   assert.equal(await flaky.act(request(), { povLines: [] }), 'move 2');
-  assert.deepEqual(flaky.decisionStats(), { ...emptyStats, decisions: 1 });
+  assert.deepEqual(flaky.decisionStats(), oneMoveStats);
 
   const persistentProvider = new ScriptedProvider([
     new ApiError(503, 'overloaded'),
@@ -191,10 +213,70 @@ test('readable decisions, technical traces, and post-game reflections stay separ
   assert.equal(traces[1]!.kind, 'reflection_trace');
   assert.match(provider.calls[1]!.system, /reviewing one completed game/);
   assert.deepEqual(engine.decisionStats(), {
-    decisions: 1,
-    fallbacks: 0,
+    ...oneMoveStats,
     reflections: 1,
-    reflection_fallbacks: 0,
+  });
+});
+
+test('readable logs suppress unchanged notebooks and tendency counters remain post-hoc', async () => {
+  const protectRequest = request();
+  protectRequest.active![0]!.moves = [
+    { move: 'Protect', id: 'protect', pp: 10, maxpp: 10, target: 'self', disabled: false },
+    { move: 'Second', id: 'second', pp: 10, maxpp: 10, target: 'self', disabled: false },
+  ];
+  protectRequest.side!.pokemon![0]!.moves = ['protect', 'second'];
+  const logs: Record<string, unknown>[] = [];
+  const engine = new LLMEngine('p1', 'scripted', {
+    provider: new ScriptedProvider([
+      decision([0], 'Scout once.', 'Preserve the attacker.'),
+      decision([0], 'Accept the consecutive-use risk.', 'Preserve the attacker.'),
+    ]),
+    decisionLog: logs,
+  });
+  engine.beginGame({ gameId: 'game-1', gameNumber: 1, seriesId: 'series-1' });
+  await engine.act(protectRequest, { povLines: ['|turn|1'] });
+  await engine.act(protectRequest, { povLines: ['|turn|2'] });
+
+  assert.equal(logs[0]!.notebook, 'Preserve the attacker.');
+  assert.ok(!('notebook' in logs[1]!));
+  assert.deepEqual(engine.decisionStats(), {
+    ...emptyStats,
+    decisions: 2,
+    move_selections: 2,
+    protect_selections: 2,
+    consecutive_protect_selections: 1,
+    repeated_joint_actions: 1,
+  });
+});
+
+test('team-preview adaptation counters compare public bring and lead choices', async () => {
+  const preview = request();
+  preview.teamPreview = true;
+  preview.maxChosenTeamSize = 4;
+  preview.side!.pokemon = Array.from({ length: 6 }, (_, index) => ({
+    ident: `p1: Mon${index + 1}`,
+    details: `Species${index + 1}, L50`,
+    condition: '100/100',
+    active: false,
+  }));
+  delete preview.active;
+  const engine = new LLMEngine('p1', 'scripted', {
+    provider: new ScriptedProvider([
+      decision([0, 1, 2, 3]),
+      decision([1, 2, 3, 4]),
+    ]),
+    decisionLog: [],
+  });
+  engine.beginGame({ gameId: 'game-1', gameNumber: 1, seriesId: 'series-1' });
+  await engine.act(preview, { povLines: [] });
+  engine.beginGame({ gameId: 'game-2', gameNumber: 2, seriesId: 'series-1' });
+  await engine.act(preview, { povLines: [] });
+  assert.deepEqual(engine.decisionStats(), {
+    ...emptyStats,
+    decisions: 2,
+    team_previews: 2,
+    bring_changes: 1,
+    lead_changes: 1,
   });
 });
 

@@ -119,13 +119,16 @@ clock bank is exhausted. The benchmark does not override its result.
 
 `runs/` contains series logs, decision timelines, technical traces, and run
 configuration. Each `pN-decisions.jsonl` is a compact human-readable timeline of
-selected labels, action, short rationale, notebook snapshot, fallbacks, and game
-reflections. The corresponding `pN-trace.jsonl` retains prompts, complete menus,
+selected labels, action, short rationale, notebook updates, fallbacks, and game
+reflections. Unchanged notebooks are omitted instead of repeating the same text.
+The corresponding `pN-trace.jsonl` retains prompts, complete menus,
 raw responses, usage, and every lookup's arguments and returned Showdown data for
 auditing without duplicating that noise in the decision timeline.
 `records/results.jsonl` contains one rated row per completed BO3, with its games
-nested inside. Both directories are local and gitignored.
-
+nested inside. Its per-player decision statistics also record post-hoc tendency
+signals such as lead/bring adaptation, Protect chains, repeated actions, switches,
+ally targeting, spread moves, Mega choices, and mechanics lookups. These counters
+do not alter model prompts. Both directories are local and gitignored.
 Captured Showdown requests used by parser tests live under
 `tests/data/showdown_requests/`. They are protocol samples, not preferred plays or
 runtime inputs.

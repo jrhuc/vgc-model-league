@@ -10,8 +10,8 @@ test('reference reads exact data from the configured Showdown checkout', () => {
   const rendered = reference
     .render({
       speciesSets: [
-        ['Gengar', 'Gengarite', 'Timid', 50],
-        ['Garchomp', 'Clear Amulet', 'Jolly', 50],
+        ['Gengar', 'Gengarite', 'Timid'],
+        ['Garchomp', 'Clear Amulet', 'Jolly'],
       ],
       moves: ['Shadow Ball', 'shadowball', 'Earthquake'],
       items: ['Gengarite', 'Clear Amulet'],
@@ -24,10 +24,10 @@ test('reference reads exact data from the configured Showdown checkout', () => {
     rendered,
     /Species Gengar: Ghost\/Poison; base stats HP 60, Atk 65, Def 60, SpA 130, SpD 75, Spe 110; abilities Cursed Body/,
   );
-  assert.match(rendered, /L50 Speed 126-178 with Timid alignment/);
+  assert.match(rendered, /Speed 126-178 with Timid alignment/);
   assert.match(
     rendered,
-    /Gengar-Mega \(Ghost\/Poison, base stats HP 60, Atk 65, Def 80, SpA 170, SpD 95, Spe 130, abilities Shadow Tag; L50 Speed 148-200 with Timid alignment\)/,
+    /Gengar-Mega \(Ghost\/Poison, base stats HP 60, Atk 65, Def 80, SpA 170, SpD 95, Spe 130, abilities Shadow Tag; Speed 148-200 with Timid alignment\)/,
   );
   assert.match(
     rendered,
@@ -51,10 +51,15 @@ test('Mega formes require the visible matching stone', () => {
 test('lookup tools return one entry and reject missing data', () => {
   const reference = new ShowdownReference('gen9championsvgc2026regmb');
   assert.match(reference.lookup('lookup_move', { name: 'Earthquake' }), /Earthquake/);
+  assert.match(reference.lookup('lookup_move', { name: 'Protect' }), /triples each time/);
   assert.match(reference.lookup('lookup_move', { name: 'NotAMove' }), /No move data/);
-  assert.equal(reference.lookup('lookup_species', { name: '', level: 50 }), 'Species name is required.');
+  assert.equal(reference.lookup('lookup_species', { name: '' }), 'Species name is required.');
   assert.equal(reference.lookup('unknown'), 'Unknown tool: unknown');
   assert.deepEqual(DEX_TOOLS.find((tool) => tool.name === 'lookup_species')!.parameters.required, ['name']);
+  assert.equal(
+    'level' in (DEX_TOOLS.find((tool) => tool.name === 'lookup_species')!.parameters.properties as object),
+    false,
+  );
 });
 
 test('missing Showdown checkout fails immediately', () => {

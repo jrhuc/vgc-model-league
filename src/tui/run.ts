@@ -277,7 +277,7 @@ export class RunScreen implements Screen {
 
   private sideLines(pid: Pid, battle: BattleState, row: SeriesRow | undefined): string[] {
     const side = battle.sides[pid];
-    const activeKeys = new Set(Object.values(side.active));
+    const activeSlots = new Map(Object.entries(side.active).map(([slot, key]) => [key, slot.toUpperCase()]));
     const conditions = side.conditions.size ? `  ${warn([...side.conditions].sort().join(', '))}` : '';
     const lines = [`  ${bold(`${pid} · ${row?.players[pid] ?? '?'}`)}${conditions}`];
     const speciesKey = (species: string) => species.toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -287,6 +287,11 @@ export class RunScreen implements Screen {
         .filter((mon) => mon.hp !== undefined || mon.moves.size || mon.item || mon.ability)
         .map((mon) => speciesKey(mon.species)),
     );
+    const identityKey = (ident: string) => `${pid}:${(afterColon(ident) || 'Pokémon').toLowerCase()}`;
+    for (const mon of all.filter((candidate) => candidate.hp !== undefined || candidate.moves.size)) {
+      const sheetMon = side.sheet.find((candidate) => identityKey(candidate.ident) === identityKey(mon.ident));
+      if (sheetMon) rich.add(speciesKey(sheetMon.species));
+    }
     const mons = all.filter((mon) => !(mon.preview && mon.hp === undefined && rich.has(speciesKey(mon.species))));
     if (!mons.length) {
       lines.push(`    ${dim('nothing revealed yet')}`);
@@ -294,16 +299,21 @@ export class RunScreen implements Screen {
     }
     const nameWidth = Math.max(...mons.map((mon) => displayWidth(mon.species)));
     for (const mon of mons) {
-      const key = `${pid}:${(afterColon(mon.ident) || 'Pokémon').toLowerCase()}`;
-      const marker = mon.fainted ? bad('✗') : activeKeys.has(key) ? good('▸') : dim('·');
+      const key = identityKey(mon.ident);
+      const activeSlot = activeSlots.get(key);
+      const marker = mon.fainted ? bad('✗ ') : activeSlot ? good(`${activeSlot}›`) : dim('· ');
       const attrs = [mon.fainted ? bad('fainted') : mon.hp ? `HP ${mon.hp}` : dim('unrevealed')];
       if (mon.status && !mon.fainted) attrs.push(warn(mon.status));
+      if (mon.lastMove) {
+        const target = mon.lastMove.target ? ` → ${afterColon(mon.lastMove.target)}` : '';
+        attrs.push(`${dim('last')} ${accent(mon.lastMove.name)}${dim(`${target} · T${mon.lastMove.turn}`)}`);
+      }
       const boosts = Object.entries(mon.boosts)
         .filter(([, value]) => value)
         .sort(([a], [b]) => a.localeCompare(b))
         .map(([stat, value]) => `${stat} ${value > 0 ? '+' : ''}${value}`);
       if (boosts.length) attrs.push(accent(boosts.join(', ')));
-      lines.push(`    ${marker} ${padDisplay(mon.species, nameWidth)}  ${attrs.join('  ')}`);
+      lines.push(`    ${marker}${padDisplay(mon.species, nameWidth)}  ${attrs.join('  ')}`);
     }
     return lines;
   }

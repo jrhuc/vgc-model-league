@@ -316,7 +316,9 @@ test('run screen game view renders live battle state', () => {
         '|switch|p1a: Miraidon|Miraidon, L50|207/207',
         '|switch|p2a: Calyrex-Ice|Calyrex-Ice, L50|252/252',
         '|turn|1',
+        '|move|p1a: Miraidon|Electro Drift|p2a: Calyrex-Ice',
         '|-damage|p2a: Calyrex-Ice|126/252',
+        '|move|p2a: Calyrex-Ice|Glacial Lance|p1a: Miraidon',
         '|turn|2',
       ],
     });
@@ -329,6 +331,9 @@ test('run screen game view renders live battle state', () => {
     assert.ok(view.some((line) => line.includes('model-a')));
     assert.ok(view.some((line) => line.includes('Miraidon') && line.includes('207/207')));
     assert.ok(view.some((line) => line.includes('Calyrex-Ice') && line.includes('126/252')));
+    assert.ok(view.some((line) => line.includes('A›Miraidon') && line.includes('last Electro Drift')));
+    assert.ok(view.some((line) => line.includes('Electro Drift') && line.includes('→ Calyrex-Ice · T1')));
+    assert.ok(view.some((line) => line.includes('Glacial Lance') && line.includes('→ Miraidon · T1')));
     screen.key({ name: 'escape' });
     assert.ok(
       screen

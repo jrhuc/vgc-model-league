@@ -10,9 +10,14 @@ interface MoveState {
   maxpp?: number;
 }
 
+export interface LastMove {
+  name: string;
+  target?: string;
+  turn: number;
+}
+
 export class MonState {
   species = 'Pokémon';
-  level: number | undefined;
   hp: string | undefined;
   hpPercent: number | undefined;
   status: string | undefined;
@@ -20,6 +25,7 @@ export class MonState {
   boosts: Record<string, number> = {};
   volatiles = new Set<string>();
   moves = new Map<string, MoveState>();
+  lastMove: LastMove | undefined;
   item: string | undefined;
   itemConsumed = false;
   ability: string | undefined;
@@ -27,6 +33,7 @@ export class MonState {
   mega = false;
   fainted = false;
   preview = false;
+  brought: boolean | undefined;
 
   constructor(public ident: string) {}
 
@@ -104,8 +111,15 @@ export class BattleState {
       const mon = this.mon(`${args[0]}: ${species}`);
       this.setDetails(mon, args[1]!);
       mon.preview = true;
-    } else if (kind === 'move' && args.length >= 2) this.mon(args[0]!).recordMove(args[1]!, 1);
-    else if (kind === 'faint' && args[0]) {
+    } else if (kind === 'move' && args.length >= 2) {
+      const mon = this.mon(args[0]!);
+      mon.recordMove(args[1]!, 1);
+      mon.lastMove = {
+        name: args[1]!,
+        ...(args[2] ? { target: args[2] } : {}),
+        turn: this.turn,
+      };
+    } else if (kind === 'faint' && args[0]) {
       const mon = this.mon(args[0]);
       mon.hp = '0 fnt';
       mon.hpPercent = 0;
@@ -193,7 +207,7 @@ export class BattleState {
       side.sheet.length ? side.sheet : [...side.mons.values()],
     );
     return {
-      speciesSets: mons.map((mon) => [mon.species, mon.item ?? null, mon.nature ?? null, mon.level ?? 50]),
+      speciesSets: mons.map((mon) => [mon.species, mon.item ?? null, mon.nature ?? null]),
       moves: mons.flatMap((mon) => [...mon.moves.values()].map((move) => move.name)),
       items: mons.flatMap((mon) => (mon.item ? [mon.item] : [])),
       abilities: mons.flatMap((mon) => (mon.ability ? [mon.ability] : [])),
@@ -205,16 +219,26 @@ export class BattleState {
     const side = this.sides[pid];
     const title = own ? 'Your side' : 'Opponent side';
     const lines = [`${title} conditions: ${side.conditions.size ? [...side.conditions].sort().join(', ') : 'none'}`];
-    let mons = [...side.mons.values()];
+    let mons = [...side.mons.values()].filter((mon) => !own || mon.brought !== false);
     const rich = new Set(
       mons
         .filter((mon) => mon.hp !== undefined || mon.moves.size || mon.item || mon.ability)
         .map((mon) => this.speciesKey(mon.species)),
     );
+    for (const mon of mons.filter((candidate) => candidate.hp !== undefined || candidate.moves.size)) {
+      const sheetMon = side.sheet.find((candidate) => this.monKey(candidate.ident) === this.monKey(mon.ident));
+      if (sheetMon) rich.add(this.speciesKey(sheetMon.species));
+    }
     mons = mons.filter((mon) => !(mon.preview && mon.hp === undefined && rich.has(this.speciesKey(mon.species))));
     if (!own && side.showteam) {
-      const known = new Set(mons.map((mon) => this.speciesKey(mon.species)));
-      mons.push(...side.sheet.filter((mon) => !known.has(this.speciesKey(mon.species))));
+      const knownSpecies = new Set(mons.map((mon) => this.speciesKey(mon.species)));
+      const knownIdentities = new Set(mons.map((mon) => this.monKey(mon.ident)));
+      mons.push(
+        ...side.sheet.filter(
+          (mon) =>
+            !knownSpecies.has(this.speciesKey(mon.species)) && !knownIdentities.has(this.monKey(mon.ident)),
+        ),
+      );
     }
     for (const mon of mons) {
       if (
@@ -232,7 +256,6 @@ export class BattleState {
         key === this.monKey(mon.ident) ? [slot] : [],
       );
       if (activeSlots.length) attrs.push(`active slot ${activeSlots.join('/')}`);
-      if (mon.level !== undefined) attrs.push(`L${mon.level}`);
       attrs.push(`HP ${mon.hp ?? '?'}`);
       if (mon.status) attrs.push(mon.status);
       if (mon.fainted) attrs.push('fainted');
@@ -254,6 +277,10 @@ export class BattleState {
             })
             .join(', ')}`,
         );
+      if (mon.lastMove) {
+        const target = mon.lastMove.target ? ` into ${this.nickname(mon.lastMove.target)}` : '';
+        attrs.push(`last move ${mon.lastMove.name}${target} (turn ${mon.lastMove.turn})`);
+      }
       if (own && Object.keys(mon.stats).length)
         attrs.push(
           `stats ${Object.entries(mon.stats)
@@ -271,11 +298,20 @@ export class BattleState {
   }
 
   private updateOwnRequest(request: BattleRequest): void {
+    const requested = request.side?.pokemon ?? [];
+    if (!request.teamPreview && requested.length) {
+      const brought = new Set(
+        requested.map((pokemon) => this.monKey(text(pokemon.ident))).filter((key) => key !== `${this.pid}:pokémon`),
+      );
+      for (const [key, mon] of this.sides[this.pid].mons) mon.brought = brought.has(key);
+      if (request.active) this.sides[this.pid].active = {};
+    }
     let activeIndex = 0;
-    for (const pokemon of request.side?.pokemon ?? []) {
+    for (const pokemon of requested) {
       const ident = text(pokemon.ident);
       if (!ident) continue;
       const mon = this.mon(ident);
+      if (!request.teamPreview) mon.brought = true;
       this.setDetails(mon, text(pokemon.details));
       const condition = text(pokemon.condition);
       this.setHp(mon, condition);
@@ -291,7 +327,9 @@ export class BattleState {
       );
       for (const move of asStrings(pokemon.moves)) if (move) mon.recordMove(move);
       if (!pokemon.active) continue;
-      const active = request.active?.[activeIndex++];
+      const slot = activeIndex++;
+      this.sides[this.pid].active[String.fromCharCode('a'.charCodeAt(0) + slot)] = this.monKey(ident);
+      const active = request.active?.[slot];
       if (!active) continue;
       for (const move of asRecords(active.moves)) {
         const name = text(move.move) || text(move.id);
@@ -316,17 +354,19 @@ export class BattleState {
 
   private setDetails(mon: MonState, details: string): void {
     if (!details) return;
-    const [species, ...fields] = details.split(',').map((value) => value.trim());
+    const [species] = details.split(',').map((value) => value.trim());
     if (species) mon.species = species;
-    for (const value of fields) if (/^L\d+$/.test(value)) mon.level = Number(value.slice(1));
   }
 
   private setHp(mon: MonState, hp: string): void {
     if (!hp) return;
-    mon.hp = hp;
-    const [first = '', status] = hp.split(' ');
-    if (first.includes('/')) {
-      const [current, maximum] = first.split('/').map(Number);
+    const [rawFirst = '', status] = hp.trim().split(/\s+/);
+    const match = /^(\d+)\/(\d+)[a-z]*$/i.exec(rawFirst);
+    const first = match ? `${match[1]}/${match[2]}` : rawFirst;
+    mon.hp = status ? `${first} ${status}` : first;
+    if (match) {
+      const current = Number(match[1]);
+      const maximum = Number(match[2]);
       if (maximum) mon.hpPercent = (100 * current!) / maximum;
     } else if (first === '0') mon.hpPercent = 0;
     mon.fainted = status === 'fnt' || mon.hpPercent === 0;
@@ -347,7 +387,6 @@ export class BattleState {
         mon.ability = fields[3] || undefined;
         for (const move of fields[4]?.split(',') ?? []) if (move) mon.recordMove(move);
         mon.nature = fields[5] || undefined;
-        if (fields[10] && /^\d+$/.test(fields[10])) mon.level = Number(fields[10]);
         return mon;
       });
     const side = this.sides[pidValue];
@@ -371,7 +410,6 @@ export class BattleState {
     mon.item ||= sheet.item;
     mon.ability ||= sheet.ability;
     mon.nature ||= sheet.nature;
-    mon.level ||= sheet.level;
     for (const move of sheet.moves.values()) mon.recordMove(move.name);
   }
 

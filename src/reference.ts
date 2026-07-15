@@ -21,12 +21,11 @@ function tool(
 export const DEX_TOOLS: ToolDefinition[] = [
   tool(
     'lookup_species',
-    'Look up a species: typing, abilities, base stats, forme, Mega Stone outcomes, and optional level/nature Speed range.',
+    'Look up a species: typing, abilities, base stats, forme, Mega Stone outcomes, and optional nature-based Speed range.',
     {
       name: { type: 'string' },
       item: { type: ['string', 'null'] },
       nature: { type: ['string', 'null'] },
-      level: { type: ['integer', 'null'] },
     },
     ['name'],
   ),
@@ -45,7 +44,7 @@ export const DEX_TOOLS: ToolDefinition[] = [
   ]),
 ];
 
-type SpeciesSet = [name: string, item?: string | null, nature?: string | null, level?: number | null];
+type SpeciesSet = [name: string, item?: string | null, nature?: string | null];
 
 export interface ReferenceQuery {
   speciesItems?: Array<[string, string | null]>;
@@ -77,10 +76,10 @@ function baseStats(stats: Dex.StatsTable): string {
   return `base stats HP ${stats.hp}, Atk ${stats.atk}, Def ${stats.def}, SpA ${stats.spa}, SpD ${stats.spd}, Spe ${stats.spe}`;
 }
 
-function speedRange(base: number, level: number, nature?: { plus?: string; minus?: string }): [number, number] {
+function speedRange(base: number, nature?: { plus?: string; minus?: string }): [number, number] {
   const modifier = nature?.plus === 'spe' ? 1.1 : nature?.minus === 'spe' ? 0.9 : nature ? 1 : undefined;
   const stat = (iv: number, ev: number, multiplier: number) =>
-    Math.floor((Math.floor(((2 * base + iv + Math.floor(ev / 4)) * level) / 100) + 5) * multiplier);
+    Math.floor((Math.floor(((2 * base + iv + Math.floor(ev / 4)) * 50) / 100) + 5) * multiplier);
   return modifier === undefined
     ? [stat(0, 0, 0.9), stat(31, 252, 1.1)]
     : [stat(0, 0, modifier), stat(31, 252, modifier)];
@@ -141,14 +140,13 @@ export class ShowdownReference {
         ...(abilityNames.length ? [`abilities ${abilityNames.join('/')}`] : []),
       ];
       if (species.forme) details.push(`forme ${species.forme}`);
-      for (const [, , natureName, level] of sets) {
-        if (!level) continue;
+      for (const [, , natureName] of sets) {
         const nature = natureName ? this.dex.natures.get(natureName) : undefined;
         const knownNature = nature?.exists ? nature : undefined;
-        const [low, high] = speedRange(species.baseStats.spe, level, knownNature);
+        const [low, high] = speedRange(species.baseStats.spe, knownNature);
         const detail = knownNature
-          ? `L${level} Speed ${low}-${high} with ${knownNature.name} alignment (full legal IV/EV range)`
-          : `L${level} Speed ${low}-${high} (full legal IV/EV/nature range)`;
+          ? `Speed ${low}-${high} with ${knownNature.name} alignment (full legal IV/EV range)`
+          : `Speed ${low}-${high} (full legal IV/EV/nature range)`;
         if (!details.includes(detail)) details.push(detail);
       }
       for (const itemName of uniqueNames(sets.map((set) => set[1]))) {
@@ -159,12 +157,12 @@ export class ShowdownReference {
           if (!mega.exists || !/^Mega(?:-|$)/.test(mega.forme)) continue;
           const target = typeof item.megaStone === 'string' ? item.megaStone : item.megaStone[species.name];
           if (id(target ?? '') !== id(mega.name)) continue;
-          const ranges = sets.flatMap(([, visibleItem, natureName, level]) => {
-            if (id(visibleItem ?? '') !== id(itemName) || !level) return [];
+          const ranges = sets.flatMap(([, visibleItem, natureName]) => {
+            if (id(visibleItem ?? '') !== id(itemName)) return [];
             const nature = natureName ? this.dex.natures.get(natureName) : undefined;
             const knownNature = nature?.exists ? nature : undefined;
-            const [low, high] = speedRange(mega.baseStats.spe, level, knownNature);
-            return [`L${level} Speed ${low}-${high}${knownNature ? ` with ${knownNature.name} alignment` : ''}`];
+            const [low, high] = speedRange(mega.baseStats.spe, knownNature);
+            return [`Speed ${low}-${high}${knownNature ? ` with ${knownNature.name} alignment` : ''}`];
           });
           const megaAbilities = uniqueNames(Object.values(mega.abilities));
           for (const ability of megaAbilities)
@@ -188,7 +186,9 @@ export class ShowdownReference {
         `priority ${move.priority >= 0 ? '+' : ''}${move.priority}`,
         `target ${move.target}`,
       ];
-      const description = cleanDescription(move.shortDesc || move.desc);
+      // Prefer Showdown's complete mechanics text. Some short descriptions omit
+      // strategically important clauses such as consecutive-use failure rates.
+      const description = cleanDescription(move.desc || move.shortDesc);
       if (description) details.push(description);
       lines.push(`- Move ${move.name}: ${details.join('; ')}`);
     }
@@ -216,7 +216,7 @@ export class ShowdownReference {
 
   lookup(name: string, args: Record<string, unknown> = {}): string {
     const value = typeof args.name === 'string' ? args.name : '';
-    if (name === 'lookup_species') return this.lookupSpecies(value, args.item, args.nature, args.level);
+    if (name === 'lookup_species') return this.lookupSpecies(value, args.item, args.nature);
     if (name === 'lookup_move') return this.lookupOne('Move', value, { moves: [value] });
     if (name === 'lookup_item') return this.lookupOne('Item', value, { items: [value] });
     if (name === 'lookup_ability') return this.lookupOne('Ability', value, { abilities: [value] });
@@ -224,17 +224,14 @@ export class ShowdownReference {
     return `Unknown tool: ${name}`;
   }
 
-  lookupSpecies(name: string, item?: unknown, nature?: unknown, level?: unknown): string {
+  lookupSpecies(name: string, item?: unknown, nature?: unknown): string {
     if (!name.trim()) return 'Species name is required.';
-    const resolvedLevel = level == null ? 50 : level;
-    if (typeof resolvedLevel !== 'number' || !Number.isInteger(resolvedLevel)) return 'Level must be an integer.';
     const lines = this.render({
       speciesSets: [
         [
           name,
           typeof item === 'string' && item.trim() ? item : null,
           typeof nature === 'string' && nature.trim() ? nature : null,
-          resolvedLevel,
         ],
       ],
     });

@@ -241,6 +241,22 @@ export class LLMEngine extends BaseEngine {
   private fallbacks = 0;
   private reflections = 0;
   private reflectionFallbacks = 0;
+  private moveSelections = 0;
+  private switchSelections = 0;
+  private protectSelections = 0;
+  private consecutiveProtectSelections = 0;
+  private allyTargetSelections = 0;
+  private spreadMoveSelections = 0;
+  private megaSelections = 0;
+  private toolLookups = 0;
+  private repeatedJointActions = 0;
+  private teamPreviews = 0;
+  private bringChanges = 0;
+  private leadChanges = 0;
+  private loggedNotebook = '';
+  private previousPreview: { brought: string; leads: string } | undefined;
+  private previousTurnAction: { gameId: string; turn: number; action: string } | undefined;
+  private previousProtect = new Map<string, { gameId: string; turn: number }>();
   private pending: PendingDecision | undefined;
   private generation = 0;
 
@@ -451,6 +467,7 @@ export class LLMEngine extends BaseEngine {
     this.remember(`Decision: ${action}. Rationale: ${rationale}`);
     const phase = request.teamPreview ? 'team_preview' : request.forceSwitch ? 'forced_switch' : 'turn';
     const selection = choices.map((choice, slot) => menus[slot]?.[choice]?.label ?? parts[slot] ?? 'pass');
+    if (!automatic) this.recordTendencies(phase, menus, choices, parts, action, pending.toolCalls ?? []);
     this.writeLog(this.options.decisionLog, {
       kind: 'decision',
       game_id: this.gameId,
@@ -462,7 +479,7 @@ export class LLMEngine extends BaseEngine {
       selection,
       action,
       rationale,
-      notebook: this.notebook,
+      ...this.notebookUpdate(),
       automatic,
       fallback: pending.fallback ?? false,
       error: pending.error ?? null,
@@ -496,7 +513,75 @@ export class LLMEngine extends BaseEngine {
       fallbacks: this.fallbacks,
       reflections: this.reflections,
       reflection_fallbacks: this.reflectionFallbacks,
+      move_selections: this.moveSelections,
+      switch_selections: this.switchSelections,
+      protect_selections: this.protectSelections,
+      consecutive_protect_selections: this.consecutiveProtectSelections,
+      ally_target_selections: this.allyTargetSelections,
+      spread_move_selections: this.spreadMoveSelections,
+      mega_selections: this.megaSelections,
+      tool_lookups: this.toolLookups,
+      repeated_joint_actions: this.repeatedJointActions,
+      team_previews: this.teamPreviews,
+      bring_changes: this.bringChanges,
+      lead_changes: this.leadChanges,
     };
+  }
+
+  private recordTendencies(
+    phase: string,
+    menus: SlotMenu[],
+    choices: number[],
+    parts: string[],
+    action: string,
+    toolCalls: ToolTrace[],
+  ): void {
+    this.toolLookups += toolCalls.length;
+    if (phase === 'team_preview') {
+      this.teamPreviews += 1;
+      const brought = [...parts].sort().join(',');
+      const leads = parts.slice(0, 2).sort().join(',');
+      if (this.previousPreview) {
+        if (this.previousPreview.brought !== brought) this.bringChanges += 1;
+        if (this.previousPreview.leads !== leads) this.leadChanges += 1;
+      }
+      this.previousPreview = { brought, leads };
+    }
+    for (const [slot, part] of parts.entries()) {
+      const item = menus[slot]?.[choices[slot]!];
+      if (item?.kind === 'move') this.moveSelections += 1;
+      if (item?.kind === 'switch') this.switchSelections += 1;
+      if (/ -[12](?:\s|$)/.test(part)) this.allyTargetSelections += 1;
+      if (item?.label.includes('(spread)')) this.spreadMoveSelections += 1;
+      if (part.endsWith(' mega')) this.megaSelections += 1;
+
+      if (phase !== 'turn') continue;
+      const activeKey = this.state.sides[this.pid].active[String.fromCharCode('a'.charCodeAt(0) + slot)];
+      if (!activeKey) continue;
+      const protect = item?.kind === 'move' && /^Protect(?:\b|\s)/i.test(item.label);
+      const previous = this.previousProtect.get(activeKey);
+      if (protect) {
+        this.protectSelections += 1;
+        if (previous?.gameId === this.gameId && previous.turn === this.state.turn - 1)
+          this.consecutiveProtectSelections += 1;
+        this.previousProtect.set(activeKey, { gameId: this.gameId, turn: this.state.turn });
+      } else this.previousProtect.delete(activeKey);
+    }
+    if (phase === 'turn') {
+      if (
+        this.previousTurnAction?.gameId === this.gameId &&
+        this.previousTurnAction.turn === this.state.turn - 1 &&
+        this.previousTurnAction.action === action
+      )
+        this.repeatedJointActions += 1;
+      this.previousTurnAction = { gameId: this.gameId, turn: this.state.turn, action };
+    } else this.previousTurnAction = undefined;
+  }
+
+  private notebookUpdate(): JsonObject {
+    if (this.notebook === this.loggedNotebook) return {};
+    this.loggedNotebook = this.notebook;
+    return { notebook: this.notebook };
   }
 
   protected override menuNames(request: BattleRequest): TargetNames | undefined {
@@ -618,7 +703,7 @@ export class LLMEngine extends BaseEngine {
       result,
       summary: review.summary,
       adjustment: review.adjustment,
-      notebook: this.notebook,
+      ...this.notebookUpdate(),
       fallback,
       error: error ?? null,
     });
@@ -689,7 +774,7 @@ function summarizeBattleEvents(lines: string[]): string[] {
     const [, kind = '', ...args] = line.split('|');
     if (kind === 'turn') summary.push(`Turn ${args[0]} begins.`);
     else if ((kind === 'switch' || kind === 'drag' || kind === 'replace') && args.length >= 3)
-      summary.push(`${ident(args[0])} entered as ${args[1]} at ${args[2]}.`);
+      summary.push(`${ident(args[0])} entered as ${args[1]!.split(',', 1)[0]} at ${args[2]}.`);
     else if (kind === 'move' && args.length >= 2)
       summary.push(`${ident(args[0])} used ${args[1]}${args[2] ? ` into ${ident(args[2])}` : ''}.`);
     else if ((kind === '-damage' || kind === '-heal') && args.length >= 2)
