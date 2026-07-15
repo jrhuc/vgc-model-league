@@ -27,10 +27,16 @@ its types mapped through `tsconfig.json`)
 ## Run
 
 Running `npm run vgcbench` with no command in a terminal opens an interactive
-TUI for composing runs: model selection (curated list, recently used specs, and
-free-form spec entry), pool/reasoning/series/concurrency/seed options, API-key
-presence checks, a live series dashboard while the benchmark runs, and a
-standings browser. Batch commands:
+Stadium Lab workflow. Choose a provider, connect its API key, fetch the live model
+catalog, add at least two contenders, design the shared competitive conditions,
+and review the round-robin size before spending. The review shows mirrored-series
+coverage, the expected best-of-three game range, connection state, and the exact
+batch command. The TUI also includes a live series board and standings browser.
+
+Keys pasted into the TUI are kept only in the current process and are never
+written to disk. Existing provider environment variables are detected
+automatically. Providers without a reliable catalog, private deployments, and
+OpenAI-compatible endpoints retain exact manual model-spec entry. Batch commands:
 
 ```sh
 npm run vgcbench -- selfcheck

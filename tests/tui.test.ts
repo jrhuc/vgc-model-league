@@ -5,11 +5,13 @@ import path from 'node:path';
 import test from 'node:test';
 
 import type { ArenaEvent } from '../src/arena.js';
-import { runBenchmark } from '../src/arena.js';
+import { makePlans, runBenchmark } from '../src/arena.js';
+import { PROVIDER_OPTIONS } from '../src/model-catalog.js';
 import type { App } from '../src/tui/app.js';
-import { allowedReasoning, commandPreview, SetupScreen } from '../src/tui/setup.js';
+import { CredentialScreen } from '../src/tui/models.js';
+import { allowedReasoning, commandPreview, runSize, SetupScreen } from '../src/tui/setup.js';
 import { decodeKeys, displayWidth, padDisplay, stripSgr, truncateDisplay } from '../src/tui/term.js';
-import { tableLines } from '../src/tui/widgets.js';
+import { pinFooter, tableLines } from '../src/tui/widgets.js';
 
 function fakeApp(): App & { screens: unknown[]; quits: number } {
   const fake = {
@@ -65,6 +67,13 @@ test('tableLines pads and aligns by display width', () => {
   assert.equal(stripSgr(lines[3]!), '  b      123');
 });
 
+test('pinFooter keeps navigation at the bottom of short screens', () => {
+  const lines = pinFooter(['body'], ['', 'footer'], 5);
+  assert.equal(lines.length, 5);
+  assert.equal(lines[0], 'body');
+  assert.equal(lines[4], 'footer');
+});
+
 test('allowedReasoning intersects levels across selected specs', () => {
   assert.deepEqual(allowedReasoning(['anthropic:claude-sonnet-5', 'openai:gpt-5.2', 'random']), [
     'low',
@@ -91,40 +100,161 @@ test('commandPreview mirrors the batch CLI invocation', () => {
   );
 });
 
-test('setup screen toggles models and blocks underspecified runs', () => {
+test('setup workflow builds and reviews a mirrored round robin', () => {
   const app = fakeApp();
   const screen = new SetupScreen(app);
-  const lines = screen.render(100);
-  assert.ok(lines.some((line) => stripSgr(line).includes('vgcbench')));
-  assert.ok(lines.some((line) => stripSgr(line).includes('anthropic:claude-sonnet-5')));
+  assert.ok(screen.render(100, 30).some((line) => stripSgr(line).includes('01 CONTENDERS')));
 
-  screen.key({ name: 'space' });
-  assert.ok(screen.render(100).some((line) => stripSgr(line).includes('◉ anthropic:claude-sonnet-5')));
-
-  for (const _ of Array(50)) screen.key({ name: 'down' });
-  screen.key({ name: 'up' });
+  screen.key({ name: 'end' });
   screen.key({ name: 'enter' });
-  assert.ok(screen.render(100).some((line) => stripSgr(line).includes('select at least two models')));
-  assert.equal(app.screens.length, 0);
+  assert.ok(screen.render(100, 30).some((line) => stripSgr(line).includes('Add at least two contenders')));
 
-  screen.key({ name: 'char', char: 's' });
+  for (const spec of ['random', 'compat:http://localhost:11434/v1:qwen']) {
+    screen.key({ name: 'char', char: 'm' });
+    for (const char of spec) screen.key(char === ' ' ? { name: 'space' } : { name: 'char', char });
+    screen.key({ name: 'enter' });
+  }
+  assert.ok(screen.render(100, 30).some((line) => stripSgr(line).includes('compat / qwen')));
+
+  screen.key({ name: 'end' });
+  screen.key({ name: 'enter' });
+  assert.ok(screen.render(100, 30).some((line) => stripSgr(line).includes('02 MATCH DESIGN')));
+  screen.key({ name: 'right' });
+  screen.key({ name: 'down' });
+  screen.key({ name: 'right' });
+  screen.key({ name: 'down' });
+  screen.key({ name: 'right' });
+  screen.key({ name: 'right' });
+  screen.key({ name: 'down' });
+  screen.key({ name: 'right' });
+  screen.key({ name: 'down' });
+  screen.key({ name: 'char', char: '7' });
+  screen.key({ name: 'down' });
+  screen.key({ name: 'enter' });
+  const review = screen.render(100, 30).map(stripSgr);
+  assert.ok(review.some((line) => line.includes('03 REVIEW')));
+  assert.ok(review.some((line) => line.includes('BATCH COMMAND')));
+  assert.ok(review.some((line) => line.includes('1 pairings  4 series  8–12 games')));
+  assert.ok(
+    review
+      .join(' ')
+      .replace(/\s+/g, ' ')
+      .includes('--reasoning off --series-per-pair 4 --pool test --concurrency 3 --seed 7'),
+  );
+
+  screen.key({ name: 'down' });
+  assert.ok(screen.render(100, 30).some((line) => stripSgr(line).includes('incur provider cost')));
+  screen.key({ name: 'enter' });
   assert.equal(app.screens.length, 1);
-  screen.key({ name: 'ctrl-c' });
-  assert.equal(app.quits, 1);
+  assert.deepEqual(runSize(4, 4), { pairings: 6, series: 24, minimumGames: 48, maximumGames: 72 });
 });
 
-test('setup screen custom model entry validates specs', () => {
+test('even series counts reuse team matchups while swapping model sides', () => {
+  const plans = makePlans(
+    ['model-a', 'model-b'],
+    2,
+    [
+      { id: 'team-a', packed: 'a' },
+      { id: 'team-b', packed: 'b' },
+      { id: 'team-c', packed: 'c' },
+    ],
+    () => 0,
+  );
+  assert.equal(plans.length, 2);
+  assert.deepEqual(
+    plans.map((plan) => plan.players),
+    [
+      { p1: 'model-a', p2: 'model-b' },
+      { p1: 'model-b', p2: 'model-a' },
+    ],
+  );
+  assert.deepEqual(
+    plans.map((plan) => ({ p1: plan.teams.p1.id, p2: plan.teams.p2.id })),
+    [
+      { p1: 'team-a', p2: 'team-b' },
+      { p1: 'team-a', p2: 'team-b' },
+    ],
+  );
+});
+
+test('setup blocks required provider credentials before start', () => {
   const app = fakeApp();
   const screen = new SetupScreen(app);
-  screen.key({ name: 'char', char: 'a' });
+  const previous = process.env.OPENAI_API_KEY;
+  try {
+    delete process.env.OPENAI_API_KEY;
+    for (const spec of ['random', 'openai:gpt-5.2']) {
+      screen.key({ name: 'char', char: 'm' });
+      for (const char of spec) screen.key({ name: 'char', char });
+      screen.key({ name: 'enter' });
+    }
+    screen.key({ name: 'end' });
+    screen.key({ name: 'enter' });
+    screen.key({ name: 'end' });
+    screen.key({ name: 'enter' });
+    screen.key({ name: 'down' });
+    screen.key({ name: 'enter' });
+    assert.equal(app.screens.length, 0);
+    assert.ok(screen.render(100, 30).some((line) => stripSgr(line).includes('Connect openai')));
+
+    process.env.OPENAI_API_KEY = 'session-key';
+    screen.key({ name: 'enter' });
+    assert.equal(app.screens.length, 1);
+  } finally {
+    if (previous === undefined) delete process.env.OPENAI_API_KEY;
+    else process.env.OPENAI_API_KEY = previous;
+  }
+});
+
+test('manual model entry explains invalid specs and accepts provider IDs', () => {
+  const app = fakeApp();
+  const screen = new SetupScreen(app);
+  screen.key({ name: 'char', char: 'm' });
   for (const char of 'bogus') screen.key({ name: 'char', char });
   screen.key({ name: 'enter' });
-  assert.ok(screen.render(100).some((line) => stripSgr(line).includes('Usage:')));
+  assert.ok(screen.render(100, 30).some((line) => stripSgr(line).includes('Usage:')));
   screen.key({ name: 'escape' });
-  screen.key({ name: 'char', char: 'a' });
+  screen.key({ name: 'char', char: 'm' });
   for (const char of 'xai:grok-4.3') screen.key({ name: 'char', char });
   screen.key({ name: 'enter' });
-  assert.ok(screen.render(100).some((line) => stripSgr(line).includes('◉ xai:grok-4.3')));
+  assert.ok(screen.render(100, 30).some((line) => stripSgr(line).includes('xai / grok-4.3')));
+});
+
+test('review warns when a contender uses a mutable latest alias', () => {
+  const app = fakeApp();
+  const screen = new SetupScreen(app);
+  for (const spec of ['random', 'openrouter:vendor/model-latest']) {
+    screen.key({ name: 'char', char: 'm' });
+    for (const char of spec) screen.key({ name: 'char', char });
+    screen.key({ name: 'enter' });
+  }
+  screen.key({ name: 'end' });
+  screen.key({ name: 'enter' });
+  screen.key({ name: 'end' });
+  screen.key({ name: 'enter' });
+  assert.ok(screen.render(100, 30).some((line) => stripSgr(line).includes('prefer a snapshot ID')));
+});
+
+test('credential entry keeps provider keys in the current process', () => {
+  const app = fakeApp();
+  const back = new SetupScreen(app);
+  const provider = PROVIDER_OPTIONS.find((option) => option.id === 'openai')!;
+  const previous = process.env.OPENAI_API_KEY;
+  let connected = 0;
+  try {
+    delete process.env.OPENAI_API_KEY;
+    const screen = new CredentialScreen(app, back, provider, () => {
+      connected += 1;
+    });
+    for (const char of 'session-q-key') screen.key({ name: 'char', char });
+    screen.key({ name: 'enter' });
+    assert.equal(process.env.OPENAI_API_KEY, 'session-q-key');
+    assert.equal(connected, 1);
+    assert.ok(screen.render(100, 24).some((line) => stripSgr(line).includes('never written')));
+  } finally {
+    if (previous === undefined) delete process.env.OPENAI_API_KEY;
+    else process.env.OPENAI_API_KEY = previous;
+  }
 });
 
 test('runBenchmark emits ordered arena events', async () => {

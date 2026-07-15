@@ -25,6 +25,11 @@ export function tableLines(columns: TableColumn[], rows: string[][], indent = ' 
   return [header, divider, ...rows.map((row) => indent + row.map((text, index) => cell(text, index)).join('  '))];
 }
 
+export function pinFooter(lines: string[], footer: string[], height: number): string[] {
+  const body = lines.slice(0, Math.max(0, height - footer.length));
+  return [...body, ...Array.from({ length: Math.max(0, height - footer.length - body.length) }, () => ''), ...footer];
+}
+
 export function formatElapsed(milliseconds: number): string {
   const total = Math.floor(milliseconds / 1000);
   const minutes = Math.floor(total / 60);

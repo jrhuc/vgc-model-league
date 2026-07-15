@@ -110,10 +110,10 @@ function sgr(code: string): (text: string) => string {
 export const bold = sgr('1');
 export const dim = sgr('2');
 export const inverse = sgr('7');
-export const accent = sgr('38;5;75');
-export const accentBold = sgr('1;38;5;75');
-export const good = sgr('38;5;78');
-export const bad = sgr('38;5;203');
+export const accent = sgr('38;5;81');
+export const accentBold = sgr('1;38;5;81');
+export const good = sgr('38;5;114');
+export const bad = sgr('38;5;168');
 export const warn = sgr('38;5;179');
 
 export const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];

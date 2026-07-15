@@ -4,7 +4,7 @@ import { h2h, loadRows, standings } from '../records.js';
 import type { App, Screen } from './app.js';
 import type { Key } from './term.js';
 import { accent, accentBold, bold, dim } from './term.js';
-import { rule, tableLines } from './widgets.js';
+import { pinFooter, rule, tableLines } from './widgets.js';
 
 export class StandingsScreen implements Screen {
   private rows: SeriesRecord[] = [];
@@ -45,18 +45,20 @@ export class StandingsScreen implements Screen {
     this.app.paint();
   }
 
-  render(width: number): string[] {
+  render(width: number, height = 24): string[] {
     const rows = this.filtered();
     const pool = this.pools[this.poolIndex] ?? 'all pools';
-    const lines: string[] = [];
-    lines.push('');
-    lines.push(
-      `  ${accentBold('vgcbench')}  ${dim('standings')}  ${accent('‹')} ${bold(pool)} ${accent('›')}  ${dim(`${rows.length} series`)}`,
-    );
-    lines.push('');
+    const lines: string[] = [
+      '',
+      `  ${accentBold('VGCBENCH')}  ${bold('LEAGUE TABLE')}  ${accent('‹')} ${bold(pool)} ${accent('›')}  ${dim(`${rows.length} series`)}`,
+      '',
+    ];
     if (!rows.length) {
-      lines.push(`  ${dim('no recorded results yet — run a benchmark first')}`);
+      lines.push(rule('STANDINGS', width));
+      lines.push(`  ${dim('No recorded results in this pool. Return to setup and run a benchmark first.')}`);
     } else {
+      const ranked = standings(rows);
+      const rankSlots = Math.max(2, Math.min(8, height - 12));
       lines.push(rule('STANDINGS', width));
       lines.push(
         ...tableLines(
@@ -69,20 +71,23 @@ export class StandingsScreen implements Screen {
             { title: 'win rate', align: 'right' },
             { title: 'elo', align: 'right' },
           ],
-          standings(rows).map((item, index) => [
-            index === 0 ? accentBold(item.spec) : item.spec,
-            String(item.series),
-            String(item.w),
-            String(item.l),
-            String(item.t),
-            `${(100 * item.winrate).toFixed(1)}%`,
-            index === 0 ? accentBold(item.elo.toFixed(1)) : item.elo.toFixed(1),
-          ]),
+          ranked
+            .slice(0, rankSlots)
+            .map((item, index) => [
+              index === 0 ? accentBold(item.spec) : item.spec,
+              String(item.series),
+              String(item.w),
+              String(item.l),
+              String(item.t),
+              `${(100 * item.winrate).toFixed(1)}%`,
+              index === 0 ? accentBold(item.elo.toFixed(1)) : item.elo.toFixed(1),
+            ]),
         ),
       );
+      if (ranked.length > rankSlots) lines.push(`  ${dim(`+ ${ranked.length - rankSlots} models in the HTML report`)}`);
       const matrix = h2h(rows);
       const specs = Object.keys(matrix);
-      if (specs.length >= 2) {
+      if (width >= 100 && specs.length >= 2 && specs.length <= 4 && lines.length + specs.length + 6 < height) {
         lines.push('');
         lines.push(rule('HEAD TO HEAD (W-L-T)', width));
         lines.push(
@@ -96,8 +101,7 @@ export class StandingsScreen implements Screen {
         );
       }
     }
-    lines.push('');
-    lines.push(`  ${dim('←→ pool filter · r reload · esc back · q quit')}`);
-    return lines;
+    const footer = ['', `  ${dim('←→ pool · r reload · esc setup · q quit')}`];
+    return pinFooter(lines, footer, height);
   }
 }

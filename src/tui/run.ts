@@ -9,7 +9,7 @@ import type { RunConfig } from './setup.js';
 import { StandingsScreen } from './standings.js';
 import type { Key } from './term.js';
 import { accent, accentBold, bad, bold, dim, good, SPINNER_FRAMES, warn } from './term.js';
-import { formatElapsed, rule, tableLines } from './widgets.js';
+import { formatElapsed, pinFooter, rule, tableLines } from './widgets.js';
 
 interface SeriesRow {
   players: Record<Pid, string>;
@@ -51,7 +51,8 @@ export class RunScreen implements Screen {
   }
 
   leave(): void {
-    if (this.timer) clearInterval(this.timer);
+    clearInterval(this.timer);
+    this.timer = undefined;
   }
 
   private async launch(): Promise<void> {
@@ -128,45 +129,60 @@ export class RunScreen implements Screen {
     else if (key.name === 'char' && key.char === 'q') this.app.quit();
   }
 
-  render(width: number): string[] {
+  render(width: number, height = 24): string[] {
     const lines: string[] = [];
     const finished = this.rows.filter((row) => row.status === 'done').length;
     const elapsed = formatElapsed((this.endTime ?? Date.now()) - this.startTime);
+    const total = this.rows.length;
+    const barWidth = Math.max(8, Math.min(28, width - 42));
+    const filled = total ? Math.round((finished / total) * barWidth) : 0;
+    const bar = `${good('█'.repeat(filled))}${dim('░'.repeat(barWidth - filled))}`;
     lines.push('');
     lines.push(
-      `  ${accentBold('vgcbench')}  ${dim(`run ${this.runId} · pool ${this.config.pool}${this.seed === undefined ? '' : ` · seed ${this.seed}`}`)}`,
+      `  ${accentBold('VGCBENCH')}  ${bold('STADIUM LIVE')}  ${dim(`${this.runId} · ${this.config.pool}${this.seed === undefined ? '' : ` · seed ${this.seed}`}`)}`,
     );
     lines.push('');
     const spinner = accent(SPINNER_FRAMES[this.spinnerIndex % SPINNER_FRAMES.length]!);
-    if (this.state === 'done')
-      lines.push(`  ${good('✓')} ${bold(`${finished}/${this.rows.length} series complete`)}  ${dim(elapsed)}`);
-    else if (this.state === 'failed') lines.push(`  ${bad('✗')} ${bold('run failed')}  ${dim(elapsed)}`);
-    else lines.push(`  ${spinner} ${bold(`${finished}/${this.rows.length || '?'} series complete`)}  ${dim(elapsed)}`);
+    const status =
+      this.state === 'done'
+        ? `${good('✓')} ${bold('run complete')}`
+        : this.state === 'failed'
+          ? `${bad('✗')} ${bold('run failed')}`
+          : `${spinner} ${bold('series in play')}`;
+    lines.push(`  ${status}  ${bar}  ${bold(`${finished}/${total || '?'}`)}  ${dim(elapsed)}`);
     lines.push('');
-    lines.push(rule('SERIES', width));
+    lines.push(rule('SERIES BOARD', width));
     if (this.rows.length) {
-      const body = this.rows.map((row, index) => [
-        dim(String(index + 1)),
-        `${row.players.p1} ${dim('vs')} ${row.players.p2}`,
-        this.result(row),
-      ]);
+      const notices = this.notices.slice(-2);
+      const reserved = 13 + notices.length * 2 + (this.error ? 2 : 0);
+      const rowSlots = Math.max(1, height - reserved);
+      const running = this.rows.findIndex((row) => row.status === 'running');
+      const anchor = running >= 0 ? running : Math.max(0, finished - 1);
+      const start = Math.max(0, Math.min(anchor - Math.floor(rowSlots / 2), this.rows.length - rowSlots));
+      const body = this.rows
+        .slice(start, start + rowSlots)
+        .map((row, index) => [
+          dim(String(start + index + 1)),
+          `${row.players.p1} ${accentBold('VS')} ${row.players.p2}`,
+          this.result(row),
+        ]);
       lines.push(...tableLines([{ title: '#', align: 'right' }, { title: 'matchup' }, { title: 'result' }], body));
+      if (body.length < this.rows.length)
+        lines.push(`  ${dim(`showing ${start + 1}–${start + body.length} of ${this.rows.length}`)}`);
     } else {
-      lines.push(`  ${dim('preparing plans…')}`);
+      lines.push(`  ${dim('preparing seeded series plans…')}`);
     }
-    if (this.error) {
-      lines.push('');
-      lines.push(`  ${bad(this.error)}`);
-    }
-    for (const notice of this.notices.slice(-3)) {
-      lines.push('');
-      lines.push(`  ${warn(notice)}`);
-    }
-    lines.push('');
-    if (this.state === 'done' || this.state === 'failed')
-      lines.push(`  ${dim('s standings · enter back to setup · q quit')}`);
-    else lines.push(`  ${dim('running… ctrl-c quits (completed series stay recorded)')}`);
-    return lines;
+    if (this.error) lines.push('', `  ${bad(this.error)}`);
+    for (const notice of this.notices.slice(-2)) lines.push('', `  ${warn(notice)}`);
+    const footer = [
+      '',
+      `  ${dim(
+        this.state === 'done' || this.state === 'failed'
+          ? 's standings · enter setup · q quit'
+          : 'running · ctrl-c leaves the TUI; completed series remain recorded',
+      )}`,
+    ];
+    return pinFooter(lines, footer, height);
   }
 
   private result(row: SeriesRow): string {

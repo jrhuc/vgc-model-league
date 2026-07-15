@@ -51,7 +51,9 @@ export function parseSpec(value: string): ProviderSpec {
   }
   if (value.startsWith('compat:')) {
     const rest = value.slice(7);
-    const separator = rest.lastIndexOf(':');
+    const schemeEnd = rest.indexOf('://') + 3;
+    const pathStart = rest.indexOf('/', schemeEnd);
+    const separator = pathStart >= 0 ? rest.indexOf(':', pathStart) : rest.lastIndexOf(':');
     const baseUrl = rest.slice(0, separator);
     const model = rest.slice(separator + 1);
     if (separator > 0 && baseUrl.includes('://') && model) return { provider: 'compat', model, baseUrl };

@@ -21,6 +21,11 @@ test('provider specs route aliases and custom endpoints', () => {
     baseUrl: 'https://example.test/v1',
     model: 'model',
   });
+  assert.deepEqual(parseSpec('compat:http://localhost:11434/v1:qwen2.5:7b'), {
+    provider: 'compat',
+    baseUrl: 'http://localhost:11434/v1',
+    model: 'qwen2.5:7b',
+  });
   assert.throws(() => parseSpec('human'), /Usage/);
 });
 
