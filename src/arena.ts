@@ -4,7 +4,7 @@ import path from 'node:path';
 
 import type { GameEnd, GameStart } from './engines.js';
 import { LLMEngine, RandomEngine } from './engines.js';
-import { defaultPsDir, REPO_ROOT } from './paths.js';
+import { defaultPsDir, REPO_ROOT, RUNS_DIR } from './paths.js';
 import type { ReasoningLevel } from './providers.js';
 import { makeProvider, parseSpec, validateReasoning } from './providers.js';
 import type { Rng } from './random.js';
@@ -25,6 +25,12 @@ interface SeriesPlan {
   engineSeeds: Record<Pid, number>;
 }
 
+export type ArenaEvent =
+  | { type: 'plans'; plans: Array<{ index: number; players: Record<Pid, string> }>; pool: string; seed: number }
+  | { type: 'series-start'; index: number }
+  | { type: 'game-end'; index: number; game: number; winner: string | null; turns: number; score: Record<Pid, number> }
+  | { type: 'series-end'; index: number; record: SeriesRecord };
+
 export interface BenchmarkOptions {
   seed?: number;
   concurrency?: number;
@@ -32,6 +38,14 @@ export interface BenchmarkOptions {
   psDir?: string;
   reasoning?: ReasoningLevel;
   pool?: string;
+  onEvent?: (event: ArenaEvent) => void;
+}
+
+export function makeRunDirectory(): string {
+  const stamp = new Date().toISOString().replaceAll('-', '').replaceAll(':', '').replace('Z', '000Z');
+  const directory = path.join(RUNS_DIR, `${stamp}-${randomUUID().slice(0, 8)}`);
+  fs.mkdirSync(directory, { recursive: true });
+  return directory;
 }
 
 export function makeEngine(
@@ -72,6 +86,12 @@ export async function runBenchmark(
   validatePool(pool, psDir);
   const seed = options.seed ?? randomBytes(6).readUIntBE(0, 6);
   const plans = makePlans(models, seriesPerPair, pool.teams, seededRng(seed));
+  options.onEvent?.({
+    type: 'plans',
+    plans: plans.map((plan) => ({ index: plan.index, players: plan.players })),
+    pool: pool.id,
+    seed,
+  });
   fs.writeFileSync(
     path.join(runDir, 'config.json'),
     `${JSON.stringify(
@@ -97,8 +117,10 @@ export async function runBenchmark(
       runSeed: seed,
       psDir,
       ...(options.reasoning === undefined ? {} : { reasoning: options.reasoning }),
+      ...(options.onEvent === undefined ? {} : { onEvent: options.onEvent }),
     });
     appendRow(recordsPath, row);
+    options.onEvent?.({ type: 'series-end', index: plan.index, record: row });
     return row;
   });
 }
@@ -152,8 +174,16 @@ export function makePlans(models: string[], seriesPerPair: number, teams: Team[]
 
 async function playSeries(
   plan: SeriesPlan,
-  context: { runDir: string; pool: TeamPool; runSeed: number; psDir: string; reasoning?: ReasoningLevel },
+  context: {
+    runDir: string;
+    pool: TeamPool;
+    runSeed: number;
+    psDir: string;
+    reasoning?: ReasoningLevel;
+    onEvent?: (event: ArenaEvent) => void;
+  },
 ): Promise<SeriesRecord> {
+  context.onEvent?.({ type: 'series-start', index: plan.index });
   const seriesId = randomUUID().replaceAll('-', '').slice(0, 12);
   const seriesDir = path.join(context.runDir, 'series', seriesId);
   fs.mkdirSync(seriesDir, { recursive: true });
@@ -218,6 +248,14 @@ async function playSeries(
       errors: outcome.errors,
       fallbacks: outcome.fallbacks,
       log: relative(logPath),
+    });
+    context.onEvent?.({
+      type: 'game-end',
+      index: plan.index,
+      game: gameNumber,
+      winner: winnerSide ? plan.players[winnerSide] : null,
+      turns: outcome.turns,
+      score: { ...score },
     });
     if (Math.max(...Object.values(score)) === 2) break;
   }

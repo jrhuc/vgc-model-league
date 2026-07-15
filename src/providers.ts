@@ -30,6 +30,15 @@ export interface ProviderSpec {
   baseUrl?: string;
 }
 
+export function envKeyName(spec: ProviderSpec): string | undefined {
+  if (spec.provider === 'random') return undefined;
+  if (spec.provider === 'anthropic') return 'ANTHROPIC_API_KEY';
+  if (spec.provider === 'openai') return 'OPENAI_API_KEY';
+  if (spec.provider === 'google') return 'GEMINI_API_KEY';
+  if (spec.provider === 'compat') return 'OPENAI_COMPAT_API_KEY';
+  return COMPAT_ENV_KEYS[spec.provider];
+}
+
 export function parseSpec(value: string): ProviderSpec {
   if (value === 'random') return { provider: 'random', model: 'random' };
   for (const provider of ['anthropic', 'openai', 'google']) {

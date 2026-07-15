@@ -1,11 +1,9 @@
 #!/usr/bin/env node
-import { randomUUID } from 'node:crypto';
-import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
-import { runBenchmark } from './arena.js';
-import { REPO_ROOT, RESULTS_PATH, RUNS_DIR } from './paths.js';
+import { makeRunDirectory, runBenchmark } from './arena.js';
+import { REPO_ROOT, RESULTS_PATH } from './paths.js';
 import type { ReasoningLevel } from './providers.js';
 import { REASONING_LEVELS } from './providers.js';
 import type { SeriesRecord } from './records.js';
@@ -15,6 +13,7 @@ import { writeReport } from './report.js';
 const HELP = `Usage: vgcbench <command>
 
 Commands:
+  (no command)                   open the interactive TUI (needs a terminal)
   selfcheck                      run one random-vs-random series through the simulator
   run --models <spec> <spec>...  benchmark models against each other
       [--series-per-pair <n>] [--pool <name>] [--seed <n>] [--concurrency <n>] [--reasoning <level>]
@@ -27,15 +26,12 @@ function positiveInteger(name: string, value: string): number {
   return parsed;
 }
 
-function runDirectory(): string {
-  const stamp = new Date().toISOString().replaceAll('-', '').replaceAll(':', '').replace('Z', '000Z');
-  const directory = path.join(RUNS_DIR, `${stamp}-${randomUUID().slice(0, 8)}`);
-  fs.mkdirSync(directory, { recursive: true });
-  return directory;
-}
-
 export async function main(argv = process.argv.slice(2)): Promise<number> {
   const [command, ...rest] = argv;
+  if (command === undefined && process.stdin.isTTY && process.stdout.isTTY) {
+    const { runTui } = await import('./tui/index.js');
+    return runTui();
+  }
   if (command === 'selfcheck') return selfcheck();
   if (command === 'run') {
     const { values, positionals } = parseArgs({
@@ -60,7 +56,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
     const rows = await runBenchmark(
       models,
       positiveInteger('series-per-pair', values['series-per-pair']),
-      runDirectory(),
+      makeRunDirectory(),
       {
         pool: values.pool,
         concurrency: positiveInteger('concurrency', values.concurrency),
@@ -92,7 +88,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
 }
 
 async function selfcheck(): Promise<number> {
-  const directory = runDirectory();
+  const directory = makeRunDirectory();
   try {
     const rows = await runBenchmark(['random', 'random'], 1, directory, {
       seed: 1,
