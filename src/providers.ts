@@ -1,0 +1,405 @@
+import { createAnthropic } from '@ai-sdk/anthropic';
+import { createDeepSeek } from '@ai-sdk/deepseek';
+import { createGoogleGenerativeAI } from '@ai-sdk/google';
+import { createOpenAI } from '@ai-sdk/openai';
+import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
+import { createXai } from '@ai-sdk/xai';
+import {
+  APICallError,
+  generateText,
+  type JSONSchema7,
+  jsonSchema,
+  type LanguageModel,
+  type ModelMessage,
+  type ToolSet,
+  tool,
+} from 'ai';
+
+import type { CompleteOptions, Completion, JsonObject, Provider, ProviderMessage } from './types.js';
+
+import { isRecord } from './value.js';
+
+export const REASONING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const;
+export type ReasoningLevel = (typeof REASONING_LEVELS)[number];
+
+export const USAGE =
+  'Usage: anthropic:<model>, openai:<model>, google:<model>, xai:<model>, deepseek:<model>, meta:<model>, kimi:<model>, zai:<model>, openrouter:<model>, cerebras:<model>, compat:<base_url>:<model>, or random';
+
+export const COMPAT_BASE_URLS: Record<string, string> = {
+  xai: 'https://api.x.ai/v1',
+  deepseek: 'https://api.deepseek.com',
+  meta: 'https://api.meta.ai/v1',
+  kimi: 'https://api.moonshot.ai/v1',
+  zai: 'https://api.z.ai/api/paas/v4',
+  openrouter: 'https://openrouter.ai/api/v1',
+  cerebras: 'https://api.cerebras.ai/v1',
+};
+
+const COMPAT_ENV_KEYS: Record<string, string> = Object.fromEntries(
+  Object.keys(COMPAT_BASE_URLS).map((provider) => [provider, `${provider.toUpperCase()}_API_KEY`]),
+);
+COMPAT_ENV_KEYS.meta = 'META_MODEL_API_KEY';
+COMPAT_ENV_KEYS.kimi = 'MOONSHOT_API_KEY';
+
+export interface ProviderSpec {
+  provider: string;
+  model: string;
+  baseUrl?: string;
+}
+
+export function envKeyName(spec: ProviderSpec): string | undefined {
+  if (spec.provider === 'random') return undefined;
+  if (spec.provider === 'anthropic') return 'ANTHROPIC_API_KEY';
+  if (spec.provider === 'openai') return 'OPENAI_API_KEY';
+  if (spec.provider === 'google') return 'GEMINI_API_KEY';
+  if (spec.provider === 'compat') return 'OPENAI_COMPAT_API_KEY';
+  return COMPAT_ENV_KEYS[spec.provider];
+}
+
+export function parseSpec(value: string): ProviderSpec {
+  if (value === 'random') return { provider: 'random', model: 'random' };
+  for (const provider of ['anthropic', 'openai', 'google']) {
+    if (value.startsWith(`${provider}:`) && value.length > provider.length + 1)
+      return { provider, model: value.slice(provider.length + 1) };
+  }
+  for (const [provider, baseUrl] of Object.entries(COMPAT_BASE_URLS)) {
+    if (value.startsWith(`${provider}:`) && value.length > provider.length + 1)
+      return { provider, model: value.slice(provider.length + 1), baseUrl };
+  }
+  if (value.startsWith('compat:')) {
+    const rest = value.slice(7);
+    const schemeEnd = rest.indexOf('://') + 3;
+    const pathStart = rest.indexOf('/', schemeEnd);
+    const separator = pathStart >= 0 ? rest.indexOf(':', pathStart) : rest.lastIndexOf(':');
+    const baseUrl = rest.slice(0, separator);
+    const model = rest.slice(separator + 1);
+    if (separator > 0 && baseUrl.includes('://') && model) return { provider: 'compat', model, baseUrl };
+  }
+  throw new Error(USAGE);
+}
+
+export function reasoningLevels(spec: ProviderSpec): ReasoningLevel[] {
+  const model = spec.model.toLowerCase();
+  if (spec.provider === 'meta' && model.includes('muse-spark'))
+    return ['off', 'minimal', 'low', 'medium', 'high', 'xhigh'];
+  if (spec.provider === 'anthropic') {
+    const opus = /opus-(\d+)[.-](\d+)/.exec(model);
+    const sonnet = /sonnet-(\d+)/.exec(model);
+    if (
+      (opus && (Number(opus[1]) > 4 || (Number(opus[1]) === 4 && Number(opus[2]) >= 7))) ||
+      (sonnet && Number(sonnet[1]) >= 5) ||
+      model.includes('fable-5')
+    )
+      return ['low', 'medium', 'high', 'xhigh', 'max'];
+    if (['opus-4-6', 'opus-4.6', 'sonnet-4-6', 'sonnet-4.6'].some((name) => model.includes(name)))
+      return ['low', 'medium', 'high', 'max'];
+    return [];
+  }
+  if (spec.provider === 'openai') return openaiReasoningLevels(model);
+  if (spec.provider === 'google') {
+    if (model.includes('gemini-3')) {
+      if (model.includes('flash-image')) return ['minimal', 'high'];
+      if (model.includes('pro-image')) return ['high'];
+      if (model.includes('flash')) return ['minimal', 'low', 'medium', 'high'];
+      const minor = /gemini-3\.(\d+)/.exec(model);
+      return minor && Number(minor[1]) >= 1 ? ['low', 'medium', 'high'] : ['low', 'high'];
+    }
+    return model.includes('gemini-2.5') ? ['high', 'max'] : [];
+  }
+  if (spec.provider === 'xai') {
+    if (model.includes('grok-4.3')) return ['off', 'low', 'medium', 'high'];
+    if (model.includes('grok-4')) return ['low', 'medium', 'high'];
+    if (model.includes('grok-3-mini')) return ['low', 'high'];
+    return [];
+  }
+  if (spec.provider === 'deepseek' && model.includes('deepseek')) return ['off', 'high', 'max'];
+  if (spec.provider === 'cerebras') {
+    if (model.includes('gpt-oss')) return ['low', 'medium', 'high'];
+    if (model.includes('glm')) return ['off'];
+  }
+  return spec.provider === 'compat' ? [...REASONING_LEVELS] : [];
+}
+
+function openaiReasoningLevels(model: string): ReasoningLevel[] {
+  if (model.includes('deep-research')) return ['medium'];
+  if (!/(?:^|\/)gpt-5(?:[.-]|$)/.test(model))
+    return /(?:^|\/)(?:o1|o3|o4)(?:[.-]|$)/.test(model) ? ['low', 'medium', 'high'] : [];
+  const versionMatch = /(?:^|\/)gpt-5[.-](\d+)(?:[.-]|$)/.exec(model);
+  const version = versionMatch ? Number(versionMatch[1]) : undefined;
+  if (model.includes('-chat')) return version === undefined ? [] : ['medium'];
+  if (/(?:^|\/)gpt-5[.-]?pro(?:[.-]|$)/.test(model)) return ['high'];
+  if (/(?:^|\/)gpt-5[.-]\d+[.-]pro(?:[.-]|$)/.test(model)) return ['medium', 'high', 'xhigh'];
+  if (model.includes('codex')) {
+    if (version !== undefined && version >= 3) return ['off', 'low', 'medium', 'high', 'xhigh'];
+    if (model.includes('codex-max') || (version !== undefined && version >= 2))
+      return ['low', 'medium', 'high', 'xhigh'];
+    return ['low', 'medium', 'high'];
+  }
+  if (version === 1) return ['off', 'low', 'medium', 'high'];
+  if (version !== undefined && version >= 6) return ['off', 'low', 'medium', 'high', 'xhigh', 'max'];
+  if (version !== undefined && version >= 2) return ['off', 'low', 'medium', 'high', 'xhigh'];
+  return ['minimal', 'low', 'medium', 'high'];
+}
+
+export function validateReasoning(spec: ProviderSpec, level?: ReasoningLevel): void {
+  if (!level || spec.provider === 'random') return;
+  const supported = reasoningLevels(spec);
+  if (!supported.includes(level))
+    throw new Error(
+      `${spec.provider}:${spec.model} does not support reasoning=${level}; supported: ${supported.join(', ') || 'no configurable levels'}`,
+    );
+}
+
+function parseToolArguments(value: unknown): JsonObject {
+  if (isRecord(value)) return value;
+  if (typeof value !== 'string' || !value.trim()) return {};
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return isRecord(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+export function assistantToolMessage(completion: Completion): ProviderMessage {
+  return {
+    role: 'assistant',
+    content: completion.text || null,
+    toolCalls: completion.toolCalls.map((call, index) => ({ ...call, id: call.id || `call_${index}` })),
+  };
+}
+
+export function toolResultMessage(callId: string, content: string): ProviderMessage {
+  return { role: 'tool', toolCallId: callId, content };
+}
+
+export class ApiError extends Error {
+  constructor(
+    readonly status: number,
+    message: string,
+  ) {
+    super(message);
+    this.name = 'ApiError';
+  }
+}
+
+const DEFAULT_TIMEOUT = 120;
+
+function googleThinkingBudgetMax(model: string): number {
+  return model.includes('2.5') && model.includes('pro') && !model.includes('flash') ? 32_768 : 24_576;
+}
+
+function convertMessages(messages: ProviderMessage[]): ModelMessage[] {
+  const converted: ModelMessage[] = [];
+  const callNames = new Map<string, string>();
+  for (const message of messages) {
+    if (message.role === 'tool') {
+      converted.push({
+        role: 'tool',
+        content: [
+          {
+            type: 'tool-result',
+            toolCallId: message.toolCallId ?? '',
+            toolName: callNames.get(message.toolCallId ?? '') ?? message.name ?? '',
+            output: { type: 'text', value: message.content ?? '' },
+          },
+        ],
+      });
+    } else if (message.role === 'assistant' && message.toolCalls?.length) {
+      for (const call of message.toolCalls) callNames.set(call.id, call.name);
+      converted.push({
+        role: 'assistant',
+        content: [
+          ...(message.content ? [{ type: 'text' as const, text: message.content }] : []),
+          ...message.toolCalls.map((call) => ({
+            type: 'tool-call' as const,
+            toolCallId: call.id,
+            toolName: call.name,
+            input: call.arguments,
+          })),
+        ],
+      });
+    } else {
+      converted.push({ role: message.role, content: message.content ?? '' });
+    }
+  }
+  return converted;
+}
+
+function providerOptions(spec: ProviderSpec, reasoning?: ReasoningLevel) {
+  if (reasoning === undefined) return undefined;
+  if (spec.provider === 'anthropic') {
+    if (reasoning === 'off') return { anthropic: { thinking: { type: 'disabled' } } };
+    return { anthropic: { thinking: { type: 'adaptive' }, effort: reasoning } };
+  }
+  if (spec.provider === 'openai')
+    return {
+      openai: {
+        reasoningEffort: reasoning === 'off' ? 'none' : reasoning,
+        ...(reasoning === 'off' ? {} : { reasoningSummary: 'detailed' }),
+      },
+    };
+  if (spec.provider === 'xai') return { xai: { reasoningEffort: reasoning === 'off' ? 'none' : reasoning } };
+  if (spec.provider === 'deepseek') {
+    if (reasoning === 'off') return { deepseek: { thinking: { type: 'disabled' } } };
+    if (reasoning === 'high' || reasoning === 'max') return { deepseek: { reasoningEffort: reasoning } };
+    return undefined;
+  }
+  if (spec.provider === 'google') {
+    if (reasoning === 'off') return { google: { thinkingConfig: { thinkingBudget: 0, includeThoughts: false } } };
+    if (spec.model.toLowerCase().includes('2.5')) {
+      const budget = reasoning === 'high' ? 16_000 : googleThinkingBudgetMax(spec.model.toLowerCase());
+      return { google: { thinkingConfig: { thinkingBudget: budget, includeThoughts: true } } };
+    }
+    return {
+      google: {
+        thinkingConfig: { thinkingLevel: reasoning, includeThoughts: true },
+        thinkingSummaries: 'auto',
+      },
+    };
+  }
+  return { [spec.provider]: { reasoningEffort: reasoning === 'off' ? 'none' : reasoning } };
+}
+
+export class SdkProvider implements Provider {
+  readonly model: string;
+  readonly reasoning?: ReasoningLevel | undefined;
+  private readonly apiKey: string | undefined;
+  private readonly fetch: typeof fetch | undefined;
+  private supportsTemperature = true;
+
+  constructor(
+    private readonly spec: ProviderSpec,
+    options: { apiKey?: string | undefined; reasoning?: ReasoningLevel | undefined; fetch?: typeof fetch | undefined },
+  ) {
+    this.model = spec.model;
+    this.reasoning = options.reasoning;
+    this.apiKey = options.apiKey;
+    this.fetch = options.fetch;
+  }
+
+  private key(): string {
+    const envKey = envKeyName(this.spec);
+    if (!envKey) throw new Error(USAGE);
+    const apiKey = this.apiKey ?? process.env[envKey] ?? (envKey === 'OPENAI_COMPAT_API_KEY' ? 'none' : undefined);
+    if (!apiKey) throw new Error(`Missing ${envKey}`);
+    return apiKey;
+  }
+
+  private languageModel(apiKey: string): LanguageModel {
+    const settings = { apiKey, ...(this.fetch ? { fetch: this.fetch } : {}) };
+    if (this.spec.provider === 'anthropic') return createAnthropic(settings)(this.model);
+    if (this.spec.provider === 'openai') return createOpenAI(settings)(this.model);
+    if (this.spec.provider === 'google') return createGoogleGenerativeAI(settings)(this.model);
+    if (this.spec.provider === 'xai') return createXai(settings)(this.model);
+    if (this.spec.provider === 'deepseek') return createDeepSeek(settings)(this.model);
+    if (!this.spec.baseUrl)
+      throw new Error(this.spec.provider === 'compat' ? 'compat provider requires base_url' : USAGE);
+    return createOpenAICompatible({
+      name: this.spec.provider,
+      baseURL: this.spec.baseUrl,
+      ...settings,
+    })(this.model);
+  }
+
+  async complete(system: string, messages: ProviderMessage[], options: CompleteOptions = {}): Promise<Completion> {
+    const seconds = options.timeout ?? DEFAULT_TIMEOUT;
+    const timeout = AbortSignal.timeout(Math.max(100, Math.round(seconds * 1000)));
+    const abortSignal = options.signal ? AbortSignal.any([timeout, options.signal]) : timeout;
+    const model = this.languageModel(this.key());
+    const tools: ToolSet | undefined = options.tools?.length
+      ? (Object.fromEntries(
+          options.tools.map((definition) => [
+            definition.name,
+            tool({
+              description: definition.description,
+              inputSchema: jsonSchema(definition.parameters as JSONSchema7),
+            }),
+          ]),
+        ) as ToolSet)
+      : undefined;
+    let maxOutputTokens = options.maxTokens ?? 1200;
+    if (
+      this.spec.provider === 'google' &&
+      this.reasoning &&
+      this.reasoning !== 'off' &&
+      this.model.toLowerCase().includes('2.5')
+    ) {
+      const budget = this.reasoning === 'high' ? 16_000 : googleThinkingBudgetMax(this.model.toLowerCase());
+      maxOutputTokens = Math.max(maxOutputTokens, budget + 1200);
+    }
+    let sendTemperature =
+      this.supportsTemperature &&
+      (this.spec.provider === 'google' || this.reasoning === undefined || this.reasoning === 'off') &&
+      !(this.spec.provider === 'openai' && /^(?:gpt-5|o\d)/i.test(this.model));
+    const mappedProviderOptions = providerOptions(this.spec, this.reasoning);
+    while (true) {
+      try {
+        const result = await generateText({
+          model,
+          system,
+          messages: convertMessages(messages),
+          ...(tools ? { tools } : {}),
+          ...(tools && options.toolChoice ? { toolChoice: options.toolChoice } : {}),
+          maxOutputTokens,
+          ...(sendTemperature ? { temperature: options.temperature ?? 0.2 } : {}),
+          ...(mappedProviderOptions ? { providerOptions: mappedProviderOptions } : {}),
+          maxRetries: 0,
+          abortSignal,
+        });
+        if (result.warnings?.some((warning) => warning.type === 'unsupported' && warning.feature === 'temperature'))
+          this.supportsTemperature = false;
+        const reasoningText = result.reasoningText?.trim() ?? '';
+        const reasoningTokens = result.usage.outputTokenDetails?.reasoningTokens ?? 0;
+        return {
+          text: result.text,
+          usage: {
+            input_tokens: result.usage.inputTokens ?? 0,
+            output_tokens: result.usage.outputTokens ?? 0,
+            ...(reasoningTokens > 0 ? { reasoning_tokens: reasoningTokens } : {}),
+          },
+          toolCalls: result.toolCalls.map((call) => ({
+            id: call.toolCallId,
+            name: call.toolName,
+            arguments: parseToolArguments(call.input),
+          })),
+          ...(reasoningText ? { reasoning: reasoningText } : {}),
+        };
+      } catch (error) {
+        if (options.signal?.aborted) throw error;
+        if (timeout.aborted)
+          throw new ApiError(0, `request to ${this.spec.provider}:${this.model} timed out after ${seconds}s`);
+        if (APICallError.isInstance(error)) {
+          const errorText = `${error.message} ${error.responseBody ?? ''}`;
+          if (error.statusCode === 400 && sendTemperature && /temperature/i.test(errorText)) {
+            this.supportsTemperature = false;
+            sendTemperature = false;
+            continue;
+          }
+          const status = error.statusCode ?? 0;
+          throw new ApiError(
+            status,
+            `${this.spec.provider}:${this.model} ${status}: ${(error.responseBody ?? error.message).slice(0, 2000)}`,
+          );
+        }
+        throw error;
+      }
+    }
+  }
+}
+
+export function makeProvider(
+  spec: ProviderSpec,
+  options: {
+    apiKey?: string | undefined;
+    reasoning?: ReasoningLevel | undefined;
+    fetch?: typeof fetch | undefined;
+  } = {},
+): Provider {
+  validateReasoning(spec, options.reasoning);
+  if (spec.provider === 'random') throw new Error('random provider is handled separately');
+  if (spec.provider === 'compat' && !spec.baseUrl) throw new Error('compat provider requires base_url');
+  if (!['anthropic', 'openai', 'google', 'compat', ...Object.keys(COMPAT_BASE_URLS)].includes(spec.provider))
+    throw new Error(USAGE);
+  return new SdkProvider(spec, options);
+}

@@ -1,0 +1,36 @@
+{
+  "name": "vgcbench",
+  "version": "0.1.0",
+  "description": "LLM competitive Pokémon benchmark on the real Showdown simulator",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "vgcbench": "dist/src/cli.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "biome check src tools tests",
+    "check:fix": "biome check --write src tools tests",
+    "test": "npm run build && node --test dist/tests/*.test.js",
+    "vgcbench": "node dist/src/cli.js",
+    "build-pool": "node dist/tools/build-pool.js",
+    "capture-requests": "node dist/tools/capture-requests.js"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.3",
+    "@types/node": "^26.1.1",
+    "typescript": "^7.0.2"
+  },
+  "dependencies": {
+    "@ai-sdk/anthropic": "^4.0.15",
+    "@ai-sdk/deepseek": "^3.0.11",
+    "@ai-sdk/google": "^4.0.17",
+    "@ai-sdk/openai": "^4.0.15",
+    "@ai-sdk/openai-compatible": "^3.0.11",
+    "@ai-sdk/xai": "^4.0.14",
+    "ai": "^7.0.28"
+  }
+}

@@ -1,13 +1,7 @@
-# Python environments and build artifacts
-.venv/
-__pycache__/
-*.py[cod]
-.pytest_cache/
-.coverage
-htmlcov/
-*.egg-info/
-build/
+# Node build artifacts
+node_modules/
 dist/
+*.tsbuildinfo
 
 # Local benchmark output
 runs/
