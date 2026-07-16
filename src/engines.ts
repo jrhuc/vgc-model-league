@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 
-import type { SlotMenu, TargetNames } from './choices.js';
+import type { MenuHints, SlotMenu, TargetNames } from './choices.js';
 import { buildMenus, compose } from './choices.js';
 import { REFLECTION_SYSTEM, renderDecision, SYSTEM } from './prompts.js';
 import type { ReasoningLevel } from './providers.js';
@@ -51,7 +51,7 @@ export abstract class BaseEngine implements BattleAgent {
   }
 
   async act(request: BattleRequest, context: AgentContext): Promise<string> {
-    const menus = buildMenus(request, this.menuNames(request));
+    const menus = buildMenus(request, this.menuHints(request));
     if (!menus.length) return '';
     let automatic = menus.every((menu) => menu.length === 1);
     let choices = automatic ? menus.map(() => 0) : await this.decideJoint(menus, request, context);
@@ -79,7 +79,7 @@ export abstract class BaseEngine implements BattleAgent {
     _parts: string[],
     _automatic: boolean,
   ): void {}
-  protected menuNames(_request: BattleRequest): TargetNames | undefined {
+  protected menuHints(_request: BattleRequest): MenuHints | undefined {
     return undefined;
   }
 
@@ -174,6 +174,8 @@ interface ParsedDecision {
   choices: number[];
   rationale: string;
   notebook: string;
+  threats: string[];
+  candidates: string[];
 }
 
 interface ToolTrace extends JsonObject {
@@ -188,6 +190,9 @@ interface PendingDecision extends JsonObject {
   rawResponse?: string;
   rationale?: string;
   notebook?: string;
+  threats?: string[];
+  candidates?: string[];
+  reasoning?: string;
   generation: number;
   usage?: Record<string, number>;
   fallback?: boolean;
@@ -310,7 +315,7 @@ export class LLMEngine extends BaseEngine {
     const generation = this.generation;
     this.state.feed(events);
     this.rememberEvents(events);
-    if (!this.mechanics.length) this.mechanics = this.reference.render(this.state.referenceQuery());
+    this.mechanics = this.reference.renderCompact(this.state.compactMons());
     this.pending = { events, rawResponse: '', notebook: this.notebook, generation };
     const choice = await super.act(request, context);
     return generation === this.generation ? choice : '';
@@ -325,6 +330,11 @@ export class LLMEngine extends BaseEngine {
     const turnSeconds = request.timer?.turnSeconds;
     const deadline = turnSeconds === undefined ? undefined : started + 1000 * turnSeconds;
     const generation = this.generation;
+    const sides = this.state.activeMatchupSides();
+    const matchups = this.reference.renderActiveMatchups(
+      [...sides.allies, ...sides.foes],
+      [...sides.foes, ...sides.allies],
+    );
     let prompt = renderDecision({
       state: this.state.render(request),
       slotNames: menus.map((_, slot) => this.state.slotName(slot, request)),
@@ -333,9 +343,10 @@ export class LLMEngine extends BaseEngine {
       notebook: this.notebook,
       seriesContext: `Series ${this.seriesId ?? '?'}; game ${this.gameNumber}; score ${this.scoreText()}`,
       mechanics: this.mechanics,
+      matchups,
     });
     if (turnSeconds !== undefined)
-      prompt += `\n\nShowdown timer: ${turnSeconds} seconds for this decision; ${request.timer?.seconds ?? turnSeconds} seconds remain in your clock bank.`;
+      prompt += `\n\nShowdown timer: ${turnSeconds} seconds for this decision; ${request.timer?.seconds ?? turnSeconds} seconds remain in your clock bank. Use this turn window for hard decisions; lock in when ready. Do not burn the remaining bank needlessly.`;
     if (context.error) prompt += `\n\nThe simulator rejected the previous joint action: ${context.error}`;
 
     let rawResponse = '';
@@ -344,6 +355,7 @@ export class LLMEngine extends BaseEngine {
     let error = 'no choices found';
     let parseFailures = 0;
     const toolCalls: ToolTrace[] = [];
+    const reasoningParts: string[] = [];
     const messages: ProviderMessage[] = [{ role: 'user', content: prompt }];
     while (!parsed && parseFailures < 2) {
       if (generation !== this.generation) return menus.map(() => 0);
@@ -362,7 +374,7 @@ export class LLMEngine extends BaseEngine {
           messages,
           {
             maxTokens: 8192,
-            temperature: 0.6,
+            temperature: 0.2,
             tools: DEX_TOOLS,
             toolChoice: finalRound ? 'none' : 'auto',
             ...(deadline === undefined ? {} : { timeout: Math.max(0.1, (deadline - performance.now()) / 1000 + 1) }),
@@ -370,6 +382,7 @@ export class LLMEngine extends BaseEngine {
           generation,
         );
         for (const [key, value] of Object.entries(completion.usage)) usage[key] = (usage[key] ?? 0) + Math.trunc(value);
+        if (completion.reasoning) reasoningParts.push(completion.reasoning);
         if (completion.toolCalls.length && !finalRound) {
           messages.push(assistantToolMessage(completion));
           for (const call of completion.toolCalls) {
@@ -401,6 +414,8 @@ export class LLMEngine extends BaseEngine {
         choices: BaseEngine.defaults(menus)[0],
         rationale: 'Recorded legal fallback.',
         notebook: this.notebook,
+        threats: [],
+        candidates: [],
       } satisfies ParsedDecision);
     if (generation === this.generation && this.pending)
       Object.assign(this.pending, {
@@ -408,6 +423,9 @@ export class LLMEngine extends BaseEngine {
         rawResponse,
         rationale: decision.rationale,
         notebook: decision.notebook,
+        threats: decision.threats,
+        candidates: decision.candidates,
+        reasoning: reasoningParts.join('\n\n').trim() || undefined,
         usage,
         fallback,
         error: fallback ? error : undefined,
@@ -464,7 +482,7 @@ export class LLMEngine extends BaseEngine {
       if (pending.fallback) this.fallbacks += 1;
     }
     const action = request.teamPreview ? `team ${parts.join('')}` : compose(parts);
-    this.remember(`Decision: ${action}. Rationale: ${rationale}`);
+    this.remember(`Decision: ${action}.`);
     const phase = request.teamPreview ? 'team_preview' : request.forceSwitch ? 'forced_switch' : 'turn';
     const selection = choices.map((choice, slot) => menus[slot]?.[choice]?.label ?? parts[slot] ?? 'pass');
     if (!automatic) this.recordTendencies(phase, menus, choices, parts, action, pending.toolCalls ?? []);
@@ -479,6 +497,8 @@ export class LLMEngine extends BaseEngine {
       selection,
       action,
       rationale,
+      threats: pending.threats ?? [],
+      candidates: pending.candidates ?? [],
       ...this.notebookUpdate(),
       automatic,
       fallback: pending.fallback ?? false,
@@ -499,6 +519,9 @@ export class LLMEngine extends BaseEngine {
       choices,
       parts,
       raw_response: pending.rawResponse ?? '',
+      reasoning: pending.reasoning ?? null,
+      threats: pending.threats ?? [],
+      candidates: pending.candidates ?? [],
       usage: pending.usage ?? {},
       latency_ms: pending.latencyMs ?? 0,
       tool_calls: pending.toolCalls ?? [],
@@ -552,7 +575,8 @@ export class LLMEngine extends BaseEngine {
       if (item?.kind === 'move') this.moveSelections += 1;
       if (item?.kind === 'switch') this.switchSelections += 1;
       if (/ -[12](?:\s|$)/.test(part)) this.allyTargetSelections += 1;
-      if (item?.label.includes('(spread)')) this.spreadMoveSelections += 1;
+      if (item?.kind === 'move' && /\((?:both foes|your side|all adjacent|spread)/.test(item.label))
+        this.spreadMoveSelections += 1;
       if (part.endsWith(' mega')) this.megaSelections += 1;
 
       if (phase !== 'turn') continue;
@@ -584,7 +608,7 @@ export class LLMEngine extends BaseEngine {
     return { notebook: this.notebook };
   }
 
-  protected override menuNames(request: BattleRequest): TargetNames | undefined {
+  protected override menuHints(request: BattleRequest): MenuHints | undefined {
     if (request.teamPreview || !request.active) return undefined;
     const names: TargetNames = { foe: {}, ally: {} };
     const foe: Pid = this.pid === 'p1' ? 'p2' : 'p1';
@@ -607,7 +631,7 @@ export class LLMEngine extends BaseEngine {
         names.ally[index + 1] = BattleState.requestName(mon);
       }
     }
-    return names;
+    return { names, protectReduced: this.state.protectReducedSlots() };
   }
 
   static extractChoices(response: string, menus: SlotMenu[]): ParsedDecision {
@@ -628,10 +652,17 @@ export class LLMEngine extends BaseEngine {
     const notebook = typeof object.notebook === 'string' ? object.notebook : undefined;
     if (rationale === undefined || notebook === undefined)
       throw new Error('response must contain string rationale and notebook fields');
+    const asStringArray = (value: unknown, field: string): string[] => {
+      if (!Array.isArray(value) || !value.every((entry) => typeof entry === 'string'))
+        throw new Error(`${field} must be an array of strings`);
+      return value.map((entry) => entry.slice(0, 240));
+    };
     return {
       choices,
       rationale: rationale.slice(0, LLMEngine.RATIONALE_LIMIT),
       notebook: notebook.slice(0, LLMEngine.NOTE_LIMIT),
+      threats: asStringArray(object.threats, 'threats'),
+      candidates: asStringArray(object.candidates, 'candidates'),
     };
   }
 
@@ -659,7 +690,7 @@ export class LLMEngine extends BaseEngine {
       for (let attempt = 0; attempt < 2 && !parsed; attempt += 1) {
         const completion = await this.completeWithRetry(
           messages,
-          { maxTokens: 2048, temperature: 0.4, timeout: 60 },
+          { maxTokens: 2048, temperature: 0.2, timeout: 60 },
           this.generation,
           REFLECTION_SYSTEM,
         );

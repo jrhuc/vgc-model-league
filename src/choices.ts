@@ -1,3 +1,4 @@
+import { PROTECT_MOVES } from './state.js';
 import type { BattleRequest, JsonObject } from './types.js';
 
 import { afterColon, asRecords, text } from './value.js';
@@ -11,11 +12,20 @@ export interface MenuItem {
 export type SlotMenu = MenuItem[];
 export type TargetNames = Record<'foe' | 'ally', Record<number, string>>;
 
+export interface MenuHints {
+  /** Species currently in ally slots, used to annotate ally-hitting spreads. */
+  names?: TargetNames;
+  /** Per active slot (1/2): Protect success already reduced because it worked last turn. */
+  protectReduced?: Record<number, boolean>;
+}
+
 const SELECTED_TARGETS = new Set(['normal', 'any', 'adjacentFoe']);
 const SPREAD_TARGETS = new Set(['allySide', 'foeSide', 'all', 'allAdjacent', 'allAdjacentFoes', 'allies']);
 
-function pokemonName(pokemon: JsonObject): string {
-  return afterColon(text(pokemon.ident)) || text(pokemon.details, 'Pokémon').split(',', 1)[0]!;
+function pokemonSpecies(pokemon: JsonObject): string {
+  const fromDetails = text(pokemon.details).split(',', 1)[0]?.trim();
+  if (fromDetails) return fromDetails;
+  return afterColon(text(pokemon.ident)) || 'Pokémon';
 }
 
 function switches(request: BattleRequest, reviving = false): SlotMenu {
@@ -23,9 +33,24 @@ function switches(request: BattleRequest, reviving = false): SlotMenu {
   for (const [index, pokemon] of (request.side?.pokemon ?? []).entries()) {
     const fainted = text(pokemon.condition).endsWith(' fnt');
     if (pokemon.active || fainted !== reviving) continue;
-    menu.push({ label: `Switch to ${pokemonName(pokemon)}`, part: `switch ${index + 1}`, kind: 'switch' });
+    menu.push({ label: `Switch to ${pokemonSpecies(pokemon)}`, part: `switch ${index + 1}`, kind: 'switch' });
   }
   return menu;
+}
+
+function spreadLabel(target: string, slot: number, names?: TargetNames): string {
+  if (target === 'allAdjacentFoes' || target === 'foeSide') return ' (both foes)';
+  if (target === 'allies' || target === 'allySide') {
+    const ally = slot === 1 ? 2 : 1;
+    const species = names?.ally[ally];
+    return species ? ` (your side, including ally ${species})` : ' (your side)';
+  }
+  if (target === 'allAdjacent' || target === 'all') {
+    const ally = slot === 1 ? 2 : 1;
+    const species = names?.ally[ally];
+    return species ? ` (all adjacent, including ally ${species})` : ' (all adjacent, including ally)';
+  }
+  return ' (spread)';
 }
 
 function moveItems(
@@ -35,9 +60,10 @@ function moveItems(
   activeCount: number,
   hasAlly: boolean,
   mega: boolean,
-  names?: TargetNames,
+  hints?: MenuHints,
 ): SlotMenu {
   const target = text(move.target);
+  const names = hints?.names;
   const targetLabel = (side: 'foe' | 'ally', number: number) => {
     const species = names?.[side][number];
     return ` -> ${side} ${number}${species ? ` (${species})` : ''}`;
@@ -59,21 +85,25 @@ function moveItems(
   }
 
   const name = text(move.move, `Move ${moveSlot}`);
-  const spread = SPREAD_TARGETS.has(target) ? ' (spread)' : '';
+  const protectHint =
+    PROTECT_MOVES.has(name.toLowerCase().replace(/[^a-z0-9]+/g, '')) && hints?.protectReduced?.[slot]
+      ? ' [success rate reduced: Protected last turn]'
+      : '';
+  const spread = SPREAD_TARGETS.has(target) ? spreadLabel(target, slot, names) : '';
   return targets.flatMap(([targetPart, label]) => {
     const part = `move ${moveSlot}${targetPart}`;
-    const item: MenuItem = { label: `${name}${spread}${label}`, part, kind: 'move' };
+    const item: MenuItem = { label: `${name}${spread}${protectHint}${label}`, part, kind: 'move' };
     return mega ? [item, { label: `${item.label} + Mega Evolve`, part: `${part} mega`, kind: 'move' }] : [item];
   });
 }
 
-export function buildMenus(request: BattleRequest, names?: TargetNames): SlotMenu[] {
+export function buildMenus(request: BattleRequest, hints?: MenuHints): SlotMenu[] {
   const pokemon = request.side?.pokemon ?? [];
   if (request.wait) return [];
   if (request.teamPreview) {
     const count = request.maxChosenTeamSize || pokemon.length;
     const base = pokemon.map(
-      (mon, index): MenuItem => ({ label: `Pick ${pokemonName(mon)}`, part: String(index + 1), kind: 'team' }),
+      (mon, index): MenuItem => ({ label: `Pick ${pokemonSpecies(mon)}`, part: String(index + 1), kind: 'team' }),
     );
     return Array.from({ length: count }, () => base.map((item) => ({ ...item })));
   }
@@ -115,7 +145,7 @@ export function buildMenus(request: BattleRequest, names?: TargetNames): SlotMen
               request.active!.length,
               request.active!.length > 1 && request.active![slot === 1 ? 1 : 0] !== null,
               Boolean(active.canMegaEvo),
-              names,
+              hints,
             ),
       );
       if (moves.length && moves.every((move) => move.disabled))

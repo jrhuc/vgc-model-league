@@ -1,4 +1,4 @@
-import type { ReferenceQuery } from './reference.js';
+import type { CompactMon, MatchupMon, ReferenceQuery } from './reference.js';
 import type { BattleRequest, JsonObject, Pid } from './types.js';
 
 import { afterColon, asRecord, asRecords, asStrings, text } from './value.js';
@@ -14,6 +14,12 @@ export interface LastMove {
   name: string;
   target?: string;
   turn: number;
+}
+
+export interface TimedEffect {
+  name: string;
+  startedTurn: number;
+  duration: number;
 }
 
 export class MonState {
@@ -34,6 +40,8 @@ export class MonState {
   fainted = false;
   preview = false;
   brought: boolean | undefined;
+  /** Successful consecutive Protect-like stalls; 0 means next Protect is full odds. */
+  protectSuccessStreak = 0;
 
   constructor(public ident: string) {}
 
@@ -50,15 +58,35 @@ export class MonState {
 export class SideState {
   mons = new Map<string, MonState>();
   active: Record<string, string> = {};
-  conditions = new Set<string>();
+  conditions = new Map<string, TimedEffect>();
   sheet: MonState[] = [];
   showteam = false;
 }
 
+const SCREEN_MOVES = new Set(['reflect', 'lightscreen', 'auroraveil']);
+
+const WEATHER_ROCKS: Record<string, string> = {
+  raindance: 'damprock',
+  sunnyday: 'heatrock',
+  sandstorm: 'smoothrock',
+  snow: 'icyrock',
+  snowscape: 'icyrock',
+  hail: 'icyrock',
+};
+
+export const PROTECT_MOVES = new Set([
+  'protect',
+  'detect',
+  'banefulbunker',
+  'spikyshield',
+  'silktrap',
+  'burningbulwark',
+]);
+
 export class BattleState {
   turn = 0;
-  weather: string | undefined;
-  fields = new Set<string>();
+  weather: TimedEffect | undefined;
+  fields = new Map<string, TimedEffect>();
   sides: Record<Pid, SideState> = { p1: new SideState(), p2: new SideState() };
 
   constructor(readonly pid: Pid) {}
@@ -98,6 +126,7 @@ export class BattleState {
         if (kind !== 'replace') {
           mon.boosts = {};
           mon.volatiles.clear();
+          mon.protectSuccessStreak = 0;
         }
         this.sides[side].active[slot] = this.monKey(args[0]!);
       }
@@ -119,6 +148,14 @@ export class BattleState {
         ...(args[2] ? { target: args[2] } : {}),
         turn: this.turn,
       };
+      const moveId = this.speciesKey(args[1]!);
+      if (!PROTECT_MOVES.has(moveId)) mon.protectSuccessStreak = 0;
+    } else if (kind === '-singleturn' && args.length >= 2) {
+      if (PROTECT_MOVES.has(this.speciesKey(this.effect(args[1]!)))) this.mon(args[0]!).protectSuccessStreak += 1;
+    } else if (kind === '-fail' && args[0]) {
+      const mon = this.mon(args[0]!);
+      if (mon.lastMove && PROTECT_MOVES.has(this.speciesKey(mon.lastMove.name)) && mon.lastMove.turn === this.turn)
+        mon.protectSuccessStreak = 0;
     } else if (kind === 'faint' && args[0]) {
       const mon = this.mon(args[0]);
       mon.hp = '0 fnt';
@@ -150,16 +187,38 @@ export class BattleState {
       const effect = this.effect(args[1]!);
       if (kind === '-start') mon.volatiles.add(effect);
       else mon.volatiles.delete(effect);
-    } else if (kind === '-weather' && args[0] !== undefined)
-      this.weather = args[0] === 'none' || !args[0] ? undefined : this.effect(args[0]);
-    else if (kind === '-fieldstart' && args[0]) this.fields.add(this.effect(args[0]));
-    else if (kind === '-fieldend' && args[0]) this.fields.delete(this.effect(args[0]));
+    } else if (kind === '-weather' && args[0] !== undefined) {
+      if (args[0] === 'none' || !args[0]) this.weather = undefined;
+      else if (
+        !args.includes('[upkeep]') ||
+        !this.weather ||
+        this.speciesKey(this.weather.name) !== this.speciesKey(args[0])
+      ) {
+        const name = this.effect(args[0]);
+        const rock = WEATHER_ROCKS[this.speciesKey(name)];
+        const setter = this.effectSource(args) ?? this.lastMoveUserThisTurn(this.speciesKey(name));
+        const extended = rock !== undefined && setter?.item !== undefined && this.speciesKey(setter.item) === rock;
+        this.weather = { name, startedTurn: Math.max(1, this.turn), duration: extended ? 8 : 5 };
+      }
+    } else if (kind === '-fieldstart' && args[0]) {
+      const name = this.effect(args[0]);
+      this.fields.set(this.speciesKey(name), { name, startedTurn: Math.max(1, this.turn), duration: 5 });
+    } else if (kind === '-fieldend' && args[0]) this.fields.delete(this.speciesKey(this.effect(args[0]!)));
     else if ((kind === '-sidestart' || kind === '-sideend') && args.length >= 2) {
-      const side = args[0]!.split(':', 1)[0];
+      const side = args[0]!.split(':')[0]!;
       if (side === 'p1' || side === 'p2') {
         const effect = this.effect(args[1]!);
-        if (kind === '-sidestart') this.sides[side].conditions.add(effect);
-        else this.sides[side].conditions.delete(effect);
+        const key = this.speciesKey(effect);
+        if (kind === '-sidestart') {
+          let duration = key === 'tailwind' ? 4 : 5;
+          if (SCREEN_MOVES.has(key)) {
+            const setter =
+              this.lastMoveUserThisTurn(key, side) ??
+              [...this.sides[side].mons.values()].find((mon) => mon.item && this.speciesKey(mon.item) === 'lightclay');
+            if (setter?.item && this.speciesKey(setter.item) === 'lightclay') duration = 8;
+          }
+          this.sides[side].conditions.set(key, { name: effect, startedTurn: Math.max(1, this.turn), duration });
+        } else this.sides[side].conditions.delete(key);
       }
     } else if (kind === '-item' && args.length >= 2) {
       const mon = this.mon(args[0]!);
@@ -186,8 +245,8 @@ export class BattleState {
     const foe: Pid = this.pid === 'p1' ? 'p2' : 'p1';
     return [
       `Turn: ${this.turn}`,
-      `Weather: ${this.weather ?? 'none'}`,
-      `Field: ${this.fields.size ? [...this.fields].sort().join(', ') : 'none'}`,
+      `Weather: ${this.weatherLabel()}`,
+      `Field: ${this.fieldLabels().join(', ') || 'none'}`,
       ...this.renderSide(this.pid, true),
       ...this.renderSide(foe, false),
     ].join('\n');
@@ -215,10 +274,116 @@ export class BattleState {
     };
   }
 
+  /** Active + brought/revealed bench only, for compact always-on mechanics. */
+  compactMons(): CompactMon[] {
+    const out: CompactMon[] = [];
+    for (const pid of ['p1', 'p2'] as const) {
+      const side = this.sides[pid];
+      const own = pid === this.pid;
+      const activeKeys = new Set(Object.values(side.active));
+      const mons = [...side.mons.values()].filter((mon) => {
+        if (mon.fainted) return false;
+        if (own && mon.brought === false) return false;
+        if (activeKeys.has(this.monKey(mon.ident))) return true;
+        if (own) return mon.brought !== false;
+        return Boolean(mon.hp !== undefined || mon.moves.size || side.showteam);
+      });
+      if (!own && side.showteam) {
+        const known = new Set(mons.map((mon) => this.speciesKey(mon.species)));
+        for (const sheetMon of side.sheet) {
+          if (!known.has(this.speciesKey(sheetMon.species))) mons.push(sheetMon);
+        }
+      }
+      for (const mon of mons) {
+        out.push({
+          species: mon.species,
+          item: mon.item ?? null,
+          nature: mon.nature ?? null,
+          moves: [...mon.moves.values()].map((move) => move.name),
+          active: activeKeys.has(this.monKey(mon.ident)),
+        });
+      }
+    }
+    return out;
+  }
+
+  protectReducedSlots(): Record<number, boolean> {
+    const reduced: Record<number, boolean> = {};
+    const side = this.sides[this.pid];
+    for (const [number, slot] of [
+      [1, 'a'],
+      [2, 'b'],
+    ] as const) {
+      const key = side.active[slot];
+      const mon = key ? side.mons.get(key) : undefined;
+      if (mon && !mon.fainted && mon.protectSuccessStreak > 0) reduced[number] = true;
+    }
+    return reduced;
+  }
+
+  activeMatchupSides(): { allies: MatchupMon[]; foes: MatchupMon[] } {
+    const collect = (pid: Pid, ally: boolean): MatchupMon[] => {
+      const side = this.sides[pid];
+      return (['a', 'b'] as const).flatMap((slot) => {
+        const key = side.active[slot];
+        const mon = key ? side.mons.get(key) : undefined;
+        if (!mon || mon.fainted) return [];
+        return [
+          {
+            species: mon.species,
+            moves: [...mon.moves.values()].map((move) => move.name),
+            ally,
+          },
+        ];
+      });
+    };
+    const foe: Pid = this.pid === 'p1' ? 'p2' : 'p1';
+    return { allies: collect(this.pid, true), foes: collect(foe, false) };
+  }
+
+  weatherLabel(): string {
+    return this.formatTimed(this.weather);
+  }
+
+  fieldLabels(): string[] {
+    return [...this.fields.values()].map((effect) => this.formatTimed(effect)).sort();
+  }
+
+  conditionLabels(pid: Pid): string[] {
+    return [...this.sides[pid].conditions.values()].map((effect) => this.formatTimed(effect)).sort();
+  }
+
+  private formatTimed(effect: TimedEffect | undefined): string {
+    if (!effect) return 'none';
+    const elapsed = Math.max(0, this.turn - effect.startedTurn);
+    const remaining = Math.max(0, effect.duration - elapsed);
+    return `${effect.name} (${remaining} turn${remaining === 1 ? '' : 's'} left)`;
+  }
+
+  private effectSource(args: string[]): MonState | undefined {
+    const of = args.find((arg) => arg.startsWith('[of] '));
+    if (!of) return undefined;
+    const ident = of.slice(5);
+    const side = this.identParts(ident)[0];
+    return side ? this.sides[side].mons.get(this.monKey(ident)) : undefined;
+  }
+
+  private lastMoveUserThisTurn(moveId: string, pid?: Pid): MonState | undefined {
+    for (const side of pid ? [this.sides[pid]] : Object.values(this.sides)) {
+      for (const key of Object.values(side.active)) {
+        const mon = side.mons.get(key);
+        if (mon?.lastMove && mon.lastMove.turn === this.turn && this.speciesKey(mon.lastMove.name) === moveId)
+          return mon;
+      }
+    }
+    return undefined;
+  }
+
   private renderSide(pid: Pid, own: boolean): string[] {
     const side = this.sides[pid];
     const title = own ? 'Your side' : 'Opponent side';
-    const lines = [`${title} conditions: ${side.conditions.size ? [...side.conditions].sort().join(', ') : 'none'}`];
+    const conditions = this.conditionLabels(pid);
+    const lines = [`${title} conditions: ${conditions.length ? conditions.join(', ') : 'none'}`];
     let mons = [...side.mons.values()].filter((mon) => !own || mon.brought !== false);
     const rich = new Set(
       mons
@@ -235,8 +400,7 @@ export class BattleState {
       const knownIdentities = new Set(mons.map((mon) => this.monKey(mon.ident)));
       mons.push(
         ...side.sheet.filter(
-          (mon) =>
-            !knownSpecies.has(this.speciesKey(mon.species)) && !knownIdentities.has(this.monKey(mon.ident)),
+          (mon) => !knownSpecies.has(this.speciesKey(mon.species)) && !knownIdentities.has(this.monKey(mon.ident)),
         ),
       );
     }
@@ -277,8 +441,14 @@ export class BattleState {
             })
             .join(', ')}`,
         );
+      if (mon.protectSuccessStreak > 0)
+        attrs.push(
+          mon.protectSuccessStreak === 1
+            ? 'Protect success rate reduced next use'
+            : `Protect success rate heavily reduced (streak ${mon.protectSuccessStreak})`,
+        );
       if (mon.lastMove) {
-        const target = mon.lastMove.target ? ` into ${this.nickname(mon.lastMove.target)}` : '';
+        const target = mon.lastMove.target ? ` into ${this.targetSpecies(mon.lastMove.target)}` : '';
         attrs.push(`last move ${mon.lastMove.name}${target} (turn ${mon.lastMove.turn})`);
       }
       if (own && Object.keys(mon.stats).length)
@@ -414,7 +584,7 @@ export class BattleState {
   }
 
   private identParts(ident: string): [Pid | undefined, string] {
-    const head = ident.split(':', 1)[0]!;
+    const head = ident.split(':')[0]!;
     return head.startsWith('p1') || head.startsWith('p2')
       ? [head.slice(0, 2) as Pid, head.slice(2, 3) || 'a']
       : [undefined, 'a'];
@@ -438,6 +608,17 @@ export class BattleState {
   }
 
   static requestName(pokemon: JsonObject): string {
-    return afterColon(text(pokemon.ident)) || text(pokemon.details, 'Pokémon').split(',', 1)[0]!;
+    const fromDetails = text(pokemon.details).split(',', 1)[0]?.trim();
+    if (fromDetails) return fromDetails;
+    return afterColon(text(pokemon.ident)) || 'Pokémon';
+  }
+
+  private targetSpecies(ident: string): string {
+    const side = this.identParts(ident)[0];
+    if (side) {
+      const mon = this.sides[side].mons.get(this.monKey(ident));
+      if (mon?.species && mon.species !== 'Pokémon') return mon.species;
+    }
+    return this.nickname(ident);
   }
 }

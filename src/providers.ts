@@ -232,7 +232,13 @@ function providerOptions(spec: ProviderSpec, reasoning?: ReasoningLevel) {
     if (reasoning === 'off') return { anthropic: { thinking: { type: 'disabled' } } };
     return { anthropic: { thinking: { type: 'adaptive' }, effort: reasoning } };
   }
-  if (spec.provider === 'openai') return { openai: { reasoningEffort: reasoning === 'off' ? 'none' : reasoning } };
+  if (spec.provider === 'openai')
+    return {
+      openai: {
+        reasoningEffort: reasoning === 'off' ? 'none' : reasoning,
+        ...(reasoning === 'off' ? {} : { reasoningSummary: 'detailed' }),
+      },
+    };
   if (spec.provider === 'xai') return { xai: { reasoningEffort: reasoning === 'off' ? 'none' : reasoning } };
   if (spec.provider === 'deepseek') {
     if (reasoning === 'off') return { deepseek: { thinking: { type: 'disabled' } } };
@@ -240,12 +246,17 @@ function providerOptions(spec: ProviderSpec, reasoning?: ReasoningLevel) {
     return undefined;
   }
   if (spec.provider === 'google') {
-    if (reasoning === 'off') return { google: { thinkingConfig: { thinkingBudget: 0 } } };
+    if (reasoning === 'off') return { google: { thinkingConfig: { thinkingBudget: 0, includeThoughts: false } } };
     if (spec.model.toLowerCase().includes('2.5')) {
       const budget = reasoning === 'high' ? 16_000 : googleThinkingBudgetMax(spec.model.toLowerCase());
-      return { google: { thinkingConfig: { thinkingBudget: budget } } };
+      return { google: { thinkingConfig: { thinkingBudget: budget, includeThoughts: true } } };
     }
-    return { google: { thinkingConfig: { thinkingLevel: reasoning } } };
+    return {
+      google: {
+        thinkingConfig: { thinkingLevel: reasoning, includeThoughts: true },
+        thinkingSummaries: 'auto',
+      },
+    };
   }
   return { [spec.provider]: { reasoningEffort: reasoning === 'off' ? 'none' : reasoning } };
 }
@@ -319,7 +330,8 @@ export class SdkProvider implements Provider {
     }
     let sendTemperature =
       this.supportsTemperature &&
-      (this.spec.provider === 'google' || this.reasoning === undefined || this.reasoning === 'off');
+      (this.spec.provider === 'google' || this.reasoning === undefined || this.reasoning === 'off') &&
+      !(this.spec.provider === 'openai' && /^(?:gpt-5|o\d)/i.test(this.model));
     const mappedProviderOptions = providerOptions(this.spec, this.reasoning);
     while (true) {
       try {
@@ -330,22 +342,28 @@ export class SdkProvider implements Provider {
           ...(tools ? { tools } : {}),
           ...(tools && options.toolChoice ? { toolChoice: options.toolChoice } : {}),
           maxOutputTokens,
-          ...(sendTemperature ? { temperature: options.temperature ?? 0.6 } : {}),
+          ...(sendTemperature ? { temperature: options.temperature ?? 0.2 } : {}),
           ...(mappedProviderOptions ? { providerOptions: mappedProviderOptions } : {}),
           maxRetries: 0,
           abortSignal,
         });
+        if (result.warnings?.some((warning) => warning.type === 'unsupported' && warning.feature === 'temperature'))
+          this.supportsTemperature = false;
+        const reasoningText = result.reasoningText?.trim() ?? '';
+        const reasoningTokens = result.usage.outputTokenDetails?.reasoningTokens ?? 0;
         return {
           text: result.text,
           usage: {
             input_tokens: result.usage.inputTokens ?? 0,
             output_tokens: result.usage.outputTokens ?? 0,
+            ...(reasoningTokens > 0 ? { reasoning_tokens: reasoningTokens } : {}),
           },
           toolCalls: result.toolCalls.map((call) => ({
             id: call.toolCallId,
             name: call.toolName,
             arguments: parseToolArguments(call.input),
           })),
+          ...(reasoningText ? { reasoning: reasoningText } : {}),
         };
       } catch (error) {
         if (options.signal?.aborted) throw error;

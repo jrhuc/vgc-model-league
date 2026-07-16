@@ -142,7 +142,7 @@ test('compat provider uses chat completions', async () => {
   const completion = await provider.complete('system', [{ role: 'user', content: 'hello' }]);
 
   assert.equal(url, 'https://api.moonshot.ai/v1/chat/completions');
-  assert.equal(body.temperature, 0.6);
+  assert.equal(body.temperature, 0.2);
   assert.equal('reasoning_effort' in body, false);
   assert.deepEqual(completion, {
     text: 'ok',

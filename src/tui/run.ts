@@ -267,9 +267,7 @@ export class RunScreen implements Screen {
     } else {
       const battle = entry.state;
       lines.push(rule(`GAME ${entry.game} · ${battle.turn ? `TURN ${battle.turn}` : 'TEAM PREVIEW'}`, width));
-      lines.push(
-        `  ${dim(`weather ${battle.weather ?? 'none'} · field ${battle.fields.size ? [...battle.fields].sort().join(', ') : 'none'}`)}`,
-      );
+      lines.push(`  ${dim(`weather ${battle.weatherLabel()} · field ${battle.fieldLabels().join(', ') || 'none'}`)}`);
       for (const pid of ['p1', 'p2'] as const) lines.push('', ...this.sideLines(pid, battle, row));
     }
     return pinFooter(lines, ['', `  ${dim('esc back to series board')}`], height);
@@ -278,7 +276,8 @@ export class RunScreen implements Screen {
   private sideLines(pid: Pid, battle: BattleState, row: SeriesRow | undefined): string[] {
     const side = battle.sides[pid];
     const activeSlots = new Map(Object.entries(side.active).map(([slot, key]) => [key, slot.toUpperCase()]));
-    const conditions = side.conditions.size ? `  ${warn([...side.conditions].sort().join(', '))}` : '';
+    const conditionLabels = battle.conditionLabels(pid);
+    const conditions = conditionLabels.length ? `  ${warn(conditionLabels.join(', '))}` : '';
     const lines = [`  ${bold(`${pid} · ${row?.players[pid] ?? '?'}`)}${conditions}`];
     const speciesKey = (species: string) => species.toLowerCase().replace(/[^a-z0-9]/g, '');
     const all = [...side.mons.values()];

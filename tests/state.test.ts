@@ -125,3 +125,35 @@ test('last observed move retains target and turn for live viewers', () => {
   });
   assert.match(state.render({}), /last move Electro Drift into Calyrex-Ice \(turn 3\)/);
 });
+
+test('field weather and screens render remaining turns', () => {
+  const state = new BattleState('p1');
+  state.feed([
+    '|showteam|p1|Grimmsnarl||LightClay|Prankster|FoulPlay,Reflect|Calm||||',
+    '|switch|p1a: Grimmsnarl|Grimmsnarl, L50|202/202',
+    '|turn|1',
+    '|-fieldstart|move: Trick Room',
+    '|-weather|SunnyDay|[from] ability: Drought|[of] p2a: Torkoal',
+    '|-sidestart|p1: p1|Reflect',
+    '|turn|2',
+  ]);
+  const rendered = state.render({});
+  assert.match(rendered, /Trick Room \(4 turns? left\)/);
+  // Gen 9 ability weather also lasts 5 turns; Torkoal's item is unknown, so no Heat Rock extension.
+  assert.match(rendered, /SunnyDay \(4 turns? left\)/);
+  // Light Clay extends Reflect to 8; one turn has elapsed by the turn-2 decision.
+  assert.match(rendered, /Reflect \(7 turns? left\)/);
+});
+
+test('Protect success reduction is tracked for the next menu', () => {
+  const state = new BattleState('p1');
+  state.feed([
+    '|switch|p1a: Archaludon|Archaludon, L50|197/197',
+    '|turn|5',
+    '|move|p1a: Archaludon|Protect|p1a: Archaludon',
+    '|-singleturn|p1a: Archaludon|Protect',
+    '|turn|6',
+  ]);
+  assert.equal(state.protectReducedSlots()[1], true);
+  assert.match(state.render({}), /Protect success rate reduced/);
+});

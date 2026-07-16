@@ -27,8 +27,13 @@ function request(activeCount = 1): BattleRequest {
   };
 }
 
-const decision = (choices: number[], rationale = 'test choice', notebook = '') =>
-  JSON.stringify({ choices, rationale, notebook });
+const decision = (
+  choices: number[],
+  rationale = 'test choice',
+  notebook = '',
+  threats: string[] = ['threat'],
+  candidates: string[] = ['candidate'],
+) => JSON.stringify({ choices, rationale, notebook, threats, candidates });
 
 const emptyStats = {
   decisions: 0,
@@ -261,10 +266,7 @@ test('team-preview adaptation counters compare public bring and lead choices', a
   }));
   delete preview.active;
   const engine = new LLMEngine('p1', 'scripted', {
-    provider: new ScriptedProvider([
-      decision([0, 1, 2, 3]),
-      decision([1, 2, 3, 4]),
-    ]),
+    provider: new ScriptedProvider([decision([0, 1, 2, 3]), decision([1, 2, 3, 4])]),
     decisionLog: [],
   });
   engine.beginGame({ gameId: 'game-1', gameNumber: 1, seriesId: 'series-1' });

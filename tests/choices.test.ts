@@ -83,8 +83,10 @@ test('target names change labels but not commands', () => {
   (request.active![0]!.moves as Array<Record<string, unknown>>)[0]!.target = 'normal';
   const plain = buildMenus(request)[0]!;
   const named = buildMenus(request, {
-    foe: { 1: 'Charizard', 2: 'Pelipper' },
-    ally: { 1: 'Whimsicott', 2: 'Basculegion' },
+    names: {
+      foe: { 1: 'Charizard', 2: 'Pelipper' },
+      ally: { 1: 'Whimsicott', 2: 'Basculegion' },
+    },
   })[0]!;
   assert.deepEqual(
     named.map((item) => item.part),
@@ -120,4 +122,24 @@ test('disabled moves offer Struggle and Mega is exclusive', async () => {
   }
   const choice = await new MegaEngine('p1').act(request, { povLines: [] });
   assert.equal(choice.match(/ mega/g)?.length, 1);
+});
+
+test('menus use species names and annotate ally-hitting spreads', () => {
+  const preview = fixture('team_preview.json');
+  const picks = buildMenus(preview)[0]!.map((item) => item.label);
+  assert.ok(picks.every((label) => label.startsWith('Pick ')));
+  assert.ok(picks.some((label) => label.includes('Pyroar')));
+  assert.ok(!picks.some((label) => label.includes('Epidemic')));
+
+  const request = fixture('turn.json');
+  const moves = request.active![0]!.moves as Array<Record<string, unknown>>;
+  moves[0]!.move = 'Earthquake';
+  moves[0]!.target = 'allAdjacent';
+  const labeled = buildMenus(request, {
+    names: { foe: { 1: 'Torkoal', 2: 'Farigiraf' }, ally: { 1: 'Pelipper', 2: 'Swampert' } },
+  })[0]!;
+  assert.match(
+    labeled.find((item) => item.part === 'move 1')!.label,
+    /Earthquake \(all adjacent, including ally Swampert\)/,
+  );
 });

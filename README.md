@@ -79,29 +79,38 @@ Showdown format, so there is no separate format switch in the runner.
 
 At each decision the model receives:
 
-- a compact private battle timeline and its durable series notebook;
-- current field, side conditions, HP, status, boosts, revealed information, and
-  exact stats for its own Pokémon;
-- both open team sheets;
-- exact Showdown species, move, base/Mega ability, item, nature, and Speed-range context
-  for those sheets;
-- numbered legal menus for the complete joint action;
-- optional native tool calls to look up move, species, item, ability, and nature
-  facts from the configured Showdown checkout.
+- current field/side timers, HP, status, boosts, revealed information, and exact
+  stats for its own Pokémon;
+- a compact active type-matchup table and slim active/bench species+move reference;
+- both open team sheets (species-based menus; nicknames are not used in prompts);
+- a compact private battle timeline (protocol facts only) and its durable notebook;
+- numbered legal menus for the complete joint action, with ally-spread and Protect-odds hints;
+- optional native tool calls for species/move/item/ability/nature, plus
+  `lookup_matchup` (type chart) and `estimate_damage` (level-50 ranges using own exact
+  stats and foe open-sheet legal ranges only—never hidden IVs/EVs).
+
+Full dex essays are behind tools rather than pasted every turn. Provider reasoning
+summaries are stored on decision traces when the AI SDK exposes them.
 
 It returns one JSON object:
 
 ```json
-{"choices":[0,2],"rationale":"brief reason for the joint action","notebook":"durable private series notes"}
+{
+  "threats": ["likely opposing joint actions or KO threats"],
+  "candidates": ["2-3 joint lines considered"],
+  "choices": [0, 2],
+  "rationale": "brief final reason",
+  "notebook": "durable private series notes"
+}
 ```
 
-The strategy prompt explicitly checks team modes, intended Mega, the opportunity
-cost of bringing multiple Mega Stones, speed control, positioning, and endgames.
-A non-chosen Mega holder must be evaluated only in its base forme; Mega-only
-stats, typing, abilities, and move boosts cannot be assumed. After each game,
-both players concurrently write a short result review, next-game adjustment, and
-updated notebook. These reviews are outside the Showdown battle clock and add one
-model request per player per completed game.
+The strategy prompt explicitly checks team modes, intended Mega, free
+super-effective hits, speed control, Protect odds, and endgames. Models are told
+they may use the full per-turn timer on hard decisions without idling out the
+bank. A non-chosen Mega holder must be evaluated only in its base forme. After
+each game, both players concurrently write a short result review, next-game
+adjustment, and updated notebook. These reviews are outside the Showdown battle
+clock and add one model request per player per completed game.
 
 Malformed decisions get one retry and then a recorded legal fallback. Empty
 responses take the recorded fallback directly. Provider failures while choosing,

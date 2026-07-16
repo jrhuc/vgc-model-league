@@ -65,3 +65,66 @@ test('lookup tools return one entry and reject missing data', () => {
 test('missing Showdown checkout fails immediately', () => {
   assert.throws(() => new ShowdownReference('test', path.join(REPO_ROOT, 'missing-showdown')), /Cannot find module/);
 });
+
+test('matchup and damage tools stay within open information', () => {
+  const reference = new ShowdownReference('gen9championsvgc2026regmb');
+  assert.match(
+    reference.lookup('lookup_matchup', { move: 'Earthquake', defender: 'Decidueye-Hisui' }),
+    /0\.5x|not very effective/,
+  );
+  assert.match(reference.lookup('lookup_matchup', { move: 'Leaf Blade', defender: 'Swampert' }), /2x|super-effective/);
+  assert.match(reference.lookup('lookup_matchup', { move: 'Earthquake', defender: 'Pelipper' }), /immune/);
+  const damage = reference.lookup('estimate_damage', {
+    attacker: 'Swampert',
+    defender: 'Farigiraf',
+    move: 'Earthquake',
+    attacker_stats: { atk: 176, def: 110, spa: 94, spd: 110, spe: 98 },
+    defender_nature: 'Calm',
+    is_spread_hit: true,
+  });
+  assert.match(damage, /damage \d+-\d+/);
+  assert.match(damage, /legal range|exact from request/);
+  assert.doesNotMatch(damage, /exact foe|hidden (iv|ev)s?/i);
+  assert.ok(DEX_TOOLS.some((tool) => tool.name === 'lookup_matchup'));
+  assert.ok(DEX_TOOLS.some((tool) => tool.name === 'estimate_damage'));
+});
+
+test('damage percentages use real foe HP even when the model passes percent-scale HP', () => {
+  const reference = new ShowdownReference('gen9championsvgc2026regmb');
+  const args = {
+    attacker: 'Whimsicott',
+    defender: 'Incineroar',
+    move: 'Moonblast',
+    attacker_stats: { atk: 78, def: 105, spa: 129, spd: 95, spe: 184 },
+    defender_nature: 'Impish',
+  };
+  // Showdown shows foe HP as x/100; raw 70/100 must not be treated as 70 real HP.
+  const misused = reference.lookup('estimate_damage', { ...args, defender_hp: 70, defender_max_hp: 100 });
+  assert.match(misused, /legal max HP \d{3}/);
+  assert.match(misused, /defender shown at 70%/);
+  assert.doesNotMatch(misused, /1[0-9][0-9](?:\.\d)?% of/);
+  const explicit = reference.lookup('estimate_damage', { ...args, defender_hp_percent: 70 });
+  assert.match(explicit, /defender shown at 70%/);
+  // Exact raw HP for the model's own side still reports percent of current HP.
+  const own = reference.lookup('estimate_damage', { ...args, defender_hp: 142, defender_max_hp: 202 });
+  assert.match(own, /% of current HP 142/);
+});
+
+test('compact reference omits ability essays and full move text', () => {
+  const compact = new ShowdownReference('gen9championsvgc2026regmb')
+    .renderCompact([
+      {
+        species: 'Swampert',
+        item: 'Swampertite',
+        nature: 'Adamant',
+        moves: ['Earthquake', 'Protect'],
+        active: true,
+      },
+    ])
+    .join('\n');
+  assert.match(compact, /Compact Showdown reference/);
+  assert.match(compact, /Swampert: Water\/Ground/);
+  assert.match(compact, /Earthquake Ground\/Physical\/100/);
+  assert.doesNotMatch(compact, /Damage doubles if the target is using Dig/);
+  assert.doesNotMatch(compact, /abilities Damp\/Torrent/);
+});

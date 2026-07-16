@@ -57,6 +57,8 @@ export interface Completion {
   text: string;
   usage: Record<string, number>;
   toolCalls: ToolCall[];
+  /** Provider reasoning / thinking summary when exposed by the AI SDK. */
+  reasoning?: string;
 }
 
 export interface ProviderMessage extends JsonObject {
