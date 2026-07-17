@@ -1,0 +1,210 @@
+import type { TargetedFocusEvent } from 'preact';
+import { useEffect, useRef, useState } from 'preact/hooks';
+
+const LIMIT = 50;
+
+export interface DropdownOption {
+  value: string;
+  label: string;
+  description?: string;
+}
+
+export function filterOptions(options: DropdownOption[], text: string): DropdownOption[] {
+  const query = text.trim().toLowerCase();
+  if (!query) return options;
+  return options.filter(
+    (option) =>
+      option.value.toLowerCase().includes(query) ||
+      option.label.toLowerCase().includes(query) ||
+      option.description?.toLowerCase().includes(query),
+  );
+}
+
+export function resolveOption(options: DropdownOption[], text: string): DropdownOption | null {
+  const query = text.trim().toLowerCase();
+  if (!query) return null;
+  const exact = options.find((option) => option.value.toLowerCase() === query);
+  if (exact) return exact;
+  const matches = filterOptions(options, text);
+  return matches.length === 1 ? (matches[0] ?? null) : null;
+}
+
+interface DropdownProps {
+  id: string;
+  label: string;
+  options: DropdownOption[];
+  value: string;
+  onChange: (value: string) => void;
+  placeholder?: string;
+  searchable?: boolean;
+  onSubmit?: () => void;
+  emptyText?: string;
+  disabled?: boolean;
+}
+
+export function Dropdown({
+  id,
+  label,
+  options,
+  value,
+  onChange,
+  placeholder = 'Select an option',
+  searchable = false,
+  onSubmit,
+  emptyText = 'No options match.',
+  disabled = false,
+}: DropdownProps) {
+  const [open, setOpen] = useState(false);
+  const [highlight, setHighlight] = useState(0);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const typeaheadRef = useRef({ text: '', time: 0 });
+  const unavailable = disabled || options.length === 0;
+  const matches = searchable ? filterOptions(options, value) : options;
+  const shown = matches.slice(0, LIMIT);
+  const clamped = Math.min(highlight, Math.max(0, shown.length - 1));
+  const selected = options.find((option) => option.value === value);
+  const listId = `${id}-options`;
+
+  useEffect(() => {
+    const onPointerDown = (event: PointerEvent) => {
+      if (rootRef.current && !rootRef.current.contains(event.target as Node)) setOpen(false);
+    };
+    document.addEventListener('pointerdown', onPointerDown);
+    return () => document.removeEventListener('pointerdown', onPointerDown);
+  }, []);
+
+  useEffect(() => {
+    rootRef.current?.querySelector('.dropdown-option.hot')?.scrollIntoView({ block: 'nearest' });
+  }, [highlight]);
+
+  const pick = (option: DropdownOption) => {
+    onChange(option.value);
+    setOpen(false);
+  };
+
+  const openAtSelection = () => {
+    const index = Math.max(
+      0,
+      shown.findIndex((option) => option.value === value),
+    );
+    setHighlight(index);
+    setOpen(true);
+  };
+
+  const onKeyDown = (event: KeyboardEvent) => {
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault();
+      if (!shown.length) return;
+      if (open) {
+        setHighlight((clamped + (event.key === 'ArrowDown' ? 1 : shown.length - 1)) % shown.length);
+      } else {
+        openAtSelection();
+      }
+    } else if (event.key === 'Home' && open && shown.length) {
+      event.preventDefault();
+      setHighlight(0);
+    } else if (event.key === 'End' && open && shown.length) {
+      event.preventDefault();
+      setHighlight(shown.length - 1);
+    } else if (event.key === 'Enter' || (!searchable && event.key === ' ')) {
+      event.preventDefault();
+      if (open && shown.length) pick(shown[clamped]!);
+      else if (searchable) onSubmit?.();
+      else openAtSelection();
+    } else if (event.key === 'Escape') {
+      setOpen(false);
+    } else if (!searchable && event.key.length === 1 && /\S/.test(event.key)) {
+      const now = Date.now();
+      const previous = typeaheadRef.current;
+      const query = `${now - previous.time < 500 ? previous.text : ''}${event.key}`.toLowerCase();
+      typeaheadRef.current = { text: query, time: now };
+      const match = options.find((option) => option.label.toLowerCase().startsWith(query));
+      if (match) pick(match);
+    }
+  };
+
+  const onBlur = (event: TargetedFocusEvent<HTMLElement>) => {
+    if (!(event.relatedTarget instanceof Node) || !rootRef.current?.contains(event.relatedTarget)) setOpen(false);
+  };
+
+  return (
+    <div class={`field dropdown ${open ? 'open' : ''}`} ref={rootRef}>
+      <label class="field-label" for={id}>
+        {label}
+      </label>
+      {searchable ? (
+        <input
+          id={id}
+          role="combobox"
+          aria-autocomplete="list"
+          aria-expanded={open && !unavailable}
+          aria-controls={listId}
+          aria-activedescendant={open && shown.length ? `${id}-option-${clamped}` : undefined}
+          autocomplete="off"
+          spellcheck={false}
+          disabled={unavailable}
+          placeholder={placeholder}
+          value={value}
+          onInput={(event) => {
+            setHighlight(0);
+            setOpen(true);
+            onChange(event.currentTarget.value);
+          }}
+          onFocus={() => {
+            if (!unavailable) setOpen(true);
+          }}
+          onKeyDown={onKeyDown}
+          onBlur={onBlur}
+        />
+      ) : (
+        <button
+          id={id}
+          type="button"
+          class="dropdown-trigger"
+          role="combobox"
+          aria-expanded={open && !unavailable}
+          aria-controls={listId}
+          aria-activedescendant={open && shown.length ? `${id}-option-${clamped}` : undefined}
+          disabled={unavailable}
+          onClick={() => {
+            if (open) setOpen(false);
+            else openAtSelection();
+          }}
+          onKeyDown={onKeyDown}
+          onBlur={onBlur}
+        >
+          <span>{selected?.label ?? placeholder}</span>
+          <span class="dropdown-arrow" aria-hidden="true" />
+        </button>
+      )}
+      {open && !unavailable && (
+        <div id={listId} class="dropdown-pop" role="listbox" aria-label={label}>
+          {shown.length ? (
+            shown.map((option, index) => (
+              <div
+                id={`${id}-option-${index}`}
+                key={option.value}
+                class={`dropdown-option ${index === clamped ? 'hot' : ''}`}
+                role="option"
+                tabIndex={-1}
+                aria-selected={option.value === value}
+                onPointerDown={(event) => {
+                  event.preventDefault();
+                  pick(option);
+                }}
+              >
+                <span class="dropdown-value">{option.label}</span>
+                {option.description && option.description !== option.label && <small>{option.description}</small>}
+              </div>
+            ))
+          ) : (
+            <div class="dropdown-empty">{emptyText}</div>
+          )}
+          {matches.length > shown.length && (
+            <div class="dropdown-empty">+ {matches.length - shown.length} more — keep typing to narrow</div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}

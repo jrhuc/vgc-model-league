@@ -1,98 +1,135 @@
-# vgcbench
+# VGC Model League
 
-`vgcbench` runs language models against each other in fixed-team, open-team-sheet
-VGC best-of-three matches using Pokémon Showdown.
+VGC Model League measures how well general-purpose language models play
+competitive Pokémon — full VGC best-of-three on Pokémon Showdown — when given a
+practical game interface but no Pokémon-specific training. Each model gets open
+team sheets, complete legal action menus, reference and damage tools, a private
+series notebook, and a review step between games. Showdown decides legality,
+timers, and outcomes. There is no fine-tuning, no search policy, and no
+battle-log pretraining: the scaffold is domain-aware, the model is not
+domain-trained.
 
-Each player makes one joint decision for both active Pokémon. The two players can
-think concurrently, and each keeps its private transcript and notebook for the
-whole series. Battle state is rebuilt from that player's Showdown protocol stream;
-the simulator remains the authority on legality and outcomes.
+The league exists to answer:
+
+- How strong are current frontier models without task-specific policy training?
+- Do models adapt between games in a best-of-three, or replay the same plan?
+- How do reliability, latency, token use, and provider configuration trade off
+  against competitive strength?
+- Which tendencies — leads, brings, switching, Protect use, targeting,
+  recovery after a loss — distinguish model families, and how do they change
+  across model generations?
+
+## Modes
+
+**Rotation** is the implemented mode and produces the controlled league
+rating: models rotate through immutable tournament-team pools, with
+assignments mirrored in pairs to cancel side and team bias.
+
+Two planned modes, **Draft League** (models draft rosters and build teams) and
+**Tournament** (fixed teams, bracket play), will record their own results and
+never enter the Rotation rating. Every result records `mode` and
+`protocol_version`; older rows remain readable.
+
+## Prior work
+
+[VGC-Bench](https://arxiv.org/abs/2506.10326) is the closest prior work: a VGC
+training environment, a large human battle-log corpus, behavior-cloned and
+reinforcement-learned agents, and seen/unseen-team generalization protocols.
+Its question is how specialized policies learn and generalize. This project
+asks the complement: how capable, reliable, and behaviorally distinct are
+hosted general-purpose models under one thin scaffold, across providers and
+model generations. VGC-Bench policies could later serve as reference opponents
+here — they would implement the same `BattleAgent` interface the league already
+uses.
+
+[PokéLLMon](https://arxiv.org/abs/2402.01118) and
+[PokéChamp](https://arxiv.org/abs/2503.04094) are adjacent language-model
+Pokémon agents; both add a learned or search component that this project
+leaves out on purpose.
 
 ## Setup
 
 ```sh
-git clone https://github.com/smogon/pokemon-showdown.git
-cd pokemon-showdown
 npm install
-npm run build-npm
-cd ..
-npm install
+npm run setup:showdown
 npm run build
 ```
 
-A built Pokémon Showdown checkout is expected at `./pokemon-showdown`. Override it
-with `VGCBENCH_PS`. The benchmark loads the configured checkout directly (by path, with
-its types mapped through `tsconfig.json`)
+`setup:showdown` clones the simulator at the exact commit in
+`showdown.lock.json` and builds it. Every project build verifies the pin. To
+adopt a new upstream revision (for example when a new VGC regulation ships):
+
+```sh
+npm run check:showdown-update   # report whether upstream HEAD moved
+npm run update:showdown         # build candidate, run full suite, advance the lock
+```
+
+`update:showdown` restores the previous pin if the candidate fails. Set
+`VGC_LEAGUE_PS` only to use a different built checkout on purpose; its actual
+commit is recorded with every result.
 
 ## Run
 
-Running `npm run vgcbench` with no command in a terminal opens an interactive
-Stadium Lab workflow. Choose a provider, connect its API key, fetch the live model
-catalog, add at least two contenders, design the shared competitive conditions,
-and review the round-robin size before spending. The review shows mirrored-series
-coverage, the expected best-of-three game range, connection state, and the exact
-batch command. The TUI also includes a live series board and standings browser.
-
-Keys pasted into the TUI are kept only in the current process and are never
-written to disk. Existing provider environment variables are detected
-automatically. Providers without a reliable catalog, private deployments, and
-OpenAI-compatible endpoints retain exact manual model-spec entry. Batch commands:
-
 ```sh
-npm run vgcbench -- selfcheck
+npm run vgcleague -- gui [--port 8484]   # browser control room on 127.0.0.1
+npm run vgcleague -- selfcheck           # one random-vs-random series
 
-npm run vgcbench -- run \
+npm run vgcleague -- rotation \
   --models anthropic:claude-sonnet-5 openai:gpt-5.2 \
   --reasoning medium \
   --series-per-pair 4 \
   --pool regmb-202607
 
-npm run vgcbench -- run \
-  --models anthropic:claude-sonnet-5 openai:gpt-5.2 meta:muse-spark-1.1 \
-  --reasoning medium \
-  --series-per-pair 2 \
-  --pool regmb-202607
-
-npm run vgcbench -- standings --pool regmb-202607
-npm run vgcbench -- report --pool regmb-202607
+npm run vgcleague -- standings --pool regmb-202607
+npm run vgcleague -- report --pool regmb-202607
 ```
 
-Two models produce one matchup. Three or more produce a round robin. The reasoning
-setting applies to every model in the run and is rejected if a selected provider
-does not support it. `--pool` on `standings` and `report` keeps ratings from
-mixing team-pool epochs.
+Two models produce one matchup; three or more produce a round robin.
+`--series-per-pair` defaults to 2 so assignments stay mirrored; an odd count
+warns. The reasoning level applies to every model and is rejected if a
+selected provider does not support it.
+
+A failed series aborts the whole run: queued series never start, in-flight
+series are cancelled, and completed series are already persisted. A run
+reported as failed is not still spending provider credits in the background.
+
+**Standings scope.** `--pool` restricts standings and reports to one team-pool
+epoch. Without it, both cover every pool except the disposable `test` pool, so
+scratch runs never contaminate the record book; pass `--pool test` to inspect
+them. The GUI record book has the same scoping.
+
+**Keys.** GUI runs use only keys pasted into the browser: held in memory for
+the run, never written to disk, never replaced by the server's environment
+variables — a run missing a key fails instead of billing server credentials.
+Provider environment variables (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, …)
+apply to CLI runs only.
 
 ## Teams
 
-Team pools live at `teams/<pool>/pool.json`; `--pool` selects one. Pools are
-immutable snapshots: refreshing the meta means a new directory, never editing an
-existing one, so old records stay reproducible. `teams/regmb-202607` is the
-current Reg M-B snapshot (11 archetype-deduped tournament teams). `test` is a
-disposable set used while the benchmark was being developed.
+Team pools live at `teams/<pool>/pool.json`. Pools are immutable snapshots: a
+metagame refresh is a new directory, never an edit, so old records stay
+reproducible. `teams/regmb-202607` is the current Reg M-B snapshot (11
+archetype-deduplicated tournament teams); `test` is disposable local data.
 
-`npm run build-pool -- teams/<pool>/sources.json` builds a snapshot from
-pokepaste sources: it packs and validates every team against the manifest format
-and refuses two teams with the same species set. The manifest owns the exact
-Showdown format, so there is no separate format switch in the runner.
+Two ways to build a pool, both validated by the pinned simulator and rejected
+on duplicate species sets:
 
-## Model input
+- `npm run build-pool -- teams/<pool>/sources.json` — from Pokepaste sources.
+- The GUI pool builder — paste
+  [Showdown teambuilder](https://play.pokemonshowdown.com/teambuilder)
+  exports.
 
-At each decision the model receives:
+The manifest records the exact Showdown format; the runner has no separate
+format switch.
 
-- current field/side timers, HP, status, boosts, revealed information, and exact
-  stats for its own Pokémon;
-- a compact active type-matchup table and slim active/bench species+move reference;
-- both open team sheets (species-based menus; nicknames are not used in prompts);
-- a compact private battle timeline (protocol facts only) and its durable notebook;
-- numbered legal menus for the complete joint action, with ally-spread and Protect-odds hints;
-- optional native tool calls for species/move/item/ability/nature, plus
-  `lookup_matchup` (type chart) and `estimate_damage` (level-50 ranges using own exact
-  stats and foe open-sheet legal ranges only—never hidden IVs/EVs).
+## Model interface
 
-Full dex essays are behind tools rather than pasted every turn. Provider reasoning
-summaries are stored on decision traces when the AI SDK exposes them.
-
-It returns one JSON object:
+At each decision the model receives the current field state and timers, exact
+stats for its own Pokémon, both open team sheets, a compact private timeline
+and durable notebook, numbered legal menus for the complete joint action, and
+active-matchup references. Optional tools cover species, moves, items,
+abilities, natures, type matchups, and level-50 damage ranges, using only
+legally available information. The model returns one JSON object:
 
 ```json
 {
@@ -104,40 +141,30 @@ It returns one JSON object:
 }
 ```
 
-The strategy prompt explicitly checks team modes, intended Mega, free
-super-effective hits, speed control, Protect odds, and endgames. Models are told
-they may use the full per-turn timer on hard decisions without idling out the
-bank. A non-chosen Mega holder must be evaluated only in its base forme. After
-each game, both players concurrently write a short result review, next-game
-adjustment, and updated notebook. These reviews are outside the Showdown battle
-clock and add one model request per player per completed game.
+Malformed decisions get one retry, then a recorded legal fallback. Empty
+responses take the fallback directly. Provider, simulator, reference, and
+team-validation failures stop the run.
 
-Malformed decisions get one retry and then a recorded legal fallback. Empty
-responses take the recorded fallback directly. Provider failures while choosing,
-reference failures, simulator failures, and team-validation failures stop the run;
-completed series are already persisted when that happens. A failed post-game
-review is recorded as a reflection fallback and does not discard a completed
-battle.
+After every game — including the last one of a series — both players write a
+short result review, next-game adjustment, and updated notebook, outside the
+battle clock. The closing review of a decided series no longer informs play;
+it is kept as post-mortem evidence and marked `series_over` in the decision
+log so analysis can separate the two.
 
-The pool's Showdown BO3 format is the authority for timer rules, tiebreaks,
-legality, and battle outcomes. Native timer budgets are included in each model
-prompt; Showdown auto-chooses when a turn expires and forfeits a player whose
-clock bank is exhausted. The benchmark does not override its result.
+## Evidence
 
-## Output
+`runs/` holds exact run configuration, series logs, compact decision timelines
+(selected actions, rationales, notebook changes, fallbacks, reflections), and
+technical traces (prompts, menus, raw responses, usage, tool calls).
 
-`runs/` contains series logs, decision timelines, technical traces, and run
-configuration. Each `pN-decisions.jsonl` is a compact human-readable timeline of
-selected labels, action, short rationale, notebook updates, fallbacks, and game
-reflections. Unchanged notebooks are omitted instead of repeating the same text.
-The corresponding `pN-trace.jsonl` retains prompts, complete menus,
-raw responses, usage, and every lookup's arguments and returned Showdown data for
-auditing without duplicating that noise in the decision timeline.
-`records/results.jsonl` contains one rated row per completed BO3, with its games
-nested inside. Its per-player decision statistics also record post-hoc tendency
-signals such as lead/bring adaptation, Protect chains, repeated actions, switches,
-ally targeting, spread moves, Mega choices, and mechanics lookups. These counters
-do not alter model prompts. Both directories are local and gitignored.
-Captured Showdown requests used by parser tests live under
-`tests/data/showdown_requests/`. They are protocol samples, not preferred plays or
-runtime inputs.
+`records/results.jsonl` holds one row per completed best-of-three: nested
+games, protocol identity, assignments, seeds, model specs, Showdown commit,
+and per-player decision statistics. Each row also records `scaffold`, a hash
+of the system prompts, tool schemas, and sampling parameters, so longitudinal
+comparisons can detect scaffold drift that a manual `protocol_version` bump
+would miss. Tendency counters (lead and bring changes, Protect chains,
+repeated actions, ally targeting, spread moves, Mega choices, tool lookups)
+are recorded post-hoc and never alter model prompts.
+
+Both directories are local and gitignored. See `docs/architecture.md` for the
+client/server contract, trust model, and deployment plan.

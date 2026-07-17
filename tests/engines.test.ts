@@ -77,6 +77,7 @@ test('LLM choices parse prose, retry, and record fallbacks', async () => {
     [[decision([1], 'remember speed', 'remember speed')], 'move 2', false, 1],
     [[`I choose this: ${decision([1], 'reason', 'x')}.`], 'move 2', false, 1],
     [[`${decision([0])} then ${decision([1])}`], 'move 2', false, 1],
+    [[`${decision([1])} earlier draft was {"choices":[9]}`], 'move 2', false, 1],
     [['{"choices":[1],"notes":"legacy"}', decision([1])], 'move 2', false, 2],
     [['invalid', decision([1])], 'move 2', false, 2],
     [['invalid', decision([9])], 'move 1', true, 2],
@@ -212,6 +213,7 @@ test('readable decisions, technical traces, and post-game reflections stay separ
   assert.ok(!('raw_response' in decisions[0]!));
   assert.ok(!('menus' in decisions[0]!));
   assert.equal(decisions[1]!.kind, 'game_reflection');
+  assert.equal(decisions[1]!.series_over, false);
   assert.match(String(decisions[1]!.adjustment), /speed order/);
   assert.equal(traces[0]!.kind, 'decision_trace');
   assert.ok('prompt' in traces[0]! && 'raw_response' in traces[0]! && 'menus' in traces[0]!);
@@ -280,6 +282,20 @@ test('team-preview adaptation counters compare public bring and lead choices', a
     bring_changes: 1,
     lead_changes: 1,
   });
+});
+
+test('the closing review of a decided series is marked series_over', async () => {
+  const decisions: Record<string, unknown>[] = [];
+  const engine = new LLMEngine('p1', 'scripted', { provider: new ScriptedProvider([]), decisionLog: decisions });
+  engine.beginGame({ gameId: 'game-2', gameNumber: 2, seriesId: 'series-1', seriesScore: { p1: 1, p2: 0 } });
+  await engine.endGame({
+    gameNumber: 2,
+    outcome: { winner: 'p1-scripted', won: true, turns: 9 },
+    seriesScore: { p1: 2, p2: 0 },
+  });
+  assert.equal(decisions[0]!.kind, 'game_reflection');
+  assert.equal(decisions[0]!.series_over, true);
+  assert.equal(decisions[0]!.fallback, true);
 });
 
 test('abandoned decisions cannot mutate memory or statistics', async () => {

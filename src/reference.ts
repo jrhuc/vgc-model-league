@@ -1,8 +1,6 @@
-import { execFileSync } from 'node:child_process';
-
 import type { Dex } from 'pokemon-showdown';
 import { defaultPsDir } from './paths.js';
-import { loadShowdown } from './showdown.js';
+import { loadShowdown, showdownCommit } from './showdown.js';
 import type { ToolDefinition } from './types.js';
 
 function tool(
@@ -83,7 +81,10 @@ export const DEX_TOOLS: ToolDefinition[] = [
         description: 'Foe HP as the percent shown in battle (0-100). Use this for opponents; never guess raw foe HP.',
       },
       attacker_item: { type: 'string' },
-      defender_item: { type: 'string' },
+      defender_item: {
+        type: 'string',
+        description: 'Modeled: Assault Vest and Eviolite only. Other defensive items are ignored.',
+      },
       attacker_nature: { type: 'string' },
       defender_nature: { type: 'string' },
       weather: { type: 'string' },
@@ -220,7 +221,6 @@ const TYPE_BOOST_ITEMS: Record<string, string> = {
 
 export class ShowdownReference {
   private readonly dex;
-  private revisionValue?: string;
 
   constructor(
     readonly format: string,
@@ -230,17 +230,7 @@ export class ShowdownReference {
   }
 
   get revision(): string {
-    if (this.revisionValue) return this.revisionValue;
-    try {
-      this.revisionValue =
-        execFileSync('git', ['-C', this.psDir, 'rev-parse', '--short=12', 'HEAD'], {
-          encoding: 'utf8',
-          timeout: 5_000,
-        }).trim() || 'unknown';
-    } catch {
-      this.revisionValue = 'unknown';
-    }
-    return this.revisionValue;
+    return showdownCommit(this.psDir).slice(0, 12);
   }
 
   /** Compact always-on context: typing, speed band, move type/BP only. */
@@ -476,11 +466,20 @@ export class ShowdownReference {
       exactAttack !== undefined
         ? [exactAttack, exactAttack]
         : statRange(attacker.baseStats[attackStat], attackerNature?.exists ? attackerNature : undefined, attackStat);
-    const [defLow, defHigh] = statRange(
+    const defenderItemName = typeof args.defender_item === 'string' ? args.defender_item : '';
+    const defenderItem = defenderItemName ? this.dex.items.get(defenderItemName) : undefined;
+    let defenderItemMod = 1;
+    if (defenderItem?.exists) {
+      if (id(defenderItem.name) === 'assaultvest' && move.category === 'Special') defenderItemMod = 1.5;
+      else if (id(defenderItem.name) === 'eviolite' && defender.nfe) defenderItemMod = 1.5;
+    }
+    let [defLow, defHigh] = statRange(
       defender.baseStats[defenseStat],
       defenderNature?.exists ? defenderNature : undefined,
       defenseStat,
     );
+    defLow = Math.floor(defLow * defenderItemMod);
+    defHigh = Math.floor(defHigh * defenderItemMod);
     const [hpLow, hpHigh] = hpRange(defender.baseStats.hp);
     let defenderHp = asFinite(args.defender_hp);
     let defenderMaxHp = asFinite(args.defender_max_hp);
@@ -570,9 +569,9 @@ export class ShowdownReference {
     return [
       `${attacker.name} ${move.name} (${moveType} ${move.category} BP ${power}) into ${defender.name}:`,
       `damage ${minDamage}-${maxDamage} (${hpText})`,
-      `type ${effectivenessLabel(typeMod)}; STAB ${stab}x; weather ${weatherMod}x; item ${itemMod}x; spread ${spreadMod}x.`,
+      `type ${effectivenessLabel(typeMod)}; STAB ${stab}x; weather ${weatherMod}x; item ${itemMod}x; defender item ${defenderItemMod}x; spread ${spreadMod}x.`,
       `${exactNote}${defNote}`,
-      'Not modeled: abilities, stat boosts, burn, screens, terrain—adjust the range yourself when these apply.',
+      'Not modeled: abilities, stat boosts, burn, screens, terrain, defensive items other than Assault Vest/Eviolite—adjust the range yourself when these apply.',
     ].join(' ');
   }
 

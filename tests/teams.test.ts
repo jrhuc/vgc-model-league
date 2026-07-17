@@ -26,7 +26,7 @@ test('default pool loads in manifest order and validates', () => {
 });
 
 test('pool loader uses custom directories and rejects invalid manifests', (t) => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'vgcbench-teams-'));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-model-league-teams-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const poolDir = path.join(root, 'snapshot');
   fs.mkdirSync(poolDir);

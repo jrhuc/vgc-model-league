@@ -4,6 +4,7 @@ import test from 'node:test';
 
 import { REPO_ROOT } from '../src/paths.js';
 import { DEX_TOOLS, ShowdownReference } from '../src/reference.js';
+import { SHOWDOWN_LOCK, showdownCommit } from '../src/showdown.js';
 
 test('reference reads exact data from the configured Showdown checkout', () => {
   const reference = new ShowdownReference('gen9championsvgc2026regmb');
@@ -62,8 +63,15 @@ test('lookup tools return one entry and reject missing data', () => {
   );
 });
 
+test('default Showdown checkout matches the pinned revision', () => {
+  assert.equal(showdownCommit(), SHOWDOWN_LOCK.commit);
+});
+
 test('missing Showdown checkout fails immediately', () => {
-  assert.throws(() => new ShowdownReference('test', path.join(REPO_ROOT, 'missing-showdown')), /Cannot find module/);
+  assert.throws(
+    () => new ShowdownReference('test', path.join(REPO_ROOT, 'missing-showdown')),
+    /Pokémon Showdown is not built.*setup:showdown/,
+  );
 });
 
 test('matchup and damage tools stay within open information', () => {
@@ -87,6 +95,21 @@ test('matchup and damage tools stay within open information', () => {
   assert.doesNotMatch(damage, /exact foe|hidden (iv|ev)s?/i);
   assert.ok(DEX_TOOLS.some((tool) => tool.name === 'lookup_matchup'));
   assert.ok(DEX_TOOLS.some((tool) => tool.name === 'estimate_damage'));
+});
+
+test('defender items model Assault Vest and Eviolite and disclose everything else', () => {
+  const reference = new ShowdownReference('gen9championsvgc2026regmb');
+  const args = { attacker: 'Gengar', defender: 'Farigiraf', move: 'Sludge Bomb' };
+  assert.match(reference.lookup('estimate_damage', args), /defender item 1x/);
+  assert.match(reference.lookup('estimate_damage', { ...args, defender_item: 'Assault Vest' }), /defender item 1\.5x/);
+  assert.match(
+    reference.lookup('estimate_damage', { ...args, move: 'Crunch', defender_item: 'Assault Vest' }),
+    /defender item 1x/,
+  );
+  assert.match(
+    reference.lookup('estimate_damage', { ...args, defender_item: 'Leftovers' }),
+    /defender item 1x.*other than Assault Vest\/Eviolite/s,
+  );
 });
 
 test('damage percentages use real foe HP even when the model passes percent-scale HP', () => {

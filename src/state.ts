@@ -353,6 +353,28 @@ export class BattleState {
     return [...this.sides[pid].conditions.values()].map((effect) => this.formatTimed(effect)).sort();
   }
 
+  /** Mons a spectator should see: team-preview ghosts are dropped once a richer entry covers the species. */
+  visibleMons(pid: Pid): MonState[] {
+    const side = this.sides[pid];
+    const all = [...side.mons.values()];
+    const rich = new Set(
+      all
+        .filter((mon) => mon.hp !== undefined || mon.moves.size || mon.item || mon.ability)
+        .map((mon) => this.speciesKey(mon.species)),
+    );
+    for (const mon of all) {
+      if (mon.hp === undefined && !mon.moves.size) continue;
+      const sheetMon = side.sheet.find((candidate) => this.monKey(candidate.ident) === this.monKey(mon.ident));
+      if (sheetMon) rich.add(this.speciesKey(sheetMon.species));
+    }
+    return all.filter((mon) => !(mon.preview && mon.hp === undefined && rich.has(this.speciesKey(mon.species))));
+  }
+
+  activeSlot(pid: Pid, mon: MonState): string | undefined {
+    const key = this.monKey(mon.ident);
+    return Object.entries(this.sides[pid].active).find(([, active]) => active === key)?.[0];
+  }
+
   private formatTimed(effect: TimedEffect | undefined): string {
     if (!effect) return 'none';
     const elapsed = Math.max(0, this.turn - effect.startedTurn);

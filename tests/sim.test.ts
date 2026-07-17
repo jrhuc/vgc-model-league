@@ -4,8 +4,8 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
-import { runBenchmark } from '../src/arena.js';
 import { RandomEngine } from '../src/engines.js';
+import { runRotation } from '../src/rotation.js';
 import { routeUpdateLines, SimBattle } from '../src/sim.js';
 import { BattleState } from '../src/state.js';
 import { loadPool } from '../src/teams.js';
@@ -109,17 +109,19 @@ test('split messages route secrets and buffer incomplete triples', () => {
   assert.deepEqual(buffered.pov.p2, ['|public', '|after']);
 });
 
-test('benchmark writes one completed best-of-three record', async (t) => {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'vgcbench-run-'));
+test('Rotation writes one completed best-of-three record', async (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-model-league-run-'));
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
   const records = path.join(directory, 'results.jsonl');
-  const rows = await runBenchmark(['random', 'random'], 1, path.join(directory, 'run'), {
+  const rows = await runRotation(['random', 'random'], 1, path.join(directory, 'run'), {
     seed: 1,
     concurrency: 1,
     recordsPath: records,
   });
   assert.equal(rows.length, 1);
   assert.equal(rows[0]!.run_seed, 1);
+  assert.equal(rows[0]!.mode, 'rotation');
+  assert.equal(rows[0]!.protocol_version, 1);
   assert.ok(Array.isArray(rows[0]!.games));
   assert.ok((rows[0]!.games as unknown[]).length >= 2);
   assert.equal(fs.readFileSync(records, 'utf8').trim().split('\n').length, 1);
