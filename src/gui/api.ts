@@ -103,6 +103,10 @@ export interface StandingView {
 
 export interface RecordsResponse {
   count: number;
+  /** Applied pool filter; null is the overall view, which excludes the test pool. */
+  pool: string | null;
+  /** Every pool present in the records file, including the test pool. */
+  pools: string[];
   standings: StandingView[];
   h2h: Record<string, Record<string, [number, number, number]>>;
   records: unknown[];

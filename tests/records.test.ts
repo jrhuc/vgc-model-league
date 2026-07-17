@@ -6,7 +6,7 @@ import test from 'node:test';
 
 import type { SeriesRecord } from '../src/records.js';
 
-import { appendRow, h2h, standings } from '../src/records.js';
+import { appendRow, h2h, scopeRows, standings } from '../src/records.js';
 import { writeReport } from '../src/report.js';
 
 function row(p1: string, p2: string, winner: string | null): SeriesRecord {
@@ -34,6 +34,30 @@ test('head-to-head and self-play use each model perspective', () => {
   assert.equal(self.elo, 1000);
   assert.equal(self.series, 2);
   assert.deepEqual(h2h([row('a', 'a', 'a')]).a!.a, [1, 1, 0]);
+});
+
+test('scoping keeps the test pool out of overall views but selectable', () => {
+  const rows = [
+    { ...row('a', 'b', 'a'), pool: 'regmb-202607' },
+    { ...row('a', 'b', 'b'), pool: 'test' },
+    row('legacy-a', 'legacy-b', null),
+  ];
+  assert.deepEqual(
+    scopeRows(rows).map((item) => item.players.p1),
+    ['a', 'legacy-a'],
+  );
+  assert.deepEqual(
+    scopeRows(rows, 'test').map((item) => item.players.p2),
+    ['b'],
+  );
+  assert.equal(scopeRows(rows, 'regmb-202607').length, 1);
+});
+
+test('standings and head-to-head tolerate rows without players', () => {
+  const malformed = { games: [] } as unknown as SeriesRecord;
+  const table = standings([row('a', 'b', 'a'), malformed]);
+  assert.equal(table.length, 2);
+  assert.deepEqual(h2h([malformed]), {});
 });
 
 test('ratings follow scheduled order rather than completion order', () => {
@@ -64,6 +88,7 @@ test('HTML reports include nested games and filter pools', (t) => {
     ],
   });
   appendRow(records, { ...row('excluded-c', 'excluded-d', 'excluded-c'), pool: 'beta' });
+  appendRow(records, { ...row('scratch-e', 'scratch-f', 'scratch-e'), pool: 'test' });
   const report = path.join(directory, 'report.html');
   writeReport(records, report, 'alpha');
   const html = fs.readFileSync(report, 'utf8');
@@ -72,4 +97,11 @@ test('HTML reports include nested games and filter pools', (t) => {
   assert.match(html, /series-1/);
   assert.match(html, /game-1\.log/);
   assert.doesNotMatch(html, /excluded-c/);
+
+  const overall = path.join(directory, 'report-overall.html');
+  writeReport(records, overall);
+  const overallHtml = fs.readFileSync(overall, 'utf8');
+  assert.match(overallHtml, /2 completed series across all pools \(pool test excluded\)/);
+  assert.match(overallHtml, /excluded-c/);
+  assert.doesNotMatch(overallHtml, /scratch-e/);
 });

@@ -78,6 +78,29 @@ test('move targeting follows Showdown target types', () => {
   assert.ok(ally.has('move 1 -2'));
 });
 
+test('fainted or commanding allies are not offered as targets', () => {
+  const request = fixture('turn.json');
+  const moves = request.active![0]!.moves as Array<Record<string, unknown>>;
+  moves[0]!.target = 'normal';
+  const ally = request.side!.pokemon![1]!;
+  ally.condition = '0 fnt';
+  const fainted = buildMenus(request)[0]!.map((item) => item.part);
+  assert.ok(fainted.includes('move 1 +1'));
+  assert.ok(!fainted.some((part) => part === 'move 1 -2'));
+
+  ally.condition = '219/219';
+  ally.commanding = true;
+  const commanding = buildMenus(request)[0]!.map((item) => item.part);
+  assert.ok(!commanding.some((part) => part === 'move 1 -2'));
+
+  ally.commanding = false;
+  assert.ok(
+    buildMenus(request)[0]!
+      .map((item) => item.part)
+      .includes('move 1 -2'),
+  );
+});
+
 test('target names change labels but not commands', () => {
   const request = fixture('turn.json');
   (request.active![0]!.moves as Array<Record<string, unknown>>)[0]!.target = 'normal';

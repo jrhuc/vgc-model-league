@@ -13,6 +13,9 @@ pokemon-showdown/
 .env.*
 !.env.example
 
+# Stray local environments
+.venv/
+
 # Editors and operating systems
 .DS_Store
 .idea/

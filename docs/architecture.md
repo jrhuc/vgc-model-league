@@ -43,11 +43,25 @@ so future modes can reuse execution without inheriting Rotation scheduling.
 `ExperimentMode` currently contains only `rotation`. A new mode extends that type only when its real orchestrator
 exists; Draft League and Tournament must not arrive as conditionals scattered through `rotation.ts`. Every new run
 config, live snapshot, and completed series carries `mode` and `protocol_version`. Protocol versions change when an
-evaluation rule changes enough to make unlike results incomparable.
+evaluation rule changes enough to make unlike results incomparable. Because that bump is manual discipline, every row
+and run config also records `scaffold` — a hash of the decision/reflection system prompts, tool schemas, and sampling
+parameters — so unintentional scaffold drift is detectable after the fact even when `protocol_version` did not move.
 
-Before another mode ships, records queries and ratings must be scoped by mode, protocol version, regulation, and pool
-where applicable. Rotation Elo remains the default controlled rating; Draft League and Tournament results will have
-their own views and cannot silently enter it.
+Reference opponents (for example VGC-Bench's behavior-cloned or reinforcement-learned policies) integrate by
+implementing `BattleAgent` (`act`/`observe`/`abandonDecision`). That interface is the interop seam: reference agents
+never acquire `LLMEngine`'s notebook, reflection, or tool machinery, and the league scaffold never leaks into them.
+
+Run failure semantics are part of the protocol: the first failed series aborts the scheduler's shared signal, so
+queued series never start and in-flight series stop consuming provider credits; the failure is reported only after
+every worker has settled. Completed series are already persisted. A user-initiated stop behaves the same way but
+resolves with the completed results instead of an error.
+
+Records queries and ratings are scoped by pool today: unscoped standings, reports, and the GUI record book exclude
+the disposable `test` pool, and any single pool — including `test` — can be selected explicitly. Before another mode
+ships, that scoping must extend to mode and protocol version. Rotation Elo remains the default controlled rating;
+Draft League and Tournament results will have their own views and cannot silently enter it. The sequential Elo shown
+in standings is a provisional display rating recomputed from qualifying rows on every read — never stored — so a
+paired-comparison model (Bradley–Terry or similar) can replace it later without any schema change.
 
 ## Pokémon Showdown boundary
 
@@ -77,7 +91,9 @@ visits, so it defends itself:
 - **Path traversal guard** on static assets; only known extensions under `dist/gui` are served.
 - **Keys**: provider API keys are held in browser memory and sent only for catalog lookup and the run; the server
   keeps them in memory for the run's duration, then wipes them. They are never written to records, logs, or state
-  responses. Server-side env keys are never exposed to the client.
+  responses. Server-side env keys are never exposed to the client, and GUI runs never fall back to them: a
+  key-carrying run that is missing a key for any hosted model is rejected up front rather than silently billed to
+  the server's credentials. Env keys exist for CLI runs only.
 - Body size limit (2 MB) on JSON parsing.
 
 ## Trust model — deployed multi-user site (future, not built)
@@ -88,21 +104,29 @@ Before this runs anywhere but localhost, all of the following are required; none
    auth (or OAuth) sits in front of every mutating route; the route table in `server.ts` is the middleware choke point.
    Published evidence belongs to the shared corpus, while contributor identity remains attached for provenance and
    moderation.
-2. **Quotas and rate limits.** Runs consume the submitter's LLM credits and our CPU; per-user concurrency caps and
-   run-length limits are load-bearing, not polish.
-3. **Key handling.** Never store user provider keys at rest. Either keep the current pass-through model (keys live in
-   the client, submitted per run, wiped after) or add a per-user encrypted vault with explicit consent. Redact keys
-   from every error path (model-catalog already does this for discovery errors).
+2. **Quotas and rate limits.** Because provider keys are bring-your-own, token spend lands on the submitter, not the
+   site; the economic abuse surface is CPU and egress. Per-user active-run caps and run-duration limits therefore
+   cover it — the quota system should stay that simple until measured abuse says otherwise.
+3. **Key handling.** Never store user provider keys at rest. Keep the current pass-through model: keys live in the
+   client, are submitted per run, and are wiped after. This constrains scheduling (see admission control below) —
+   that constraint is accepted, not worked around. A per-user encrypted vault is the named prerequisite for anything
+   that would require holding a key beyond one run. Redact keys from every error path (model-catalog already does
+   this for discovery errors).
 4. **Execution isolation.** Untrusted-input runs (team pastes, model specs, seeds) execute in a sandboxed worker with
    timeouts, not in the web server process. Validate specs/pastes exactly as now — `createPool`/`inspectTeam`/
    `parseSpec` are already the choke points.
 5. **Transport and headers.** HTTPS, CSP, and replacing the localhost host allowlist with the real origin.
-6. **Aggregation pipeline.** Central ingestion accepts `results.jsonl`-shaped rows. Requirements include
-   `schema_version` (currently 1; bump on breaking change while keeping additive fields optional), `mode`,
-   `protocol_version`, model identity, and provenance (Showdown commit, pool id, run seed, and engine seeds).
-   Server-side re-validation happens before rows enter shared standings: client-submitted results are claims, not
-   facts. Long-term, the server replays the seed and log to verify them. Ratings are recomputed from qualifying rows,
-   never stored as authoritative values.
+6. **Evidence admission.** Public ratings admit server-produced evidence only, from day one. Client-submitted
+   `results.jsonl`-shaped rows may be accepted as unverified exhibits with full provenance (`schema_version`, `mode`,
+   `protocol_version`, `scaffold`, model identity, Showdown commit, pool id, run seed, engine seeds), but they never
+   enter shared standings. Replay can verify only outcome integrity — that the recorded choices under the recorded
+   seed produce the recorded result — not that a hosted model actually produced those choices, and that second claim
+   is the one a leaderboard rests on. So replay verification is not a promotion path from exhibit to rating; it is a
+   spot-check. Ratings are recomputed from qualifying rows, never stored as authoritative values.
+7. **Spectating uses the public stream.** The current live feed is omniscient: `routeUpdateLines` keeps the secret
+   half of `|split|` lines in `state.log`, which is correct for the operator's own control room. Spectating another
+   user's live run must be built on the public log stream instead — open team sheets already reveal sets, but exact
+   HP and request internals stay private to the players.
 
 ### Recorded deployment decisions
 
@@ -141,23 +165,31 @@ edge/container runtime merely to reduce hosting cost.
 
 ### Delivery sequence
 
+0. **Static public results site.** The research-commons goal does not need auth, quotas, or SSRF hardening to start
+   existing. `writeReport` already produces a self-contained HTML record book; publish that plus exported replay
+   logs as a static site with zero attack surface. Run submission stays local. Later phases stop being blockers for
+   being public at all.
 1. **Private deployment hardening.** Containerize the existing app; add `/healthz` and `/readyz`, graceful shutdown,
-   a persistent data directory, automated encrypted backups plus a restore drill, structured logs with secret
-   redaction, dependency/image updates, and a single configured public origin. Confirm the proxy does not buffer SSE.
+   a persistent data directory, structured logs with secret redaction, dependency/image updates, and a single
+   configured public origin. Back up SQLite with continuous replication to object storage (Litestream-style) rather
+   than scheduled dumps — near-free, and the restore drill becomes point-in-time recovery. SSE through the proxy
+   works but idles out (Cloudflare ≈100s): send heartbeat comments on `/api/events` roughly every 25 seconds.
 2. **Identity and durable state.** Add GitHub OAuth, hashed sessions, the narrow role model, SQLite migrations, immutable
    versioned pools, experiment ownership, and an audit trail for every mutation. Public reads stay unauthenticated.
-3. **Admission and execution isolation.** Replace the in-web-process scheduler with a bounded job queue and worker
-   process. Enforce per-user queued/active limits, global concurrent-series limits, maximum models, series, teams, and
-   run duration; cancellation must survive browser disconnects. A malformed or hung run must not take down the web
-   process.
+3. **Admission control and execution isolation.** Move runs into a bounded worker process, admitted only when a
+   worker slot is free — no durable server-side queue. A durably queued job would need its provider key when it
+   eventually starts, which conflicts with memory-only keys; admission control resolves that honestly, and runs are
+   minutes to hours, not days. The browser retries when slots are full. Enforce per-user active limits, global
+   concurrent-series limits, maximum models, series, teams, and run duration; cancellation must survive browser
+   disconnects. A malformed or hung run must not take down the web process.
 4. **Public security gate.** Add strict CSP, HSTS, `X-Content-Type-Options`, `Referrer-Policy`, and
    `Permissions-Policy`; CSRF protection; route and resource rate limits; generic external errors with correlation IDs;
    and tested backup/restore and rollback procedures. Disable arbitrary OpenAI-compatible base URLs in hosted mode or
    run them in a network-restricted worker with HTTPS-only allowlists, redirect revalidation, DNS/IP range rejection,
    response-size limits, and timeouts to close the SSRF path.
-5. **Research corpus and scale.** Admit only server-produced or server-revalidated evidence to public ratings, retain
-   simulator/model/prompt/pool/protocol provenance, expose reproducible exports, and add moderation workflows. Split
-   workers or move from SQLite only after measured load requires it.
+5. **Research corpus and scale.** Server-produced evidence feeds public ratings; client submissions remain unverified
+   exhibits (see trust model item 6). Retain simulator/model/scaffold/pool/protocol provenance, expose reproducible
+   exports, and add moderation workflows. Split workers or move from SQLite only after measured load requires it.
 
 Provider keys remain bring-your-own and memory-only through these phases. Never include them in job configuration,
 artifacts, logs, or database rows. A future encrypted vault is a separate opt-in feature with its own threat model, not
@@ -165,8 +197,10 @@ a prerequisite for public deployment.
 
 ## Records are the data currency
 
-`records/results.jsonl` is append-only and backward compatible: readers tolerate unknown fields and missing optional
-ones. New rows record `mode: "rotation"` and `protocol_version: 1`; the fields remain optional in the TypeScript reader
-so pre-versioning rows still load. Anything worth analyzing later—decisions, token usage, latency, provider failures,
-or behavioral opportunities—should be captured at run time as structured evidence. Backfilling from logs is possible
-but expensive; additive schema fields are cheap.
+`records/results.jsonl` is append-only and backward compatible: readers tolerate unknown fields, missing optional
+ones, and malformed rows (a row without players is skipped by ratings rather than crashing the reader). New rows
+record `mode: "rotation"`, `protocol_version: 1`, and `scaffold`; the fields remain optional in the TypeScript reader
+so pre-versioning rows still load, and legacy rows without a `pool` field stay in unscoped views. Anything worth
+analyzing later—decisions, token usage, latency, provider failures, or behavioral opportunities—should be captured at
+run time as structured evidence (post-game reflections carry `series_over` for exactly this reason). Backfilling from
+logs is possible but expensive; additive schema fields are cheap.

@@ -85,13 +85,11 @@ export function ArenaView({ run, battles, selected, onSelect, onGoFixtures }: Ar
       <div class="panel no-run">
         <div class="no-run-inner">
           <div class="no-run-mark">VS</div>
-          <p class="eyebrow">Arena standby</p>
-          <h2>No fixture is running</h2>
-          <p class="lede">
-            Build a contender lineup and start the run. Live turns will appear here as Showdown resolves them.
-          </p>
+          <p class="eyebrow">No active run</p>
+          <h2>No run in progress</h2>
+          <p class="lede">Set up models and start a run. Live turns appear here as Showdown resolves them.</p>
           <button type="button" class="button primary" style="margin-top:22px" onClick={onGoFixtures}>
-            Create a fixture
+            Set up a run
           </button>
         </div>
       </div>
@@ -125,11 +123,13 @@ export function ArenaView({ run, battles, selected, onSelect, onGoFixtures }: Ar
       <div class="arena-topline">
         <div>
           <p class="eyebrow">
-            Rotation v{run.protocolVersion} / stadium feed / {run.runId}
-            {run.seed === null ? '' : ` / seed ${run.seed}`}
+            Rotation · protocol v{run.protocolVersion} · {run.runId}
+            {run.seed === null ? '' : ` · seed ${run.seed}`}
           </p>
           <div class="run-identity">
-            <h1>{run.state === 'running' ? 'Match live' : run.state === 'done' ? 'Run complete' : 'Run failed'}</h1>
+            <h1>
+              {run.state === 'running' ? 'Run in progress' : run.state === 'done' ? 'Run complete' : 'Run failed'}
+            </h1>
             <span class={`status-pill ${run.state}`}>{run.state}</span>
           </div>
           <p class="kicker" style="margin:10px 0 0">
@@ -166,7 +166,7 @@ export function ArenaView({ run, battles, selected, onSelect, onGoFixtures }: Ar
           <div class="board-list">
             {run.rows.length === 0 ? (
               <div class="empty-contenders" style="margin:18px">
-                Simulator is drawing the fixture queue…
+                Planning series assignments…
               </div>
             ) : (
               run.rows.map((item, index) => (
@@ -196,8 +196,8 @@ export function ArenaView({ run, battles, selected, onSelect, onGoFixtures }: Ar
           {!row ? (
             <div class="field-surface">
               <div class="field-empty">
-                <h2>Waiting for the card</h2>
-                <p>The simulator is preparing series assignments.</p>
+                <h2>Waiting for assignments</h2>
+                <p>The scheduler is planning the series.</p>
               </div>
             </div>
           ) : !entry?.snapshot ? (
@@ -208,7 +208,7 @@ export function ArenaView({ run, battles, selected, onSelect, onGoFixtures }: Ar
               </div>
               <div class="field-surface">
                 <div class="field-empty">
-                  <h2>{row.status === 'queued' ? 'In the tunnel' : 'Loading the battle feed'}</h2>
+                  <h2>{row.status === 'queued' ? 'Queued' : 'Waiting for battle output'}</h2>
                   <p>
                     {row.players.p1} vs {row.players.p2}
                   </p>

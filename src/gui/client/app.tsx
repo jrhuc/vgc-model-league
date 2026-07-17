@@ -8,9 +8,9 @@ import { PoolsView } from './views/pools';
 import { ResultsView } from './views/results';
 
 const NAV = [
-  { id: 'fixtures', label: 'Fixtures' },
-  { id: 'arena', label: 'Live arena' },
-  { id: 'results', label: 'Results' },
+  { id: 'fixtures', label: 'New run' },
+  { id: 'arena', label: 'Live run' },
+  { id: 'results', label: 'Record book' },
   { id: 'pools', label: 'Team pools' },
 ] as const;
 
@@ -109,7 +109,7 @@ export function App() {
         <div class="brand">
           <span class="brand-mark" aria-hidden="true" />
           <div class="brand-name">
-            VGC MODEL LEAGUE<small>Frontier model match play</small>
+            VGC MODEL LEAGUE<small>Frontier model evaluation on Pokémon Showdown</small>
           </div>
         </div>
         <nav class="primary-nav" aria-label="Main navigation">
@@ -126,7 +126,7 @@ export function App() {
         </nav>
         <div class={`header-state ${live ? 'live' : ''}`}>
           <span class="live-dot" />
-          <span>{live ? 'Rotation live' : run ? `Last run ${run.state}` : 'League idle'}</span>
+          <span>{live ? 'Run in progress' : run ? `Last run ${run.state}` : 'Idle'}</span>
         </div>
       </header>
       <main class="shell">

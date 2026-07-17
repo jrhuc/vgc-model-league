@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -214,6 +215,26 @@ export interface LLMEngineOptions {
 
 const RETRY_ATTEMPTS = 3;
 const RETRY_BASE_MS = 400;
+const DECISION_MAX_TOKENS = 8192;
+const DECISION_TEMPERATURE = 0.2;
+const REFLECTION_MAX_TOKENS = 2048;
+
+/** Identity of the fixed scaffold: prompts, tool schemas, and sampling parameters. */
+export function scaffoldRevision(): string {
+  return createHash('sha256')
+    .update(
+      JSON.stringify({
+        system: SYSTEM,
+        reflection: REFLECTION_SYSTEM,
+        tools: DEX_TOOLS,
+        decisionMaxTokens: DECISION_MAX_TOKENS,
+        decisionTemperature: DECISION_TEMPERATURE,
+        reflectionMaxTokens: REFLECTION_MAX_TOKENS,
+      }),
+    )
+    .digest('hex')
+    .slice(0, 12);
+}
 
 function isTransientError(error: unknown): boolean {
   if (error instanceof ApiError)
@@ -373,8 +394,8 @@ export class LLMEngine extends BaseEngine {
         const completion = await this.completeWithRetry(
           messages,
           {
-            maxTokens: 8192,
-            temperature: 0.2,
+            maxTokens: DECISION_MAX_TOKENS,
+            temperature: DECISION_TEMPERATURE,
             tools: DEX_TOOLS,
             toolChoice: finalRound ? 'none' : 'auto',
             ...(deadline === undefined ? {} : { timeout: Math.max(0.1, (deadline - performance.now()) / 1000 + 1) }),
@@ -636,8 +657,19 @@ export class LLMEngine extends BaseEngine {
 
   static extractChoices(response: string, menus: SlotMenu[]): ParsedDecision {
     const objects = jsonObjects(response).filter((value) => 'choices' in value || 'choice' in value);
-    const object = objects.at(-1);
-    if (!object) throw new Error('no JSON object with a choices key');
+    if (!objects.length) throw new Error('no JSON object with a choices key');
+    let failure: unknown;
+    for (const object of objects.reverse()) {
+      try {
+        return LLMEngine.parseDecision(object, menus);
+      } catch (caught) {
+        failure ??= caught;
+      }
+    }
+    throw failure;
+  }
+
+  private static parseDecision(object: JsonObject, menus: SlotMenu[]): ParsedDecision {
     const rawChoices = object.choices ?? (menus.length === 1 ? [object.choice] : undefined);
     if (!Array.isArray(rawChoices) || rawChoices.length !== menus.length)
       throw new Error(`choices must be an array of exactly ${menus.length} integers`);
@@ -667,6 +699,7 @@ export class LLMEngine extends BaseEngine {
   }
 
   private async reflect(context: GameEnd, result: string): Promise<void> {
+    const seriesOver = context.gameNumber >= 3 || Math.max(this.seriesScore.p1, this.seriesScore.p2) >= 2;
     const prompt = [
       `Series ${this.seriesId ?? '?'}; game ${context.gameNumber}; result: ${result}; series score ${this.scoreText()}.`,
       `Turns: ${String(context.outcome.turns ?? '?')}. Decision errors: ${String(context.outcome.errors ?? 0)}. Legal fallbacks: ${String(context.outcome.fallbacks ?? 0)}.`,
@@ -690,7 +723,7 @@ export class LLMEngine extends BaseEngine {
       for (let attempt = 0; attempt < 2 && !parsed; attempt += 1) {
         const completion = await this.completeWithRetry(
           messages,
-          { maxTokens: 2048, temperature: 0.2, timeout: 60 },
+          { maxTokens: REFLECTION_MAX_TOKENS, temperature: DECISION_TEMPERATURE, timeout: 60 },
           this.generation,
           REFLECTION_SYSTEM,
         );
@@ -732,6 +765,7 @@ export class LLMEngine extends BaseEngine {
       game_number: context.gameNumber,
       pid: this.pid,
       result,
+      series_over: seriesOver,
       summary: review.summary,
       adjustment: review.adjustment,
       ...this.notebookUpdate(),
@@ -744,6 +778,7 @@ export class LLMEngine extends BaseEngine {
       series_id: this.seriesId ?? null,
       game_number: context.gameNumber,
       pid: this.pid,
+      series_over: seriesOver,
       prompt,
       raw_response: rawResponse,
       usage,

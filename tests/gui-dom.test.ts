@@ -33,13 +33,13 @@ test('built client bundle boots and renders the app against the live server', as
     window.eval(bundle);
 
     const rendered = () => window.document.body.textContent ?? '';
-    await waitFor(() => rendered().includes('Contender lineup'));
+    await waitFor(() => rendered().includes('Model lineup'));
     const text = rendered();
     assert.match(text, /VGC MODEL LEAGUE/);
-    assert.match(text, /Contender lineup/);
+    assert.match(text, /Model lineup/);
     assert.match(text, /Control sheet/);
     assert.match(text, /Team pools/);
-    assert.match(text, /No agents on the card/);
+    assert.match(text, /No models selected/);
     const navButtons = window.document.querySelectorAll('.nav-button');
     assert.equal(navButtons.length, 4);
 

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'preact/hooks';
 
 import type { RecordsResponse } from '../../api';
+import { Dropdown } from '../components/dropdown';
 import { api } from '../http';
 
 function code(index: number): string {
@@ -9,24 +10,34 @@ function code(index: number): string {
 
 export function ResultsView({ active, epoch }: { active: boolean; epoch: number }) {
   const [data, setData] = useState<RecordsResponse | null>(null);
+  const [pool, setPool] = useState('');
   const [error, setError] = useState('');
 
   useEffect(() => {
     if (!active) return;
-    api<RecordsResponse>('/api/records')
+    api<RecordsResponse>(`/api/records${pool ? `?pool=${encodeURIComponent(pool)}` : ''}`)
       .then((response) => {
         setData(response);
         setError('');
       })
       .catch((failure: Error) => setError(failure.message));
-  }, [active, epoch]);
+  }, [active, epoch, pool]);
 
   const rows = data?.standings ?? [];
+  const poolOptions = [
+    { value: '', label: 'Overall', description: 'Every pool except the disposable test pool' },
+    ...(data?.pools ?? []).map((name) => ({ value: name, label: name })),
+  ];
+  const scopeText = data
+    ? data.pool
+      ? `${data.count} recorded series in pool ${data.pool}.`
+      : `${data.count} recorded series across all pools (test excluded).`
+    : 'Loading the record book…';
   return (
     <>
       <div class="page-heading">
         <div>
-          <p class="eyebrow">Record book / all runs</p>
+          <p class="eyebrow">Record book / {pool || 'overall'}</p>
           <h1>
             Standings &amp;
             <br />
@@ -34,8 +45,8 @@ export function ResultsView({ active, epoch }: { active: boolean; epoch: number 
           </h1>
         </div>
         <p class="lede">
-          Every recorded Rotation series in this checkout, rated by Elo. The record book grows with each run and feeds
-          future adaptation, reliability, habit, and team-choice analysis.
+          Recorded Rotation series in this checkout, rated by Elo. The overall view excludes the disposable test pool;
+          select a pool to keep ratings within one team-pool epoch.
         </p>
       </div>
       <div class="results-grid">
@@ -43,7 +54,10 @@ export function ResultsView({ active, epoch }: { active: boolean; epoch: number 
           <div class="section-head">
             <div>
               <h2>Standings</h2>
-              <p>{error || (data ? `${data.count} recorded series across all runs.` : 'Loading the record book…')}</p>
+              <p>{error || scopeText}</p>
+            </div>
+            <div style="min-width:220px">
+              <Dropdown id="recordsPool" label="Scope" options={poolOptions} value={pool} onChange={setPool} />
             </div>
           </div>
           <div class="table-scroll">

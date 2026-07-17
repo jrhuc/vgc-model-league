@@ -135,18 +135,18 @@ export function buildMenus(request: BattleRequest, hints?: MenuHints): SlotMenu[
         return [{ label: 'Pass', part: 'pass', kind: 'pass' }];
       }
       const moves = asRecords(active.moves);
+      const allyIndex = slot === 1 ? 1 : 0;
+      const ally = activePokemon[allyIndex];
+      const hasAlly =
+        request.active!.length > 1 &&
+        request.active![allyIndex] !== null &&
+        ally !== undefined &&
+        !ally.commanding &&
+        !text(ally.condition).endsWith(' fnt');
       const menu = moves.flatMap((move, index) =>
         move.disabled
           ? []
-          : moveItems(
-              move,
-              index + 1,
-              slot,
-              request.active!.length,
-              request.active!.length > 1 && request.active![slot === 1 ? 1 : 0] !== null,
-              Boolean(active.canMegaEvo),
-              hints,
-            ),
+          : moveItems(move, index + 1, slot, request.active!.length, hasAlly, Boolean(active.canMegaEvo), hints),
       );
       if (moves.length && moves.every((move) => move.disabled))
         menu.push({ label: 'Struggle', part: 'move 1', kind: 'move' });

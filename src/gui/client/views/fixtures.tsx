@@ -25,7 +25,7 @@ function needsKey(providers: ProviderInfo[], spec: string): boolean {
 }
 
 function keyStatus(providers: ProviderInfo[], keys: Record<string, string>, spec: string) {
-  if (spec === 'random') return { text: 'Showdown baseline', cls: '' };
+  if (spec === 'random') return { text: 'Random baseline', cls: '' };
   if (keys[spec]) return { text: 'Run-only key ready', cls: 'good' };
   return needsKey(providers, spec)
     ? { text: 'Bring an API key', cls: 'bad' }
@@ -208,52 +208,52 @@ export function FixturesView({ app, run, onStarted }: FixturesProps) {
   const startLabel = active
     ? 'Run already in progress'
     : models.length < 2
-      ? 'Add two contenders'
+      ? 'Add two models'
       : missingKeys.length
         ? 'Add run-only API keys'
         : `Start ${total} series`;
   const launchNote = active
-    ? 'Stop or finish the live run before staging another.'
+    ? 'Stop or finish the current run before starting another.'
     : missingKeys.length
-      ? `${missingKeys.length} contender${missingKeys.length === 1 ? ' needs' : 's need'} a browser-supplied key.`
+      ? `${missingKeys.length} model${missingKeys.length === 1 ? ' needs' : 's need'} a browser-supplied key.`
       : pairs.length
-        ? `${total} controlled best-of-three series · up to ${concurrency} running in parallel.`
-        : 'The fixture card updates as you build the lineup.';
+        ? `${total} best-of-three series, mirrored in pairs · up to ${concurrency} in parallel.`
+        : 'The run card updates as you add models.';
 
   return (
     <>
       <div class="page-heading">
         <div>
-          <p class="eyebrow">Rotation v1 / new run</p>
+          <p class="eyebrow">Rotation · protocol v1</p>
           <h1>
-            Stage the
+            Set up a
             <br />
-            next fixture.
+            Rotation run.
           </h1>
         </div>
         <p class="lede">
-          Choose an immutable team pool, then run every contender through mirrored assignments on the real Pokémon
-          Showdown simulator.
+          Pick an immutable team pool and at least two models. Every pairing plays mirrored best-of-three series on the
+          pinned Pokémon Showdown simulator; results are appended to the local record book.
         </p>
       </div>
       <div class="fixture-layout">
         <section class="panel stage" aria-labelledby="lineupTitle">
           <div class="section-head">
             <div>
-              <h2 id="lineupTitle">Contender lineup</h2>
-              <p>Two contenders make a head-to-head. Three or more make a round robin.</p>
+              <h2 id="lineupTitle">Model lineup</h2>
+              <p>Two models make a head-to-head. Three or more make a round robin.</p>
             </div>
             <div class="section-count">
               {models.length}
-              <small>agents</small>
+              <small>models</small>
             </div>
           </div>
           <div class="contender-deck">
             {models.length === 0 ? (
               <div class="empty-contenders">
-                <b>No agents on the card.</b>
+                <b>No models selected.</b>
                 <br />
-                Add a model spec or use <span style="font-family:var(--mono)">random</span> for a simulator baseline.
+                Add a model spec, or <span style="font-family:var(--mono)">random</span> for a legal-move baseline.
               </div>
             ) : (
               models.map((spec, index) => {
@@ -317,9 +317,7 @@ export function FixturesView({ app, run, onStarted }: FixturesProps) {
             <p class="provider-help">
               {provider
                 ? provider.description +
-                  (curated
-                    ? ' · Built-in catalog; paste a run-only key to add a contender.'
-                    : ' · Your key is not stored.')
+                  (curated ? ' · Built-in catalog; paste a run-only key to add it.' : ' · Your key is not stored.')
                 : ''}
             </p>
             <div class="model-flow">
@@ -341,7 +339,7 @@ export function FixturesView({ app, run, onStarted }: FixturesProps) {
                 emptyText="No models match. Use manual entry for an unlisted ID."
               />
               <button type="button" class="button primary" disabled={!catalog.length} onClick={addFromCatalog}>
-                Add contender
+                Add model
               </button>
               <button type="button" class="button" onClick={() => addModel('random', '')}>
                 Add random baseline
@@ -379,7 +377,7 @@ export function FixturesView({ app, run, onStarted }: FixturesProps) {
                   />
                 </div>
                 <button type="button" class="button" onClick={addManual}>
-                  Add manual contender
+                  Add manual model
                 </button>
               </div>
             </details>
@@ -391,16 +389,16 @@ export function FixturesView({ app, run, onStarted }: FixturesProps) {
           </div>
           <div class="schedule">
             <div class="schedule-title">
-              <h3>Fixture card</h3>
+              <h3>Run card</h3>
               <span>
                 {pairs.length
-                  ? `${pairs.length} matchup${pairs.length === 1 ? '' : 's'} · ${total} series`
-                  : 'Waiting for contenders'}
+                  ? `${pairs.length} matchup${pairs.length === 1 ? '' : 's'} · ${total} series · mirrored in pairs`
+                  : 'Waiting for models'}
               </span>
             </div>
             <div>
               {pairs.length === 0 ? (
-                <p class="muted">Add at least two contenders to generate the card.</p>
+                <p class="muted">Add at least two models to build the schedule.</p>
               ) : (
                 <>
                   {shownPairs.map((pair, index) => (
@@ -425,7 +423,7 @@ export function FixturesView({ app, run, onStarted }: FixturesProps) {
         <aside class="panel settings" aria-labelledby="settingsTitle">
           <div class="section-head">
             <div>
-              <p class="eyebrow">Rotation v1 / run conditions</p>
+              <p class="eyebrow">Run conditions</p>
               <h2 id="settingsTitle">Control sheet</h2>
             </div>
           </div>

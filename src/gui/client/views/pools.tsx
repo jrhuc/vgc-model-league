@@ -101,15 +101,16 @@ export function PoolsView({ app, onPools }: PoolsProps) {
     <>
       <div class="page-heading">
         <div>
-          <p class="eyebrow">Team lab / immutable snapshots</p>
+          <p class="eyebrow">Team pools / immutable snapshots</p>
           <h1>
-            Build the
+            Create a
             <br />
             team pool.
           </h1>
         </div>
         <p class="lede">
-          Create in Showdown, validate against this checkout, then seal the legal teams into a reproducible pool.
+          Paste Showdown teambuilder exports, validate them against the pinned simulator, and write an immutable pool
+          directory. A metagame refresh is a new pool, never an edit, so old records stay reproducible.
         </p>
       </div>
       <div class="pool-layout">
@@ -117,7 +118,7 @@ export function PoolsView({ app, onPools }: PoolsProps) {
           <div class="section-head">
             <div>
               <h2>Pool archive</h2>
-              <p>Available to new fixtures.</p>
+              <p>Available to new runs.</p>
             </div>
           </div>
           <div class="pool-list">
@@ -140,16 +141,16 @@ export function PoolsView({ app, onPools }: PoolsProps) {
           <div class="builder-intro">
             <div>
               <p class="eyebrow" style="color:#f3ce39">
-                Powered by the local Showdown build
+                Validated by the pinned Showdown build
               </p>
-              <h2>Showdown team intake</h2>
+              <h2>Team intake</h2>
               <p>
-                Build each roster in the official creator. Copy its Import/Export text here; the bundled validator
-                checks every set before writing files.
+                Build each team in the official teambuilder and paste its Import/Export text here. Every set is
+                validated against the pool's format before any file is written.
               </p>
             </div>
             <a class="button" href="https://play.pokemonshowdown.com/teambuilder" target="_blank" rel="noreferrer">
-              Open team creator ↗
+              Open teambuilder ↗
             </a>
           </div>
           <div class="pool-form">

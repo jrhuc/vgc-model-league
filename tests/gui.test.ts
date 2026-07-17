@@ -351,9 +351,16 @@ test('gui runs a random-vs-random series and streams live battle state', async (
     assert.equal(sides.p1!.player, 'random');
     assert.ok(sides.p1!.mons.length > 0);
 
-    const records = await apiJson(`${base}api/records`);
+    const overall = await apiJson(`${base}api/records`);
+    assert.equal(overall.status, 200);
+    assert.equal(overall.data.count, 0, 'the test pool must stay out of overall standings');
+    assert.equal(overall.data.pool, null);
+    assert.deepEqual(overall.data.pools, ['test']);
+
+    const records = await apiJson(`${base}api/records?pool=test`);
     assert.equal(records.status, 200);
     assert.equal(records.data.count, 1);
+    assert.equal(records.data.pool, 'test');
     const standings = records.data.standings as Array<Record<string, unknown>>;
     assert.equal(standings.length, 1);
     assert.equal(standings[0]!.spec, 'random');

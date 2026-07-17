@@ -5,7 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import type { RotationEvent } from '../src/rotation.js';
-import { makePlans, ROTATION_PROTOCOL_VERSION, runRotation } from '../src/rotation.js';
+import { makePlans, mapLimit, ROTATION_PROTOCOL_VERSION, runRotation } from '../src/rotation.js';
 
 test('even series counts reuse team matchups while swapping model sides', () => {
   const plans = makePlans(
@@ -48,6 +48,8 @@ test('Rotation emits ordered events and protocol identity', async (t) => {
   const config = JSON.parse(fs.readFileSync(path.join(directory, 'config.json'), 'utf8')) as Record<string, unknown>;
   assert.equal(config.mode, 'rotation');
   assert.equal(config.protocol_version, ROTATION_PROTOCOL_VERSION);
+  assert.match(String(config.scaffold), /^[0-9a-f]{12}$/);
+  assert.equal(rows[0]?.scaffold, config.scaffold);
   const planned = events[0];
   assert.equal(planned?.type, 'plans');
   if (planned?.type === 'plans') {
@@ -66,6 +68,39 @@ test('Rotation emits ordered events and protocol identity', async (t) => {
   assert.equal(last.record.protocol_version, ROTATION_PROTOCOL_VERSION);
   assert.deepEqual(last.record.score, rows[0]?.score);
   assert.deepEqual(gameEnds.at(-1)?.score, rows[0]?.score);
+});
+
+test('the first failure cancels queued and in-flight series before rethrowing', async () => {
+  const started: number[] = [];
+  const aborted: number[] = [];
+  await assert.rejects(
+    mapLimit([0, 1, 2, 3], 2, undefined, (item, signal) => {
+      started.push(item);
+      return new Promise((_, reject) => {
+        if (item === 0) setTimeout(() => reject(new Error('provider down')), 20);
+        else
+          signal.addEventListener('abort', () => {
+            aborted.push(item);
+            reject(new Error('aborted'));
+          });
+      });
+    }),
+    /provider down/,
+  );
+  assert.deepEqual(started, [0, 1]);
+  assert.deepEqual(aborted, [1]);
+});
+
+test('key-carrying runs require a key for every hosted model', async (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-model-league-keys-'));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  await assert.rejects(
+    runRotation(['random', 'anthropic:claude-x'], 1, directory, {
+      apiKeys: {},
+      recordsPath: path.join(directory, 'results.jsonl'),
+    }),
+    /no API key was supplied for anthropic:claude-x/,
+  );
 });
 
 test('an aborted signal stops Rotation without recording', async (t) => {

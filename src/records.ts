@@ -6,10 +6,27 @@ import type { ExperimentMode, JsonObject, Pid } from './types.js';
 export interface SeriesRecord extends JsonObject {
   mode?: ExperimentMode;
   protocol_version?: number;
+  scaffold?: string;
   run_id?: string;
   series_index?: number;
+  pool?: string;
   players: Record<Pid, string>;
   winner?: string | null;
+}
+
+/** Disposable local test data; excluded from every unscoped standings view. */
+export const TEST_POOL = 'test';
+
+/**
+ * With a pool, only that pool's rows qualify; without one, every pool except the
+ * disposable test pool qualifies (legacy rows without a pool field stay in).
+ */
+export function scopeRows(rows: SeriesRecord[], pool?: string): SeriesRecord[] {
+  return pool === undefined ? rows.filter((row) => row.pool !== TEST_POOL) : rows.filter((row) => row.pool === pool);
+}
+
+function playedRows(rows: SeriesRecord[]): SeriesRecord[] {
+  return rows.filter((row) => typeof row.players?.p1 === 'string' && typeof row.players.p2 === 'string');
 }
 
 export interface Standing {
@@ -52,7 +69,7 @@ function scheduled(rows: SeriesRecord[]): SeriesRecord[] {
 }
 
 export function standings(rows: SeriesRecord[]): Standing[] {
-  const ordered = scheduled(rows);
+  const ordered = scheduled(playedRows(rows));
   const specs = [...new Set(ordered.flatMap((row) => Object.values(row.players ?? {})))].sort();
   const ratings: Record<string, number> = Object.fromEntries(specs.map((spec) => [spec, 1000]));
   const totals: Record<string, { series: number; w: number; l: number; t: number }> = Object.fromEntries(
@@ -92,7 +109,8 @@ export function standings(rows: SeriesRecord[]): Standing[] {
     .sort((a, b) => b.elo - a.elo || a.spec.localeCompare(b.spec));
 }
 
-export function h2h(rows: SeriesRecord[]): HeadToHead {
+export function h2h(input: SeriesRecord[]): HeadToHead {
+  const rows = playedRows(input);
   const specs = [...new Set(rows.flatMap((row) => Object.values(row.players ?? {})))].sort();
   const matrix: HeadToHead = Object.fromEntries(
     specs.map((a) => [a, Object.fromEntries(specs.map((b) => [b, [0, 0, 0]]))]),

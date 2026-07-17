@@ -162,7 +162,7 @@ export class SimBattle {
           retryCount[pid] += 1;
           pendingError[pid] = line;
           if (retryCount[pid] >= 3) {
-            timer.choose(pid, 'default');
+            void Promise.resolve(timer.choose(pid, 'default')).catch(() => {});
             fallbacks[pid] += 1;
             suppressRequest[pid] = line.includes('[Unavailable choice]');
             pendingError[pid] = undefined;

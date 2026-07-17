@@ -6,7 +6,7 @@ import { REPO_ROOT, RESULTS_PATH } from './paths.js';
 import type { ReasoningLevel } from './providers.js';
 import { REASONING_LEVELS } from './providers.js';
 import type { SeriesRecord } from './records.js';
-import { h2h, loadRows, standings } from './records.js';
+import { h2h, loadRows, scopeRows, standings, TEST_POOL } from './records.js';
 import { writeReport } from './report.js';
 import { makeRunDirectory, runRotation } from './rotation.js';
 
@@ -18,7 +18,10 @@ Commands:
   rotation --models <spec> <spec>...  run the controlled team-rotation protocol
       [--series-per-pair <n>] [--pool <name>] [--seed <n>] [--concurrency <n>] [--reasoning <level>]
   standings [--pool <name>]           print standings and head-to-head from recorded results
-  report [--out <path>] [--pool <name>]  write an HTML report`;
+  report [--out <path>] [--pool <name>]  write an HTML report
+
+Without --pool, standings and report cover every pool except the disposable "test" pool;
+pass --pool test to inspect test runs.`;
 
 function positiveInteger(name: string, value: string): number {
   const parsed = Number(value);
@@ -42,7 +45,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
       allowPositionals: true,
       options: {
         models: { type: 'string', multiple: true },
-        'series-per-pair': { type: 'string', default: '1' },
+        'series-per-pair': { type: 'string', default: '2' },
         pool: { type: 'string', default: 'test' },
         seed: { type: 'string' },
         concurrency: { type: 'string', default: '2' },
@@ -83,7 +86,8 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
       console.log(writeReport(RESULTS_PATH, values.out, values.pool));
       return 0;
     }
-    printStandings(loadRows(RESULTS_PATH).filter((row) => values.pool === undefined || row.pool === values.pool));
+    if (values.pool === undefined) console.log(`All pools except ${JSON.stringify(TEST_POOL)}; use --pool for one.\n`);
+    printStandings(scopeRows(loadRows(RESULTS_PATH), values.pool));
     return 0;
   }
   console.error(HELP);

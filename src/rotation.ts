@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import type { GameEnd, GameStart } from './engines.js';
-import { LLMEngine, RandomEngine } from './engines.js';
+import { LLMEngine, RandomEngine, scaffoldRevision } from './engines.js';
 import { defaultPsDir, REPO_ROOT, RUNS_DIR } from './paths.js';
 import type { ReasoningLevel } from './providers.js';
 import { makeProvider, parseSpec, validateReasoning } from './providers.js';
@@ -103,6 +103,14 @@ export async function runRotation(
     else console.error(message);
   }
   for (const model of models) validateReasoning(parseSpec(model), options.reasoning);
+  if (options.apiKeys) {
+    for (const model of models) {
+      if (model !== 'random' && options.apiKeys[model] === undefined)
+        throw new Error(
+          `no API key was supplied for ${model}; key-carrying runs never fall back to server environment keys`,
+        );
+    }
+  }
 
   fs.mkdirSync(runDir, { recursive: true });
   const recordsPath = options.recordsPath ?? path.join(REPO_ROOT, 'records', 'results.jsonl');
@@ -110,6 +118,7 @@ export async function runRotation(
   const pool = loadPool(options.pool ?? 'test');
   validatePool(pool, psDir);
   const seed = options.seed ?? randomBytes(6).readUIntBE(0, 6);
+  const scaffold = scaffoldRevision();
   const plans = makePlans(models, seriesPerPair, pool.teams, seededRng(seed));
   options.onEvent?.({
     mode: 'rotation',
@@ -125,6 +134,7 @@ export async function runRotation(
       {
         mode: 'rotation',
         protocol_version: ROTATION_PROTOCOL_VERSION,
+        scaffold,
         models,
         series_per_pair: seriesPerPair,
         seed,
@@ -139,16 +149,17 @@ export async function runRotation(
     'utf8',
   );
 
-  return mapLimit(plans, options.concurrency ?? 2, options.signal, async (plan) => {
+  return mapLimit(plans, options.concurrency ?? 2, options.signal, async (plan, signal) => {
     const row = await playSeries(plan, {
       runDir,
       pool,
       runSeed: seed,
+      scaffold,
       psDir,
+      signal,
       ...(options.reasoning === undefined ? {} : { reasoning: options.reasoning }),
       ...(options.apiKeys === undefined ? {} : { apiKeys: options.apiKeys }),
       ...(options.onEvent === undefined ? {} : { onEvent: options.onEvent }),
-      ...(options.signal === undefined ? {} : { signal: options.signal }),
     });
     appendRow(recordsPath, row);
     options.onEvent?.({ type: 'series-end', index: plan.index, record: row });
@@ -156,26 +167,41 @@ export async function runRotation(
   });
 }
 
-async function mapLimit<T, R>(
+/**
+ * The first failure aborts the shared signal so queued series never start and in-flight
+ * series stop consuming provider credits; the failure is rethrown only after every worker
+ * has settled. An external abort still resolves with the completed results.
+ */
+export async function mapLimit<T, R>(
   items: T[],
   limit: number,
   signal: AbortSignal | undefined,
-  task: (item: T) => Promise<R>,
+  task: (item: T, signal: AbortSignal) => Promise<R>,
 ): Promise<R[]> {
   const results = new Array<R | undefined>(items.length);
+  const controller = new AbortController();
+  const forward = () => controller.abort();
+  if (signal?.aborted) controller.abort();
+  else signal?.addEventListener('abort', forward, { once: true });
+  let failure: { error: unknown } | undefined;
   let next = 0;
   const workers = Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, async () => {
-    while (next < items.length && !signal?.aborted) {
+    while (next < items.length && !controller.signal.aborted) {
       const index = next++;
       try {
-        results[index] = await task(items[index]!);
+        results[index] = await task(items[index]!, controller.signal);
       } catch (error) {
-        if (signal?.aborted) return;
-        throw error;
+        if (!controller.signal.aborted) {
+          failure ??= { error };
+          controller.abort();
+        }
+        return;
       }
     }
   });
   await Promise.all(workers);
+  signal?.removeEventListener('abort', forward);
+  if (failure && !signal?.aborted) throw failure.error;
   return results.filter((result): result is R => result !== undefined);
 }
 
@@ -219,6 +245,7 @@ async function playSeries(
     runDir: string;
     pool: TeamPool;
     runSeed: number;
+    scaffold: string;
     psDir: string;
     reasoning?: ReasoningLevel;
     apiKeys?: Readonly<Record<string, string>>;
@@ -318,6 +345,7 @@ async function playSeries(
     schema_version: 1,
     mode: 'rotation',
     protocol_version: ROTATION_PROTOCOL_VERSION,
+    scaffold: context.scaffold,
     timestamp: new Date().toISOString(),
     run_id: path.basename(context.runDir),
     series_id: seriesId,

@@ -8,7 +8,7 @@ import { discoverModels, PROVIDER_OPTIONS, providerOption } from '../model-catal
 import { RESULTS_PATH, TEAMS_DIR } from '../paths.js';
 import type { ReasoningLevel } from '../providers.js';
 import { parseSpec, REASONING_LEVELS, validateReasoning } from '../providers.js';
-import { h2h, loadRows, standings } from '../records.js';
+import { h2h, loadRows, scopeRows, standings } from '../records.js';
 import type { RotationEvent } from '../rotation.js';
 import { makeRunDirectory, ROTATION_PROTOCOL_VERSION, runRotation } from '../rotation.js';
 import { loadShowdown } from '../showdown.js';
@@ -198,7 +198,7 @@ export class GuiServer {
       return;
     }
     if (key === 'GET /api/state') this.json(response, 200, this.stateBody());
-    else if (key === 'GET /api/records') this.json(response, 200, this.recordsBody());
+    else if (key === 'GET /api/records') this.json(response, 200, this.recordsBody(url.searchParams.get('pool')));
     else if (key === 'GET /api/events') this.openEvents(response);
     else if (key === 'GET /api/battle')
       this.json(response, 200, this.battleBody(Number(url.searchParams.get('index'))));
@@ -269,9 +269,12 @@ export class GuiServer {
     };
   }
 
-  private recordsBody(): RecordsResponse {
-    const rows = loadRows(this.options.recordsPath ?? RESULTS_PATH);
-    return { count: rows.length, standings: standings(rows), h2h: h2h(rows), records: rows };
+  private recordsBody(poolParam: string | null): RecordsResponse {
+    const all = loadRows(this.options.recordsPath ?? RESULTS_PATH);
+    const pool = poolParam?.trim() || null;
+    const rows = scopeRows(all, pool ?? undefined);
+    const pools = [...new Set(all.map((row) => (typeof row.pool === 'string' ? row.pool : '')))].filter(Boolean).sort();
+    return { count: rows.length, pool, pools, standings: standings(rows), h2h: h2h(rows), records: rows };
   }
 
   private runBody(): RunSnapshot | null {
