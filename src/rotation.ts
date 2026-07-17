@@ -239,6 +239,91 @@ export function makePlans(models: string[], seriesPerPair: number, teams: Team[]
   return plans;
 }
 
+export interface Bo3Context {
+  engines: Record<Pid, RandomEngine | LLMEngine>;
+  /** Showdown player names; game winners come back as these. */
+  names: Record<Pid, string>;
+  /** Recorded participant labels (model specs or seat names). */
+  players: Record<Pid, string>;
+  teams: Record<Pid, Team>;
+  gameSeeds: Array<[number, number, number, number]>;
+  seriesId: string;
+  seriesDir: string;
+  format: string;
+  psDir: string;
+  timer?: boolean;
+  signal?: AbortSignal;
+  onGameStart?: (game: number) => void;
+  onGameUpdate?: (game: number, lines: string[]) => void;
+  onGameEnd?: (game: number, winner: string | null, turns: number, score: Record<Pid, number>) => void;
+}
+
+export interface Bo3Result {
+  score: Record<Pid, number>;
+  games: JsonObject[];
+  winnerSide: Pid | undefined;
+}
+
+export async function playBo3(context: Bo3Context): Promise<Bo3Result> {
+  const { engines, names, seriesId } = context;
+  const score: Record<Pid, number> = { p1: 0, p2: 0 };
+  const games: JsonObject[] = [];
+
+  for (const [index, gameSeed] of context.gameSeeds.entries()) {
+    context.signal?.throwIfAborted();
+    const gameNumber = index + 1;
+    const gameId = `${seriesId}-${gameNumber}`;
+    const start: GameStart = { gameId, gameNumber, seriesId, seriesScore: { ...score } };
+    for (const engine of Object.values(engines)) engine.beginGame(start);
+    context.onGameStart?.(gameNumber);
+    const players: Record<Pid, PlayerOptions> = {
+      p1: { name: names.p1, team: context.teams.p1.packed },
+      p2: { name: names.p2, team: context.teams.p2.packed },
+    };
+    const outcome = await new SimBattle(context.format, players, gameSeed, context.psDir, context.timer ?? true).run(
+      engines,
+      (lines) => context.onGameUpdate?.(gameNumber, lines),
+    );
+    context.signal?.throwIfAborted();
+    const winnerSide = (['p1', 'p2'] as const).find((pid) => names[pid] === outcome.winner);
+    if (winnerSide) score[winnerSide] += 1;
+    await Promise.all(
+      (['p1', 'p2'] as const).map(async (pid) => {
+        const end: GameEnd = {
+          outcome: {
+            winner: outcome.winner,
+            winner_side: winnerSide ?? null,
+            won: winnerSide === pid,
+            turns: outcome.turns,
+            pov_lines: outcome.pov[pid],
+            errors: outcome.errors[pid],
+            fallbacks: outcome.fallbacks[pid],
+          },
+          gameNumber,
+          seriesScore: { ...score },
+        };
+        await engines[pid].endGame(end);
+      }),
+    );
+    const logPath = path.join(context.seriesDir, `game-${gameNumber}.log`);
+    fs.writeFileSync(logPath, `${outcome.log.join('\n')}\n`, 'utf8');
+    games.push({
+      number: gameNumber,
+      winner: winnerSide ? context.players[winnerSide] : null,
+      winner_side: winnerSide ?? null,
+      turns: outcome.turns,
+      seed: gameSeed,
+      errors: outcome.errors,
+      fallbacks: outcome.fallbacks,
+      log: relative(logPath),
+    });
+    context.onGameEnd?.(gameNumber, winnerSide ? context.players[winnerSide] : null, outcome.turns, { ...score });
+    if (Math.max(...Object.values(score)) === 2) break;
+  }
+
+  return { score, games, winnerSide: score.p1 === score.p2 ? undefined : score.p1 > score.p2 ? 'p1' : 'p2' };
+}
+
 async function playSeries(
   plan: SeriesPlan,
   context: {
@@ -280,67 +365,22 @@ async function playSeries(
       ),
     ]),
   ) as Record<Pid, RandomEngine | LLMEngine>;
-  const score: Record<Pid, number> = { p1: 0, p2: 0 };
-  const games: JsonObject[] = [];
+  const { score, games, winnerSide } = await playBo3({
+    engines,
+    names,
+    players: plan.players,
+    teams: plan.teams,
+    gameSeeds: plan.gameSeeds,
+    seriesId,
+    seriesDir,
+    format: context.pool.format,
+    psDir: context.psDir,
+    ...(context.signal === undefined ? {} : { signal: context.signal }),
+    onGameUpdate: (game, lines) => context.onEvent?.({ type: 'game-update', index: plan.index, game, lines }),
+    onGameEnd: (game, winner, turns, score) =>
+      context.onEvent?.({ type: 'game-end', index: plan.index, game, winner, turns, score }),
+  });
 
-  for (const [index, gameSeed] of plan.gameSeeds.entries()) {
-    context.signal?.throwIfAborted();
-    const gameNumber = index + 1;
-    const gameId = `${seriesId}-${gameNumber}`;
-    const start: GameStart = { gameId, gameNumber, seriesId, seriesScore: { ...score } };
-    for (const engine of Object.values(engines)) engine.beginGame(start);
-    const players: Record<Pid, PlayerOptions> = {
-      p1: { name: names.p1, team: plan.teams.p1.packed },
-      p2: { name: names.p2, team: plan.teams.p2.packed },
-    };
-    const outcome = await new SimBattle(context.pool.format, players, gameSeed, context.psDir).run(engines, (lines) =>
-      context.onEvent?.({ type: 'game-update', index: plan.index, game: gameNumber, lines }),
-    );
-    context.signal?.throwIfAborted();
-    const winnerSide = (['p1', 'p2'] as const).find((pid) => names[pid] === outcome.winner);
-    if (winnerSide) score[winnerSide] += 1;
-    await Promise.all(
-      (['p1', 'p2'] as const).map(async (pid) => {
-        const end: GameEnd = {
-          outcome: {
-            winner: outcome.winner,
-            winner_side: winnerSide ?? null,
-            won: winnerSide === pid,
-            turns: outcome.turns,
-            pov_lines: outcome.pov[pid],
-            errors: outcome.errors[pid],
-            fallbacks: outcome.fallbacks[pid],
-          },
-          gameNumber,
-          seriesScore: { ...score },
-        };
-        await engines[pid].endGame(end);
-      }),
-    );
-    const logPath = path.join(seriesDir, `game-${gameNumber}.log`);
-    fs.writeFileSync(logPath, `${outcome.log.join('\n')}\n`, 'utf8');
-    games.push({
-      number: gameNumber,
-      winner: winnerSide ? plan.players[winnerSide] : null,
-      winner_side: winnerSide ?? null,
-      turns: outcome.turns,
-      seed: gameSeed,
-      errors: outcome.errors,
-      fallbacks: outcome.fallbacks,
-      log: relative(logPath),
-    });
-    context.onEvent?.({
-      type: 'game-end',
-      index: plan.index,
-      game: gameNumber,
-      winner: winnerSide ? plan.players[winnerSide] : null,
-      turns: outcome.turns,
-      score: { ...score },
-    });
-    if (Math.max(...Object.values(score)) === 2) break;
-  }
-
-  const winnerSide = score.p1 === score.p2 ? undefined : score.p1 > score.p2 ? 'p1' : 'p2';
   return {
     schema_version: 1,
     mode: 'rotation',

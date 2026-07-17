@@ -28,6 +28,7 @@ export class TimerAdapter {
     private readonly stream: BattleStream,
     private readonly onEvent: (pid: Pid, event: TimerEvent) => void,
     psDir: string,
+    private readonly enabled = true,
   ) {
     this.players = (['p1', 'p2'] as const).map((slot) => ({
       slot,
@@ -73,7 +74,7 @@ export class TimerAdapter {
     };
     const Timer = loadRoomBattleTimer(psDir);
     this.timer = new Timer(this.battle);
-    this.timer.start();
+    if (this.enabled) this.timer.start();
   }
 
   setPlayer(pid: Pid, name: string): void {
@@ -94,17 +95,19 @@ export class TimerAdapter {
         const request = JSON.parse(line.slice(9)) as Record<string, unknown>;
         player.request = { isWait: request.wait ? 'cantUndo' : false };
         this.battle.requestCount += 1;
-        if (!request.update) this.timer.nextRequest(player);
-        if (!request.wait) {
-          request.timer = { turnSeconds: player.turnSecondsLeft, seconds: player.secondsLeft };
-          lines[2] = `|request|${JSON.stringify(request)}`;
+        if (this.enabled) {
+          if (!request.update) this.timer.nextRequest(player);
+          if (!request.wait) {
+            request.timer = { turnSeconds: player.turnSecondsLeft, seconds: player.secondsLeft };
+            lines[2] = `|request|${JSON.stringify(request)}`;
+          }
         }
       } else if (player && line.startsWith('|error|[Invalid choice]')) {
         player.request.isWait = line.includes("Can't undo") ? 'cantUndo' : false;
       }
     } else if (lines[0] === 'end') {
       this.battle.ended = true;
-      this.timer.end();
+      if (this.enabled) this.timer.end();
     }
     return lines.join('\n');
   }
@@ -118,6 +121,6 @@ export class TimerAdapter {
 
   end(): void {
     this.battle.ended = true;
-    this.timer.end();
+    if (this.enabled) this.timer.end();
   }
 }

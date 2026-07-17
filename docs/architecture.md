@@ -40,7 +40,7 @@ Rules that keep this from rotting:
 configuration, event emission, and result persistence. Shared battle engines and Showdown integration stay outside it
 so future modes can reuse execution without inheriting Rotation scheduling.
 
-`ExperimentMode` currently contains only `rotation`. A new mode extends that type only when its real orchestrator
+`ExperimentMode` contains `rotation` and `exhibition`. A new mode extends that type only when its real orchestrator
 exists; Draft League and Tournament must not arrive as conditionals scattered through `rotation.ts`. Every new run
 config, live snapshot, and completed series carries `mode` and `protocol_version`. Protocol versions change when an
 evaluation rule changes enough to make unlike results incomparable. Because that bump is manual discipline, every row
@@ -51,14 +51,26 @@ Reference opponents (for example VGC-Bench's behavior-cloned or reinforcement-le
 implementing `BattleAgent` (`act`/`observe`/`abandonDecision`). That interface is the interop seam: reference agents
 never acquire `LLMEngine`'s notebook, reflection, or tool machinery, and the league scaffold never leaks into them.
 
+Exhibition mode (`src/exhibition.ts`) is the opposite integration: an external terminal agent plays one seat
+*through* the full `LLMEngine` scaffold. The engine's provider calls are surfaced by `src/seat.ts` as exchanges on a
+token-authenticated localhost bridge, so the agent answers exactly the prompts an API model would receive — the
+information surface is identical by construction, not by auditing. Hidden-information containment relies on process
+separation: the host process owns the battle (both `|split|` halves), the opponent engine, and any opponent API key;
+the agent's workspace contains only the thin client, instructions, and its token, and the bridge has no endpoint
+that serializes anything beyond that seat's own view. The Showdown move timer is disabled for these series because
+agent turns take minutes. Rows record `mode: "exhibition"` and the seat side, and unscoped standings drop them, so
+agent seats never rate the Rotation ladder. The seat's decision/trace logs plus the bridge's tool-lookup log make
+post-hoc audits possible, including checking whether a player acted on information its seat view never contained.
+
 Run failure semantics are part of the protocol: the first failed series aborts the scheduler's shared signal, so
 queued series never start and in-flight series stop consuming provider credits; the failure is reported only after
 every worker has settled. Completed series are already persisted. A user-initiated stop behaves the same way but
 resolves with the completed results instead of an error.
 
-Records queries and ratings are scoped by pool today: unscoped standings, reports, and the GUI record book exclude
-the disposable `test` pool, and any single pool — including `test` — can be selected explicitly. Before another mode
-ships, that scoping must extend to mode and protocol version. Rotation Elo remains the default controlled rating;
+Records queries and ratings are scoped by pool and partially by mode today: unscoped standings, reports, and the GUI
+record book exclude the disposable `test` pool and drop `exhibition` rows, and any single pool — including `test` —
+can be selected explicitly. Before Draft League or Tournament ships, that scoping must extend to full mode and
+protocol-version selection. Rotation Elo remains the default controlled rating;
 Draft League and Tournament results will have their own views and cannot silently enter it. The sequential Elo shown
 in standings is a provisional display rating recomputed from qualifying rows on every read — never stored — so a
 paired-comparison model (Bradley–Terry or similar) can replace it later without any schema change.

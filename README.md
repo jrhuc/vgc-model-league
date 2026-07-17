@@ -25,6 +25,11 @@ The league exists to answer:
 rating: models rotate through immutable tournament-team pools, with
 assignments mirrored in pairs to cancel side and team bias.
 
+**Exhibition** hosts a single best-of-three where one seat is played by an
+external terminal agent over a local bridge instead of a provider API — useful
+for testing subscription-billed agents without API spend. Exhibition rows are
+recorded but never enter the Rotation rating.
+
 Two planned modes, **Draft League** (models draft rosters and build teams) and
 **Tournament** (fixed teams, bracket play), will record their own results and
 never enter the Rotation rating. Every result records `mode` and
@@ -95,8 +100,29 @@ reported as failed is not still spending provider credits in the background.
 
 **Standings scope.** `--pool` restricts standings and reports to one team-pool
 epoch. Without it, both cover every pool except the disposable `test` pool, so
-scratch runs never contaminate the record book; pass `--pool test` to inspect
-them. The GUI record book has the same scoping.
+scratch runs never contaminate the record book, and exhibition rows are dropped
+so agent seats never rate the ladder; pass `--pool <name>` to inspect
+everything in one pool. The GUI record book has the same scoping.
+
+### Exhibition seats
+
+```sh
+npm run vgcleague -- exhibition --opponent random
+npm run vgcleague -- exhibition --opponent openai:gpt-5.2 --name cli-claude --seat p2
+```
+
+The host process runs the battle, the opponent engine, and its API key, and
+serves a token-authenticated bridge on `127.0.0.1`. It writes an agent
+workspace (default `runs/<run>/agent/`) containing only a thin client
+(`seat.mjs`), instructions (`SEAT.md`), and the connection token — start the
+terminal agent with that directory as its working directory. The agent seat
+goes through the same `LLMEngine` scaffold as an API model: identical prompts,
+menus, notebook, reflections, and lookup tools, so the agent cannot receive
+information an API model would not. The Showdown move timer is disabled because
+agent turns take minutes. Decision and trace logs are written like any other
+series, plus a `*-bridge-tools.jsonl` log of the agent's lookups, so traces can
+be audited afterwards — including for signs a player acted on information its
+seat view never contained.
 
 **Keys.** GUI runs use only keys pasted into the browser: held in memory for
 the run, never written to disk, never replaced by the server's environment
