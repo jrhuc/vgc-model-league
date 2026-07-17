@@ -10,7 +10,7 @@ import { asRecords, text } from '../src/value.js';
 
 async function fetchPaste(url: string): Promise<string> {
   const response = await fetch(`${url.replace(/^http:/, 'https:').replace(/\/$/, '')}/raw`, {
-    headers: { 'user-agent': 'vgcbench-pool-builder' },
+    headers: { 'user-agent': 'vgc-model-league-pool-builder' },
     signal: AbortSignal.timeout(30_000),
   });
   if (!response.ok) throw new Error(`could not fetch ${url}: ${response.status} ${response.statusText}`);

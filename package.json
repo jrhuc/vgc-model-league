@@ -1,18 +1,24 @@
 {
-  "name": "vgcbench",
+  "name": "vgc-model-league",
   "version": "0.1.0",
-  "description": "LLM competitive Pokémon benchmark on the real Showdown simulator",
+  "description": "Live league for frontier language models playing full VGC best-of-three on Pokémon Showdown",
   "private": true,
   "type": "module",
   "bin": {
-    "vgcbench": "dist/src/cli.js"
+    "vgcleague": "dist/src/cli.js"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "setup:showdown": "node tools/setup-showdown.mjs",
+    "update:showdown": "node tools/setup-showdown.mjs --update",
+    "check:showdown-update": "node tools/setup-showdown.mjs --update --check",
+    "prebuild": "node tools/setup-showdown.mjs --check && npm run clean",
+    "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
+    "build": "tsc -p tsconfig.json && tsc -p tsconfig.client.json && vite build --logLevel warn",
     "check": "biome check src tools tests",
     "check:fix": "biome check --write src tools tests",
+    "dev:gui": "vite build --watch",
     "test": "npm run build && node --test dist/tests/*.test.js",
-    "vgcbench": "node dist/src/cli.js",
+    "vgcleague": "node dist/src/cli.js",
     "build-pool": "node dist/tools/build-pool.js",
     "capture-requests": "node dist/tools/capture-requests.js"
   },
@@ -21,8 +27,12 @@
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.3",
+    "@preact/preset-vite": "^2.10.5",
     "@types/node": "^26.1.1",
-    "typescript": "^7.0.2"
+    "happy-dom": "^20.10.6",
+    "preact": "^10.29.7",
+    "typescript": "^7.0.2",
+    "vite": "^8.1.5"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^4.0.15",

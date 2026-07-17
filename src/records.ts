@@ -1,10 +1,11 @@
-import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 
-import type { JsonObject, Pid } from './types.js';
+import type { ExperimentMode, JsonObject, Pid } from './types.js';
 
 export interface SeriesRecord extends JsonObject {
+  mode?: ExperimentMode;
+  protocol_version?: number;
   run_id?: string;
   series_index?: number;
   players: Record<Pid, string>;
@@ -35,18 +36,6 @@ export function loadRows(file: string): SeriesRecord[] {
     .split('\n')
     .filter(Boolean)
     .map((line) => JSON.parse(line) as SeriesRecord);
-}
-
-const commitCache = new Map<string, string>();
-export function psCommit(psDir: string): string {
-  const cached = commitCache.get(psDir);
-  if (cached) return cached;
-  let commit = 'unknown';
-  try {
-    commit = execFileSync('git', ['-C', psDir, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim() || 'unknown';
-  } catch {}
-  commitCache.set(psDir, commit);
-  return commit;
 }
 
 function scheduled(rows: SeriesRecord[]): SeriesRecord[] {

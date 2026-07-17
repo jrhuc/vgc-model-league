@@ -19,5 +19,5 @@
     "sourceMap": true
   },
   "include": ["src/**/*.ts", "tools/**/*.ts", "tests/**/*.ts"],
-  "exclude": ["dist", "node_modules", "pokemon-showdown"]
+  "exclude": ["dist", "node_modules", "pokemon-showdown", "src/gui/client"]
 }

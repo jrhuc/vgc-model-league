@@ -4,6 +4,7 @@ import test from 'node:test';
 
 import { REPO_ROOT } from '../src/paths.js';
 import { DEX_TOOLS, ShowdownReference } from '../src/reference.js';
+import { SHOWDOWN_LOCK, showdownCommit } from '../src/showdown.js';
 
 test('reference reads exact data from the configured Showdown checkout', () => {
   const reference = new ShowdownReference('gen9championsvgc2026regmb');
@@ -62,8 +63,15 @@ test('lookup tools return one entry and reject missing data', () => {
   );
 });
 
+test('default Showdown checkout matches the pinned revision', () => {
+  assert.equal(showdownCommit(), SHOWDOWN_LOCK.commit);
+});
+
 test('missing Showdown checkout fails immediately', () => {
-  assert.throws(() => new ShowdownReference('test', path.join(REPO_ROOT, 'missing-showdown')), /Cannot find module/);
+  assert.throws(
+    () => new ShowdownReference('test', path.join(REPO_ROOT, 'missing-showdown')),
+    /Pokémon Showdown is not built.*setup:showdown/,
+  );
 });
 
 test('matchup and damage tools stay within open information', () => {

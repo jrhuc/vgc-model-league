@@ -199,9 +199,12 @@ test('manual and non-catalog providers reject clearly without making requests', 
   }) as typeof fetch;
 
   await assert.rejects(
-    discoverModels(providerOption('meta')!, 'key', { fetch: mockFetch }),
+    discoverModels(providerOption('zai')!, 'key', { fetch: mockFetch }),
     /enter a model ID manually/,
   );
+  assert.deepEqual(await discoverModels(providerOption('meta')!, 'key', { fetch: mockFetch }), [
+    { id: 'muse-spark-1.1', displayName: 'Muse Spark 1.1' },
+  ]);
   await assert.rejects(
     discoverModels(providerOption('random')!, undefined, { fetch: mockFetch }),
     /does not have a model catalog/,

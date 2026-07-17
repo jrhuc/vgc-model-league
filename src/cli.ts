@@ -2,22 +2,22 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
-import { makeRunDirectory, runBenchmark } from './arena.js';
 import { REPO_ROOT, RESULTS_PATH } from './paths.js';
 import type { ReasoningLevel } from './providers.js';
 import { REASONING_LEVELS } from './providers.js';
 import type { SeriesRecord } from './records.js';
 import { h2h, loadRows, standings } from './records.js';
 import { writeReport } from './report.js';
+import { makeRunDirectory, runRotation } from './rotation.js';
 
-const HELP = `Usage: vgcbench <command>
+const HELP = `Usage: vgcleague <command>
 
 Commands:
-  (no command)                   open the interactive TUI (needs a terminal)
-  selfcheck                      run one random-vs-random series through the simulator
-  run --models <spec> <spec>...  benchmark models against each other
+  gui [--port <n>]                    serve the browser GUI on 127.0.0.1 (default port 8484)
+  selfcheck                           run one random-vs-random series through the simulator
+  rotation --models <spec> <spec>...  run the controlled team-rotation protocol
       [--series-per-pair <n>] [--pool <name>] [--seed <n>] [--concurrency <n>] [--reasoning <level>]
-  standings [--pool <name>]      print standings and head-to-head from recorded results
+  standings [--pool <name>]           print standings and head-to-head from recorded results
   report [--out <path>] [--pool <name>]  write an HTML report`;
 
 function positiveInteger(name: string, value: string): number {
@@ -28,12 +28,15 @@ function positiveInteger(name: string, value: string): number {
 
 export async function main(argv = process.argv.slice(2)): Promise<number> {
   const [command, ...rest] = argv;
-  if (command === undefined && process.stdin.isTTY && process.stdout.isTTY) {
-    const { runTui } = await import('./tui/index.js');
-    return runTui();
-  }
   if (command === 'selfcheck') return selfcheck();
-  if (command === 'run') {
+  if (command === 'gui') {
+    const { values } = parseArgs({ args: rest, options: { port: { type: 'string', default: '8484' } } });
+    const { GuiServer } = await import('./gui/server.js');
+    const url = await new GuiServer().listen(positiveInteger('port', values.port));
+    console.log(`VGC Model League GUI at ${url} (ctrl-c to stop)`);
+    return 0;
+  }
+  if (command === 'rotation') {
     const { values, positionals } = parseArgs({
       args: rest,
       allowPositionals: true,
@@ -47,13 +50,13 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
       },
     });
     const models = [...(values.models ?? []), ...positionals];
-    if (models.length < 2) throw new Error('run requires at least two --models');
+    if (models.length < 2) throw new Error('rotation requires at least two --models');
     const reasoning = values.reasoning as ReasoningLevel | undefined;
     if (reasoning && !REASONING_LEVELS.includes(reasoning))
       throw new Error(`--reasoning must be one of: ${REASONING_LEVELS.join(', ')}`);
     const seed = values.seed === undefined ? undefined : Number(values.seed);
     if (seed !== undefined && !Number.isSafeInteger(seed)) throw new Error('--seed must be an integer');
-    const rows = await runBenchmark(
+    const rows = await runRotation(
       models,
       positiveInteger('series-per-pair', values['series-per-pair']),
       makeRunDirectory(),
@@ -90,7 +93,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
 async function selfcheck(): Promise<number> {
   const directory = makeRunDirectory();
   try {
-    const rows = await runBenchmark(['random', 'random'], 1, directory, {
+    const rows = await runRotation(['random', 'random'], 1, directory, {
       seed: 1,
       concurrency: 1,
       recordsPath: path.join(directory, 'results.jsonl'),

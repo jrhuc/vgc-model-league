@@ -10,12 +10,14 @@ import { makeProvider, parseSpec, validateReasoning } from './providers.js';
 import type { Rng } from './random.js';
 import { seededRng } from './random.js';
 import type { SeriesRecord } from './records.js';
-import { appendRow, psCommit } from './records.js';
+import { appendRow } from './records.js';
 import { ShowdownReference } from './reference.js';
+import { showdownCommit } from './showdown.js';
 import { SimBattle } from './sim.js';
 import type { Team, TeamPool } from './teams.js';
 import { loadPool, validatePool } from './teams.js';
-import type { JsonObject, Pid, PlayerOptions } from './types.js';
+import type { ExperimentMode, JsonObject, Pid, PlayerOptions } from './types.js';
+export const ROTATION_PROTOCOL_VERSION = 1;
 
 interface SeriesPlan {
   index: number;
@@ -25,21 +27,30 @@ interface SeriesPlan {
   engineSeeds: Record<Pid, number>;
 }
 
-export type ArenaEvent =
-  | { type: 'plans'; plans: Array<{ index: number; players: Record<Pid, string> }>; pool: string; seed: number }
+export type RotationEvent =
+  | {
+      type: 'plans';
+      mode: ExperimentMode;
+      protocolVersion: number;
+      plans: Array<{ index: number; players: Record<Pid, string> }>;
+      pool: string;
+      seed: number;
+    }
   | { type: 'series-start'; index: number }
   | { type: 'game-update'; index: number; game: number; lines: string[] }
   | { type: 'game-end'; index: number; game: number; winner: string | null; turns: number; score: Record<Pid, number> }
   | { type: 'series-end'; index: number; record: SeriesRecord };
 
-export interface BenchmarkOptions {
+export interface RotationOptions {
   seed?: number;
   concurrency?: number;
   recordsPath?: string;
   psDir?: string;
   reasoning?: ReasoningLevel;
+  apiKeys?: Readonly<Record<string, string>>;
   pool?: string;
-  onEvent?: (event: ArenaEvent) => void;
+  onEvent?: (event: RotationEvent) => void;
+  onNotice?: (message: string) => void;
   signal?: AbortSignal;
 }
 
@@ -61,10 +72,14 @@ export function makeEngine(
   reasoning?: ReasoningLevel,
   reference?: ShowdownReference,
   signal?: AbortSignal,
+  apiKey?: string,
 ): RandomEngine | LLMEngine {
   if (spec === 'random') return new RandomEngine(pid, seed);
   return new LLMEngine(pid, spec, {
-    provider: makeProvider(parseSpec(spec), { reasoning }),
+    provider: makeProvider(parseSpec(spec), {
+      reasoning,
+      ...(apiKey === undefined ? {} : { apiKey }),
+    }),
     decisionLog,
     traceLog,
     format,
@@ -75,14 +90,18 @@ export function makeEngine(
   });
 }
 
-export async function runBenchmark(
+export async function runRotation(
   models: string[],
   seriesPerPair: number,
   runDir: string,
-  options: BenchmarkOptions = {},
+  options: RotationOptions = {},
 ): Promise<SeriesRecord[]> {
   if (models.length < 2) throw new Error('at least two models are required');
-  if (seriesPerPair % 2) console.error("warning: an odd --series-per-pair leaves each pair's last matchup unmirrored");
+  if (seriesPerPair % 2) {
+    const message = "warning: an odd --series-per-pair leaves each pair's last matchup unmirrored";
+    if (options.onNotice) options.onNotice(message);
+    else console.error(message);
+  }
   for (const model of models) validateReasoning(parseSpec(model), options.reasoning);
 
   fs.mkdirSync(runDir, { recursive: true });
@@ -93,6 +112,8 @@ export async function runBenchmark(
   const seed = options.seed ?? randomBytes(6).readUIntBE(0, 6);
   const plans = makePlans(models, seriesPerPair, pool.teams, seededRng(seed));
   options.onEvent?.({
+    mode: 'rotation',
+    protocolVersion: ROTATION_PROTOCOL_VERSION,
     type: 'plans',
     plans: plans.map((plan) => ({ index: plan.index, players: plan.players })),
     pool: pool.id,
@@ -102,6 +123,8 @@ export async function runBenchmark(
     path.join(runDir, 'config.json'),
     `${JSON.stringify(
       {
+        mode: 'rotation',
+        protocol_version: ROTATION_PROTOCOL_VERSION,
         models,
         series_per_pair: seriesPerPair,
         seed,
@@ -123,6 +146,7 @@ export async function runBenchmark(
       runSeed: seed,
       psDir,
       ...(options.reasoning === undefined ? {} : { reasoning: options.reasoning }),
+      ...(options.apiKeys === undefined ? {} : { apiKeys: options.apiKeys }),
       ...(options.onEvent === undefined ? {} : { onEvent: options.onEvent }),
       ...(options.signal === undefined ? {} : { signal: options.signal }),
     });
@@ -197,7 +221,8 @@ async function playSeries(
     runSeed: number;
     psDir: string;
     reasoning?: ReasoningLevel;
-    onEvent?: (event: ArenaEvent) => void;
+    apiKeys?: Readonly<Record<string, string>>;
+    onEvent?: (event: RotationEvent) => void;
     signal?: AbortSignal;
   },
 ): Promise<SeriesRecord> {
@@ -224,6 +249,7 @@ async function playSeries(
         context.reasoning,
         reference,
         context.signal,
+        context.apiKeys?.[plan.players[pid]],
       ),
     ]),
   ) as Record<Pid, RandomEngine | LLMEngine>;
@@ -289,6 +315,9 @@ async function playSeries(
 
   const winnerSide = score.p1 === score.p2 ? undefined : score.p1 > score.p2 ? 'p1' : 'p2';
   return {
+    schema_version: 1,
+    mode: 'rotation',
+    protocol_version: ROTATION_PROTOCOL_VERSION,
     timestamp: new Date().toISOString(),
     run_id: path.basename(context.runDir),
     series_id: seriesId,
@@ -306,7 +335,7 @@ async function playSeries(
     engine_seeds: plan.engineSeeds,
     reasoning: context.reasoning ?? null,
     decision_stats: Object.fromEntries((['p1', 'p2'] as const).map((pid) => [pid, engines[pid].decisionStats()])),
-    ps_commit: psCommit(context.psDir),
+    ps_commit: showdownCommit(context.psDir),
   };
 }
 

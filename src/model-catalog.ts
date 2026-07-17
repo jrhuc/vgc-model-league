@@ -6,6 +6,7 @@ export interface ProviderOption {
   baseUrl?: string;
   discovery: 'list' | 'manual' | 'none';
   requiresKey: boolean;
+  models?: readonly DiscoveredModel[];
 }
 
 export interface DiscoveredModel {
@@ -90,11 +91,12 @@ export const PROVIDER_OPTIONS: readonly ProviderOption[] = [
   {
     id: 'meta',
     label: 'Meta',
-    description: 'Enter a Meta model ID',
+    description: 'Muse Spark models from Meta',
     envKey: 'META_MODEL_API_KEY',
     baseUrl: 'https://api.meta.ai/v1',
     discovery: 'manual',
     requiresKey: true,
+    models: [{ id: 'muse-spark-1.1', displayName: 'Muse Spark 1.1' }],
   },
   {
     id: 'zai',
@@ -131,6 +133,7 @@ export async function discoverModels(
   apiKey: string | undefined,
   options: { fetch?: typeof fetch; signal?: AbortSignal } = {},
 ): Promise<DiscoveredModel[]> {
+  if (provider.models?.length) return normalizeModels(provider.models.map((model) => ({ ...model })));
   if (provider.discovery === 'manual') {
     throw new Error(`${provider.label} does not provide reliable model discovery; enter a model ID manually`);
   }

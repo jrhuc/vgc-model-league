@@ -91,7 +91,7 @@ export function writeReport(recordsPath: string, outPath: string, pool?: string)
     new Date(),
   );
   const poolText = pool === undefined ? '' : ` for pool ${escapeHtml(pool)}`;
-  const document = `<!doctype html><meta charset=utf-8><title>vgcbench records</title><style>${CSS}</style><h1>vgcbench records</h1><p class=meta>${rows.length} completed series${poolText} — generated ${stamp} UTC</p>${standingsTable(rows)}${h2hTable(rows)}${seriesTable(rows)}${gamesTable(rows)}`;
+  const document = `<!doctype html><meta charset=utf-8><title>VGC Model League records</title><style>${CSS}</style><h1>VGC Model League records</h1><p class=meta>${rows.length} completed series${poolText} — generated ${stamp} UTC</p>${standingsTable(rows)}${h2hTable(rows)}${seriesTable(rows)}${gamesTable(rows)}`;
   fs.mkdirSync(path.dirname(outPath), { recursive: true });
   fs.writeFileSync(outPath, document, 'utf8');
   return outPath;

@@ -1,5 +1,6 @@
 export type Pid = 'p1' | 'p2';
 export type JsonObject = Record<string, unknown>;
+export type ExperimentMode = 'rotation';
 
 export interface PlayerOptions {
   name: string;

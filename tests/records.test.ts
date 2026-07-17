@@ -46,7 +46,7 @@ test('ratings follow scheduled order rather than completion order', () => {
 });
 
 test('HTML reports include nested games and filter pools', (t) => {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'vgcbench-records-'));
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-model-league-records-'));
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
   const records = path.join(directory, 'results.jsonl');
   appendRow(records, {
@@ -67,6 +67,7 @@ test('HTML reports include nested games and filter pools', (t) => {
   const report = path.join(directory, 'report.html');
   writeReport(records, report, 'alpha');
   const html = fs.readFileSync(report, 'utf8');
+  assert.match(html, /VGC Model League records/);
   assert.match(html, /1 completed series for pool alpha/);
   assert.match(html, /series-1/);
   assert.match(html, /game-1\.log/);

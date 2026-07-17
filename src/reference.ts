@@ -1,8 +1,6 @@
-import { execFileSync } from 'node:child_process';
-
 import type { Dex } from 'pokemon-showdown';
 import { defaultPsDir } from './paths.js';
-import { loadShowdown } from './showdown.js';
+import { loadShowdown, showdownCommit } from './showdown.js';
 import type { ToolDefinition } from './types.js';
 
 function tool(
@@ -220,7 +218,6 @@ const TYPE_BOOST_ITEMS: Record<string, string> = {
 
 export class ShowdownReference {
   private readonly dex;
-  private revisionValue?: string;
 
   constructor(
     readonly format: string,
@@ -230,17 +227,7 @@ export class ShowdownReference {
   }
 
   get revision(): string {
-    if (this.revisionValue) return this.revisionValue;
-    try {
-      this.revisionValue =
-        execFileSync('git', ['-C', this.psDir, 'rev-parse', '--short=12', 'HEAD'], {
-          encoding: 'utf8',
-          timeout: 5_000,
-        }).trim() || 'unknown';
-    } catch {
-      this.revisionValue = 'unknown';
-    }
-    return this.revisionValue;
+    return showdownCommit(this.psDir).slice(0, 12);
   }
 
   /** Compact always-on context: typing, speed band, move type/BP only. */
