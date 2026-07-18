@@ -1,4 +1,5 @@
 import { runRotation } from '../rotation.js';
+import { redactSecrets } from '../sanitize.js';
 import type { RunWorkerInput, RunWorkerOutput, RunWorkerStart } from './run-worker-protocol.js';
 
 let controller: AbortController | undefined;
@@ -32,7 +33,10 @@ async function execute(message: RunWorkerStart): Promise<void> {
     });
     finish({ type: 'done' }, 0);
   } catch (error) {
-    const detail = redact(error instanceof Error ? error.message : String(error), Object.values(message.apiKeys));
+    const detail = redactSecrets(
+      error instanceof Error ? error.message : String(error),
+      Object.values(message.apiKeys),
+    );
     finish({ type: 'failed', error: detail }, 1);
   } finally {
     for (const model of Object.keys(message.apiKeys)) delete message.apiKeys[model];
@@ -49,15 +53,4 @@ function finish(message: RunWorkerOutput, exitCode: number): void {
     return;
   }
   process.send(message, () => process.exit(exitCode));
-}
-
-function redact(message: string, secrets: readonly string[]): string {
-  let redacted = message
-    .replace(/[\p{Cc}\p{Cf}]/gu, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-  for (const secret of secrets) {
-    if (secret && secret !== 'none') redacted = redacted.split(secret).join('[redacted]');
-  }
-  return redacted.slice(0, 2000);
 }

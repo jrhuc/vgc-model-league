@@ -1,3 +1,5 @@
+import { readCappedText } from './sanitize.js';
+
 export interface ProviderOption {
   id: string;
   label: string;
@@ -261,7 +263,8 @@ function requestInit(headers: Record<string, string>, signal: AbortSignal | unde
 }
 
 async function responseBody(response: Response, provider: string, apiKey: string | undefined): Promise<UnknownRecord> {
-  const raw = await limitedResponseText(response, provider);
+  const raw = await readCappedText(response, 1_000_000);
+  if (raw === undefined) throw new Error(`${provider} model catalog response was too large`);
   if (!response.ok) {
     const detail = errorDetail(raw, apiKey);
     const status = response.statusText ? `${response.status} ${response.statusText}` : String(response.status);
@@ -272,26 +275,6 @@ async function responseBody(response: Response, provider: string, apiKey: string
     if (isRecord(parsed)) return parsed;
   } catch {}
   throw new Error(`${provider} returned an invalid model catalog response`);
-}
-
-async function limitedResponseText(response: Response, provider: string): Promise<string> {
-  const declaredLength = Number(response.headers.get('content-length') ?? 0);
-  if (declaredLength > 1_000_000) throw new Error(`${provider} model catalog response was too large`);
-  if (!response.body) return '';
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let size = 0;
-  let text = '';
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) return text + decoder.decode();
-    size += value.byteLength;
-    if (size > 1_000_000) {
-      await reader.cancel();
-      throw new Error(`${provider} model catalog response was too large`);
-    }
-    text += decoder.decode(value, { stream: true });
-  }
 }
 
 function errorDetail(raw: string, apiKey: string | undefined): string {

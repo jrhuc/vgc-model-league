@@ -1,6 +1,7 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { createRequire } from 'node:module';
 import type { DatabaseSync } from 'node:sqlite';
+import { readCappedText } from './sanitize.js';
 
 export type UserRole = 'reader' | 'contributor' | 'operator';
 
@@ -426,26 +427,8 @@ function authUser(row: Record<string, unknown>): AuthUser {
 }
 
 async function responseJson(response: Response, operation: string): Promise<Record<string, unknown>> {
-  const declaredLength = Number(response.headers.get('content-length') ?? 0);
-  if (declaredLength > 64_000) throw new AuthError(502, `${operation} returned too much data`);
-  if (!response.body) throw new AuthError(502, `${operation} returned an invalid response`);
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let size = 0;
-  let text = '';
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) {
-      text += decoder.decode();
-      break;
-    }
-    size += value.byteLength;
-    if (size > 64_000) {
-      await reader.cancel();
-      throw new AuthError(502, `${operation} returned too much data`);
-    }
-    text += decoder.decode(value, { stream: true });
-  }
+  const text = await readCappedText(response, 64_000);
+  if (text === undefined) throw new AuthError(502, `${operation} returned too much data`);
   try {
     const value: unknown = JSON.parse(text);
     if (typeof value === 'object' && value !== null && !Array.isArray(value)) return value as Record<string, unknown>;

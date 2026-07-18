@@ -15,6 +15,7 @@ import {
   tool,
 } from 'ai';
 
+import { redactSecrets } from './sanitize.js';
 import type { CompleteOptions, Completion, JsonObject, Provider, ProviderMessage } from './types.js';
 
 import { isRecord } from './value.js';
@@ -377,13 +378,9 @@ export class SdkProvider implements Provider {
             sendTemperature = false;
             continue;
           }
-          let detail = (error.responseBody ?? error.message)
-            .replace(/[\p{Cc}\p{Cf}]/gu, ' ')
-            .replace(/\s+/g, ' ')
-            .trim();
-          if (apiKey !== 'none') detail = detail.split(apiKey).join('[redacted]');
+          const detail = redactSecrets(error.responseBody ?? error.message, [apiKey]);
           const status = error.statusCode ?? 0;
-          throw new ApiError(status, `${this.spec.provider}:${this.model} ${status}: ${detail.slice(0, 2000)}`);
+          throw new ApiError(status, `${this.spec.provider}:${this.model} ${status}: ${detail}`);
         }
         throw error;
       }

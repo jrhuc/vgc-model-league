@@ -15,6 +15,7 @@ import { parseSpec, REASONING_LEVELS, validateReasoning } from '../providers.js'
 import { h2h, loadRows, scopeRows, standings } from '../records.js';
 import type { RotationEvent } from '../rotation.js';
 import { makeRunDirectory, ROTATION_PROTOCOL_VERSION, runRotation } from '../rotation.js';
+import { redactSecrets } from '../sanitize.js';
 import { loadShowdown } from '../showdown.js';
 import type { MonState } from '../state.js';
 import { BattleState } from '../state.js';
@@ -91,17 +92,6 @@ function configuredOrigin(value: string | undefined): URL | undefined {
     throw new Error('VGC_LEAGUE_PUBLIC_ORIGIN must be an exact http(s) origin without a path');
   }
   return url;
-}
-
-function redactSecrets(message: string, secrets: readonly string[]): string {
-  let redacted = message
-    .replace(/[\p{Cc}\p{Cf}]/gu, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-  for (const secret of secrets) {
-    if (secret && secret !== 'none') redacted = redacted.split(secret).join('[redacted]');
-  }
-  return redacted.slice(0, 2000);
 }
 
 function requestCookies(header: string | undefined): Record<string, string> {
