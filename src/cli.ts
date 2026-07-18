@@ -17,11 +17,15 @@ Commands:
   selfcheck                           run one random-vs-random series through the simulator
   rotation --models <spec> <spec>...  run the controlled team-rotation protocol
       [--series-per-pair <n>] [--pool <name>] [--seed <n>] [--concurrency <n>] [--reasoning <level>]
+  exhibition --opponent <spec>        host one bo3 where a terminal agent plays a seat over a local bridge
+      [--seat p1|p2] [--name <label>] [--pool <name>] [--seed <n>] [--port <n>] [--reasoning <level>]
+      [--agent-dir <path>]
   standings [--pool <name>]           print standings and head-to-head from recorded results
   report [--out <path>] [--pool <name>]  write an HTML report
 
-Without --pool, standings and report cover every pool except the disposable "test" pool;
-pass --pool test to inspect test runs.`;
+Without --pool, standings and report cover every pool except the disposable "test" pool
+and drop exhibition rows; pass --pool <name> to inspect everything in one pool.
+Exhibition rows record mode "exhibition" and never rate the rotation ladder.`;
 
 function positiveInteger(name: string, value: string): number {
   const parsed = Number(value);
@@ -72,6 +76,48 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
       },
     );
     printResults(rows);
+    return 0;
+  }
+  if (command === 'exhibition') {
+    const { values } = parseArgs({
+      args: rest,
+      options: {
+        opponent: { type: 'string' },
+        seat: { type: 'string', default: 'p1' },
+        name: { type: 'string', default: 'cli-agent' },
+        pool: { type: 'string', default: 'test' },
+        seed: { type: 'string' },
+        port: { type: 'string' },
+        reasoning: { type: 'string' },
+        'agent-dir': { type: 'string' },
+      },
+    });
+    if (!values.opponent) throw new Error('exhibition requires --opponent <spec|random>');
+    if (values.seat !== 'p1' && values.seat !== 'p2') throw new Error('--seat must be p1 or p2');
+    const reasoning = values.reasoning as ReasoningLevel | undefined;
+    if (reasoning && !REASONING_LEVELS.includes(reasoning))
+      throw new Error(`--reasoning must be one of: ${REASONING_LEVELS.join(', ')}`);
+    const seed = values.seed === undefined ? undefined : Number(values.seed);
+    if (seed !== undefined && !Number.isSafeInteger(seed)) throw new Error('--seed must be an integer');
+    const { runExhibition } = await import('./exhibition.js');
+    const row = await runExhibition(makeRunDirectory(), {
+      opponent: values.opponent,
+      seat: values.seat,
+      name: values.name,
+      pool: values.pool,
+      recordsPath: RESULTS_PATH,
+      ...(seed === undefined ? {} : { seed }),
+      ...(values.port === undefined ? {} : { port: positiveInteger('port', values.port) }),
+      ...(reasoning === undefined ? {} : { reasoning }),
+      ...(values['agent-dir'] === undefined ? {} : { agentDir: values['agent-dir'] }),
+      onNotice: (line) => console.log(line),
+      onReady: ({ url, agentDir }) => {
+        console.log(`Seat bridge listening at ${url}`);
+        console.log(`Agent workspace: ${agentDir}`);
+        console.log('Start the terminal agent with that directory as its working directory and have it read SEAT.md.');
+      },
+    });
+    printResults([row]);
     return 0;
   }
   if (command === 'standings' || command === 'report') {

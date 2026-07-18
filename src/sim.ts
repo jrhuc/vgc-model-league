@@ -77,6 +77,7 @@ export class SimBattle {
     readonly players: Record<Pid, PlayerOptions>,
     seed?: number | [number, number, number, number],
     psDir = defaultPsDir(),
+    private readonly timerEnabled = true,
   ) {
     this.psDir = psDir;
     if (Array.isArray(seed)) {
@@ -132,7 +133,7 @@ export class SimBattle {
     if (this.seed) start.seed = this.seed;
     stream.write(`>start ${JSON.stringify(start)}`);
     for (const pid of ['p1', 'p2'] as const) stream.write(`>player ${pid} ${JSON.stringify(this.players[pid])}`);
-    const timer = new TimerAdapter(this.format, stream, timerEvent, this.psDir);
+    const timer = new TimerAdapter(this.format, stream, timerEvent, this.psDir, this.timerEnabled);
     for (const pid of ['p1', 'p2'] as const) timer.setPlayer(pid, this.players[pid].name);
 
     const schedule = (pid: Pid, request: BattleRequest, error?: string) => {
