@@ -111,3 +111,45 @@ test('sessions expire and contributor ownership gates another user', async () =>
   assert.equal(auth.session(first.sessionToken), undefined);
   auth.close();
 });
+
+test('service restart records interrupted experiments as failed', async (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'vgcleague-auth-recovery-'));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const dbPath = path.join(directory, 'league.sqlite');
+  const request = (async (input) =>
+    String(input).includes('/login/oauth/access_token')
+      ? json({ access_token: 'token' })
+      : json({ id: 7, login: 'recoverable', avatar_url: '' })) as typeof fetch;
+  const options = {
+    dbPath,
+    clientId: 'client-id',
+    clientSecret: 'client-secret',
+    publicOrigin: 'https://league.example',
+    fetch: request,
+  };
+  const first = new AuthService(options);
+  const flow = first.beginLogin();
+  const login = await first.completeLogin('code', flow.state, flow.state, undefined);
+  first.startExperiment(login.session.user, 'interrupted-run', 'test', {});
+  first.close();
+
+  const restarted = new AuthService(options);
+  restarted.startExperiment(login.session.user, 'replacement-run', 'test', {});
+  restarted.finishExperiment('replacement-run', 'done');
+  restarted.close();
+
+  const inspection = new DatabaseSync(dbPath, { readOnly: true });
+  const interrupted = inspection
+    .prepare('SELECT status, ended_at FROM experiments WHERE run_id = ?')
+    .get('interrupted-run') as { status: string; ended_at: number | null };
+  assert.equal(interrupted.status, 'failed');
+  assert.equal(typeof interrupted.ended_at, 'number');
+  const actions = inspection
+    .prepare("SELECT action FROM audit_events WHERE resource_id = 'interrupted-run'")
+    .all() as Array<{ action: string }>;
+  assert.deepEqual(
+    actions.map((entry) => entry.action),
+    ['experiment.start', 'experiment.failed'],
+  );
+  inspection.close();
+});

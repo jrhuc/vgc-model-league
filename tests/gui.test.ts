@@ -4,6 +4,7 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
 
 import { GuiServer } from '../src/gui/server.js';
 import { TEAMS_DIR } from '../src/paths.js';
@@ -368,6 +369,133 @@ test('gui rejects a second run while one is active and stops on request', async 
     assert.equal(run.state, 'done');
   } finally {
     gui.close();
+  }
+});
+
+test('gui aborts runs that exceed the configured duration', async () => {
+  const timedOut = Promise.withResolvers<void>();
+  const gui = new GuiServer({
+    maxRunMs: 1,
+    runner: async (_models, _seriesPerPair, _runDir, options = {}) => {
+      const aborted = Promise.withResolvers<void>();
+      options.signal?.addEventListener('abort', () => aborted.resolve(), { once: true });
+      await aborted.promise;
+      timedOut.resolve();
+      return [];
+    },
+  });
+  const base = await gui.listen(0);
+  try {
+    const started = await apiJson(`${base}api/run`, { models: ['random', 'random'], pool: 'test' });
+    assert.equal(started.status, 200, JSON.stringify(started.data));
+    await timedOut.promise;
+    await new Promise(setImmediate);
+    const run = (await apiJson(`${base}api/state`)).data.run as Record<string, unknown>;
+    assert.equal(run.state, 'failed');
+    assert.equal(run.error, 'run exceeded its maximum duration');
+  } finally {
+    gui.close();
+  }
+});
+
+test('server shutdown marks an active run as failed', async () => {
+  const settled = Promise.withResolvers<Record<string, unknown>>();
+  const gui = new GuiServer({
+    runner: async (_models, _seriesPerPair, _runDir, options = {}) => {
+      const aborted = Promise.withResolvers<void>();
+      options.signal?.addEventListener('abort', () => aborted.resolve(), { once: true });
+      await aborted.promise;
+      return [];
+    },
+    logger: (entry) => {
+      if (entry.event === 'run_finished') settled.resolve(entry);
+    },
+  });
+  const base = await gui.listen(0);
+  const started = await apiJson(`${base}api/run`, { models: ['random', 'random'], pool: 'test' });
+  assert.equal(started.status, 200, JSON.stringify(started.data));
+  await gui.shutdown(1_000);
+  assert.equal((await settled.promise).state, 'failed');
+});
+
+test('hosted runs execute in a child process and return events to the server', async (t) => {
+  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'vgcleague-worker-'));
+  t.after(() => fs.rmSync(scratch, { recursive: true, force: true }));
+  const settled = Promise.withResolvers<Record<string, unknown>>();
+  const gui = new GuiServer({
+    host: '127.0.0.1',
+    publicOrigin: 'http://league.example',
+    mutationsEnabled: true,
+    recordsPath: path.join(scratch, 'results.jsonl'),
+    logger: (entry) => {
+      if (entry.event === 'run_finished') settled.resolve(entry);
+    },
+  });
+  await gui.listen(0);
+  const address = gui.server.address();
+  assert.ok(address && typeof address === 'object');
+  const port = address.port;
+  try {
+    const started = await rawJsonRequest(port, {
+      method: 'POST',
+      path: '/api/run',
+      headers: {
+        host: 'league.example',
+        origin: 'http://league.example',
+        'content-type': 'application/json',
+      },
+      body: '{"models":["random","random"],"pool":"test","seriesPerPair":1,"concurrency":1,"seed":1}',
+    });
+    assert.equal(started.status, 200, JSON.stringify(started.data));
+    const finished = await settled.promise;
+    assert.equal(finished.state, 'done');
+    const state = await rawJsonRequest(port, { path: '/api/state', headers: { host: 'league.example' } });
+    const run = state.data.run as Record<string, unknown>;
+    assert.equal(run.state, 'done', String(run.error ?? ''));
+    assert.equal((run.rows as unknown[]).length, 1);
+    assert.equal(await rawRequest(port, { path: '/healthz' }), 200);
+  } finally {
+    await gui.shutdown(1_000);
+  }
+});
+
+test('a hung hosted worker is killed without taking down the web process', async () => {
+  const settled = Promise.withResolvers<Record<string, unknown>>();
+  const gui = new GuiServer({
+    host: '127.0.0.1',
+    publicOrigin: 'http://league.example',
+    mutationsEnabled: true,
+    maxRunMs: 1,
+    workerStopGraceMs: 1,
+    workerPath: fileURLToPath(new URL('./fixtures/hung-run-worker.js', import.meta.url)),
+    logger: (entry) => {
+      if (entry.event === 'run_finished') settled.resolve(entry);
+    },
+  });
+  await gui.listen(0);
+  const address = gui.server.address();
+  assert.ok(address && typeof address === 'object');
+  const port = address.port;
+  try {
+    const started = await rawJsonRequest(port, {
+      method: 'POST',
+      path: '/api/run',
+      headers: {
+        host: 'league.example',
+        origin: 'http://league.example',
+        'content-type': 'application/json',
+      },
+      body: '{"models":["random","random"],"pool":"test"}',
+    });
+    assert.equal(started.status, 200, JSON.stringify(started.data));
+    const finished = await settled.promise;
+    assert.equal(finished.state, 'failed');
+    const state = await rawJsonRequest(port, { path: '/api/state', headers: { host: 'league.example' } });
+    const run = state.data.run as Record<string, unknown>;
+    assert.equal(run.error, 'run exceeded its maximum duration');
+    assert.equal(await rawRequest(port, { path: '/healthz' }), 200);
+  } finally {
+    await gui.shutdown(1_000);
   }
 });
 

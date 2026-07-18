@@ -43,7 +43,7 @@ export type RotationEvent =
       seed: number;
     }
   | { type: 'series-start'; index: number }
-  | { type: 'game-update'; index: number; game: number; lines: string[] }
+  | { type: 'game-update'; index: number; game: number; lines: string[]; publicLines: string[] }
   | { type: 'game-end'; index: number; game: number; winner: string | null; turns: number; score: Record<Pid, number> }
   | { type: 'series-end'; index: number; record: SeriesRecord };
 
@@ -263,7 +263,7 @@ export interface Bo3Context {
   timer?: boolean;
   signal?: AbortSignal;
   onGameStart?: (game: number) => void;
-  onGameUpdate?: (game: number, lines: string[]) => void;
+  onGameUpdate?: (game: number, lines: string[], publicLines: string[]) => void;
   onGameEnd?: (game: number, winner: string | null, turns: number, score: Record<Pid, number>) => void;
 }
 
@@ -291,7 +291,7 @@ export async function playBo3(context: Bo3Context): Promise<Bo3Result> {
     };
     const outcome = await new SimBattle(context.format, players, gameSeed, context.psDir, context.timer ?? true).run(
       engines,
-      (lines) => context.onGameUpdate?.(gameNumber, lines),
+      (lines, publicLines) => context.onGameUpdate?.(gameNumber, lines, publicLines),
     );
     context.signal?.throwIfAborted();
     const winnerSide = (['p1', 'p2'] as const).find((pid) => names[pid] === outcome.winner);
@@ -386,7 +386,8 @@ async function playSeries(
     format: context.pool.format,
     psDir: context.psDir,
     ...(context.signal === undefined ? {} : { signal: context.signal }),
-    onGameUpdate: (game, lines) => context.onEvent?.({ type: 'game-update', index: plan.index, game, lines }),
+    onGameUpdate: (game, lines, publicLines) =>
+      context.onEvent?.({ type: 'game-update', index: plan.index, game, lines, publicLines }),
     onGameEnd: (game, winner, turns, score) =>
       context.onEvent?.({ type: 'game-end', index: plan.index, game, winner, turns, score }),
   });

@@ -35,6 +35,16 @@ function positiveInteger(name: string, value: string): number {
   return parsed;
 }
 
+function environmentInteger(name: string, fallback: number, minimum: number, maximum: number): number {
+  const raw = process.env[name]?.trim();
+  if (!raw) return fallback;
+  const parsed = Number(raw);
+  if (!Number.isSafeInteger(parsed) || parsed < minimum || parsed > maximum) {
+    throw new Error(`${name} must be an integer from ${minimum} to ${maximum}`);
+  }
+  return parsed;
+}
+
 export async function main(argv = process.argv.slice(2)): Promise<number> {
   prepareDataDirectories();
   const [command, ...rest] = argv;
@@ -50,6 +60,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
     });
     const publicOrigin = values.origin ?? process.env.VGC_LEAGUE_PUBLIC_ORIGIN;
     const host = values.host ?? process.env.VGC_LEAGUE_HOST;
+    const maxRunMinutes = environmentInteger('VGC_LEAGUE_MAX_RUN_MINUTES', 240, 1, 1440);
     const logger = publicOrigin ? (entry: Record<string, unknown>) => console.log(JSON.stringify(entry)) : undefined;
     const githubClientId = process.env.GITHUB_CLIENT_ID?.trim();
     const githubClientSecret = process.env.GITHUB_CLIENT_SECRET?.trim();
@@ -76,6 +87,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
       mutationsEnabled: !publicOrigin || process.env.VGC_LEAGUE_ENABLE_MUTATIONS === 'true',
       ...(logger ? { logger } : {}),
       ...(auth ? { auth } : {}),
+      maxRunMs: maxRunMinutes * 60_000,
     });
     const url = await gui.listen(positiveInteger('port', values.port));
     if (logger) logger({ timestamp: new Date().toISOString(), level: 'info', event: 'server_started', url });

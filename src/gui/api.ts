@@ -61,6 +61,7 @@ export interface RunSnapshot {
   startTime: number;
   owner: string | null;
   endTime: number | null;
+  canControl: boolean;
   rows: SeriesRowView[];
 }
 

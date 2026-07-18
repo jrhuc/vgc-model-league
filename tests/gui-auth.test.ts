@@ -41,6 +41,57 @@ function request(
   return promise;
 }
 
+function firstEvent(port: number, path: string): Promise<RawResponse> {
+  const { promise, resolve, reject } = Promise.withResolvers<RawResponse>();
+  const outgoing = http.request({ host: '127.0.0.1', port, path, headers: { host: 'league.example' } }, (incoming) => {
+    let body = '';
+    incoming.on('data', (chunk: Buffer) => {
+      body += chunk.toString('utf8');
+      if (!body.includes('\n\n')) return;
+      resolve({ status: incoming.statusCode ?? 0, headers: incoming.headers, body });
+      incoming.destroy();
+    });
+  });
+  outgoing.on('error', reject);
+  outgoing.end();
+  return promise;
+}
+
+function eventStream(
+  port: number,
+  path: string,
+  headers: Record<string, string>,
+): { ready: Promise<number>; battle: Promise<string>; close: () => void } {
+  const ready = Promise.withResolvers<number>();
+  const battle = Promise.withResolvers<string>();
+  let incoming: http.IncomingMessage | undefined;
+  let body = '';
+  const outgoing = http.request(
+    { host: '127.0.0.1', port, path, headers: { host: 'league.example', ...headers } },
+    (response) => {
+      incoming = response;
+      ready.resolve(response.statusCode ?? 0);
+      response.on('data', (chunk: Buffer) => {
+        body += chunk.toString('utf8');
+        if (body.includes('"type":"battle"')) battle.resolve(body);
+      });
+    },
+  );
+  outgoing.on('error', (error) => {
+    ready.reject(error);
+    battle.reject(error);
+  });
+  outgoing.end();
+  return {
+    ready: ready.promise,
+    battle: battle.promise,
+    close: () => {
+      incoming?.destroy();
+      outgoing.destroy();
+    },
+  };
+}
+
 function cookieValue(headers: http.IncomingHttpHeaders, name: string): string {
   const cookies = headers['set-cookie'] ?? [];
   for (const cookie of cookies) {
@@ -93,7 +144,32 @@ test('hosted GitHub OAuth protects mutations with sessions, CSRF, and run owners
     publicOrigin: 'http://league.example',
     fetch: github,
   });
+  let emitLateUpdate: (() => void) | undefined;
   const runner = (async (_models, _seriesPerPair, _runDir, options) => {
+    options?.onEvent?.({
+      type: 'plans',
+      mode: 'rotation',
+      protocolVersion: 1,
+      plans: [{ index: 0, players: { p1: 'random', p2: 'random' } }],
+      pool: 'test',
+      seed: 1,
+    });
+    options?.onEvent?.({ type: 'series-start', index: 0 });
+    options?.onEvent?.({
+      type: 'game-update',
+      index: 0,
+      game: 1,
+      lines: ['|switch|p1a: Alpha|Pikachu, L50|100/200'],
+      publicLines: ['|switch|p1a: Alpha|Pikachu, L50|50/100'],
+    });
+    emitLateUpdate = () =>
+      options?.onEvent?.({
+        type: 'game-update',
+        index: 0,
+        game: 1,
+        lines: ['|-damage|p1a: Alpha|80/200'],
+        publicLines: ['|-damage|p1a: Alpha|40/100'],
+      });
     const signal = options?.signal;
     if (!signal?.aborted) {
       const gate = Promise.withResolvers<void>();
@@ -125,6 +201,9 @@ test('hosted GitHub OAuth protects mutations with sessions, CSRF, and run owners
       csrfToken: null,
     });
     assert.equal((await request(port, { path: '/api/events' })).status, 401);
+    const publicEvents = await firstEvent(port, '/api/events/public');
+    assert.equal(publicEvents.status, 200);
+    assert.match(publicEvents.body, /"type":"run"/);
     assert.equal(
       (
         await request(port, {
@@ -172,9 +251,32 @@ test('hosted GitHub OAuth protects mutations with sessions, CSRF, and run owners
       }),
     });
     assert.equal(started.status, 200, started.body);
+    const ownerState = JSON.parse(
+      (await request(port, { path: '/api/state', headers: { cookie: owner.cookie } })).body,
+    ) as {
+      run: { canControl: boolean };
+    };
+    assert.equal(ownerState.run.canControl, true);
+    const publicState = JSON.parse((await request(port, { path: '/api/state' })).body) as {
+      run: { canControl: boolean };
+    };
+    assert.equal(publicState.run.canControl, false);
+    const ownerBattle = await request(port, { path: '/api/battle?index=0', headers: { cookie: owner.cookie } });
+    assert.equal(ownerBattle.status, 200);
+    assert.match(ownerBattle.body, /100\/200/);
+    const publicBattle = await request(port, { path: '/api/battle/public?index=0' });
+    assert.equal(publicBattle.status, 200);
+    assert.match(publicBattle.body, /50\/100/);
+    assert.doesNotMatch(publicBattle.body, /100\/200/);
 
     profileId = 2;
     const other = await login(port);
+    const otherState = JSON.parse(
+      (await request(port, { path: '/api/state', headers: { cookie: other.cookie } })).body,
+    ) as {
+      run: { canControl: boolean };
+    };
+    assert.equal(otherState.run.canControl, false);
     const forbiddenStop = await request(port, {
       path: '/api/run/stop',
       method: 'POST',
@@ -187,7 +289,10 @@ test('hosted GitHub OAuth protects mutations with sessions, CSRF, and run owners
       body: '{}',
     });
     assert.equal(forbiddenStop.status, 403);
-    assert.equal((await request(port, { path: '/api/battle?index=0', headers: { cookie: other.cookie } })).status, 403);
+    const otherBattle = await request(port, { path: '/api/battle?index=0', headers: { cookie: other.cookie } });
+    assert.equal(otherBattle.status, 200);
+    assert.match(otherBattle.body, /50\/100/);
+    assert.doesNotMatch(otherBattle.body, /100\/200/);
 
     const stopped = await request(port, {
       path: '/api/run/stop',
@@ -202,6 +307,37 @@ test('hosted GitHub OAuth protects mutations with sessions, CSRF, and run owners
     });
     assert.equal(stopped.status, 200);
 
+    for (let attempt = 0; attempt < 30; attempt += 1) {
+      const response = await request(port, {
+        path: '/api/models',
+        method: 'POST',
+        headers: {
+          origin: 'http://league.example',
+          'content-type': 'application/json',
+          cookie: owner.cookie,
+          'x-csrf-token': owner.csrf,
+        },
+        body: '{"provider":"missing"}',
+      });
+      assert.equal(response.status, 400);
+    }
+    const limited = await request(port, {
+      path: '/api/models',
+      method: 'POST',
+      headers: {
+        origin: 'http://league.example',
+        'content-type': 'application/json',
+        cookie: owner.cookie,
+        'x-csrf-token': owner.csrf,
+      },
+      body: '{"provider":"missing"}',
+    });
+    assert.equal(limited.status, 429);
+    assert.ok(Number(limited.headers['retry-after']) >= 1);
+
+    const ownerStream = eventStream(port, '/api/events', { cookie: owner.cookie });
+    assert.equal(await ownerStream.ready, 200);
+
     const logout = await request(port, {
       path: '/api/logout',
       method: 'POST',
@@ -215,6 +351,11 @@ test('hosted GitHub OAuth protects mutations with sessions, CSRF, and run owners
     });
     assert.equal(logout.status, 200);
     assert.equal(cookieValue(logout.headers, 'vgc_session'), '');
+    emitLateUpdate?.();
+    const afterLogout = await ownerStream.battle;
+    assert.match(afterLogout, /40\/100/);
+    assert.doesNotMatch(afterLogout, /80\/200/);
+    ownerStream.close();
   } finally {
     await gui.shutdown(1_000);
     auth.close();

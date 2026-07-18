@@ -1,3 +1,4 @@
+import { fork } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import type http from 'node:http';
@@ -33,10 +34,12 @@ import type {
   SeriesRowView,
   ServerEvent,
 } from './api.js';
+import type { RunWorkerInput, RunWorkerOutput, RunWorkerStart } from './run-worker-protocol.js';
 
 type SeriesRow = Omit<SeriesRowView, 'turn'>;
 
 const ASSETS_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'gui');
+const RUN_WORKER_PATH = fileURLToPath(new URL('./run-worker.js', import.meta.url));
 const ASSET_TYPES: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
@@ -50,8 +53,13 @@ const LOCAL_HOSTNAMES: Record<string, true> = { '127.0.0.1': true, localhost: tr
 const MUTATING_METHODS: Record<string, true> = { POST: true, PUT: true, PATCH: true, DELETE: true };
 const SESSION_COOKIE = 'vgc_session';
 const OAUTH_STATE_COOKIE = 'vgc_oauth_state';
-const MAX_SSE_CLIENTS = 64;
+const MAX_PUBLIC_SSE_CLIENTS = 32;
+const MAX_FALLBACK_SSE_CLIENTS = 16;
+const MAX_CONTROLLER_SSE_CLIENTS = 16;
+const MAX_SSE_CLIENTS_PER_SESSION = 2;
 const SSE_HEARTBEAT_MS = 25_000;
+const MAX_RATE_BUCKETS = 4096;
+const DEFAULT_MAX_RUN_MS = 4 * 60 * 60 * 1000;
 
 interface GuiServerOptions {
   teamsDir?: string;
@@ -62,6 +70,9 @@ interface GuiServerOptions {
   mutationsEnabled?: boolean;
   auth?: AuthService;
   logger?: (entry: Record<string, unknown>) => void;
+  maxRunMs?: number;
+  workerPath?: string;
+  workerStopGraceMs?: number;
 }
 
 function hostnameFromHost(host: string | undefined): string {
@@ -106,6 +117,22 @@ function responseCookie(name: string, value: string, maxAge: number, cookiePath:
   return `${name}=${value}; Path=${cookiePath}; Max-Age=${maxAge}; HttpOnly; SameSite=Lax${secure ? '; Secure' : ''}`;
 }
 
+interface RateBucket {
+  count: number;
+  resetAt: number;
+}
+
+interface EventViewer {
+  sessionToken: string | undefined;
+  publicOnly: boolean;
+  backpressured: boolean;
+}
+
+interface PendingServerEvent {
+  privateEvent: ServerEvent;
+  publicEvent: ServerEvent;
+}
+
 interface RunConfig {
   mode: ExperimentMode;
   protocolVersion: number;
@@ -124,7 +151,11 @@ class ActiveRun {
   notices: string[] = [];
   seed: number | undefined;
   endTime: number | undefined;
+  timeoutTimer: NodeJS.Timeout | undefined;
+  timedOut = false;
+  interrupted = false;
   readonly battles = new Map<number, { game: number; state: BattleState }>();
+  readonly publicBattles = new Map<number, { game: number; state: BattleState }>();
   readonly controller = new AbortController();
   readonly runDir = makeRunDirectory();
   readonly runId = path.basename(this.runDir);
@@ -145,6 +176,7 @@ class HttpError extends Error {
   constructor(
     readonly status: number,
     message: string,
+    readonly retryAfterSeconds?: number,
   ) {
     super(message);
   }
@@ -196,11 +228,14 @@ export class GuiServer {
   private run: ActiveRun | undefined;
   private runTask: Promise<void> | undefined;
   private shutdownTask: Promise<void> | undefined;
-  private readonly clients = new Map<http.ServerResponse, AuthUser | undefined>();
-  private readonly pending = new Map<string, () => ServerEvent | undefined>();
+  private readonly clients = new Map<http.ServerResponse, EventViewer>();
+  private readonly pending = new Map<string, () => PendingServerEvent | undefined>();
+  private readonly rateBuckets = new Map<string, RateBucket>();
   private readonly options: GuiServerOptions;
   private readonly publicOrigin: URL | undefined;
   private readonly bindHost: string;
+  private readonly maxRunMs: number;
+  private readonly workerStopGraceMs: number;
   private flushTimer: NodeJS.Timeout | undefined;
   private heartbeatTimer: NodeJS.Timeout | undefined;
 
@@ -208,6 +243,14 @@ export class GuiServer {
     this.options = options;
     this.publicOrigin = configuredOrigin(options.publicOrigin);
     this.bindHost = options.host?.trim() || (this.publicOrigin ? '0.0.0.0' : '127.0.0.1');
+    this.maxRunMs = options.maxRunMs ?? DEFAULT_MAX_RUN_MS;
+    if (!Number.isSafeInteger(this.maxRunMs) || this.maxRunMs < 1) {
+      throw new Error('maxRunMs must be a positive integer');
+    }
+    this.workerStopGraceMs = options.workerStopGraceMs ?? 5_000;
+    if (!Number.isSafeInteger(this.workerStopGraceMs) || this.workerStopGraceMs < 1) {
+      throw new Error('workerStopGraceMs must be a positive integer');
+    }
     const bindHostname = hostnameFromHost(this.bindHost);
     if (!this.publicOrigin && !LOCAL_HOSTNAMES[bindHostname]) {
       throw new Error('a non-loopback host requires VGC_LEAGUE_PUBLIC_ORIGIN');
@@ -256,6 +299,9 @@ export class GuiServer {
           });
         }
         const message = expected ? detail : `internal server error (${requestId})`;
+        if (error instanceof HttpError && error.retryAfterSeconds !== undefined) {
+          response.setHeader('retry-after', String(error.retryAfterSeconds));
+        }
         if (!response.headersSent) this.json(response, status, { error: message });
         else response.end();
       });
@@ -284,6 +330,7 @@ export class GuiServer {
   shutdown(graceMs = 10_000): Promise<void> {
     if (this.shutdownTask) return this.shutdownTask;
     this.shutdownTask = (async () => {
+      if (this.run?.state === 'running') this.run.interrupted = true;
       this.run?.controller.abort();
       clearTimeout(this.flushTimer);
       clearInterval(this.heartbeatTimer);
@@ -391,16 +438,31 @@ export class GuiServer {
         throw new HttpError(503, 'mutations are disabled until deployment authentication is configured');
       }
     }
+    if (MUTATING_METHODS[method] && this.publicOrigin) {
+      const subject = actor ? `user:${actor.id}` : `network:${request.socket.remoteAddress ?? 'unknown'}`;
+      if (key === 'POST /api/models') this.consumeRateLimit('models', subject, 30, 60_000);
+      else if (key === 'POST /api/team/validate') this.consumeRateLimit('validation', subject, 60, 60_000);
+      else if (key === 'POST /api/pool') this.consumeRateLimit('pool', subject, 10, 60 * 60_000);
+      else if (key === 'POST /api/run') this.consumeRateLimit('run', subject, 6, 60 * 60_000);
+    }
 
     if (method === 'GET' && !url.pathname.startsWith('/api/') && this.serveStatic(url.pathname, response)) return;
     if (key === 'GET /api/state') this.json(response, 200, this.stateBody(session));
     else if (key === 'GET /api/records') this.json(response, 200, this.recordsBody(url.searchParams.get('pool')));
-    else if (key === 'GET /api/events') {
-      this.authorizeRunViewer(session);
-      this.openEvents(response, session?.user);
+    else if (key === 'GET /api/events/public') {
+      this.openEvents(response, undefined, true);
+    } else if (key === 'GET /api/events') {
+      this.requireAuthenticatedViewer(session);
+      this.openEvents(response, sessionToken, false);
+    } else if (key === 'GET /api/battle/public') {
+      this.json(response, 200, this.battleBody(Number(url.searchParams.get('index')), true));
     } else if (key === 'GET /api/battle') {
-      this.authorizeRunViewer(session);
-      this.json(response, 200, this.battleBody(Number(url.searchParams.get('index'))));
+      this.requireAuthenticatedViewer(session);
+      this.json(
+        response,
+        200,
+        this.battleBody(Number(url.searchParams.get('index')), !this.canViewPrivateRun(session?.user)),
+      );
     } else if (key === 'POST /api/logout') {
       this.options.auth?.logout(
         sessionToken,
@@ -433,6 +495,31 @@ export class GuiServer {
     } else this.json(response, 404, { error: `no route for ${key}` });
   }
 
+  private consumeRateLimit(scope: string, subject: string, maximum: number, windowMs: number): void {
+    const now = Date.now();
+    const key = `${scope}:${subject}`;
+    let bucket = this.rateBuckets.get(key);
+    if (bucket && bucket.resetAt <= now) {
+      this.rateBuckets.delete(key);
+      bucket = undefined;
+    }
+    if (!bucket) {
+      if (this.rateBuckets.size >= MAX_RATE_BUCKETS) {
+        for (const [candidate, value] of this.rateBuckets) {
+          if (value.resetAt <= now) this.rateBuckets.delete(candidate);
+        }
+      }
+      if (this.rateBuckets.size >= MAX_RATE_BUCKETS) {
+        throw new HttpError(429, 'request rate limit exceeded', 60);
+      }
+      this.rateBuckets.set(key, { count: 1, resetAt: now + windowMs });
+      return;
+    }
+    if (bucket.count >= maximum) {
+      throw new HttpError(429, 'request rate limit exceeded', Math.max(1, Math.ceil((bucket.resetAt - now) / 1000)));
+    }
+    bucket.count += 1;
+  }
   private redirect(response: http.ServerResponse, location: string, cookies: string[]): void {
     response.writeHead(302, {
       'cache-control': 'no-store',
@@ -442,12 +529,24 @@ export class GuiServer {
     response.end();
   }
 
-  private authorizeRunViewer(session: AuthSession | undefined): void {
-    if (!this.options.auth) return;
-    if (!session) throw new HttpError(401, 'authentication required');
-    if (this.run && !this.options.auth.canControlExperiment(session.user, this.run.runId)) {
-      throw new HttpError(403, 'live run details are private to the owner and operators');
-    }
+  private requireAuthenticatedViewer(session: AuthSession | undefined): void {
+    if (this.options.auth && !session) throw new HttpError(401, 'authentication required');
+  }
+
+  private canViewPrivateRun(user: AuthUser | undefined): boolean {
+    if (!this.options.auth) return true;
+    if (!user) return false;
+    return !this.run || user.role === 'operator' || this.run.owner?.id === user.id;
+  }
+
+  private eventViewerUser(viewer: EventViewer): AuthUser | undefined {
+    if (viewer.publicOnly) return undefined;
+    return this.options.auth?.session(viewer.sessionToken)?.user;
+  }
+
+  private controlsCurrentRun(user: AuthUser | undefined): boolean {
+    if (!this.options.auth) return true;
+    return Boolean(this.run && user && (user.role === 'operator' || this.run.owner?.id === user.id));
   }
 
   private json(response: http.ServerResponse, status: number, body: unknown): void {
@@ -530,7 +629,7 @@ export class GuiServer {
             csrfToken: session?.csrfToken ?? null,
           }
         : { mode: this.publicOrigin ? 'read-only' : 'local', user: null, csrfToken: null },
-      run: this.runBody(),
+      run: this.runBody(!this.canViewPrivateRun(session?.user)),
     };
   }
 
@@ -542,28 +641,30 @@ export class GuiServer {
     return { count: rows.length, pool, pools, standings: standings(rows), h2h: h2h(rows), records: rows };
   }
 
-  private runBody(): RunSnapshot | null {
+  private runBody(publicView = false): RunSnapshot | null {
     const run = this.run;
     if (!run) return null;
+    const battles = publicView ? run.publicBattles : run.battles;
     return {
       mode: run.config.mode,
       protocolVersion: run.config.protocolVersion,
       runId: run.runId,
       state: run.state,
-      error: run.error,
-      notices: run.notices.slice(-3),
+      error: publicView && run.error ? 'run failed' : run.error,
+      notices: publicView ? [] : run.notices.slice(-3),
       seed: run.seed ?? null,
       pool: run.config.pool,
       models: run.config.models,
       startTime: run.startTime,
       owner: run.owner?.login ?? null,
       endTime: run.endTime ?? null,
-      rows: run.rows.map((row, index) => ({ ...row, turn: run.battles.get(index)?.state.turn ?? 0 })),
+      canControl: !publicView,
+      rows: run.rows.map((row, index) => ({ ...row, turn: battles.get(index)?.state.turn ?? 0 })),
     };
   }
 
-  private battleBody(index: number): BattleMessage {
-    const entry = this.run?.battles.get(index);
+  private battleBody(index: number, publicView = false): BattleMessage {
+    const entry = (publicView ? this.run?.publicBattles : this.run?.battles)?.get(index);
     if (!entry) return { index, game: 0, snapshot: null };
     return { index, game: entry.game, snapshot: snapshotBattle(entry.state, this.run?.rows[index]?.players) };
   }
@@ -586,8 +687,11 @@ export class GuiServer {
   private startRun(body: Record<string, unknown>, owner: AuthUser | undefined): JsonObject {
     if (this.run?.state === 'running') throw new HttpError(409, 'a run is already in progress');
     const models = Array.isArray(body.models) ? body.models.map(String).filter(Boolean) : [];
+    const maximumModels = this.publicOrigin ? 4 : 8;
     if (models.length < 2) throw new HttpError(400, 'a run needs at least two model specs');
-    if (models.length > 8) throw new HttpError(400, 'a run supports at most eight model specs');
+    if (models.length > maximumModels) {
+      throw new HttpError(400, `a run supports at most ${maximumModels} model specs`);
+    }
     const reasoning = body.reasoning ? (String(body.reasoning) as ReasoningLevel) : undefined;
     if (reasoning && !REASONING_LEVELS.includes(reasoning))
       throw new HttpError(400, `reasoning must be one of: ${REASONING_LEVELS.join(', ')}`);
@@ -619,13 +723,15 @@ export class GuiServer {
       throw new HttpError(400, `unknown team pool ${JSON.stringify(pool)}`);
     const seed = body.seed === undefined || body.seed === null || body.seed === '' ? undefined : Number(body.seed);
     if (seed !== undefined && !Number.isSafeInteger(seed)) throw new HttpError(400, 'seed must be an integer');
+    const maximumSeriesPerPair = this.publicOrigin ? 4 : 20;
+    const maximumConcurrency = this.publicOrigin ? 2 : 8;
     const config: RunConfig = {
       mode: 'rotation',
       protocolVersion: ROTATION_PROTOCOL_VERSION,
       models,
-      seriesPerPair: clampInt(body.seriesPerPair, 1, 20, 2),
+      seriesPerPair: clampInt(body.seriesPerPair, 1, maximumSeriesPerPair, 2),
       pool,
-      concurrency: clampInt(body.concurrency, 1, 8, 2),
+      concurrency: clampInt(body.concurrency, 1, maximumConcurrency, 2),
       ...(seed === undefined ? {} : { seed }),
       ...(reasoning === undefined ? {} : { reasoning }),
     };
@@ -640,6 +746,14 @@ export class GuiServer {
       }
     }
     this.run = run;
+    run.timeoutTimer = setTimeout(() => {
+      if (run !== this.run || run.state !== 'running') return;
+      run.timedOut = true;
+      run.notices.push('run stopped after reaching its maximum duration');
+      run.controller.abort();
+      this.queueRun();
+    }, this.maxRunMs);
+    run.timeoutTimer.unref();
     this.runTask = this.launch(run);
     this.queueRun();
     return { ok: true, runId: run.runId };
@@ -647,34 +761,54 @@ export class GuiServer {
 
   private async launch(run: ActiveRun): Promise<void> {
     try {
-      await (this.options.runner ?? runRotation)(run.config.models, run.config.seriesPerPair, run.runDir, {
-        pool: run.config.pool,
-        concurrency: run.config.concurrency,
-        recordsPath: this.options.recordsPath ?? RESULTS_PATH,
-        apiKeys: run.apiKeys,
-        signal: run.controller.signal,
-        ...(run.config.seed === undefined ? {} : { seed: run.config.seed }),
-        ...(run.config.reasoning === undefined ? {} : { reasoning: run.config.reasoning }),
-        ...(run.owner
-          ? {
-              contributor: {
-                provider: 'github',
-                subject: run.owner.providerSubject,
-                login: run.owner.login,
-              },
-            }
-          : {}),
-        onEvent: (event) => this.onEvent(run, event),
-        onNotice: (message) => run.notices.push(message),
-      });
-      run.state = 'done';
+      if (this.publicOrigin && !this.options.runner) {
+        await this.launchWorker(run);
+      } else {
+        await (this.options.runner ?? runRotation)(run.config.models, run.config.seriesPerPair, run.runDir, {
+          pool: run.config.pool,
+          concurrency: run.config.concurrency,
+          recordsPath: this.options.recordsPath ?? RESULTS_PATH,
+          apiKeys: run.apiKeys,
+          signal: run.controller.signal,
+          ...(run.config.seed === undefined ? {} : { seed: run.config.seed }),
+          ...(run.config.reasoning === undefined ? {} : { reasoning: run.config.reasoning }),
+          ...(run.owner
+            ? {
+                contributor: {
+                  provider: 'github',
+                  subject: run.owner.providerSubject,
+                  login: run.owner.login,
+                },
+              }
+            : {}),
+          onEvent: (event) => this.onEvent(run, event),
+          onNotice: (message) => run.notices.push(message),
+        });
+      }
+      if (run.timedOut) {
+        run.state = 'failed';
+        run.error = 'run exceeded its maximum duration';
+      } else if (run.interrupted) {
+        run.state = 'failed';
+        run.error = 'run interrupted by server shutdown';
+      } else {
+        run.state = 'done';
+      }
     } catch (error) {
-      if (run.controller.signal.aborted) run.state = 'done';
-      else {
+      if (run.timedOut) {
+        run.state = 'failed';
+        run.error = 'run exceeded its maximum duration';
+      } else if (run.interrupted) {
+        run.state = 'failed';
+        run.error = 'run interrupted by server shutdown';
+      } else if (run.controller.signal.aborted) {
+        run.state = 'done';
+      } else {
         run.state = 'failed';
         run.error = redactSecrets(error instanceof Error ? error.message : String(error), Object.values(run.apiKeys));
       }
     } finally {
+      clearTimeout(run.timeoutTimer);
       if (this.options.auth && run.owner) {
         try {
           this.options.auth.finishExperiment(run.runId, run.state === 'failed' ? 'failed' : 'done');
@@ -692,8 +826,90 @@ export class GuiServer {
       }
       run.clearApiKeys();
       run.endTime = Date.now();
+      this.options.logger?.({
+        timestamp: new Date().toISOString(),
+        level: run.state === 'failed' ? 'error' : 'info',
+        event: 'run_finished',
+        runId: run.runId,
+        state: run.state,
+        durationMs: run.endTime - run.startTime,
+      });
       this.queueRun();
     }
+  }
+
+  private launchWorker(run: ActiveRun): Promise<void> {
+    const child = fork(this.options.workerPath ?? RUN_WORKER_PATH, [], {
+      env: workerEnvironment(),
+      execArgv: ['--max-old-space-size=768'],
+      serialization: 'advanced',
+      stdio: ['ignore', 'ignore', 'pipe', 'ipc'],
+    });
+    child.stderr?.resume();
+    const completion = Promise.withResolvers<void>();
+    let terminal: Extract<RunWorkerOutput, { type: 'done' | 'failed' }> | undefined;
+    let killTimer: NodeJS.Timeout | undefined;
+    let settled = false;
+    const resolve = () => {
+      if (settled) return;
+      settled = true;
+      completion.resolve();
+    };
+    const reject = (error: Error) => {
+      if (settled) return;
+      settled = true;
+      completion.reject(error);
+    };
+    child.on('message', (value: unknown) => {
+      const message = value as RunWorkerOutput;
+      if (message?.type === 'event') this.onEvent(run, message.event);
+      else if (message?.type === 'notice') run.notices.push(message.message.slice(0, 2000));
+      else if (message?.type === 'done' || message?.type === 'failed') terminal = message;
+    });
+    child.once('error', reject);
+    child.once('exit', (code, signal) => {
+      if (terminal?.type === 'done' && code === 0) resolve();
+      else if (terminal?.type === 'failed') reject(new Error(terminal.error));
+      else reject(new Error(`run worker exited unexpectedly (${signal ?? code ?? 'unknown'})`));
+    });
+    const abort = () => {
+      if (child.connected) child.send({ type: 'abort' } satisfies RunWorkerInput);
+      killTimer = setTimeout(() => child.kill('SIGKILL'), this.workerStopGraceMs);
+      killTimer.unref();
+    };
+    run.controller.signal.addEventListener('abort', abort, { once: true });
+    const message: RunWorkerStart = {
+      type: 'start',
+      models: run.config.models,
+      seriesPerPair: run.config.seriesPerPair,
+      runDir: run.runDir,
+      pool: run.config.pool,
+      concurrency: run.config.concurrency,
+      recordsPath: this.options.recordsPath ?? RESULTS_PATH,
+      apiKeys: run.apiKeys,
+      ...(run.config.seed === undefined ? {} : { seed: run.config.seed }),
+      ...(run.config.reasoning === undefined ? {} : { reasoning: run.config.reasoning }),
+      ...(run.owner
+        ? {
+            contributor: {
+              provider: 'github',
+              subject: run.owner.providerSubject,
+              login: run.owner.login,
+            },
+          }
+        : {}),
+    };
+    child.send(message satisfies RunWorkerInput, (error) => {
+      run.clearApiKeys();
+      if (error) {
+        child.kill();
+        reject(error);
+      }
+    });
+    return completion.promise.finally(() => {
+      clearTimeout(killTimer);
+      run.controller.signal.removeEventListener('abort', abort);
+    });
   }
 
   private onEvent(run: ActiveRun, event: RotationEvent): void {
@@ -721,9 +937,19 @@ export class GuiServer {
         run.battles.set(event.index, entry);
       }
       entry.state.feed(event.lines);
+      let publicEntry = run.publicBattles.get(event.index);
+      if (!publicEntry || publicEntry.game !== event.game) {
+        publicEntry = { game: event.game, state: new BattleState('p1') };
+        run.publicBattles.set(event.index, publicEntry);
+      }
+      publicEntry.state.feed(event.publicLines);
       const row = run.rows[event.index];
       if (row && row.status === 'running') row.game = event.game;
-      this.queue(`battle:${event.index}`, () => ({ type: 'battle', ...this.battleBody(event.index) }));
+      this.queue(
+        `battle:${event.index}`,
+        () => ({ type: 'battle', ...this.battleBody(event.index) }),
+        () => ({ type: 'battle', ...this.battleBody(event.index, true) }),
+      );
     } else if (event.type === 'game-end') {
       const row = run.rows[event.index];
       if (row) {
@@ -744,11 +970,15 @@ export class GuiServer {
   }
 
   private queueRun(): void {
-    this.queue('run', () => ({ type: 'run', run: this.runBody() }));
+    this.queue(
+      'run',
+      () => ({ type: 'run', run: this.runBody() }),
+      () => ({ type: 'run', run: this.runBody(true) }),
+    );
   }
 
-  private queue(key: string, make: () => ServerEvent | undefined): void {
-    this.pending.set(key, make);
+  private queue(key: string, makePrivate: () => ServerEvent, makePublic: () => ServerEvent = makePrivate): void {
+    this.pending.set(key, () => ({ privateEvent: makePrivate(), publicEvent: makePublic() }));
     this.scheduleFlush();
   }
 
@@ -770,38 +1000,85 @@ export class GuiServer {
     }
   }
 
-  private broadcast(message: ServerEvent): void {
-    const data = `data: ${JSON.stringify(message)}\n\n`;
-    for (const [client, user] of this.clients) {
-      if (!this.options.auth || !this.run || (user && this.options.auth.canControlExperiment(user, this.run.runId))) {
-        client.write(data);
-      }
+  private broadcast(message: PendingServerEvent): void {
+    const privateData = `data: ${JSON.stringify(message.privateEvent)}\n\n`;
+    const publicData = `data: ${JSON.stringify(message.publicEvent)}\n\n`;
+    for (const [client, viewer] of this.clients) {
+      const data =
+        !viewer.publicOnly && this.canViewPrivateRun(this.eventViewerUser(viewer)) ? privateData : publicData;
+      this.writeEvent(client, data);
     }
   }
 
-  private openEvents(response: http.ServerResponse, user: AuthUser | undefined): void {
-    if (this.clients.size >= MAX_SSE_CLIENTS) throw new HttpError(503, 'too many event stream clients');
+  private openEvents(response: http.ServerResponse, sessionToken: string | undefined, publicOnly: boolean): void {
+    const viewers = [...this.clients.values()];
+    if (publicOnly) {
+      if (viewers.filter((viewer) => viewer.publicOnly).length >= MAX_PUBLIC_SSE_CLIENTS) {
+        throw new HttpError(503, 'too many public event stream clients');
+      }
+    } else {
+      const controllers = viewers.filter(
+        (viewer) => !viewer.publicOnly && this.controlsCurrentRun(this.eventViewerUser(viewer)),
+      ).length;
+      const user = this.options.auth?.session(sessionToken)?.user;
+      if (this.controlsCurrentRun(user)) {
+        if (controllers >= MAX_CONTROLLER_SSE_CLIENTS) {
+          throw new HttpError(503, 'too many controller event stream clients');
+        }
+      } else if (viewers.filter((viewer) => !viewer.publicOnly).length - controllers >= MAX_FALLBACK_SSE_CLIENTS) {
+        throw new HttpError(503, 'too many authenticated spectator event stream clients');
+      }
+      if (
+        sessionToken &&
+        viewers.filter((viewer) => !viewer.publicOnly && viewer.sessionToken === sessionToken).length >=
+          MAX_SSE_CLIENTS_PER_SESSION
+      ) {
+        throw new HttpError(429, 'too many event streams for this session');
+      }
+    }
     response.writeHead(200, {
       'cache-control': 'no-cache, no-transform',
       'content-type': 'text/event-stream',
       connection: 'keep-alive',
       'x-accel-buffering': 'no',
     });
-    response.write(`data: ${JSON.stringify({ type: 'run', run: this.runBody() })}\n\n`);
-    this.clients.set(response, user);
+    const viewer: EventViewer = { sessionToken, publicOnly, backpressured: false };
+    const publicView = publicOnly || !this.canViewPrivateRun(this.eventViewerUser(viewer));
+    this.clients.set(response, viewer);
+    if (!this.writeEvent(response, `data: ${JSON.stringify({ type: 'run', run: this.runBody(publicView) })}\n\n`)) {
+      return;
+    }
     if (!this.heartbeatTimer) {
       this.heartbeatTimer = setInterval(() => {
-        for (const client of this.clients.keys()) client.write(': heartbeat\n\n');
+        for (const client of this.clients.keys()) this.writeEvent(client, ': heartbeat\n\n');
       }, SSE_HEARTBEAT_MS);
       this.heartbeatTimer.unref();
     }
-    response.on('close', () => {
-      this.clients.delete(response);
-      if (this.clients.size === 0) {
-        clearInterval(this.heartbeatTimer);
-        this.heartbeatTimer = undefined;
-      }
+    response.on('close', () => this.removeEventClient(response, false));
+  }
+
+  private writeEvent(response: http.ServerResponse, data: string): boolean {
+    const viewer = this.clients.get(response);
+    if (!viewer) return false;
+    if (viewer.backpressured) {
+      this.removeEventClient(response, true);
+      return false;
+    }
+    if (response.write(data)) return true;
+    viewer.backpressured = true;
+    response.once('drain', () => {
+      if (this.clients.get(response) === viewer) viewer.backpressured = false;
     });
+    return true;
+  }
+
+  private removeEventClient(response: http.ServerResponse, destroy: boolean): void {
+    this.clients.delete(response);
+    if (destroy) response.destroy();
+    if (this.clients.size === 0) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = undefined;
+    }
   }
 
   private makePool(body: Record<string, unknown>, owner: AuthUser | undefined): JsonObject {
@@ -848,4 +1125,20 @@ function clampInt(value: unknown, minimum: number, maximum: number, fallback: nu
   const parsed = Number(value);
   if (!Number.isInteger(parsed)) return fallback;
   return Math.min(maximum, Math.max(minimum, parsed));
+}
+
+function workerEnvironment(): NodeJS.ProcessEnv {
+  const environment: NodeJS.ProcessEnv = { NODE_ENV: process.env.NODE_ENV ?? 'production' };
+  for (const name of [
+    'LANG',
+    'TZ',
+    'SSL_CERT_FILE',
+    'NODE_EXTRA_CA_CERTS',
+    'VGC_LEAGUE_DATA_DIR',
+    'VGC_LEAGUE_PS_DIR',
+  ]) {
+    const value = process.env[name];
+    if (value) environment[name] = value;
+  }
+  return environment;
 }

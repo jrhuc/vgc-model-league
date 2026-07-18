@@ -200,9 +200,9 @@ client/server contract, trust model, and deployment plan.
 The repository includes a multi-stage `Dockerfile` and `railway.toml`. Mount one
 persistent Railway volume at `/data`, configure
 `VGC_LEAGUE_PUBLIC_ORIGIN=https://<canonical-host>`, and keep Cloudflare or
-another private access layer in front of the service. The image already sets
-`VGC_LEAGUE_HOST=0.0.0.0` and `VGC_LEAGUE_DATA_DIR=/data`; Railway supplies
-`PORT`.
+another edge rate-limit/WAF layer in front of the service. The image sets
+`VGC_LEAGUE_HOST=0.0.0.0`, `VGC_LEAGUE_DATA_DIR=/data`, and
+`VGC_LEAGUE_DB_PATH=/data/vgcleague.sqlite`; Railway supplies `PORT`.
 
 Hosted mode is deliberately read-only when OAuth is absent. For contributor
 access, register a GitHub OAuth app with callback
@@ -212,17 +212,45 @@ access, register a GitHub OAuth app with callback
 GITHUB_CLIENT_ID=<oauth-app-client-id>
 GITHUB_CLIENT_SECRET=<oauth-app-client-secret>
 VGC_LEAGUE_OPERATOR_GITHUB_IDS=<comma-separated-numeric-GitHub-ids>
+VGC_LEAGUE_MAX_RUN_MINUTES=240
 ```
 
 The OAuth flow requests no scopes and uses state plus PKCE. Session hashes,
-roles, pool/run ownership, and mutation audit events live in
-`/data/vgcleague.sqlite`; browser cookies are `HttpOnly`, `Secure`, and
-`SameSite=Lax`, and every mutation also requires an exact-origin CSRF token.
-Users not listed as operators start as contributors. The unsafe
-`VGC_LEAGUE_ENABLE_MUTATIONS=true` escape hatch remains only for a separately
-protected private deployment without OAuth; it is not authentication.
+roles, pool/run ownership, mutation audit events, and experiment status live in
+SQLite. Hosted admission has one global worker, which also guarantees at most
+one active run per account. Each run is capped at four models, four series per
+pair, two concurrent series, and the configured duration. Route-specific user
+limits cover model discovery, validation, pool publication, and run admission.
+Runs execute in a memory-bounded child process with a secret-minimized
+environment and forced termination after the duration limit.
 
-Arbitrary OpenAI-compatible endpoints are unavailable in hosted mode.
-`/healthz` reports liveness and `/readyz` checks the built assets, writable data
-volume, authentication database, and pinned simulator. Back up `/data`
-off-volume and test restoration before treating a deployment as durable.
+Anonymous spectators receive `/api/events/public` and `/api/battle/public`.
+Those endpoints are built only from Showdown's public split-log branch, so
+exact HP and player-private protocol lines never enter the public battle state.
+Owners and operators receive the private stream; other authenticated users
+automatically fall back to the public representation.
+
+The image bundles Litestream 0.5.14. Set `LITESTREAM_REPLICA_URL` plus the
+credential variables required by the selected object store to enable
+continuous replication and restore-if-missing startup. Remote deletion is
+disabled in `litestream.yml`; enforce retention with a versioned bucket
+lifecycle policy, bucket-managed encryption or KMS, and credentials without
+object-deletion permission. This complements Railway's managed volume backups:
+enable daily, weekly, and monthly schedules so `/data/teams`, `/data/runs`, and
+`/data/records` are captured with SQLite. Railway restores a backup as a staged
+replacement volume and redeploys the service.
+
+The two layers cover different failures. Railway snapshots provide simple
+whole-volume rollback but remain tied to the same project and environment;
+wiping the volume also deletes those backups. Litestream continuously copies
+SQLite to a separately controlled bucket and provides the lower-RPO,
+off-platform recovery path. Exercise both a Railway staged restore and a
+Litestream point-in-time restore against disposable state before treating the
+deployment as durable.
+
+Browser cookies are `HttpOnly`, `Secure`, and `SameSite=Lax`; mutations also
+require an exact-origin CSRF token. The unsafe
+`VGC_LEAGUE_ENABLE_MUTATIONS=true` escape hatch remains only for a separately
+protected private deployment without OAuth. Arbitrary OpenAI-compatible
+endpoints are unavailable in hosted mode. `/healthz` reports liveness and
+`/readyz` checks assets, writable persistence, the auth database, and simulator.

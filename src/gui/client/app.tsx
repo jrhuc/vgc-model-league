@@ -83,9 +83,10 @@ export function App() {
   }, []);
 
   const contribute = app ? canContribute(app.auth) : false;
+  const eventsPath = app ? (contribute ? '/api/events' : '/api/events/public') : null;
   useEffect(() => {
-    if (!contribute) return;
-    const events = new EventSource('/api/events');
+    if (!eventsPath) return;
+    const events = new EventSource(eventsPath);
     events.onmessage = (event: MessageEvent<string>) => {
       const message = JSON.parse(event.data) as ServerEvent;
       if (message.type === 'run') {
@@ -104,7 +105,7 @@ export function App() {
       }
     };
     return () => events.close();
-  }, [contribute]);
+  }, [eventsPath]);
 
   useEffect(() => {
     if (run?.state !== 'running') return;
@@ -119,8 +120,7 @@ export function App() {
 
   const selectBattle = (index: number) => {
     setSelected(index);
-    if (!contribute) return;
-    api<BattleMessage>(`/api/battle?index=${index}`)
+    api<BattleMessage>(`${contribute ? '/api/battle' : '/api/battle/public'}?index=${index}`)
       .then((data) => {
         if (data.snapshot) setBattles((previous) => ({ ...previous, [index]: data }));
       })

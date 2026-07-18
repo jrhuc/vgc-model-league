@@ -1,3 +1,5 @@
+FROM litestream/litestream:0.5.14-scratch AS litestream
+
 FROM node:22-bookworm-slim AS build
 
 RUN apt-get update \
@@ -23,6 +25,7 @@ FROM node:22-bookworm-slim AS runtime
 ENV NODE_ENV=production \
     PORT=3000 \
     VGC_LEAGUE_DATA_DIR=/data \
+    VGC_LEAGUE_DB_PATH=/data/vgcleague.sqlite \
     VGC_LEAGUE_HOST=0.0.0.0
 WORKDIR /app
 
@@ -33,8 +36,11 @@ COPY --from=build --chown=node:node /app/teams ./teams
 COPY --from=build --chown=node:node /app/pokemon-showdown/dist ./pokemon-showdown/dist
 COPY --from=build --chown=node:node /app/pokemon-showdown/node_modules ./pokemon-showdown/node_modules
 
+COPY --from=litestream /usr/local/bin/litestream /usr/local/bin/litestream
+COPY --chown=node:node litestream.yml ./litestream.yml
+COPY --chown=node:node --chmod=755 tools/docker-entrypoint.sh ./docker-entrypoint.sh
 RUN mkdir /data && chown node:node /data
 USER node
 EXPOSE 3000
 
-CMD ["node", "dist/src/cli.js", "gui"]
+CMD ["/app/docker-entrypoint.sh"]

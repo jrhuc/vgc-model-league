@@ -143,9 +143,11 @@ export function ArenaView({ run, battles, selected, onSelect, onGoFixtures }: Ar
           <p class="kicker" style="text-align:right">
             {done} / {total} series · {elapsedText(run)}
           </p>
-          <button type="button" class="button danger" disabled={run.state !== 'running' || stopping} onClick={stop}>
-            {stopping ? 'Stopping…' : 'Stop run'}
-          </button>
+          {run.canControl && (
+            <button type="button" class="button danger" disabled={run.state !== 'running' || stopping} onClick={stop}>
+              {stopping ? 'Stopping…' : 'Stop run'}
+            </button>
+          )}
         </div>
       </div>
       {(run.error || stopError) && (

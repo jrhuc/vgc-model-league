@@ -88,6 +88,7 @@ test('split messages route secrets and buffer incomplete triples', () => {
   const state = {
     pov: { p1: [] as string[], p2: [] as string[] },
     log: [] as string[],
+    publicLog: [] as string[],
     pendingSplit: [] as string[],
     winner: null,
     turns: 0,
@@ -95,9 +96,11 @@ test('split messages route secrets and buffer incomplete triples', () => {
   routeUpdateLines(['|foo', '|split|p1', '|secret', '', '|bar'], state);
   assert.deepEqual(state.pov.p1, ['|foo', '|secret', '|bar']);
   assert.deepEqual(state.pov.p2, ['|foo', '|bar']);
+  assert.deepEqual(state.publicLog, ['|foo', '|bar']);
   const buffered = {
     pov: { p1: [] as string[], p2: [] as string[] },
     log: [] as string[],
+    publicLog: [] as string[],
     pendingSplit: [] as string[],
     winner: null,
     turns: 0,
@@ -107,6 +110,7 @@ test('split messages route secrets and buffer incomplete triples', () => {
   routeUpdateLines(['|public', '|after'], buffered);
   assert.deepEqual(buffered.pov.p1, ['|secret', '|after']);
   assert.deepEqual(buffered.pov.p2, ['|public', '|after']);
+  assert.deepEqual(buffered.publicLog, ['|public', '|after']);
 });
 
 test('Rotation writes one completed best-of-three record', async (t) => {

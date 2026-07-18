@@ -64,6 +64,7 @@ export class AuthService {
     this.operatorSubjects = new Set(options.operatorSubjects ?? []);
     this.db.exec('PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000;');
     this.migrate();
+    this.recoverInterruptedExperiments();
   }
 
   close(): void {
@@ -72,6 +73,32 @@ export class AuthService {
 
   ready(): void {
     this.db.prepare('SELECT 1').get();
+  }
+
+  private recoverInterruptedExperiments(): void {
+    const interrupted = this.db
+      .prepare("SELECT run_id, owner_user_id FROM experiments WHERE status = 'running'")
+      .all() as Array<{ run_id: string; owner_user_id: number }>;
+    if (!interrupted.length) return;
+    const timestamp = this.now();
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      this.db.prepare("UPDATE experiments SET status = 'failed', ended_at = ? WHERE status = 'running'").run(timestamp);
+      for (const row of interrupted) {
+        this.insertAudit(
+          row.owner_user_id,
+          'experiment.failed',
+          'experiment',
+          row.run_id,
+          { reason: 'server_restart' },
+          timestamp,
+        );
+      }
+      this.db.exec('COMMIT');
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
   }
 
   beginLogin(): { location: string; state: string } {

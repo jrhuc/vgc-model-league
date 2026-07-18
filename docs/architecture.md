@@ -124,23 +124,22 @@ Both modes defend themselves:
 
 ## Trust model — deployed multi-user site prerequisites
 
-Before public multi-user runs ship, the following gates apply. Implemented controls are marked; remaining gates still
-block a general public mutation surface:
+Before public multi-user runs ship, the following gates apply. Implemented controls are marked; deployment operations
+still block a general public mutation surface:
 
 1. **Authentication, attribution, and run ownership — implemented.** GitHub OAuth and server-side sessions protect
    every mutating route at the `server.ts` choke point. Pools and active experiments get owners; completed records
    retain the stable GitHub subject and login for provenance. Anonymous access remains read-only.
-2. **Quotas and rate limits.** Because provider keys are bring-your-own, token spend lands on the submitter, not the
-   site; the economic abuse surface is CPU and egress. Per-user active-run caps and run-duration limits therefore
-   cover it — the quota system should stay that simple until measured abuse says otherwise.
-3. **Key handling.** Never store user provider keys at rest. Keep the current pass-through model: keys live in the
-   client, are submitted per run, and are wiped after. This constrains scheduling (see admission control below) —
-   that constraint is accepted, not worked around. A per-user encrypted vault is the named prerequisite for anything
-   that would require holding a key beyond one run. Redact keys from every error path (model-catalog already does
-   this for discovery errors).
-4. **Execution isolation.** Untrusted-input runs (team pastes, model specs, seeds) execute in a sandboxed worker with
-   timeouts, not in the web server process. Validate specs/pastes exactly as now — `createPool`/`inspectTeam`/
-   `parseSpec` are already the choke points.
+2. **Quotas and rate limits — implemented.** Because provider keys are bring-your-own, token spend lands on the
+   submitter, not the site; the economic abuse surface is CPU and egress. The single global worker also guarantees at
+   most one active run per user. Hosted model/series/concurrency caps, a configurable run deadline, and route-specific
+   authenticated-user limits bound application resources; Cloudflare remains the coarse network/edge limiter.
+3. **Key handling — implemented for admitted runs.** Keys remain browser-held, cross IPC once, and are removed from
+   the web process after the worker accepts them. The worker has a secret-minimized environment and wipes its copy on
+   exit. A per-user encrypted vault remains the named prerequisite for any future durable queue.
+4. **Execution isolation — implemented.** Hosted runs execute in a separate, heap-bounded child process with a hard
+   deadline and bounded abort grace. Worker failures and forced kills become failed experiments without terminating
+   the HTTP process. Specs and pastes still pass through `createPool`/`inspectTeam`/`parseSpec` before admission.
 5. **Transport and headers — implemented.** Hosted mode requires one exact origin and HTTPS is enforced operationally.
 6. **Evidence admission.** Public ratings admit server-produced evidence only, from day one. Client-submitted
    `results.jsonl`-shaped rows may be accepted as unverified exhibits with full provenance (`schema_version`, `mode`,
@@ -149,10 +148,10 @@ block a general public mutation surface:
    seed produce the recorded result — not that a hosted model actually produced those choices, and that second claim
    is the one a leaderboard rests on. So replay verification is not a promotion path from exhibit to rating; it is a
    spot-check. Ratings are recomputed from qualifying rows, never stored as authoritative values.
-7. **Spectating uses the public stream — private containment implemented, public stream pending.** The live feed is
-   omniscient, so hosted `/api/events` and `/api/battle` are restricted to the run owner and operators. Spectating
-   another user's live run remains disabled until it can use a public log stream where exact HP and request internals
-   stay private to the players.
+7. **Public spectating — implemented.** `/api/events/public` and `/api/battle/public` are built from Showdown's
+   public split-log branch. Exact HP and player-private protocol lines feed only the owner/operator stream. Public-only
+   streams remain public for their lifetime; authenticated streams select private data only while that user owns the
+   current run or has the operator role.
 
 ### Recorded deployment decisions
 
@@ -204,9 +203,13 @@ edge/container runtime merely to reduce hosting cost.
 The code-owned part of step 1 is implemented: `Dockerfile` runs as a non-root user, `railway.toml` points Railway at
 `/readyz`, `PORT`/host/public-origin configuration is supported, SIGTERM triggers bounded graceful shutdown, and
 `VGC_LEAGUE_DATA_DIR=/data` seeds the bundled pools then keeps pools, runs, and records on the mounted volume.
-Hosted mode emits structured request/lifecycle logs without bodies or credentials. A volume is not a backup:
-deployment is not operationally complete until `/data`, including `vgcleague.sqlite`, has encrypted off-volume
-continuous backup and a tested point-in-time restore.
+Hosted mode emits structured request/lifecycle logs without bodies or credentials. The image bundles Litestream
+0.5.14 and conditionally runs continuous SQLite replication plus restore-if-missing when
+`LITESTREAM_REPLICA_URL` is configured. Remote deletion is disabled so object credentials need not delete backups.
+Deployment is not operationally complete until the replica bucket has encryption, versioning/lifecycle retention, and
+a tested point-in-time restore. Railway daily/weekly/monthly volume backups cover non-SQLite artifacts and fast
+whole-volume rollback; they complement rather than replace the off-platform SQLite replica because Railway backups
+remain tied to the same project and are deleted if the volume is wiped.
 2. **Identity and durable state — implemented.** GitHub OAuth, hashed sessions, the narrow role model, SQLite
    migrations, immutable pool ownership, experiment ownership, and mutation audit events are live. Public reads stay
    unauthenticated.
@@ -222,15 +225,17 @@ SQLite migration 1 creates users, sessions, OAuth flows, immutable pool ownershi
 Pool publication and experiment admission/finalization use transactions; failed ownership registration removes the
 new filesystem artifact. Run configs and result rows carry contributor provenance. Series/game/decision evidence
 remains in append-only files for now rather than being falsely duplicated into incomplete relational tables.
-3. **Admission control and execution isolation.** Move runs into a bounded worker process, admitted only when a
-   worker slot is free — no durable server-side queue. A durably queued job would need its provider key when it
-   eventually starts, which conflicts with memory-only keys; admission control resolves that honestly, and runs are
-   minutes to hours, not days. The browser retries when slots are full. Enforce per-user active limits, global
-   concurrent-series limits, maximum models, series, teams, and run duration; cancellation must survive browser
-   disconnects. A malformed or hung run must not take down the web process.
-4. **Public security gate — partial.** CSP, HSTS, `X-Content-Type-Options`, `Referrer-Policy`, `Permissions-Policy`,
-   exact-origin CSRF protection, generic external errors, correlation IDs, and hosted-mode SSRF removal are in place.
-   Route/resource rate limits and tested backup/restore and rollback procedures remain before public launch.
+3. **Admission control and execution isolation — implemented.** Runs are admitted only when the single worker slot is
+   free; there is no durable server-side queue. Per-user active limits, route limits, strict hosted
+   model/series/concurrency caps, and `VGC_LEAGUE_MAX_RUN_MINUTES` bound resource use. Hosted execution moves into a
+   child process with a 768 MiB V8 heap, sanitized environment, IPC-only key transfer, bounded abort grace, and hard
+   kill fallback. Cancellation survives browser disconnects; malformed, crashed, and hung workers cannot take down
+   the web process. Interrupted experiment rows are failed during the next single-instance startup.
+4. **Public security gate — code implemented, operations pending.** CSP, HSTS, content/referrer/permissions headers,
+   exact-origin CSRF protection, generic external errors, correlation IDs, hosted-mode SSRF removal, route/user rate
+   limits, process isolation, and public/private event separation are in place. Public launch still requires
+   Cloudflare policy, configured Railway volume backup schedules, an encrypted/versioned Litestream destination, a
+   deployment-level restore drill for both layers, and a tested image rollback.
 5. **Research corpus and scale.** Server-produced evidence feeds public ratings; client submissions remain unverified
    exhibits (see trust model item 6). Retain simulator/model/scaffold/pool/protocol provenance, expose reproducible
    exports, and add moderation workflows. Split workers or move from SQLite only after measured load requires it.

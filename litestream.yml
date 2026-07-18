@@ -1,0 +1,13 @@
+logging:
+  level: info
+retention:
+  enabled: false
+snapshot:
+  interval: 1h
+shutdown-sync-timeout: 30s
+shutdown-sync-interval: 500ms
+dbs:
+  - path: ${VGC_LEAGUE_DB_PATH}
+    replica:
+      url: ${LITESTREAM_REPLICA_URL}
+      sync-interval: 10s
