@@ -10,6 +10,14 @@ interface FixturesProps {
   onStarted: () => void;
 }
 
+type RunMode = 'match' | 'tournament' | 'rotation';
+
+const MODES: Array<{ id: RunMode; label: string; hint: string }> = [
+  { id: 'match', label: 'Match', hint: 'Two models, two teams, one best-of-three' },
+  { id: 'tournament', label: 'Tournament', hint: 'Knockout bracket until a champion' },
+  { id: 'rotation', label: 'Rotation', hint: 'Mirrored round robin for ratings' },
+];
+
 function pairings(models: string[]): Array<[string, string]> {
   const pairs: Array<[string, string]> = [];
   for (let i = 0; i < models.length; i += 1)
@@ -32,8 +40,37 @@ function keyStatus(providers: ProviderInfo[], keys: Record<string, string>, spec
     : { text: 'No key required', cls: 'warn' };
 }
 
+function bracketPreview(count: number): string {
+  if (count < 2) return '';
+  if (count === 2) return 'A direct final — one best-of-three decides it.';
+  if (count === 3) return 'One semifinal plus a final; the odd model out gets a bye.';
+  let size = 1;
+  while (size < count) size *= 2;
+  const byes = size - count;
+  return `${count - 1} best-of-three series over ${Math.log2(size)} rounds${byes ? ` · ${byes} first-round bye${byes === 1 ? '' : 's'}` : ''}.`;
+}
+
+const HEADINGS: Record<RunMode, { eyebrow: string; title: [string, string]; lede: string }> = {
+  match: {
+    eyebrow: 'Exhibition match',
+    title: ['Two models.', 'One best-of-three.'],
+    lede: 'Pick two models and hand each a team — paste any Poképaste export or keep the bundled teams. The winner is decided on the pinned Pokémon Showdown simulator.',
+  },
+  tournament: {
+    eyebrow: 'Tournament · protocol v1',
+    title: ['Build a', 'knockout bracket.'],
+    lede: 'Every model draws one team from the pool and defends it through a single-elimination best-of-three bracket until a champion is crowned. Four or more models make a real bracket; fewer play a direct final.',
+  },
+  rotation: {
+    eyebrow: 'Rotation · protocol v1',
+    title: ['Set up a', 'Rotation run.'],
+    lede: 'Pick an immutable team pool and at least two models. Every pairing plays mirrored best-of-three series on the pinned Pokémon Showdown simulator; results are appended to the local record book.',
+  },
+};
+
 export function FixturesView({ app, run, onStarted }: FixturesProps) {
   const providers = app.providers.filter((provider) => provider.discovery === 'list' || provider.models.length > 0);
+  const [mode, setMode] = useState<RunMode>('match');
   const [models, setModels] = useState<string[]>([]);
   const apiKeysRef = useRef<Record<string, string>>({});
   const catalogKeyRef = useRef('');
@@ -52,6 +89,10 @@ export function FixturesView({ app, run, onStarted }: FixturesProps) {
   const [pool, setPool] = useState(
     () => app.pools.find((info) => info.name !== 'test')?.name ?? app.pools[0]?.name ?? '',
   );
+  const [pastes, setPastes] = useState<[string, string]>([
+    app.sampleTeams[0]?.paste ?? '',
+    app.sampleTeams[1]?.paste ?? '',
+  ]);
   const [series, setSeries] = useState('2');
   const [concurrency, setConcurrency] = useState('2');
   const [reasoning, setReasoning] = useState('');
@@ -60,6 +101,7 @@ export function FixturesView({ app, run, onStarted }: FixturesProps) {
 
   const provider = providers.find((item) => item.id === providerId) ?? null;
   const curated = Boolean(provider && provider.models.length > 0);
+  const maxModels = mode === 'match' ? 2 : 8;
 
   useEffect(() => {
     catalogGenerationRef.current += 1;
@@ -81,6 +123,10 @@ export function FixturesView({ app, run, onStarted }: FixturesProps) {
 
   const addModel = (spec: string, key: string) => {
     setSetupMsg('');
+    if (models.length >= maxModels) {
+      setSetupMsg(mode === 'match' ? 'An exhibition match takes exactly two models.' : `At most ${maxModels} models.`);
+      return;
+    }
     if (key.trim()) apiKeysRef.current[spec] = key.trim();
     setModels((previous) => [...previous, spec]);
   };
@@ -161,15 +207,38 @@ export function FixturesView({ app, run, onStarted }: FixturesProps) {
     setStarting(true);
     const apiKeys: Record<string, string> = {};
     for (const spec of models) if (apiKeysRef.current[spec]) apiKeys[spec] = apiKeysRef.current[spec]!;
-    api('/api/run', {
-      models,
-      apiKeys,
-      pool,
-      seriesPerPair: Number(series),
-      concurrency: Number(concurrency),
-      seed: seed.trim(),
-      reasoning: reasoning || undefined,
-    })
+    const request =
+      mode === 'match'
+        ? {
+            mode: 'tournament',
+            models,
+            apiKeys,
+            teams: [pastes[0], pastes[1]],
+            format: app.defaultFormat,
+            concurrency: 1,
+            seed: seed.trim(),
+            reasoning: reasoning || undefined,
+          }
+        : mode === 'tournament'
+          ? {
+              mode: 'tournament',
+              models,
+              apiKeys,
+              pool,
+              concurrency: Number(concurrency),
+              seed: seed.trim(),
+              reasoning: reasoning || undefined,
+            }
+          : {
+              models,
+              apiKeys,
+              pool,
+              seriesPerPair: Number(series),
+              concurrency: Number(concurrency),
+              seed: seed.trim(),
+              reasoning: reasoning || undefined,
+            };
+    api('/api/run', request)
       .then(() => {
         apiKeysRef.current = {};
         catalogKeyRef.current = '';
@@ -199,49 +268,95 @@ export function FixturesView({ app, run, onStarted }: FixturesProps) {
   ];
   const pairs = pairings(models);
   const seriesPerPair = Math.max(1, Number(series) || 1);
-  const total = pairs.length * seriesPerPair;
+  const total = mode === 'rotation' ? pairs.length * seriesPerPair : Math.max(0, models.length - 1);
   const active = run?.state === 'running';
   const missingKeys = models.filter((spec) => needsKey(providers, spec) && !apiKeysRef.current[spec]);
   const poolInfo = app.pools.find((info) => info.name === pool);
   const shownPairs = pairs.slice(0, 8);
-  const startDisabled = models.length < 2 || active || !pool || missingKeys.length > 0 || starting;
+  const heading = HEADINGS[mode];
+  const formatLabel = app.formats.find((info) => info.id === app.defaultFormat)?.label ?? app.defaultFormat;
+
+  const missingPaste = mode === 'match' && pastes.some((paste) => !paste.trim());
+  const poolTooSmall = mode === 'tournament' && poolInfo !== undefined && poolInfo.teamCount < models.length;
+  const startDisabled =
+    models.length < 2 ||
+    active ||
+    missingKeys.length > 0 ||
+    starting ||
+    (mode === 'match' ? models.length !== 2 || missingPaste : !pool || poolTooSmall);
   const startLabel = active
     ? 'Run already in progress'
     : models.length < 2
       ? 'Add two models'
       : missingKeys.length
         ? 'Add run-only API keys'
-        : `Start ${total} series`;
+        : mode === 'match'
+          ? models.length !== 2
+            ? 'Exactly two models'
+            : missingPaste
+              ? 'Paste both teams'
+              : 'Start the match'
+          : mode === 'tournament'
+            ? `Start the ${models.length}-model bracket`
+            : `Start ${total} series`;
   const launchNote = active
     ? 'Stop or finish the current run before starting another.'
     : missingKeys.length
       ? `${missingKeys.length} model${missingKeys.length === 1 ? ' needs' : 's need'} a browser-supplied key.`
-      : pairs.length
-        ? `${total} best-of-three series, mirrored in pairs · up to ${concurrency} in parallel.`
-        : 'The run card updates as you add models.';
+      : mode === 'match'
+        ? `One best-of-three in ${formatLabel}.`
+        : mode === 'tournament'
+          ? poolTooSmall
+            ? `Pool ${pool} has only ${poolInfo?.teamCount} teams for ${models.length} entrants.`
+            : bracketPreview(models.length) || 'The bracket updates as you add models.'
+          : pairs.length
+            ? `${total} best-of-three series, mirrored in pairs · up to ${concurrency} in parallel.`
+            : 'The run card updates as you add models.';
 
   return (
     <>
       <div class="page-heading">
         <div>
-          <p class="eyebrow">Rotation · protocol v1</p>
+          <p class="eyebrow">{heading.eyebrow}</p>
           <h1>
-            Set up a
+            {heading.title[0]}
             <br />
-            Rotation run.
+            {heading.title[1]}
           </h1>
         </div>
-        <p class="lede">
-          Pick an immutable team pool and at least two models. Every pairing plays mirrored best-of-three series on the
-          pinned Pokémon Showdown simulator; results are appended to the local record book.
-        </p>
+        <p class="lede">{heading.lede}</p>
+      </div>
+      <div class="mode-tabs" role="tablist" aria-label="Run mode">
+        {MODES.map((item) => (
+          <button
+            key={item.id}
+            type="button"
+            role="tab"
+            aria-selected={mode === item.id}
+            class={`mode-tab ${mode === item.id ? 'on' : ''}`}
+            onClick={() => {
+              setMode(item.id);
+              setSetupMsg('');
+              setLaunchMsg('');
+            }}
+          >
+            <b>{item.label}</b>
+            <span>{item.hint}</span>
+          </button>
+        ))}
       </div>
       <div class="fixture-layout">
         <section class="panel stage" aria-labelledby="lineupTitle">
           <div class="section-head">
             <div>
               <h2 id="lineupTitle">Model lineup</h2>
-              <p>Two models make a head-to-head. Three or more make a round robin.</p>
+              <p>
+                {mode === 'match'
+                  ? 'Exactly two models play the match.'
+                  : mode === 'tournament'
+                    ? 'Each model enters the bracket with its own team.'
+                    : 'Two models make a head-to-head. Three or more make a round robin.'}
+              </p>
             </div>
             <div class="section-count">
               {models.length}
@@ -387,38 +502,80 @@ export function FixturesView({ app, run, onStarted }: FixturesProps) {
               </div>
             )}
           </div>
-          <div class="schedule">
-            <div class="schedule-title">
-              <h3>Run card</h3>
-              <span>
-                {pairs.length
-                  ? `${pairs.length} matchup${pairs.length === 1 ? '' : 's'} · ${total} series · mirrored in pairs`
-                  : 'Waiting for models'}
-              </span>
+          {mode === 'match' ? (
+            <div class="team-entry">
+              <div class="schedule-title">
+                <h3>Teams</h3>
+                <span>{formatLabel} · Poképaste export format</span>
+              </div>
+              <div class="team-paste-grid">
+                {([0, 1] as const).map((side) => (
+                  <div class="field" key={side}>
+                    <label class="field-label" for={`teamPaste${side}`}>
+                      Team {side === 0 ? 'A' : 'B'}
+                      {models[side] ? ` · ${models[side]}` : ''}
+                    </label>
+                    <textarea
+                      id={`teamPaste${side}`}
+                      rows={8}
+                      spellcheck={false}
+                      value={pastes[side]}
+                      onInput={(event) => {
+                        const value = event.currentTarget.value;
+                        setPastes((previous) => (side === 0 ? [value, previous[1]] : [previous[0], value]));
+                      }}
+                    />
+                  </div>
+                ))}
+              </div>
             </div>
-            <div>
-              {pairs.length === 0 ? (
-                <p class="muted">Add at least two models to build the schedule.</p>
-              ) : (
-                <>
-                  {shownPairs.map((pair, index) => (
-                    <div class="ticket" key={`${pair[0]}-${pair[1]}-${index}`}>
-                      <span class="ticket-number">{String(index + 1).padStart(2, '0')}</span>
-                      <span class="ticket-player">{pair[0]}</span>
-                      <span class="ticket-vs">VS</span>
-                      <span class="ticket-player away">{pair[1]}</span>
-                      <span class="ticket-series">× {seriesPerPair}</span>
-                    </div>
-                  ))}
-                  {pairs.length > shownPairs.length && (
-                    <p class="kicker" style="margin:12px 0 0">
-                      + {pairs.length - shownPairs.length} more matchups on the run card
+          ) : (
+            <div class="schedule">
+              <div class="schedule-title">
+                <h3>Run card</h3>
+                <span>
+                  {mode === 'tournament'
+                    ? models.length >= 2
+                      ? `${models.length} entrants · single elimination`
+                      : 'Waiting for models'
+                    : pairs.length
+                      ? `${pairs.length} matchup${pairs.length === 1 ? '' : 's'} · ${total} series · mirrored in pairs`
+                      : 'Waiting for models'}
+                </span>
+              </div>
+              <div>
+                {mode === 'tournament' ? (
+                  models.length < 2 ? (
+                    <p class="muted">Add at least two models to build the bracket.</p>
+                  ) : (
+                    <p class="muted">
+                      {bracketPreview(models.length)} Teams are drawn from the pool at random; every model keeps its
+                      team for the whole bracket.
                     </p>
-                  )}
-                </>
-              )}
+                  )
+                ) : pairs.length === 0 ? (
+                  <p class="muted">Add at least two models to build the schedule.</p>
+                ) : (
+                  <>
+                    {shownPairs.map((pair, index) => (
+                      <div class="ticket" key={`${pair[0]}-${pair[1]}-${index}`}>
+                        <span class="ticket-number">{String(index + 1).padStart(2, '0')}</span>
+                        <span class="ticket-player">{pair[0]}</span>
+                        <span class="ticket-vs">VS</span>
+                        <span class="ticket-player away">{pair[1]}</span>
+                        <span class="ticket-series">× {seriesPerPair}</span>
+                      </div>
+                    ))}
+                    {pairs.length > shownPairs.length && (
+                      <p class="kicker" style="margin:12px 0 0">
+                        + {pairs.length - shownPairs.length} more matchups on the run card
+                      </p>
+                    )}
+                  </>
+                )}
+              </div>
             </div>
-          </div>
+          )}
         </section>
         <aside class="panel settings" aria-labelledby="settingsTitle">
           <div class="section-head">
@@ -428,47 +585,53 @@ export function FixturesView({ app, run, onStarted }: FixturesProps) {
             </div>
           </div>
           <div class="settings-body">
-            <div class="pool-choice">
-              <Dropdown
-                id="pool"
-                label="Team pool"
-                options={poolOptions}
-                value={pool}
-                onChange={setPool}
-                placeholder="No pools available"
-              />
-              <div class="pool-facts">
-                <span>{poolInfo ? poolInfo.format.replace(/^gen[0-9]+/, '') : 'No format'}</span>
-                <span>{poolInfo ? `${poolInfo.teamCount} teams` : 'Empty'}</span>
+            {mode !== 'match' && (
+              <div class="pool-choice">
+                <Dropdown
+                  id="pool"
+                  label="Team pool"
+                  options={poolOptions}
+                  value={pool}
+                  onChange={setPool}
+                  placeholder="No pools available"
+                />
+                <div class="pool-facts">
+                  <span>{poolInfo ? poolInfo.format.replace(/^gen[0-9]+/, '') : 'No format'}</span>
+                  <span>{poolInfo ? `${poolInfo.teamCount} teams` : 'Empty'}</span>
+                </div>
               </div>
-            </div>
+            )}
             <div class="setting-grid">
-              <div class="field">
-                <label class="field-label" for="series">
-                  Series / matchup
-                </label>
-                <input
-                  id="series"
-                  type="number"
-                  min={1}
-                  max={20}
-                  value={series}
-                  onInput={(event) => setSeries(event.currentTarget.value)}
-                />
-              </div>
-              <div class="field">
-                <label class="field-label" for="concurrency">
-                  Parallel series
-                </label>
-                <input
-                  id="concurrency"
-                  type="number"
-                  min={1}
-                  max={8}
-                  value={concurrency}
-                  onInput={(event) => setConcurrency(event.currentTarget.value)}
-                />
-              </div>
+              {mode === 'rotation' && (
+                <div class="field">
+                  <label class="field-label" for="series">
+                    Series / matchup
+                  </label>
+                  <input
+                    id="series"
+                    type="number"
+                    min={1}
+                    max={20}
+                    value={series}
+                    onInput={(event) => setSeries(event.currentTarget.value)}
+                  />
+                </div>
+              )}
+              {mode !== 'match' && (
+                <div class="field">
+                  <label class="field-label" for="concurrency">
+                    Parallel series
+                  </label>
+                  <input
+                    id="concurrency"
+                    type="number"
+                    min={1}
+                    max={8}
+                    value={concurrency}
+                    onInput={(event) => setConcurrency(event.currentTarget.value)}
+                  />
+                </div>
+              )}
               <div class="wide">
                 <Dropdown
                   id="reasoning"

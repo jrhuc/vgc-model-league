@@ -1,5 +1,6 @@
 import { runRotation } from '../rotation.js';
 import { redactSecrets } from '../sanitize.js';
+import { runTournament } from '../tournament.js';
 import type { RunWorkerInput, RunWorkerOutput, RunWorkerStart } from './run-worker-protocol.js';
 
 let controller: AbortController | undefined;
@@ -19,18 +20,35 @@ process.on('message', (value: unknown) => {
 async function execute(message: RunWorkerStart): Promise<void> {
   controller = new AbortController();
   try {
-    await runRotation(message.models, message.seriesPerPair, message.runDir, {
-      pool: message.pool,
-      concurrency: message.concurrency,
-      recordsPath: message.recordsPath,
-      apiKeys: message.apiKeys,
-      signal: controller.signal,
-      ...(message.seed === undefined ? {} : { seed: message.seed }),
-      ...(message.reasoning === undefined ? {} : { reasoning: message.reasoning }),
-      ...(message.contributor === undefined ? {} : { contributor: message.contributor }),
-      onEvent: (event) => send({ type: 'event', event }),
-      onNotice: (notice) => send({ type: 'notice', message: notice }),
-    });
+    if (message.mode === 'tournament') {
+      await runTournament(message.models, message.runDir, {
+        concurrency: message.concurrency,
+        recordsPath: message.recordsPath,
+        apiKeys: message.apiKeys,
+        signal: controller.signal,
+        ...(message.teams === undefined ? {} : { teams: message.teams }),
+        ...(message.format === undefined ? {} : { format: message.format }),
+        ...(message.pool ? { pool: message.pool } : {}),
+        ...(message.seed === undefined ? {} : { seed: message.seed }),
+        ...(message.reasoning === undefined ? {} : { reasoning: message.reasoning }),
+        ...(message.contributor === undefined ? {} : { contributor: message.contributor }),
+        onEvent: (event) => send({ type: 'event', event }),
+        onNotice: (notice) => send({ type: 'notice', message: notice }),
+      });
+    } else {
+      await runRotation(message.models, message.seriesPerPair, message.runDir, {
+        pool: message.pool,
+        concurrency: message.concurrency,
+        recordsPath: message.recordsPath,
+        apiKeys: message.apiKeys,
+        signal: controller.signal,
+        ...(message.seed === undefined ? {} : { seed: message.seed }),
+        ...(message.reasoning === undefined ? {} : { reasoning: message.reasoning }),
+        ...(message.contributor === undefined ? {} : { contributor: message.contributor }),
+        onEvent: (event) => send({ type: 'event', event }),
+        onNotice: (notice) => send({ type: 'notice', message: notice }),
+      });
+    }
     finish({ type: 'done' }, 0);
   } catch (error) {
     const detail = redactSecrets(

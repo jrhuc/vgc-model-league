@@ -583,3 +583,154 @@ test('gui runs a random-vs-random series and streams live battle state', async (
     fs.rmSync(scratch, { recursive: true, force: true });
   }
 });
+
+test('gui starts tournament runs and mirrors bracket state', async () => {
+  const gui = new GuiServer({
+    tournamentRunner: async (_models, _runDir, options = {}) => {
+      options.onEvent?.({
+        type: 'plans',
+        mode: 'tournament',
+        protocolVersion: 1,
+        plans: [{ index: 0, players: { p1: 'random', p2: 'random' } }],
+        pool: 'test',
+        seed: 9,
+      });
+      options.onEvent?.({
+        type: 'bracket',
+        bracket: {
+          entrants: [
+            { model: 'random', team: 'team-a' },
+            { model: 'random', team: 'team-b' },
+          ],
+          rounds: [[{ seriesIndex: 0, slots: [0, 1], winner: 0 }]],
+          champion: 0,
+        },
+      });
+      return [];
+    },
+  });
+  const base = await gui.listen(0);
+  try {
+    const started = await apiJson(`${base}api/run`, { mode: 'tournament', models: ['random', 'random'], pool: 'test' });
+    assert.equal(started.status, 200, JSON.stringify(started.data));
+    let run = (await apiJson(`${base}api/state`)).data.run as Record<string, unknown>;
+    for (let attempt = 0; attempt < 40 && run.state !== 'done'; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      run = (await apiJson(`${base}api/state`)).data.run as Record<string, unknown>;
+    }
+    assert.equal(run.state, 'done', String(run.error ?? ''));
+    assert.equal(run.mode, 'tournament');
+    assert.equal((run.rows as unknown[]).length, 1);
+    const bracket = run.bracket as Record<string, unknown>;
+    assert.equal(bracket.champion, 0);
+    assert.equal((bracket.entrants as unknown[]).length, 2);
+  } finally {
+    gui.close();
+  }
+});
+
+test('gui validates inline match teams and hands packed teams to the tournament', async () => {
+  let received: { teams?: Array<{ id: string; packed: string }>; format?: string; pool?: string } | undefined;
+  const gui = new GuiServer({
+    tournamentRunner: async (_models, _runDir, options = {}) => {
+      received = {
+        ...(options.teams ? { teams: options.teams } : {}),
+        ...(options.format ? { format: options.format } : {}),
+        ...(options.pool ? { pool: options.pool } : {}),
+      };
+      return [];
+    },
+  });
+  const base = await gui.listen(0);
+  const pasteA = pasteFromPool('wolfe-mega-raichu-y.team');
+  const pasteB = pasteFromPool('rios-mega-raichu-x-venusaur.team');
+  try {
+    const state = await apiJson(`${base}api/state`);
+    const sampleTeams = state.data.sampleTeams as Array<{ name: string; paste: string }>;
+    assert.equal(sampleTeams.length, 2, 'the default pool provides two sample teams');
+    assert.ok(sampleTeams.every((team) => team.name && team.paste.trim().length > 0));
+
+    const mismatch = await apiJson(`${base}api/run`, {
+      mode: 'tournament',
+      models: ['random', 'random'],
+      teams: [pasteA],
+    });
+    assert.equal(mismatch.status, 400);
+    assert.match(String(mismatch.data.error), /one team paste per model/);
+
+    const illegal = await apiJson(`${base}api/run`, {
+      mode: 'tournament',
+      models: ['random', 'random'],
+      teams: [pasteA, 'Pikachu'],
+      format: FORMAT,
+    });
+    assert.equal(illegal.status, 400);
+    assert.match(String(illegal.data.error), /team 2 is not legal/);
+
+    const started = await apiJson(`${base}api/run`, {
+      mode: 'tournament',
+      models: ['random', 'random'],
+      teams: [pasteA, pasteB],
+      format: FORMAT,
+      concurrency: 1,
+    });
+    assert.equal(started.status, 200, JSON.stringify(started.data));
+    for (let attempt = 0; attempt < 40 && received === undefined; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    assert.ok(received, 'the tournament runner receives the run');
+    assert.equal(received.pool, undefined, 'inline teams replace the pool');
+    assert.equal(received.format, FORMAT);
+    assert.deepEqual(
+      received.teams?.map((team) => team.id),
+      ['paste-1', 'paste-2'],
+    );
+    assert.ok(received.teams?.every((team) => team.packed.includes('|')));
+  } finally {
+    gui.close();
+  }
+});
+
+test('hosted tournament runs execute in the worker and stream the bracket', async (t) => {
+  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'vgcleague-tournament-worker-'));
+  t.after(() => fs.rmSync(scratch, { recursive: true, force: true }));
+  const settled = Promise.withResolvers<Record<string, unknown>>();
+  const gui = new GuiServer({
+    host: '127.0.0.1',
+    publicOrigin: 'http://league.example',
+    mutationsEnabled: true,
+    recordsPath: path.join(scratch, 'results.jsonl'),
+    logger: (entry) => {
+      if (entry.event === 'run_finished') settled.resolve(entry);
+    },
+  });
+  await gui.listen(0);
+  const address = gui.server.address();
+  assert.ok(address && typeof address === 'object');
+  const port = address.port;
+  try {
+    const started = await rawJsonRequest(port, {
+      method: 'POST',
+      path: '/api/run',
+      headers: {
+        host: 'league.example',
+        origin: 'http://league.example',
+        'content-type': 'application/json',
+      },
+      body: '{"mode":"tournament","models":["random","random"],"pool":"test","concurrency":1,"seed":1}',
+    });
+    assert.equal(started.status, 200, JSON.stringify(started.data));
+    const finished = await settled.promise;
+    assert.equal(finished.state, 'done');
+    const state = await rawJsonRequest(port, { path: '/api/state', headers: { host: 'league.example' } });
+    const run = state.data.run as Record<string, unknown>;
+    assert.equal(run.state, 'done', String(run.error ?? ''));
+    assert.equal(run.mode, 'tournament');
+    assert.equal((run.rows as unknown[]).length, 1);
+    const bracket = run.bracket as Record<string, unknown> | null;
+    assert.ok(bracket, 'the worker streams bracket state back to the server');
+    assert.notEqual(bracket.champion, null);
+  } finally {
+    await gui.shutdown(1_000);
+  }
+});

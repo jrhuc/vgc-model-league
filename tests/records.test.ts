@@ -41,16 +41,18 @@ test('scoping keeps the test pool out of overall views but selectable', () => {
     { ...row('a', 'b', 'a'), pool: 'regmb-202607' },
     { ...row('a', 'b', 'b'), pool: 'test' },
     row('legacy-a', 'legacy-b', null),
+    { ...row('t1', 't2', 't1'), pool: 'regmb-202607', mode: 'tournament' as const },
+    { ...row('e1', 'e2', 'e1'), pool: 'regmb-202607', mode: 'exhibition' as const },
   ];
   assert.deepEqual(
     scopeRows(rows).map((item) => item.players.p1),
     ['a', 'legacy-a'],
   );
+  assert.equal(scopeRows(rows, 'regmb-202607').length, 3);
   assert.deepEqual(
     scopeRows(rows, 'test').map((item) => item.players.p2),
     ['b'],
   );
-  assert.equal(scopeRows(rows, 'regmb-202607').length, 1);
 });
 
 test('standings and head-to-head tolerate rows without players', () => {

@@ -19,6 +19,8 @@ Commands:
   selfcheck                           run one random-vs-random series through the simulator
   rotation --models <spec> <spec>...  run the controlled team-rotation protocol
       [--series-per-pair <n>] [--pool <name>] [--seed <n>] [--concurrency <n>] [--reasoning <level>]
+  tournament --models <spec> <spec>...  play a single-elimination bo3 bracket; each model keeps one team
+      [--pool <name>] [--seed <n>] [--concurrency <n>] [--reasoning <level>]
   exhibition --opponent <spec>        host one bo3 where a terminal agent plays a seat over a local bridge
       [--seat p1|p2] [--name <label>] [--pool <name>] [--seed <n>] [--port <n>] [--reasoning <level>]
       [--agent-dir <path>]
@@ -26,8 +28,8 @@ Commands:
   report [--out <path>] [--pool <name>]  write an HTML report
 
 Without --pool, standings and report cover every pool except the disposable "test" pool
-and drop exhibition rows; pass --pool <name> to inspect everything in one pool.
-Exhibition rows record mode "exhibition" and never rate the rotation ladder.`;
+and keep only rotation rows; pass --pool <name> to inspect everything in one pool.
+Exhibition and tournament rows record their mode and never rate the rotation ladder.`;
 
 function positiveInteger(name: string, value: string): number {
   const parsed = Number(value);
@@ -150,6 +152,39 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
       },
     );
     printResults(rows);
+    return 0;
+  }
+  if (command === 'tournament') {
+    const { values, positionals } = parseArgs({
+      args: rest,
+      allowPositionals: true,
+      options: {
+        models: { type: 'string', multiple: true },
+        pool: { type: 'string', default: 'test' },
+        seed: { type: 'string' },
+        concurrency: { type: 'string', default: '2' },
+        reasoning: { type: 'string' },
+      },
+    });
+    const models = [...(values.models ?? []), ...positionals];
+    if (models.length < 2) throw new Error('tournament requires at least two --models');
+    const reasoning = values.reasoning as ReasoningLevel | undefined;
+    if (reasoning && !REASONING_LEVELS.includes(reasoning))
+      throw new Error(`--reasoning must be one of: ${REASONING_LEVELS.join(', ')}`);
+    const seed = values.seed === undefined ? undefined : Number(values.seed);
+    if (seed !== undefined && !Number.isSafeInteger(seed)) throw new Error('--seed must be an integer');
+    const { runTournament } = await import('./tournament.js');
+    const rows = await runTournament(models, makeRunDirectory(), {
+      pool: values.pool,
+      concurrency: positiveInteger('concurrency', values.concurrency),
+      recordsPath: RESULTS_PATH,
+      ...(seed === undefined ? {} : { seed }),
+      ...(reasoning === undefined ? {} : { reasoning }),
+      onNotice: (line) => console.log(line),
+    });
+    printResults(rows);
+    const champion = rows[rows.length - 1];
+    if (champion) console.log(`Champion: ${String(champion.advanced ?? champion.winner)}`);
     return 0;
   }
   if (command === 'exhibition') {

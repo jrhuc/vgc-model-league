@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'preact/hooks';
 
-import type { BattleMessage, MonView, RunSnapshot, SeriesRowView, SideView } from '../../api';
+import type { BattleMessage, BracketView, MonView, RunSnapshot, SeriesRowView, SideView } from '../../api';
 import { api } from '../http';
 
 interface ArenaProps {
@@ -22,6 +22,84 @@ function rowState(row: SeriesRowView): string {
   if (row.status === 'running') return `Game ${Math.max(1, row.game)} · turn ${row.turn || 'preview'}`;
   if (row.status === 'done') return row.winner ? `Winner · ${row.winner}` : 'Series tied';
   return 'Queued';
+}
+
+function roundName(index: number, count: number): string {
+  const fromEnd = count - 1 - index;
+  if (fromEnd === 0) return 'Final';
+  if (fromEnd === 1) return 'Semifinals';
+  if (fromEnd === 2) return 'Quarterfinals';
+  return `Round ${index + 1}`;
+}
+
+function Bracket({
+  bracket,
+  rows,
+  selected,
+  onSelect,
+}: {
+  bracket: BracketView;
+  rows: RunSnapshot['rows'];
+  selected: number | null;
+  onSelect: (index: number) => void;
+}) {
+  const name = (slot: number | null) => (slot === null ? 'TBD' : (bracket.entrants[slot]?.model ?? 'TBD'));
+  const team = (slot: number | null) => (slot === null ? '' : (bracket.entrants[slot]?.team ?? ''));
+  const champion = bracket.champion === null ? null : bracket.entrants[bracket.champion];
+  return (
+    <section class="panel bracket-panel">
+      <div class="section-head">
+        <div>
+          <h2>Bracket</h2>
+          <p>Single elimination · best-of-three · each model keeps its team</p>
+        </div>
+        {champion && (
+          <div class="champion-banner">
+            <span class="eyebrow">Champion</span>
+            <b>{champion.model}</b>
+            <small>{champion.team}</small>
+          </div>
+        )}
+      </div>
+      <div class="bracket-scroll">
+        <div class="bracket">
+          {bracket.rounds.map((round, roundIndex) => (
+            <div class="bracket-round" key={roundIndex}>
+              <h3>{roundName(roundIndex, bracket.rounds.length)}</h3>
+              {round.map((match, matchIndex) => {
+                const row = match.seriesIndex === null ? null : rows[match.seriesIndex];
+                const clickable = match.seriesIndex !== null;
+                return (
+                  <button
+                    type="button"
+                    key={matchIndex}
+                    disabled={!clickable}
+                    class={`bracket-match ${clickable && selected === match.seriesIndex ? 'selected' : ''} ${match.seriesIndex === null ? 'bye' : ''}`}
+                    onClick={() => {
+                      if (match.seriesIndex !== null) onSelect(match.seriesIndex);
+                    }}
+                  >
+                    {([0, 1] as const).map((side) => (
+                      <span
+                        class={`bracket-slot ${match.winner !== null && match.slots[side] === match.winner ? 'winner' : ''}`}
+                        key={side}
+                      >
+                        <span class="bracket-name">
+                          {match.seriesIndex === null && match.slots[side] === null ? 'Bye' : name(match.slots[side])}
+                        </span>
+                        {team(match.slots[side]) && <small>{team(match.slots[side])}</small>}
+                        <span class="bracket-score">{row ? (side === 0 ? row.score.p1 : row.score.p2) : ''}</span>
+                      </span>
+                    ))}
+                  </button>
+                );
+              })}
+            </div>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
 }
 
 function hpPercent(value: string): number {
@@ -123,7 +201,7 @@ export function ArenaView({ run, battles, selected, onSelect, onGoFixtures }: Ar
       <div class="arena-topline">
         <div>
           <p class="eyebrow">
-            Rotation · protocol v{run.protocolVersion} · {run.runId}
+            {run.mode === 'tournament' ? 'Tournament' : 'Rotation'} · protocol v{run.protocolVersion} · {run.runId}
             {run.seed === null ? '' : ` · seed ${run.seed}`}
           </p>
           <div class="run-identity">
@@ -133,7 +211,7 @@ export function ArenaView({ run, battles, selected, onSelect, onGoFixtures }: Ar
             <span class={`status-pill ${run.state}`}>{run.state}</span>
           </div>
           <p class="kicker" style="margin:10px 0 0">
-            {run.pool} · {run.models.join(' vs ')}
+            {run.pool || 'pasted teams'} · {run.models.join(' vs ')}
           </p>
           <div class="progress-rail">
             <div class="progress-fill" style={`width:${total ? Math.round((done * 100) / total) : 0}%`} />
@@ -155,6 +233,7 @@ export function ArenaView({ run, battles, selected, onSelect, onGoFixtures }: Ar
           {run.error || stopError}
         </div>
       )}
+      {run.bracket && <Bracket bracket={run.bracket} rows={run.rows} selected={effective} onSelect={onSelect} />}
       <div class="arena-grid">
         <section class="panel series-board">
           <div class="section-head">

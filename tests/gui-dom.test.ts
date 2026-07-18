@@ -43,12 +43,24 @@ test('built client bundle boots and renders the app against the live server', as
     const navButtons = window.document.querySelectorAll('.nav-button');
     assert.equal(navButtons.length, 4);
 
+    const modeTabs = window.document.querySelectorAll('.mode-tab');
+    assert.equal(modeTabs.length, 3, 'match, tournament, and rotation modes are offered');
+    const pasteField = window.document.querySelector('#teamPaste0') as HTMLTextAreaElement | null;
+    assert.ok(pasteField, 'the default match view shows team paste fields');
+    assert.ok(pasteField.value.trim().length > 0, 'sample teams prefill the match form');
+    assert.ok(window.document.querySelector('#teamPaste1'));
+    assert.equal(window.document.querySelector('#pool'), null, 'a match needs no team pool');
+
+    (modeTabs[2] as unknown as HTMLButtonElement).click();
+    await waitFor(() => window.document.querySelector('#pool') !== null);
     const poolDropdown = window.document.querySelector('#pool') as HTMLButtonElement | null;
     assert.equal(poolDropdown?.getAttribute('role'), 'combobox');
     assert.ok(
       (window.document.querySelector('.pool-facts')?.textContent ?? '').includes('teams'),
       'selected pool should show its team count',
     );
+    (modeTabs[0] as unknown as HTMLButtonElement).click();
+    await waitFor(() => window.document.querySelector('#teamPaste0') !== null);
 
     const modelSearch = window.document.querySelector('#modelSearch');
     assert.ok(modelSearch, 'model combobox input should render');

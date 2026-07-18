@@ -48,6 +48,25 @@ export interface SeriesRowView {
   winner: string | null;
 }
 
+export interface BracketEntrantView {
+  model: string;
+  team: string;
+}
+
+export interface BracketMatchView {
+  /** Index into RunSnapshot.rows; null for byes, which play no series. */
+  seriesIndex: number | null;
+  /** Entrant indices; null until the feeding match resolves. */
+  slots: [number | null, number | null];
+  winner: number | null;
+}
+
+export interface BracketView {
+  entrants: BracketEntrantView[];
+  rounds: BracketMatchView[][];
+  champion: number | null;
+}
+
 export interface RunSnapshot {
   runId: string;
   mode: ExperimentMode;
@@ -63,6 +82,12 @@ export interface RunSnapshot {
   endTime: number | null;
   canControl: boolean;
   rows: SeriesRowView[];
+  bracket: BracketView | null;
+}
+
+export interface SampleTeam {
+  name: string;
+  paste: string;
 }
 
 export interface AppState {
@@ -71,6 +96,8 @@ export interface AppState {
   defaultFormat: string;
   formats: FormatInfo[];
   providers: ProviderInfo[];
+  /** Ready-to-play pastes from the default pool that prefill the exhibition match form. */
+  sampleTeams: SampleTeam[];
   auth: AuthView;
   run: RunSnapshot | null;
 }
@@ -152,10 +179,16 @@ export interface CreatePoolResponse {
 }
 
 export interface RunRequest {
+  mode?: 'rotation' | 'tournament';
   models: string[];
   apiKeys: Record<string, string>;
-  pool: string;
-  seriesPerPair: number;
+  /** Required unless inline teams are supplied. */
+  pool?: string;
+  /** Inline team pastes, one per model in order; tournament mode only. */
+  teams?: string[];
+  /** Showdown format for inline teams; defaults to the server's default format. */
+  format?: string;
+  seriesPerPair?: number;
   concurrency: number;
   seed: string;
   reasoning?: string;

@@ -40,12 +40,20 @@ Rules that keep this from rotting:
 configuration, event emission, and result persistence. Shared battle engines and Showdown integration stay outside it
 so future modes can reuse execution without inheriting Rotation scheduling.
 
-`ExperimentMode` contains `rotation` and `exhibition`. A new mode extends that type only when its real orchestrator
-exists; Draft League and Tournament must not arrive as conditionals scattered through `rotation.ts`. Every new run
+`ExperimentMode` contains `rotation`, `exhibition`, and `tournament`. A new mode extends that type only when its real
+orchestrator exists; Draft League must not arrive as conditionals scattered through `rotation.ts`. Every new run
 config, live snapshot, and completed series carries `mode` and `protocol_version`. Protocol versions change when an
 evaluation rule changes enough to make unlike results incomparable. Because that bump is manual discipline, every row
 and run config also records `scaffold` — a hash of the decision/reflection system prompts, tool schemas, and sampling
 parameters — so unintentional scaffold drift is detectable after the fact even when `protocol_version` did not move.
+
+Tournament mode (`src/tournament.ts`) is a single-elimination best-of-three bracket. Each entrant is assigned one team
+— drawn without replacement from a pool, or supplied inline as validated pastes — and keeps it for the whole bracket;
+classic seed ordering spreads byes so any entrant count from two upward works, and two entrants degenerate into the
+single exhibition match the GUI offers as its default landing flow. The orchestrator reuses `playBo3`, `makeEngine`,
+and `mapLimit` from rotation but owns its own scheduling, bracket state, and records. A drawn series advances the
+higher seed while the record keeps `winner: null`. Rows record `mode: "tournament"` (with `round` and, for inline
+teams, no `pool`), and standings never rate them.
 
 Reference opponents (for example VGC-Bench's behavior-cloned or reinforcement-learned policies) integrate by
 implementing `BattleAgent` (`act`/`observe`/`abandonDecision`). That interface is the interop seam: reference agents
@@ -67,11 +75,11 @@ queued series never start and in-flight series stop consuming provider credits; 
 every worker has settled. Completed series are already persisted. A user-initiated stop behaves the same way but
 resolves with the completed results instead of an error.
 
-Records queries and ratings are scoped by pool and partially by mode today: unscoped standings, reports, and the GUI
-record book exclude the disposable `test` pool and drop `exhibition` rows, and any single pool — including `test` —
-can be selected explicitly. Before Draft League or Tournament ships, that scoping must extend to full mode and
-protocol-version selection. Rotation Elo remains the default controlled rating;
-Draft League and Tournament results will have their own views and cannot silently enter it. The sequential Elo shown
+Records queries and ratings are scoped by pool and by mode: unscoped views exclude the disposable `test` pool and keep
+only `rotation` rows, and any single pool — including `test` — can be selected explicitly, where non-rotation rows
+appear in the record list but never in standings or head-to-head. Before Draft League ships, that scoping must extend
+to protocol-version selection. Rotation Elo remains the default controlled rating;
+Draft League and Tournament results have their own views and cannot silently enter it. The sequential Elo shown
 in standings is a provisional display rating recomputed from qualifying rows on every read — never stored — so a
 paired-comparison model (Bradley–Terry or similar) can replace it later without any schema change.
 

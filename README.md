@@ -21,19 +21,23 @@ The league exists to answer:
 
 ## Modes
 
-**Rotation** is the implemented mode and produces the controlled league
-rating: models rotate through immutable tournament-team pools, with
-assignments mirrored in pairs to cancel side and team bias.
+**Rotation** produces the controlled league rating: models rotate through
+immutable tournament-team pools, with assignments mirrored in pairs to cancel
+side and team bias.
+
+**Tournament** plays a single-elimination best-of-three bracket: each model is
+assigned one team — drawn from a pool or pasted directly — and defends it until
+a champion is crowned. Two models make a straight exhibition match, which is
+the GUI's default landing flow; byes handle any other entrant count.
 
 **Exhibition** hosts a single best-of-three where one seat is played by an
 external terminal agent over a local bridge instead of a provider API — useful
-for testing subscription-billed agents without API spend. Exhibition rows are
-recorded but never enter the Rotation rating.
+for testing subscription-billed agents without API spend.
 
-Two planned modes, **Draft League** (models draft rosters and build teams) and
-**Tournament** (fixed teams, bracket play), will record their own results and
-never enter the Rotation rating. Every result records `mode` and
-`protocol_version`; older rows remain readable.
+Tournament and Exhibition rows are recorded but never enter the Rotation
+rating. A planned mode, **Draft League** (models draft rosters and build
+teams), will record its own results the same way. Every result records `mode`
+and `protocol_version`; older rows remain readable.
 
 ## Prior work
 
@@ -83,6 +87,10 @@ npm run vgcleague -- rotation \
   --models anthropic:claude-sonnet-5 openai:gpt-5.2 \
   --reasoning medium \
   --series-per-pair 4 \
+  --pool regmb-202607
+
+npm run vgcleague -- tournament \
+  --models anthropic:claude-sonnet-5 openai:gpt-5.2 google:gemini-3-pro xai:grok-4 \
   --pool regmb-202607
 
 npm run vgcleague -- standings --pool regmb-202607

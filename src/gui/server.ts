@@ -13,25 +13,28 @@ import { DATA_DIR, prepareDataDirectories, RESULTS_PATH, TEAMS_DIR } from '../pa
 import type { ReasoningLevel } from '../providers.js';
 import { parseSpec, REASONING_LEVELS, validateReasoning } from '../providers.js';
 import { h2h, loadRows, scopeRows, standings } from '../records.js';
-import type { RotationEvent } from '../rotation.js';
 import { makeRunDirectory, ROTATION_PROTOCOL_VERSION, runRotation } from '../rotation.js';
 import { redactSecrets } from '../sanitize.js';
 import { loadShowdown } from '../showdown.js';
 import type { MonState } from '../state.js';
 import { BattleState } from '../state.js';
-import type { TeamDraft } from '../teams.js';
-import { createPool, inspectTeam, listPools } from '../teams.js';
+import type { Team, TeamDraft } from '../teams.js';
+import { createPool, inspectTeam, listPools, loadPool, packTeam, validateTeam } from '../teams.js';
+import type { TournamentEvent } from '../tournament.js';
+import { runTournament, TOURNAMENT_PROTOCOL_VERSION } from '../tournament.js';
 import type { ExperimentMode, JsonObject, Pid } from '../types.js';
 import { afterColon, isRecord } from '../value.js';
 import type {
   AppState,
   BattleMessage,
   BattleSnapshot,
+  BracketView,
   FormatInfo,
   ModelsResponse,
   MonView,
   RecordsResponse,
   RunSnapshot,
+  SampleTeam,
   SeriesRowView,
   ServerEvent,
 } from './api.js';
@@ -66,6 +69,7 @@ interface GuiServerOptions {
   teamsDir?: string;
   recordsPath?: string;
   runner?: typeof runRotation;
+  tournamentRunner?: typeof runTournament;
   host?: string;
   publicOrigin?: string;
   mutationsEnabled?: boolean;
@@ -130,12 +134,15 @@ interface RunConfig {
   seriesPerPair: number;
   pool: string;
   concurrency: number;
+  teams?: Team[];
+  format?: string;
   seed?: number;
   reasoning?: ReasoningLevel;
 }
 
 class ActiveRun {
   rows: SeriesRow[] = [];
+  bracket: BracketView | undefined;
   state: 'running' | 'done' | 'failed' = 'running';
   error = '';
   notices: string[] = [];
@@ -228,6 +235,7 @@ export class GuiServer {
   private readonly workerStopGraceMs: number;
   private flushTimer: NodeJS.Timeout | undefined;
   private heartbeatTimer: NodeJS.Timeout | undefined;
+  private sampleTeamsCache: { pool: string; teams: SampleTeam[] } | undefined;
 
   constructor(options: GuiServerOptions = {}) {
     this.options = options;
@@ -597,6 +605,28 @@ export class GuiServer {
     return data as Record<string, unknown>;
   }
 
+  private defaultFormatId(): string {
+    return listPools(this.options.teamsDir ?? TEAMS_DIR)[0]?.format ?? 'gen9championsvgc2026regmbbo3';
+  }
+
+  private sampleTeamsBody(pools: { name: string }[]): SampleTeam[] {
+    const source = pools[0]?.name;
+    if (!source) return [];
+    if (this.sampleTeamsCache?.pool !== source) {
+      try {
+        const { Teams } = loadShowdown();
+        const teams = loadPool(source, this.options.teamsDir ?? TEAMS_DIR).teams.slice(0, 2);
+        this.sampleTeamsCache = {
+          pool: source,
+          teams: teams.map((team) => ({ name: team.id, paste: Teams.export(Teams.unpack(team.packed) ?? []) })),
+        };
+      } catch {
+        this.sampleTeamsCache = { pool: source, teams: [] };
+      }
+    }
+    return this.sampleTeamsCache.teams;
+  }
+
   private stateBody(session: AuthSession | undefined): AppState {
     const pools = listPools(this.options.teamsDir ?? TEAMS_DIR);
     return {
@@ -604,6 +634,7 @@ export class GuiServer {
       reasoningLevels: [...REASONING_LEVELS],
       defaultFormat: pools[0]?.format ?? 'gen9championsvgc2026regmbbo3',
       formats: championsFormats(),
+      sampleTeams: this.sampleTeamsBody(pools),
       providers: PROVIDER_OPTIONS.filter((option) => !this.publicOrigin || option.id !== 'compat').map((option) => ({
         id: option.id,
         label: option.label,
@@ -633,8 +664,10 @@ export class GuiServer {
     const all = loadRows(this.options.recordsPath ?? RESULTS_PATH);
     const pool = poolParam?.trim() || null;
     const rows = scopeRows(all, pool ?? undefined);
+    // Only rotation rows rate the ladder, even inside an explicitly selected pool.
+    const rated = rows.filter((row) => (row.mode ?? 'rotation') === 'rotation');
     const pools = [...new Set(all.map((row) => (typeof row.pool === 'string' ? row.pool : '')))].filter(Boolean).sort();
-    return { count: rows.length, pool, pools, standings: standings(rows), h2h: h2h(rows), records: rows };
+    return { count: rows.length, pool, pools, standings: standings(rated), h2h: h2h(rated), records: rows };
   }
 
   private runBody(publicView = false): RunSnapshot | null {
@@ -656,6 +689,7 @@ export class GuiServer {
       endTime: run.endTime ?? null,
       canControl: !publicView,
       rows: run.rows.map((row, index) => ({ ...row, turn: battles.get(index)?.state.turn ?? 0 })),
+      bracket: run.bracket ?? null,
     };
   }
 
@@ -682,8 +716,11 @@ export class GuiServer {
 
   private startRun(body: Record<string, unknown>, owner: AuthUser | undefined): JsonObject {
     if (this.run?.state === 'running') throw new HttpError(409, 'a run is already in progress');
+    const mode: ExperimentMode = body.mode === undefined || body.mode === 'rotation' ? 'rotation' : 'tournament';
+    if (mode === 'tournament' && body.mode !== 'tournament') throw new HttpError(400, 'unknown run mode');
     const models = Array.isArray(body.models) ? body.models.map(String).filter(Boolean) : [];
-    const maximumModels = this.publicOrigin ? 4 : 8;
+    // A tournament plays only n-1 series, so hosted mode can afford a fuller bracket.
+    const maximumModels = this.publicOrigin && mode === 'rotation' ? 4 : 8;
     if (models.length < 2) throw new HttpError(400, 'a run needs at least two model specs');
     if (models.length > maximumModels) {
       throw new HttpError(400, `a run supports at most ${maximumModels} model specs`);
@@ -714,20 +751,55 @@ export class GuiServer {
       }
     }
     if (missing.length) throw new HttpError(400, `bring an API key for: ${missing.join(', ')}`);
-    const pool = String(body.pool ?? '');
-    if (!listPools(this.options.teamsDir ?? TEAMS_DIR).some((info) => info.name === pool))
-      throw new HttpError(400, `unknown team pool ${JSON.stringify(pool)}`);
+    const inlinePastes = mode === 'tournament' && Array.isArray(body.teams) ? body.teams.map(String) : undefined;
+    let pool = '';
+    let teams: Team[] | undefined;
+    let format: string | undefined;
+    if (inlinePastes) {
+      if (inlinePastes.length !== models.length) {
+        throw new HttpError(400, 'bring exactly one team paste per model');
+      }
+      format = String(body.format ?? '').trim() || this.defaultFormatId();
+      if (!championsFormats().some((info) => info.id === format)) {
+        throw new HttpError(400, `unknown format ${JSON.stringify(format)}`);
+      }
+      teams = inlinePastes.map((paste, index) => {
+        if (!paste.trim() || paste.length > 20_000) {
+          throw new HttpError(400, `team ${index + 1} must be a non-empty paste under 20k characters`);
+        }
+        try {
+          const packed = packTeam(paste);
+          validateTeam(packed, format!);
+          return { id: `paste-${index + 1}`, packed };
+        } catch (error) {
+          const detail = error instanceof Error ? error.message : String(error);
+          throw new HttpError(400, `team ${index + 1} is not legal in ${format}: ${detail}`);
+        }
+      });
+    } else {
+      pool = String(body.pool ?? '');
+      const info = listPools(this.options.teamsDir ?? TEAMS_DIR).find((entry) => entry.name === pool);
+      if (!info) throw new HttpError(400, `unknown team pool ${JSON.stringify(pool)}`);
+      if (mode === 'tournament' && info.teamCount < models.length) {
+        throw new HttpError(
+          400,
+          `pool ${JSON.stringify(pool)} has ${info.teamCount} teams for ${models.length} entrants`,
+        );
+      }
+    }
     const seed = body.seed === undefined || body.seed === null || body.seed === '' ? undefined : Number(body.seed);
     if (seed !== undefined && !Number.isSafeInteger(seed)) throw new HttpError(400, 'seed must be an integer');
     const maximumSeriesPerPair = this.publicOrigin ? 4 : 20;
     const maximumConcurrency = this.publicOrigin ? 2 : 8;
     const config: RunConfig = {
-      mode: 'rotation',
-      protocolVersion: ROTATION_PROTOCOL_VERSION,
+      mode,
+      protocolVersion: mode === 'tournament' ? TOURNAMENT_PROTOCOL_VERSION : ROTATION_PROTOCOL_VERSION,
       models,
-      seriesPerPair: clampInt(body.seriesPerPair, 1, maximumSeriesPerPair, 2),
+      seriesPerPair: mode === 'tournament' ? 1 : clampInt(body.seriesPerPair, 1, maximumSeriesPerPair, 2),
       pool,
       concurrency: clampInt(body.concurrency, 1, maximumConcurrency, 2),
+      ...(teams === undefined ? {} : { teams }),
+      ...(format === undefined ? {} : { format }),
       ...(seed === undefined ? {} : { seed }),
       ...(reasoning === undefined ? {} : { reasoning }),
     };
@@ -756,9 +828,33 @@ export class GuiServer {
   }
 
   private async launch(run: ActiveRun): Promise<void> {
+    const injected = run.config.mode === 'tournament' ? this.options.tournamentRunner : this.options.runner;
     try {
-      if (this.publicOrigin && !this.options.runner) {
+      if (this.publicOrigin && !injected) {
         await this.launchWorker(run);
+      } else if (run.config.mode === 'tournament') {
+        await (this.options.tournamentRunner ?? runTournament)(run.config.models, run.runDir, {
+          concurrency: run.config.concurrency,
+          recordsPath: this.options.recordsPath ?? RESULTS_PATH,
+          apiKeys: run.apiKeys,
+          signal: run.controller.signal,
+          ...(run.config.pool ? { pool: run.config.pool } : {}),
+          ...(run.config.teams === undefined ? {} : { teams: run.config.teams }),
+          ...(run.config.format === undefined ? {} : { format: run.config.format }),
+          ...(run.config.seed === undefined ? {} : { seed: run.config.seed }),
+          ...(run.config.reasoning === undefined ? {} : { reasoning: run.config.reasoning }),
+          ...(run.owner
+            ? {
+                contributor: {
+                  provider: 'github',
+                  subject: run.owner.providerSubject,
+                  login: run.owner.login,
+                },
+              }
+            : {}),
+          onEvent: (event) => this.onEvent(run, event),
+          onNotice: (message) => run.notices.push(message),
+        });
       } else {
         await (this.options.runner ?? runRotation)(run.config.models, run.config.seriesPerPair, run.runDir, {
           pool: run.config.pool,
@@ -876,6 +972,7 @@ export class GuiServer {
     run.controller.signal.addEventListener('abort', abort, { once: true });
     const message: RunWorkerStart = {
       type: 'start',
+      mode: run.config.mode === 'tournament' ? 'tournament' : 'rotation',
       models: run.config.models,
       seriesPerPair: run.config.seriesPerPair,
       runDir: run.runDir,
@@ -883,6 +980,8 @@ export class GuiServer {
       concurrency: run.config.concurrency,
       recordsPath: this.options.recordsPath ?? RESULTS_PATH,
       apiKeys: run.apiKeys,
+      ...(run.config.teams === undefined ? {} : { teams: run.config.teams }),
+      ...(run.config.format === undefined ? {} : { format: run.config.format }),
       ...(run.config.seed === undefined ? {} : { seed: run.config.seed }),
       ...(run.config.reasoning === undefined ? {} : { reasoning: run.config.reasoning }),
       ...(run.owner
@@ -908,9 +1007,14 @@ export class GuiServer {
     });
   }
 
-  private onEvent(run: ActiveRun, event: RotationEvent): void {
+  private onEvent(run: ActiveRun, event: TournamentEvent): void {
     if (run !== this.run) return;
-    if (event.type === 'plans') {
+    if (event.type === 'bracket') {
+      run.bracket = event.bracket;
+    } else if (event.type === 'series-players') {
+      const row = run.rows[event.index];
+      if (row) row.players = event.players;
+    } else if (event.type === 'plans') {
       run.seed = event.seed;
       run.rows = event.plans.map((plan) => ({
         players: plan.players,
@@ -953,7 +1057,7 @@ export class GuiServer {
         row.game = event.game + 1;
         row.turns += event.turns;
       }
-    } else {
+    } else if (event.type === 'series-end') {
       const row = run.rows[event.index];
       if (row) {
         row.status = 'done';
