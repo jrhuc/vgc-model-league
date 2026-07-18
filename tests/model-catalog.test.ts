@@ -193,6 +193,18 @@ test('HTTP errors preserve useful provider detail without leaking keys', async (
   });
 });
 
+test('model discovery rejects oversized responses', async () => {
+  const mockFetch = (async () =>
+    new Response('{}', {
+      headers: { 'content-length': '1000001', 'content-type': 'application/json' },
+    })) as typeof fetch;
+
+  await assert.rejects(
+    discoverModels(providerOption('openai')!, 'key', { fetch: mockFetch }),
+    /model catalog response was too large/,
+  );
+});
+
 test('manual and non-catalog providers reject clearly without making requests', async () => {
   const mockFetch = (async () => {
     throw new Error('fetch should not be called');

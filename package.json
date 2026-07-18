@@ -18,6 +18,7 @@
     "check:fix": "biome check --write src tools tests",
     "dev:gui": "vite build --watch",
     "test": "npm run build && node --test dist/tests/*.test.js",
+    "start": "node dist/src/cli.js gui",
     "vgcleague": "node dist/src/cli.js",
     "build-pool": "node dist/tools/build-pool.js",
     "capture-requests": "node dist/tools/capture-requests.js"

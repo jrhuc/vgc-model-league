@@ -61,6 +61,19 @@ test('pool loader uses custom directories and rejects invalid manifests', (t) =>
     }),
   );
   assert.throws(() => loadPool('snapshot', root), /duplicate team id/);
+  fs.writeFileSync(path.join(root, 'outside.team'), 'outside');
+  fs.writeFileSync(
+    path.join(poolDir, 'pool.json'),
+    JSON.stringify({
+      ...manifest,
+      teams: [
+        { id: 'a', file: '../outside.team' },
+        { id: 'b', file: 'b.team' },
+      ],
+    }),
+  );
+  assert.throws(() => loadPool('snapshot', root), /escapes its pool directory/);
+  assert.throws(() => loadPool('../snapshot', root), /pool name/);
 });
 
 test('team exports are packed by the direct Showdown API', () => {

@@ -2,7 +2,8 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
-import { REPO_ROOT, RESULTS_PATH } from './paths.js';
+import { GuiServer } from './gui/server.js';
+import { prepareDataDirectories, REPO_ROOT, RESULTS_PATH } from './paths.js';
 import type { ReasoningLevel } from './providers.js';
 import { REASONING_LEVELS } from './providers.js';
 import type { SeriesRecord } from './records.js';
@@ -13,7 +14,7 @@ import { makeRunDirectory, runRotation } from './rotation.js';
 const HELP = `Usage: vgcleague <command>
 
 Commands:
-  gui [--port <n>]                    serve the browser GUI on 127.0.0.1 (default port 8484)
+  gui [--port <n>] [--host <address>] [--origin <url>]  serve the browser GUI
   selfcheck                           run one random-vs-random series through the simulator
   rotation --models <spec> <spec>...  run the controlled team-rotation protocol
       [--series-per-pair <n>] [--pool <name>] [--seed <n>] [--concurrency <n>] [--reasoning <level>]
@@ -34,13 +35,47 @@ function positiveInteger(name: string, value: string): number {
 }
 
 export async function main(argv = process.argv.slice(2)): Promise<number> {
+  prepareDataDirectories();
   const [command, ...rest] = argv;
   if (command === 'selfcheck') return selfcheck();
   if (command === 'gui') {
-    const { values } = parseArgs({ args: rest, options: { port: { type: 'string', default: '8484' } } });
-    const { GuiServer } = await import('./gui/server.js');
-    const url = await new GuiServer().listen(positiveInteger('port', values.port));
-    console.log(`VGC Model League GUI at ${url} (ctrl-c to stop)`);
+    const { values } = parseArgs({
+      args: rest,
+      options: {
+        port: { type: 'string', default: process.env.PORT ?? '8484' },
+        host: { type: 'string' },
+        origin: { type: 'string' },
+      },
+    });
+    const publicOrigin = values.origin ?? process.env.VGC_LEAGUE_PUBLIC_ORIGIN;
+    const host = values.host ?? process.env.VGC_LEAGUE_HOST;
+    const logger = publicOrigin ? (entry: Record<string, unknown>) => console.log(JSON.stringify(entry)) : undefined;
+    const gui = new GuiServer({
+      ...(host ? { host } : {}),
+      ...(publicOrigin ? { publicOrigin } : {}),
+      mutationsEnabled: !publicOrigin || process.env.VGC_LEAGUE_ENABLE_MUTATIONS === 'true',
+      ...(logger ? { logger } : {}),
+    });
+    const url = await gui.listen(positiveInteger('port', values.port));
+    if (logger) logger({ timestamp: new Date().toISOString(), level: 'info', event: 'server_started', url });
+    else console.log(`VGC Model League GUI at ${url} (ctrl-c to stop)`);
+    let stopping = false;
+    const shutdown = (signal: string) => {
+      if (stopping) return;
+      stopping = true;
+      logger?.({ timestamp: new Date().toISOString(), level: 'info', event: 'server_stopping', signal });
+      void gui.shutdown().catch((error: unknown) => {
+        logger?.({
+          timestamp: new Date().toISOString(),
+          level: 'error',
+          event: 'shutdown_error',
+          error: error instanceof Error ? error.message : String(error),
+        });
+        process.exitCode = 1;
+      });
+    };
+    process.once('SIGTERM', () => shutdown('SIGTERM'));
+    process.once('SIGINT', () => shutdown('SIGINT'));
     return 0;
   }
   if (command === 'rotation') {

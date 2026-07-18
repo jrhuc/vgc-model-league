@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import type http from 'node:http';
 import { createServer } from 'node:http';
@@ -5,7 +6,7 @@ import type { AddressInfo } from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { discoverModels, PROVIDER_OPTIONS, providerOption } from '../model-catalog.js';
-import { RESULTS_PATH, TEAMS_DIR } from '../paths.js';
+import { DATA_DIR, prepareDataDirectories, RESULTS_PATH, TEAMS_DIR } from '../paths.js';
 import type { ReasoningLevel } from '../providers.js';
 import { parseSpec, REASONING_LEVELS, validateReasoning } from '../providers.js';
 import { h2h, loadRows, scopeRows, standings } from '../records.js';
@@ -43,20 +44,48 @@ const ASSET_TYPES: Record<string, string> = {
   '.ico': 'image/x-icon',
 };
 
-const LOCAL_HOSTNAMES = new Set(['127.0.0.1', 'localhost', '[::1]', '::1']);
+const LOCAL_HOSTNAMES: Record<string, true> = { '127.0.0.1': true, localhost: true, '[::1]': true, '::1': true };
+const MUTATING_METHODS: Record<string, true> = { POST: true, PUT: true, PATCH: true, DELETE: true };
+const MAX_SSE_CLIENTS = 64;
+const SSE_HEARTBEAT_MS = 25_000;
 
-function isLocalHost(host: string | undefined): boolean {
-  if (!host) return false;
-  const hostname = host.startsWith('[') ? host.slice(0, host.indexOf(']') + 1) : (host.split(':')[0] ?? '');
-  return LOCAL_HOSTNAMES.has(hostname);
+interface GuiServerOptions {
+  teamsDir?: string;
+  recordsPath?: string;
+  runner?: typeof runRotation;
+  host?: string;
+  publicOrigin?: string;
+  mutationsEnabled?: boolean;
+  logger?: (entry: Record<string, unknown>) => void;
 }
 
-function isLocalOrigin(origin: string): boolean {
+function hostnameFromHost(host: string | undefined): string {
+  if (!host || /[\s,@/\\]/.test(host)) return '';
   try {
-    return LOCAL_HOSTNAMES.has(new URL(origin).hostname);
+    return new URL(`http://${host}`).hostname.toLowerCase();
   } catch {
-    return false;
+    return '';
   }
+}
+
+function configuredOrigin(value: string | undefined): URL | undefined {
+  if (!value) return undefined;
+  const url = new URL(value);
+  if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.origin !== value) {
+    throw new Error('VGC_LEAGUE_PUBLIC_ORIGIN must be an exact http(s) origin without a path');
+  }
+  return url;
+}
+
+function redactSecrets(message: string, secrets: readonly string[]): string {
+  let redacted = message
+    .replace(/[\p{Cc}\p{Cf}]/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  for (const secret of secrets) {
+    if (secret && secret !== 'none') redacted = redacted.split(secret).join('[redacted]');
+  }
+  return redacted.slice(0, 2000);
 }
 
 interface RunConfig {
@@ -146,57 +175,150 @@ function championsFormats(): FormatInfo[] {
 export class GuiServer {
   readonly server: http.Server;
   private run: ActiveRun | undefined;
+  private runTask: Promise<void> | undefined;
+  private shutdownTask: Promise<void> | undefined;
   private readonly clients = new Set<http.ServerResponse>();
   private readonly pending = new Map<string, () => ServerEvent | undefined>();
+  private readonly options: GuiServerOptions;
+  private readonly publicOrigin: URL | undefined;
+  private readonly bindHost: string;
   private flushTimer: NodeJS.Timeout | undefined;
+  private heartbeatTimer: NodeJS.Timeout | undefined;
 
-  constructor(private readonly options: { teamsDir?: string; recordsPath?: string; runner?: typeof runRotation } = {}) {
+  constructor(options: GuiServerOptions = {}) {
+    this.options = options;
+    this.publicOrigin = configuredOrigin(options.publicOrigin);
+    this.bindHost = options.host?.trim() || (this.publicOrigin ? '0.0.0.0' : '127.0.0.1');
+    const bindHostname = hostnameFromHost(this.bindHost);
+    if (!this.publicOrigin && !LOCAL_HOSTNAMES[bindHostname]) {
+      throw new Error('a non-loopback host requires VGC_LEAGUE_PUBLIC_ORIGIN');
+    }
+    prepareDataDirectories();
     this.server = createServer((request, response) => {
+      const requestId = randomUUID();
+      const started = Date.now();
+      response.setHeader('x-request-id', requestId);
+      response.setHeader(
+        'content-security-policy',
+        "default-src 'self'; base-uri 'none'; connect-src 'self'; form-action 'self'; frame-ancestors 'none'; img-src 'self' data:; object-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'",
+      );
+      response.setHeader('permissions-policy', 'camera=(), geolocation=(), microphone=(), payment=(), usb=()');
+      response.setHeader('referrer-policy', 'no-referrer');
+      response.setHeader('x-content-type-options', 'nosniff');
+      if (this.publicOrigin?.protocol === 'https:') {
+        response.setHeader('strict-transport-security', 'max-age=31536000; includeSubDomains');
+      }
+      response.once('finish', () => {
+        this.options.logger?.({
+          timestamp: new Date().toISOString(),
+          level: 'info',
+          event: 'http_request',
+          requestId,
+          method: request.method ?? 'UNKNOWN',
+          path: request.url?.split('?', 1)[0] ?? '/',
+          status: response.statusCode,
+          durationMs: Date.now() - started,
+        });
+      });
       void this.route(request, response).catch((error: unknown) => {
-        const status = error instanceof HttpError ? error.status : 500;
-        const message = error instanceof Error ? error.message : String(error);
+        const expected = error instanceof HttpError;
+        const status = expected ? error.status : 500;
+        const detail = redactSecrets(
+          error instanceof Error ? error.message : String(error),
+          Object.values(this.run?.apiKeys ?? {}),
+        );
+        if (!expected) {
+          this.options.logger?.({
+            timestamp: new Date().toISOString(),
+            level: 'error',
+            event: 'request_error',
+            requestId,
+            error: detail,
+          });
+        }
+        const message = expected ? detail : `internal server error (${requestId})`;
         if (!response.headersSent) this.json(response, status, { error: message });
         else response.end();
       });
     });
+    this.server.headersTimeout = 15_000;
+    this.server.requestTimeout = 30_000;
+    this.server.keepAliveTimeout = 5_000;
+    this.server.maxHeadersCount = 100;
   }
 
   listen(port: number): Promise<string> {
-    return new Promise((resolve, reject) => {
-      this.server.once('error', reject);
-      this.server.listen(port, '127.0.0.1', () => {
-        const address = this.server.address() as AddressInfo;
-        resolve(`http://127.0.0.1:${address.port}/`);
-      });
+    const { promise, resolve, reject } = Promise.withResolvers<string>();
+    this.server.once('error', reject);
+    this.server.listen(port, this.bindHost, () => {
+      const address = this.server.address() as AddressInfo;
+      const localHost = hostnameFromHost(this.bindHost) === '::1' ? '[::1]' : '127.0.0.1';
+      resolve(this.publicOrigin ? `${this.publicOrigin.origin}/` : `http://${localHost}:${address.port}/`);
     });
+    return promise;
   }
 
   close(): void {
-    this.run?.controller.abort();
-    clearTimeout(this.flushTimer);
-    for (const client of this.clients) client.end();
-    this.clients.clear();
-    this.server.close();
-    this.server.closeAllConnections();
+    void this.shutdown(0);
+  }
+
+  shutdown(graceMs = 10_000): Promise<void> {
+    if (this.shutdownTask) return this.shutdownTask;
+    this.shutdownTask = (async () => {
+      this.run?.controller.abort();
+      clearTimeout(this.flushTimer);
+      clearInterval(this.heartbeatTimer);
+      for (const client of this.clients) client.end();
+      this.clients.clear();
+      const closed = Promise.withResolvers<void>();
+      this.server.close((error) => (error ? closed.reject(error) : closed.resolve()));
+      const settled = this.runTask
+        ? Promise.allSettled([closed.promise, this.runTask]).then(() => undefined)
+        : closed.promise;
+      const timeout = Promise.withResolvers<void>();
+      const timer = setTimeout(timeout.resolve, Math.max(0, graceMs));
+      await Promise.race([settled, timeout.promise]);
+      clearTimeout(timer);
+      this.server.closeAllConnections();
+    })();
+    return this.shutdownTask;
   }
 
   private async route(request: http.IncomingMessage, response: http.ServerResponse): Promise<void> {
     const url = new URL(request.url ?? '/', 'http://localhost');
-    if (!isLocalHost(request.headers.host)) throw new HttpError(403, 'requests must target 127.0.0.1 or localhost');
-    if (request.method === 'POST') {
+    const method = request.method ?? '';
+    const key = `${method} ${url.pathname}`;
+    if (key === 'GET /healthz') {
+      this.json(response, 200, { status: 'ok' });
+      return;
+    }
+    if (key === 'GET /readyz') {
+      this.ready(response);
+      return;
+    }
+
+    const host = request.headers.host;
+    const hostAllowed = this.publicOrigin
+      ? host?.toLowerCase() === this.publicOrigin.host.toLowerCase()
+      : Boolean(LOCAL_HOSTNAMES[hostnameFromHost(host)]);
+    if (!hostAllowed) throw new HttpError(403, 'request host is not allowed');
+
+    if (MUTATING_METHODS[method]) {
       const origin = request.headers.origin;
-      if (origin !== undefined && !isLocalOrigin(origin)) {
+      const expectedOrigin = this.publicOrigin?.origin ?? `http://${host}`;
+      if ((this.publicOrigin && origin !== expectedOrigin) || (origin !== undefined && origin !== expectedOrigin)) {
         throw new HttpError(403, 'cross-origin requests are not allowed');
       }
       const contentType = String(request.headers['content-type'] ?? '');
       if (!contentType.toLowerCase().startsWith('application/json')) {
         throw new HttpError(415, 'content-type must be application/json');
       }
+      if (this.options.mutationsEnabled === false || (this.publicOrigin && this.options.mutationsEnabled !== true)) {
+        throw new HttpError(503, 'mutations are disabled until deployment authentication is configured');
+      }
     }
-    const key = `${request.method} ${url.pathname}`;
-    if (request.method === 'GET' && !url.pathname.startsWith('/api/') && this.serveStatic(url.pathname, response)) {
-      return;
-    }
+
+    if (method === 'GET' && !url.pathname.startsWith('/api/') && this.serveStatic(url.pathname, response)) return;
     if (key === 'GET /api/state') this.json(response, 200, this.stateBody());
     else if (key === 'GET /api/records') this.json(response, 200, this.recordsBody(url.searchParams.get('pool')));
     else if (key === 'GET /api/events') this.openEvents(response);
@@ -216,8 +338,24 @@ export class GuiServer {
   }
 
   private json(response: http.ServerResponse, status: number, body: unknown): void {
-    response.writeHead(status, { 'content-type': 'application/json; charset=utf-8' });
+    response.writeHead(status, {
+      'cache-control': 'no-store',
+      'content-type': 'application/json; charset=utf-8',
+    });
     response.end(JSON.stringify(body));
+  }
+
+  private ready(response: http.ServerResponse): void {
+    try {
+      fs.accessSync(path.join(ASSETS_DIR, 'index.html'), fs.constants.R_OK);
+      fs.accessSync(this.options.teamsDir ?? TEAMS_DIR, fs.constants.R_OK | fs.constants.W_OK);
+      fs.accessSync(path.dirname(this.options.recordsPath ?? RESULTS_PATH), fs.constants.R_OK | fs.constants.W_OK);
+      fs.accessSync(DATA_DIR, fs.constants.R_OK | fs.constants.W_OK);
+      loadShowdown();
+      this.json(response, 200, { status: 'ready' });
+    } catch {
+      this.json(response, 503, { status: 'not_ready' });
+    }
   }
 
   private serveStatic(pathname: string, response: http.ServerResponse): boolean {
@@ -225,7 +363,7 @@ export class GuiServer {
     if (!file.startsWith(ASSETS_DIR + path.sep)) return false;
     const type = ASSET_TYPES[path.extname(file)];
     if (!type || !fs.existsSync(file) || !fs.statSync(file).isFile()) return false;
-    response.writeHead(200, { 'content-type': type });
+    response.writeHead(200, { 'cache-control': 'no-cache', 'content-type': type });
     response.end(fs.readFileSync(file));
     return true;
   }
@@ -257,7 +395,7 @@ export class GuiServer {
       reasoningLevels: [...REASONING_LEVELS],
       defaultFormat: pools[0]?.format ?? 'gen9championsvgc2026regmbbo3',
       formats: championsFormats(),
-      providers: PROVIDER_OPTIONS.map((option) => ({
+      providers: PROVIDER_OPTIONS.filter((option) => !this.publicOrigin || option.id !== 'compat').map((option) => ({
         id: option.id,
         label: option.label,
         description: option.description,
@@ -304,12 +442,16 @@ export class GuiServer {
 
   private async modelsBody(providerId: string, apiKey: string): Promise<ModelsResponse> {
     const option = providerOption(providerId);
-    if (!option) throw new HttpError(400, `unknown provider ${JSON.stringify(providerId)}`);
+    if (!option || (this.publicOrigin && option.id === 'compat')) {
+      throw new HttpError(400, `unknown provider ${JSON.stringify(providerId)}`);
+    }
     try {
-      const models = await discoverModels(option, apiKey.trim() || undefined);
+      const models = await discoverModels(option, apiKey.trim() || undefined, {
+        signal: AbortSignal.timeout(20_000),
+      });
       return { models: models.map((model) => ({ id: model.id, label: model.displayName ?? model.id })) };
     } catch (error) {
-      throw new HttpError(400, error instanceof Error ? error.message : String(error));
+      throw new HttpError(400, redactSecrets(error instanceof Error ? error.message : String(error), [apiKey]));
     }
   }
 
@@ -317,6 +459,7 @@ export class GuiServer {
     if (this.run?.state === 'running') throw new HttpError(409, 'a run is already in progress');
     const models = Array.isArray(body.models) ? body.models.map(String).filter(Boolean) : [];
     if (models.length < 2) throw new HttpError(400, 'a run needs at least two model specs');
+    if (models.length > 8) throw new HttpError(400, 'a run supports at most eight model specs');
     const reasoning = body.reasoning ? (String(body.reasoning) as ReasoningLevel) : undefined;
     if (reasoning && !REASONING_LEVELS.includes(reasoning))
       throw new HttpError(400, `reasoning must be one of: ${REASONING_LEVELS.join(', ')}`);
@@ -327,6 +470,9 @@ export class GuiServer {
       if (model === 'random') continue;
       try {
         const spec = parseSpec(model);
+        if (this.publicOrigin && spec.provider === 'compat') {
+          throw new Error('OpenAI-compatible custom endpoints are disabled in hosted mode');
+        }
         validateReasoning(spec, reasoning);
         const apiKey = typeof suppliedKeys[model] === 'string' ? suppliedKeys[model].trim() : '';
         const option = providerOption(spec.provider);
@@ -357,7 +503,7 @@ export class GuiServer {
     };
     const run = new ActiveRun(config, apiKeys);
     this.run = run;
-    void this.launch(run);
+    this.runTask = this.launch(run);
     this.queueRun();
     return { ok: true, runId: run.runId };
   }
@@ -380,7 +526,7 @@ export class GuiServer {
       if (run.controller.signal.aborted) run.state = 'done';
       else {
         run.state = 'failed';
-        run.error = error instanceof Error ? error.message : String(error);
+        run.error = redactSecrets(error instanceof Error ? error.message : String(error), Object.values(run.apiKeys));
       }
     } finally {
       run.clearApiKeys();
@@ -469,14 +615,28 @@ export class GuiServer {
   }
 
   private openEvents(response: http.ServerResponse): void {
+    if (this.clients.size >= MAX_SSE_CLIENTS) throw new HttpError(503, 'too many event stream clients');
     response.writeHead(200, {
+      'cache-control': 'no-cache, no-transform',
       'content-type': 'text/event-stream',
-      'cache-control': 'no-cache',
       connection: 'keep-alive',
+      'x-accel-buffering': 'no',
     });
     response.write(`data: ${JSON.stringify({ type: 'run', run: this.runBody() })}\n\n`);
     this.clients.add(response);
-    response.on('close', () => this.clients.delete(response));
+    if (!this.heartbeatTimer) {
+      this.heartbeatTimer = setInterval(() => {
+        for (const client of this.clients) client.write(': heartbeat\n\n');
+      }, SSE_HEARTBEAT_MS);
+      this.heartbeatTimer.unref();
+    }
+    response.on('close', () => {
+      this.clients.delete(response);
+      if (this.clients.size === 0) {
+        clearInterval(this.heartbeatTimer);
+        this.heartbeatTimer = undefined;
+      }
+    });
   }
 
   private makePool(body: Record<string, unknown>): JsonObject {
@@ -484,14 +644,19 @@ export class GuiServer {
     if (!championsFormats().some((option) => option.id === format)) {
       throw new HttpError(400, `unsupported Champions BO3 format ${JSON.stringify(format)}`);
     }
-    const drafts: TeamDraft[] = (Array.isArray(body.teams) ? body.teams : []).map((entry) => {
+    const entries = Array.isArray(body.teams) ? body.teams : [];
+    if (entries.length > 32) throw new HttpError(400, 'a pool supports at most 32 teams');
+    const drafts: TeamDraft[] = entries.map((entry) => {
       const record = (typeof entry === 'object' && entry !== null ? entry : {}) as Record<string, unknown>;
-      return { id: String(record.id ?? ''), paste: String(record.paste ?? '') };
+      const paste = String(record.paste ?? '');
+      if (paste.length > 64_000) throw new HttpError(400, 'a team paste must be at most 64 KB');
+      return { id: String(record.id ?? ''), paste };
     });
     try {
       const dir = createPool(String(body.name ?? ''), format, drafts, this.options.teamsDir);
-      return { ok: true, dir, pools: listPools(this.options.teamsDir ?? TEAMS_DIR) };
+      return { ok: true, name: path.basename(dir), pools: listPools(this.options.teamsDir ?? TEAMS_DIR) };
     } catch (error) {
+      if (error instanceof HttpError) throw error;
       throw new HttpError(400, error instanceof Error ? error.message : String(error));
     }
   }
@@ -499,7 +664,9 @@ export class GuiServer {
   private validateDraft(body: Record<string, unknown>): JsonObject {
     const format = String(body.format ?? '');
     if (!format) throw new HttpError(400, 'format is required');
-    return inspectTeam(String(body.paste ?? ''), format) as unknown as JsonObject;
+    const paste = String(body.paste ?? '');
+    if (paste.length > 64_000) throw new HttpError(400, 'a team paste must be at most 64 KB');
+    return inspectTeam(paste, format) as unknown as JsonObject;
   }
 }
 

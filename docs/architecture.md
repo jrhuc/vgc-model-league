@@ -91,22 +91,36 @@ checkouts are not claimed to match the pin, but their actual commit is still cap
 faults still share the application process today; production job isolation should place the complete run, not a
 networked Showdown server alone, in its worker boundary.
 
-## Trust model — today (localhost)
+## Trust model — local operator and deployment gate
 
-The server binds `127.0.0.1` only, but a localhost server is still reachable from any website the user's browser
-visits, so it defends itself:
+Local mode remains the default: the server binds `127.0.0.1`, accepts only loopback `Host` values, and permits the
+operator UI to mutate state. A configured hosted mode is also available for deployment preparation. It binds the
+configured interface, accepts exactly `VGC_LEAGUE_PUBLIC_ORIGIN` as both the canonical `Host` and mutation `Origin`,
+and is read-only unless `VGC_LEAGUE_ENABLE_MUTATIONS=true` is explicitly set. That override is not authentication:
+it is suitable only behind a separately enforced private access layer. Public multi-user mutations remain blocked on
+the identity and isolation work below.
 
-- **Host allowlist** (`127.0.0.1`, `localhost`, `[::1]`) on every request — blocks DNS-rebinding, where an attacker's
-  domain resolves to 127.0.0.1 and the browser happily sends requests with an attacker Host header.
-- **Origin check on POSTs** — a present, non-local `Origin` header is rejected (CSRF from web pages).
-- **`application/json` content type required on POSTs** — blocks HTML-form CSRF, which can't set that header.
-- **Path traversal guard** on static assets; only known extensions under `dist/gui` are served.
+Both modes defend themselves:
+
+- **Host allowlist** on every application request — loopback names locally or the one configured public origin when
+  hosted. This blocks DNS rebinding and direct access through an unintended Railway hostname.
+- **Exact Origin check on mutations** — hosted mutations require the configured origin; a present local origin must
+  match the request host exactly.
+- **`application/json` required on mutations** — blocks HTML-form CSRF, which cannot set that header.
+- **Path traversal guards** on static assets and pool manifests; only known asset extensions and regular team files
+  inside their pool directory are read.
 - **Keys**: provider API keys are held in browser memory and sent only for catalog lookup and the run; the server
   keeps them in memory for the run's duration, then wipes them. They are never written to records, logs, or state
   responses. Server-side env keys are never exposed to the client, and GUI runs never fall back to them: a
   key-carrying run that is missing a key for any hosted model is rejected up front rather than silently billed to
-  the server's credentials. Env keys exist for CLI runs only.
-- Body size limit (2 MB) on JSON parsing.
+  the server's credentials. Provider errors and structured server errors redact submitted keys.
+- Request bodies are capped at 2 MB, team pastes and pool/model counts have tighter resource bounds, model-catalog
+  calls time out and cap responses at 1 MB, and SSE clients are bounded.
+- Every response gets a script-restricting CSP, `X-Content-Type-Options`, `Referrer-Policy`, and `Permissions-Policy`;
+  HTTPS hosted origins also get HSTS. Hosted mode removes arbitrary OpenAI-compatible endpoints to close the SSRF
+  path until a network-restricted worker exists.
+- `/healthz` is a process liveness check. `/readyz` verifies assets, writable persistent paths, and the pinned
+  Showdown runtime. SSE sends proxy heartbeats every 25 seconds.
 
 ## Trust model — deployed multi-user site (future, not built)
 
@@ -186,6 +200,13 @@ edge/container runtime merely to reduce hosting cost.
    configured public origin. Back up SQLite with continuous replication to object storage (Litestream-style) rather
    than scheduled dumps — near-free, and the restore drill becomes point-in-time recovery. SSE through the proxy
    works but idles out (Cloudflare ≈100s): send heartbeat comments on `/api/events` roughly every 25 seconds.
+
+The code-owned part of step 1 is implemented: `Dockerfile` runs as a non-root user, `railway.toml` points Railway at
+`/readyz`, `PORT`/host/public-origin configuration is supported, SIGTERM triggers bounded graceful shutdown, and
+`VGC_LEAGUE_DATA_DIR=/data` seeds the bundled pools then keeps pools, runs, and records on the mounted volume.
+Hosted mode emits structured request/lifecycle logs without bodies or credentials. A volume is not a backup:
+deployment is not operationally complete until `/data` has encrypted off-volume backup and a tested restore. The
+Litestream requirement begins with the SQLite store in step 2; before then, back up the current files as artifacts.
 2. **Identity and durable state.** Add GitHub OAuth, hashed sessions, the narrow role model, SQLite migrations, immutable
    versioned pools, experiment ownership, and an audit trail for every mutation. Public reads stay unauthenticated.
 3. **Admission control and execution isolation.** Move runs into a bounded worker process, admitted only when a

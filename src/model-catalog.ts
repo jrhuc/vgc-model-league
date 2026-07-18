@@ -143,10 +143,11 @@ export async function discoverModels(
   }
 
   const request = options.fetch ?? fetch;
+  const signal = options.signal ?? AbortSignal.timeout(20_000);
   let models: DiscoveredModel[];
-  if (provider.id === 'anthropic') models = await discoverAnthropic(request, apiKey ?? '', options.signal);
-  else if (provider.id === 'google') models = await discoverGoogle(request, apiKey ?? '', options.signal);
-  else models = await discoverOpenAICompatible(request, provider, apiKey, options.signal);
+  if (provider.id === 'anthropic') models = await discoverAnthropic(request, apiKey ?? '', signal);
+  else if (provider.id === 'google') models = await discoverGoogle(request, apiKey ?? '', signal);
+  else models = await discoverOpenAICompatible(request, provider, apiKey, signal);
   return normalizeModels(models);
 }
 
@@ -260,7 +261,7 @@ function requestInit(headers: Record<string, string>, signal: AbortSignal | unde
 }
 
 async function responseBody(response: Response, provider: string, apiKey: string | undefined): Promise<UnknownRecord> {
-  const raw = await response.text();
+  const raw = await limitedResponseText(response, provider);
   if (!response.ok) {
     const detail = errorDetail(raw, apiKey);
     const status = response.statusText ? `${response.status} ${response.statusText}` : String(response.status);
@@ -271,6 +272,26 @@ async function responseBody(response: Response, provider: string, apiKey: string
     if (isRecord(parsed)) return parsed;
   } catch {}
   throw new Error(`${provider} returned an invalid model catalog response`);
+}
+
+async function limitedResponseText(response: Response, provider: string): Promise<string> {
+  const declaredLength = Number(response.headers.get('content-length') ?? 0);
+  if (declaredLength > 1_000_000) throw new Error(`${provider} model catalog response was too large`);
+  if (!response.body) return '';
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let size = 0;
+  let text = '';
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) return text + decoder.decode();
+    size += value.byteLength;
+    if (size > 1_000_000) {
+      await reader.cancel();
+      throw new Error(`${provider} model catalog response was too large`);
+    }
+    text += decoder.decode(value, { stream: true });
+  }
 }
 
 function errorDetail(raw: string, apiKey: string | undefined): string {

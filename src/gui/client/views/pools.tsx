@@ -88,7 +88,7 @@ export function PoolsView({ app, onPools }: PoolsProps) {
       teams: drafts.map((draft) => ({ id: draft.id, paste: draft.paste })),
     })
       .then((data) => {
-        setMessage({ text: `Pool created at ${data.dir}`, cls: 'success' });
+        setMessage({ text: `Pool ${data.name} created`, cls: 'success' });
         onPools(data.pools);
       })
       .catch((error: Error) => setMessage({ text: error.message, cls: 'error' }))

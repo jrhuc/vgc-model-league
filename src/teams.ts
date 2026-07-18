@@ -6,6 +6,8 @@ import { defaultPsDir, TEAMS_DIR } from './paths.js';
 import { loadShowdown } from './showdown.js';
 import { asRecords, text } from './value.js';
 
+const POOL_SLUG = /^[a-z0-9][a-z0-9-]{0,63}$/;
+
 export interface Team {
   id: string;
   packed: string;
@@ -13,7 +15,12 @@ export interface Team {
 
 export function listPools(teamsDir = TEAMS_DIR): PoolInfo[] {
   const pools: PoolInfo[] = [];
-  for (const name of fs.existsSync(teamsDir) ? fs.readdirSync(teamsDir).sort() : []) {
+  for (const name of fs.existsSync(teamsDir)
+    ? fs
+        .readdirSync(teamsDir)
+        .filter((entry) => POOL_SLUG.test(entry))
+        .sort()
+    : []) {
     try {
       const manifest = JSON.parse(fs.readFileSync(path.join(teamsDir, name, 'pool.json'), 'utf8')) as {
         id?: string;
@@ -38,7 +45,8 @@ export interface TeamPool {
 }
 
 export function loadPool(name = 'test', teamsDir = TEAMS_DIR): TeamPool {
-  const poolDir = path.join(teamsDir, name);
+  if (!POOL_SLUG.test(name)) throw new Error('pool name must be lowercase letters, digits, and dashes');
+  const poolDir = path.resolve(teamsDir, name);
   const manifestPath = path.join(poolDir, 'pool.json');
   const data: unknown = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
   if (typeof data !== 'object' || data === null || Array.isArray(data)) {
@@ -56,11 +64,19 @@ export function loadPool(name = 'test', teamsDir = TEAMS_DIR): TeamPool {
   const teams = entries.map((entry) => {
     const teamId = text(entry.id);
     const filename = text(entry.file);
-    if (!teamId) throw new Error(`every team in ${manifestPath} needs an id`);
+    if (!POOL_SLUG.test(teamId)) throw new Error(`invalid team id ${JSON.stringify(teamId)} in ${manifestPath}`);
     if (!filename) throw new Error(`every team in ${manifestPath} needs a file`);
     if (seen.has(teamId)) throw new Error(`duplicate team id ${JSON.stringify(teamId)} in ${manifestPath}`);
     seen.add(teamId);
-    const packed = fs.readFileSync(path.join(poolDir, filename), 'utf8').trim();
+    const teamPath = path.resolve(poolDir, filename);
+    if (path.dirname(teamPath) !== poolDir || path.basename(teamPath) !== filename) {
+      throw new Error(`team file ${JSON.stringify(filename)} escapes its pool directory`);
+    }
+    const stats = fs.lstatSync(teamPath);
+    if (!stats.isFile() || stats.isSymbolicLink()) {
+      throw new Error(`team file ${JSON.stringify(filename)} must be a regular file`);
+    }
+    const packed = fs.readFileSync(teamPath, 'utf8').trim();
     if (!packed) throw new Error(`team ${JSON.stringify(teamId)} is empty`);
     return { id: teamId, packed };
   });
@@ -136,8 +152,6 @@ export function inspectTeam(paste: string, format: string, psDir = defaultPsDir(
   }
 }
 
-const POOL_SLUG = /^[a-z0-9][a-z0-9-]{0,63}$/;
-
 export function createPool(
   name: string,
   format: string,
@@ -148,7 +162,8 @@ export function createPool(
   if (!POOL_SLUG.test(name)) throw new Error('pool name must be lowercase letters, digits, and dashes');
   if (!format.endsWith('bo3')) throw new Error('format must be a Pokémon Showdown BO3 format id (ending in "bo3")');
   if (drafts.length < 2) throw new Error('a pool needs at least two teams');
-  const poolDir = path.join(teamsDir, name);
+  if (drafts.length > 32) throw new Error('a pool supports at most 32 teams');
+  const poolDir = path.resolve(teamsDir, name);
   if (fs.existsSync(poolDir))
     throw new Error(`pool ${JSON.stringify(name)} already exists; pools are immutable snapshots — pick a new name`);
   const seenIds = new Set<string>();

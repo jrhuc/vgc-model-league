@@ -1,0 +1,17 @@
+.git
+.github
+.env
+.env.*
+node_modules
+pokemon-showdown
+dist
+runs
+records
+coverage
+*.tsbuildinfo
+.DS_Store
+.vscode
+.idea
+tests
+README.md
+docs

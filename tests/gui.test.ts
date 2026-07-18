@@ -53,12 +53,48 @@ function rawRequest(
   });
 }
 
+function rawJsonRequest(
+  port: number,
+  options: { method?: string; path: string; headers?: Record<string, string>; body?: string },
+): Promise<{ status: number; headers: http.IncomingHttpHeaders; data: Record<string, unknown> }> {
+  const { promise, resolve, reject } = Promise.withResolvers<{
+    status: number;
+    headers: http.IncomingHttpHeaders;
+    data: Record<string, unknown>;
+  }>();
+  const request = http.request(
+    {
+      host: '127.0.0.1',
+      port,
+      method: options.method ?? 'GET',
+      path: options.path,
+      headers: options.headers ?? {},
+    },
+    (response) => {
+      const chunks: Buffer[] = [];
+      response.on('data', (chunk: Buffer) => chunks.push(chunk));
+      response.on('end', () => {
+        resolve({
+          status: response.statusCode ?? 0,
+          headers: response.headers,
+          data: JSON.parse(Buffer.concat(chunks).toString('utf8')) as Record<string, unknown>,
+        });
+      });
+    },
+  );
+  request.on('error', reject);
+  request.end(options.body);
+  return promise;
+}
+
 test('gui serves the built app shell and setup state', async () => {
   const gui = new GuiServer();
   const base = await gui.listen(0);
   try {
-    const page = await (await fetch(base)).text();
-    assert.match(page, /VGC Model League — Match control/);
+    const pageResponse = await fetch(base);
+    const page = await pageResponse.text();
+    assert.match(pageResponse.headers.get('content-security-policy') ?? '', /default-src 'self'/);
+    assert.equal(pageResponse.headers.get('x-content-type-options'), 'nosniff');
     const asset = /src="(\.\/assets\/[^"]+\.js)"/.exec(page)?.[1];
     assert.ok(asset, 'shell should reference the built client bundle with a portable relative path');
     const bundle = await fetch(new URL(asset, base));
@@ -78,6 +114,8 @@ test('gui serves the built app shell and setup state', async () => {
     assert.ok(formats.some((format) => format.id === FORMAT));
     assert.ok(formats.every((format) => format.id.startsWith('gen9champions') && format.id.endsWith('bo3')));
     assert.equal(data.run, null);
+    assert.equal((await fetch(`${base}healthz`)).status, 200);
+    assert.equal((await fetch(`${base}readyz`)).status, 200);
     const missing = await fetch(`${base}api/nothing`);
     assert.equal(missing.status, 404);
     const serverKeyCatalog = await fetch(`${base}api/models?provider=anthropic`);
@@ -123,6 +161,39 @@ test('gui rejects spoofed hosts, cross-origin posts, and non-json posts', async 
       200,
     );
     assert.equal(await rawRequest(port, { path: '/assets/../package.json' }), 404);
+  } finally {
+    gui.close();
+  }
+});
+
+test('hosted mode enforces its canonical origin and defaults to read-only', async () => {
+  const gui = new GuiServer({ host: '127.0.0.1', publicOrigin: 'https://league.example' });
+  await gui.listen(0);
+  const address = gui.server.address();
+  assert.ok(address && typeof address === 'object');
+  const port = address.port;
+  try {
+    const state = await rawJsonRequest(port, { path: '/api/state', headers: { host: 'league.example' } });
+    assert.equal(state.status, 200);
+    assert.match(String(state.headers['content-security-policy']), /frame-ancestors 'none'/);
+    assert.match(String(state.headers['strict-transport-security']), /max-age=31536000/);
+    const providers = state.data.providers as Array<{ id: string }>;
+    assert.ok(!providers.some((provider) => provider.id === 'compat'));
+    assert.equal(await rawRequest(port, { path: '/api/state', headers: { host: 'evil.example' } }), 403);
+    assert.equal(
+      await rawRequest(port, {
+        method: 'POST',
+        path: '/api/run/stop',
+        headers: {
+          host: 'league.example',
+          origin: 'https://league.example',
+          'content-type': 'application/json',
+        },
+        body: '{}',
+      }),
+      503,
+    );
+    assert.equal(await rawRequest(port, { path: '/healthz', headers: { host: 'railway.internal' } }), 200);
   } finally {
     gui.close();
   }

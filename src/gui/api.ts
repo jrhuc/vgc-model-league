@@ -132,7 +132,7 @@ export interface ValidateResponse {
 
 export interface CreatePoolResponse {
   ok: boolean;
-  dir: string;
+  name: string;
   pools: PoolInfo[];
 }
 

@@ -194,3 +194,20 @@ are recorded post-hoc and never alter model prompts.
 
 Both directories are local and gitignored. See `docs/architecture.md` for the
 client/server contract, trust model, and deployment plan.
+
+## Railway deployment preparation
+
+The repository includes a multi-stage `Dockerfile` and `railway.toml`. Mount one
+persistent Railway volume at `/data`, configure
+`VGC_LEAGUE_PUBLIC_ORIGIN=https://<canonical-host>`, and keep Cloudflare or
+another private access layer in front of the service. The image already sets
+`VGC_LEAGUE_HOST=0.0.0.0` and `VGC_LEAGUE_DATA_DIR=/data`; Railway supplies
+`PORT`.
+
+Hosted mode is deliberately read-only by default. Do not set
+`VGC_LEAGUE_ENABLE_MUTATIONS=true` on a public service: it is an explicit
+private-deployment override, not authentication. Arbitrary OpenAI-compatible
+endpoints are unavailable in hosted mode. `/healthz` reports liveness and
+`/readyz` checks the built assets, writable data volume, and pinned simulator.
+Back up `/data` off-volume and test restoration before treating a deployment
+as durable.

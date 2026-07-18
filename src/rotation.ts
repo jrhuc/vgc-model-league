@@ -4,7 +4,7 @@ import path from 'node:path';
 
 import type { GameEnd, GameStart } from './engines.js';
 import { LLMEngine, RandomEngine, scaffoldRevision } from './engines.js';
-import { defaultPsDir, REPO_ROOT, RUNS_DIR } from './paths.js';
+import { defaultPsDir, REPO_ROOT, RESULTS_PATH, RUNS_DIR } from './paths.js';
 import type { ReasoningLevel } from './providers.js';
 import { makeProvider, parseSpec, validateReasoning } from './providers.js';
 import type { Rng } from './random.js';
@@ -113,7 +113,7 @@ export async function runRotation(
   }
 
   fs.mkdirSync(runDir, { recursive: true });
-  const recordsPath = options.recordsPath ?? path.join(REPO_ROOT, 'records', 'results.jsonl');
+  const recordsPath = options.recordsPath ?? RESULTS_PATH;
   const psDir = options.psDir ?? defaultPsDir();
   const pool = loadPool(options.pool ?? 'test');
   validatePool(pool, psDir);
