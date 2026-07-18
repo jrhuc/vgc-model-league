@@ -21,6 +21,18 @@ export interface PoolInfo {
   teamCount: number;
 }
 
+export interface SessionUserView {
+  login: string;
+  avatarUrl: string;
+  role: 'reader' | 'contributor' | 'operator';
+}
+
+export interface AuthView {
+  mode: 'local' | 'github' | 'read-only';
+  user: SessionUserView | null;
+  csrfToken: string | null;
+}
+
 export interface FormatInfo {
   id: string;
   label: string;
@@ -47,6 +59,7 @@ export interface RunSnapshot {
   pool: string;
   models: string[];
   startTime: number;
+  owner: string | null;
   endTime: number | null;
   rows: SeriesRowView[];
 }
@@ -57,6 +70,7 @@ export interface AppState {
   defaultFormat: string;
   formats: FormatInfo[];
   providers: ProviderInfo[];
+  auth: AuthView;
   run: RunSnapshot | null;
 }
 

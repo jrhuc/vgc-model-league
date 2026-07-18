@@ -24,7 +24,7 @@
     "capture-requests": "node dist/tools/capture-requests.js"
   },
   "engines": {
-    "node": ">=22"
+    "node": ">=22.13"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.3",

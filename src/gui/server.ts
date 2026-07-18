@@ -5,6 +5,8 @@ import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import type { AuthService, AuthSession, AuthUser } from '../auth.js';
+import { AuthError } from '../auth.js';
 import { discoverModels, PROVIDER_OPTIONS, providerOption } from '../model-catalog.js';
 import { DATA_DIR, prepareDataDirectories, RESULTS_PATH, TEAMS_DIR } from '../paths.js';
 import type { ReasoningLevel } from '../providers.js';
@@ -46,6 +48,8 @@ const ASSET_TYPES: Record<string, string> = {
 
 const LOCAL_HOSTNAMES: Record<string, true> = { '127.0.0.1': true, localhost: true, '[::1]': true, '::1': true };
 const MUTATING_METHODS: Record<string, true> = { POST: true, PUT: true, PATCH: true, DELETE: true };
+const SESSION_COOKIE = 'vgc_session';
+const OAUTH_STATE_COOKIE = 'vgc_oauth_state';
 const MAX_SSE_CLIENTS = 64;
 const SSE_HEARTBEAT_MS = 25_000;
 
@@ -56,6 +60,7 @@ interface GuiServerOptions {
   host?: string;
   publicOrigin?: string;
   mutationsEnabled?: boolean;
+  auth?: AuthService;
   logger?: (entry: Record<string, unknown>) => void;
 }
 
@@ -88,6 +93,19 @@ function redactSecrets(message: string, secrets: readonly string[]): string {
   return redacted.slice(0, 2000);
 }
 
+function requestCookies(header: string | undefined): Record<string, string> {
+  const result: Record<string, string> = {};
+  for (const part of (header ?? '').split(';')) {
+    const separator = part.indexOf('=');
+    if (separator > 0) result[part.slice(0, separator).trim()] = part.slice(separator + 1).trim();
+  }
+  return result;
+}
+
+function responseCookie(name: string, value: string, maxAge: number, cookiePath: string, secure: boolean): string {
+  return `${name}=${value}; Path=${cookiePath}; Max-Age=${maxAge}; HttpOnly; SameSite=Lax${secure ? '; Secure' : ''}`;
+}
+
 interface RunConfig {
   mode: ExperimentMode;
   protocolVersion: number;
@@ -115,6 +133,7 @@ class ActiveRun {
   constructor(
     readonly config: RunConfig,
     readonly apiKeys: Record<string, string>,
+    readonly owner: AuthUser | undefined,
   ) {}
 
   clearApiKeys(): void {
@@ -177,7 +196,7 @@ export class GuiServer {
   private run: ActiveRun | undefined;
   private runTask: Promise<void> | undefined;
   private shutdownTask: Promise<void> | undefined;
-  private readonly clients = new Set<http.ServerResponse>();
+  private readonly clients = new Map<http.ServerResponse, AuthUser | undefined>();
   private readonly pending = new Map<string, () => ServerEvent | undefined>();
   private readonly options: GuiServerOptions;
   private readonly publicOrigin: URL | undefined;
@@ -221,7 +240,7 @@ export class GuiServer {
         });
       });
       void this.route(request, response).catch((error: unknown) => {
-        const expected = error instanceof HttpError;
+        const expected = error instanceof HttpError || error instanceof AuthError;
         const status = expected ? error.status : 500;
         const detail = redactSecrets(
           error instanceof Error ? error.message : String(error),
@@ -268,7 +287,7 @@ export class GuiServer {
       this.run?.controller.abort();
       clearTimeout(this.flushTimer);
       clearInterval(this.heartbeatTimer);
-      for (const client of this.clients) client.end();
+      for (const client of this.clients.keys()) client.end();
       this.clients.clear();
       const closed = Promise.withResolvers<void>();
       this.server.close((error) => (error ? closed.reject(error) : closed.resolve()));
@@ -303,6 +322,51 @@ export class GuiServer {
       : Boolean(LOCAL_HOSTNAMES[hostnameFromHost(host)]);
     if (!hostAllowed) throw new HttpError(403, 'request host is not allowed');
 
+    const cookies = requestCookies(request.headers.cookie);
+    const sessionToken = cookies[SESSION_COOKIE];
+    const session = this.options.auth?.session(sessionToken);
+    if (key === 'GET /auth/github') {
+      if (!this.options.auth) throw new HttpError(404, 'GitHub login is not configured');
+      const login = this.options.auth.beginLogin();
+      this.redirect(response, login.location, [
+        responseCookie(
+          OAUTH_STATE_COOKIE,
+          login.state,
+          600,
+          '/auth/github/callback',
+          this.publicOrigin?.protocol === 'https:',
+        ),
+      ]);
+      return;
+    }
+    if (key === 'GET /auth/github/callback') {
+      if (!this.options.auth) throw new HttpError(404, 'GitHub login is not configured');
+      if (url.searchParams.has('error')) {
+        this.redirect(response, '/?auth=denied', [
+          responseCookie(OAUTH_STATE_COOKIE, '', 0, '/auth/github/callback', this.publicOrigin?.protocol === 'https:'),
+        ]);
+        return;
+      }
+      const result = await this.options.auth.completeLogin(
+        url.searchParams.get('code') ?? '',
+        url.searchParams.get('state') ?? '',
+        cookies[OAUTH_STATE_COOKIE],
+        sessionToken,
+      );
+      this.redirect(response, '/', [
+        responseCookie(
+          SESSION_COOKIE,
+          result.sessionToken,
+          7 * 24 * 60 * 60,
+          '/',
+          this.publicOrigin?.protocol === 'https:',
+        ),
+        responseCookie(OAUTH_STATE_COOKIE, '', 0, '/auth/github/callback', this.publicOrigin?.protocol === 'https:'),
+      ]);
+      return;
+    }
+
+    let actor: AuthUser | undefined;
     if (MUTATING_METHODS[method]) {
       const origin = request.headers.origin;
       const expectedOrigin = this.publicOrigin?.origin ?? `http://${host}`;
@@ -313,28 +377,77 @@ export class GuiServer {
       if (!contentType.toLowerCase().startsWith('application/json')) {
         throw new HttpError(415, 'content-type must be application/json');
       }
-      if (this.options.mutationsEnabled === false || (this.publicOrigin && this.options.mutationsEnabled !== true)) {
+      if (this.options.auth) {
+        const minimumRole = key === 'POST /api/logout' ? 'reader' : 'contributor';
+        actor = this.options.auth.authorize(
+          sessionToken,
+          typeof request.headers['x-csrf-token'] === 'string' ? request.headers['x-csrf-token'] : undefined,
+          minimumRole,
+        ).user;
+      } else if (
+        this.options.mutationsEnabled === false ||
+        (this.publicOrigin && this.options.mutationsEnabled !== true)
+      ) {
         throw new HttpError(503, 'mutations are disabled until deployment authentication is configured');
       }
     }
 
     if (method === 'GET' && !url.pathname.startsWith('/api/') && this.serveStatic(url.pathname, response)) return;
-    if (key === 'GET /api/state') this.json(response, 200, this.stateBody());
+    if (key === 'GET /api/state') this.json(response, 200, this.stateBody(session));
     else if (key === 'GET /api/records') this.json(response, 200, this.recordsBody(url.searchParams.get('pool')));
-    else if (key === 'GET /api/events') this.openEvents(response);
-    else if (key === 'GET /api/battle')
+    else if (key === 'GET /api/events') {
+      this.authorizeRunViewer(session);
+      this.openEvents(response, session?.user);
+    } else if (key === 'GET /api/battle') {
+      this.authorizeRunViewer(session);
       this.json(response, 200, this.battleBody(Number(url.searchParams.get('index'))));
-    else if (key === 'POST /api/models') {
+    } else if (key === 'POST /api/logout') {
+      this.options.auth?.logout(
+        sessionToken,
+        typeof request.headers['x-csrf-token'] === 'string' ? request.headers['x-csrf-token'] : undefined,
+      );
+      response.setHeader(
+        'set-cookie',
+        responseCookie(SESSION_COOKIE, '', 0, '/', this.publicOrigin?.protocol === 'https:'),
+      );
+      this.json(response, 200, { ok: true });
+    } else if (key === 'POST /api/models') {
       const body = await this.readJson(request);
-      this.json(response, 200, await this.modelsBody(String(body.provider ?? ''), String(body.apiKey ?? '')));
-    } else if (key === 'POST /api/run') this.json(response, 200, this.startRun(await this.readJson(request)));
-    else if (key === 'POST /api/run/stop') {
+      const provider = String(body.provider ?? '');
+      const result = await this.modelsBody(provider, String(body.apiKey ?? ''));
+      if (actor && this.options.auth) this.options.auth.recordModelDiscovery(actor, provider);
+      this.json(response, 200, result);
+    } else if (key === 'POST /api/run') {
+      this.json(response, 200, this.startRun(await this.readJson(request), actor));
+    } else if (key === 'POST /api/run/stop') {
+      if (actor && this.run && this.options.auth) this.options.auth.stopExperiment(actor, this.run.runId);
       this.run?.controller.abort();
       this.json(response, 200, { ok: true });
-    } else if (key === 'POST /api/pool') this.json(response, 200, this.makePool(await this.readJson(request)));
-    else if (key === 'POST /api/team/validate')
-      this.json(response, 200, this.validateDraft(await this.readJson(request)));
-    else this.json(response, 404, { error: `no route for ${key}` });
+    } else if (key === 'POST /api/pool') {
+      this.json(response, 200, this.makePool(await this.readJson(request), actor));
+    } else if (key === 'POST /api/team/validate') {
+      const body = await this.readJson(request);
+      const result = this.validateDraft(body);
+      if (actor && this.options.auth) this.options.auth.recordValidation(actor, String(body.format ?? ''));
+      this.json(response, 200, result);
+    } else this.json(response, 404, { error: `no route for ${key}` });
+  }
+
+  private redirect(response: http.ServerResponse, location: string, cookies: string[]): void {
+    response.writeHead(302, {
+      'cache-control': 'no-store',
+      location,
+      ...(cookies.length ? { 'set-cookie': cookies } : {}),
+    });
+    response.end();
+  }
+
+  private authorizeRunViewer(session: AuthSession | undefined): void {
+    if (!this.options.auth) return;
+    if (!session) throw new HttpError(401, 'authentication required');
+    if (this.run && !this.options.auth.canControlExperiment(session.user, this.run.runId)) {
+      throw new HttpError(403, 'live run details are private to the owner and operators');
+    }
   }
 
   private json(response: http.ServerResponse, status: number, body: unknown): void {
@@ -352,6 +465,7 @@ export class GuiServer {
       fs.accessSync(path.dirname(this.options.recordsPath ?? RESULTS_PATH), fs.constants.R_OK | fs.constants.W_OK);
       fs.accessSync(DATA_DIR, fs.constants.R_OK | fs.constants.W_OK);
       loadShowdown();
+      this.options.auth?.ready();
       this.json(response, 200, { status: 'ready' });
     } catch {
       this.json(response, 503, { status: 'not_ready' });
@@ -388,7 +502,7 @@ export class GuiServer {
     return data as Record<string, unknown>;
   }
 
-  private stateBody(): AppState {
+  private stateBody(session: AuthSession | undefined): AppState {
     const pools = listPools(this.options.teamsDir ?? TEAMS_DIR);
     return {
       pools,
@@ -403,6 +517,19 @@ export class GuiServer {
         requiresKey: option.requiresKey,
         models: (option.models ?? []).map((model) => ({ id: model.id, label: model.displayName ?? model.id })),
       })),
+      auth: this.options.auth
+        ? {
+            mode: 'github',
+            user: session
+              ? {
+                  login: session.user.login,
+                  avatarUrl: session.user.avatarUrl,
+                  role: session.user.role,
+                }
+              : null,
+            csrfToken: session?.csrfToken ?? null,
+          }
+        : { mode: this.publicOrigin ? 'read-only' : 'local', user: null, csrfToken: null },
       run: this.runBody(),
     };
   }
@@ -429,6 +556,7 @@ export class GuiServer {
       pool: run.config.pool,
       models: run.config.models,
       startTime: run.startTime,
+      owner: run.owner?.login ?? null,
       endTime: run.endTime ?? null,
       rows: run.rows.map((row, index) => ({ ...row, turn: run.battles.get(index)?.state.turn ?? 0 })),
     };
@@ -455,7 +583,7 @@ export class GuiServer {
     }
   }
 
-  private startRun(body: Record<string, unknown>): JsonObject {
+  private startRun(body: Record<string, unknown>, owner: AuthUser | undefined): JsonObject {
     if (this.run?.state === 'running') throw new HttpError(409, 'a run is already in progress');
     const models = Array.isArray(body.models) ? body.models.map(String).filter(Boolean) : [];
     if (models.length < 2) throw new HttpError(400, 'a run needs at least two model specs');
@@ -501,7 +629,16 @@ export class GuiServer {
       ...(seed === undefined ? {} : { seed }),
       ...(reasoning === undefined ? {} : { reasoning }),
     };
-    const run = new ActiveRun(config, apiKeys);
+    const run = new ActiveRun(config, apiKeys, owner);
+    if (owner && this.options.auth) {
+      try {
+        this.options.auth.startExperiment(owner, run.runId, pool, config);
+      } catch (error) {
+        run.clearApiKeys();
+        fs.rmSync(run.runDir, { recursive: true, force: true });
+        throw error;
+      }
+    }
     this.run = run;
     this.runTask = this.launch(run);
     this.queueRun();
@@ -518,6 +655,15 @@ export class GuiServer {
         signal: run.controller.signal,
         ...(run.config.seed === undefined ? {} : { seed: run.config.seed }),
         ...(run.config.reasoning === undefined ? {} : { reasoning: run.config.reasoning }),
+        ...(run.owner
+          ? {
+              contributor: {
+                provider: 'github',
+                subject: run.owner.providerSubject,
+                login: run.owner.login,
+              },
+            }
+          : {}),
         onEvent: (event) => this.onEvent(run, event),
         onNotice: (message) => run.notices.push(message),
       });
@@ -529,6 +675,21 @@ export class GuiServer {
         run.error = redactSecrets(error instanceof Error ? error.message : String(error), Object.values(run.apiKeys));
       }
     } finally {
+      if (this.options.auth && run.owner) {
+        try {
+          this.options.auth.finishExperiment(run.runId, run.state === 'failed' ? 'failed' : 'done');
+        } catch (error) {
+          run.state = 'failed';
+          run.error = redactSecrets(error instanceof Error ? error.message : String(error), Object.values(run.apiKeys));
+          this.options.logger?.({
+            timestamp: new Date().toISOString(),
+            level: 'error',
+            event: 'experiment_persistence_error',
+            runId: run.runId,
+            error: run.error,
+          });
+        }
+      }
       run.clearApiKeys();
       run.endTime = Date.now();
       this.queueRun();
@@ -611,10 +772,14 @@ export class GuiServer {
 
   private broadcast(message: ServerEvent): void {
     const data = `data: ${JSON.stringify(message)}\n\n`;
-    for (const client of this.clients) client.write(data);
+    for (const [client, user] of this.clients) {
+      if (!this.options.auth || !this.run || (user && this.options.auth.canControlExperiment(user, this.run.runId))) {
+        client.write(data);
+      }
+    }
   }
 
-  private openEvents(response: http.ServerResponse): void {
+  private openEvents(response: http.ServerResponse, user: AuthUser | undefined): void {
     if (this.clients.size >= MAX_SSE_CLIENTS) throw new HttpError(503, 'too many event stream clients');
     response.writeHead(200, {
       'cache-control': 'no-cache, no-transform',
@@ -623,10 +788,10 @@ export class GuiServer {
       'x-accel-buffering': 'no',
     });
     response.write(`data: ${JSON.stringify({ type: 'run', run: this.runBody() })}\n\n`);
-    this.clients.add(response);
+    this.clients.set(response, user);
     if (!this.heartbeatTimer) {
       this.heartbeatTimer = setInterval(() => {
-        for (const client of this.clients) client.write(': heartbeat\n\n');
+        for (const client of this.clients.keys()) client.write(': heartbeat\n\n');
       }, SSE_HEARTBEAT_MS);
       this.heartbeatTimer.unref();
     }
@@ -639,7 +804,7 @@ export class GuiServer {
     });
   }
 
-  private makePool(body: Record<string, unknown>): JsonObject {
+  private makePool(body: Record<string, unknown>, owner: AuthUser | undefined): JsonObject {
     const format = String(body.format ?? '');
     if (!championsFormats().some((option) => option.id === format)) {
       throw new HttpError(400, `unsupported Champions BO3 format ${JSON.stringify(format)}`);
@@ -652,13 +817,22 @@ export class GuiServer {
       if (paste.length > 64_000) throw new HttpError(400, 'a team paste must be at most 64 KB');
       return { id: String(record.id ?? ''), paste };
     });
+    let dir: string;
     try {
-      const dir = createPool(String(body.name ?? ''), format, drafts, this.options.teamsDir);
-      return { ok: true, name: path.basename(dir), pools: listPools(this.options.teamsDir ?? TEAMS_DIR) };
+      dir = createPool(String(body.name ?? ''), format, drafts, this.options.teamsDir);
     } catch (error) {
       if (error instanceof HttpError) throw error;
       throw new HttpError(400, error instanceof Error ? error.message : String(error));
     }
+    if (owner && this.options.auth) {
+      try {
+        this.options.auth.recordPool(owner, path.basename(dir), format);
+      } catch (error) {
+        fs.rmSync(dir, { recursive: true, force: true });
+        throw error;
+      }
+    }
+    return { ok: true, name: path.basename(dir), pools: listPools(this.options.teamsDir ?? TEAMS_DIR) };
   }
 
   private validateDraft(body: Record<string, unknown>): JsonObject {

@@ -113,6 +113,7 @@ test('gui serves the built app shell and setup state', async () => {
     const formats = data.formats as Array<{ id: string; label: string }>;
     assert.ok(formats.some((format) => format.id === FORMAT));
     assert.ok(formats.every((format) => format.id.startsWith('gen9champions') && format.id.endsWith('bo3')));
+    assert.deepEqual(data.auth, { mode: 'local', user: null, csrfToken: null });
     assert.equal(data.run, null);
     assert.equal((await fetch(`${base}healthz`)).status, 200);
     assert.equal((await fetch(`${base}readyz`)).status, 200);
@@ -179,6 +180,7 @@ test('hosted mode enforces its canonical origin and defaults to read-only', asyn
     assert.match(String(state.headers['strict-transport-security']), /max-age=31536000/);
     const providers = state.data.providers as Array<{ id: string }>;
     assert.ok(!providers.some((provider) => provider.id === 'compat'));
+    assert.deepEqual(state.data.auth, { mode: 'read-only', user: null, csrfToken: null });
     assert.equal(await rawRequest(port, { path: '/api/state', headers: { host: 'evil.example' } }), 403);
     assert.equal(
       await rawRequest(port, {

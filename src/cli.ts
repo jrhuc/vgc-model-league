@@ -2,8 +2,9 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
+import { AuthService } from './auth.js';
 import { GuiServer } from './gui/server.js';
-import { prepareDataDirectories, REPO_ROOT, RESULTS_PATH } from './paths.js';
+import { AUTH_DB_PATH, prepareDataDirectories, REPO_ROOT, RESULTS_PATH } from './paths.js';
 import type { ReasoningLevel } from './providers.js';
 import { REASONING_LEVELS } from './providers.js';
 import type { SeriesRecord } from './records.js';
@@ -50,11 +51,31 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
     const publicOrigin = values.origin ?? process.env.VGC_LEAGUE_PUBLIC_ORIGIN;
     const host = values.host ?? process.env.VGC_LEAGUE_HOST;
     const logger = publicOrigin ? (entry: Record<string, unknown>) => console.log(JSON.stringify(entry)) : undefined;
+    const githubClientId = process.env.GITHUB_CLIENT_ID?.trim();
+    const githubClientSecret = process.env.GITHUB_CLIENT_SECRET?.trim();
+    if (Boolean(githubClientId) !== Boolean(githubClientSecret)) {
+      throw new Error('GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET must be configured together');
+    }
+    if (githubClientId && !publicOrigin) throw new Error('GitHub OAuth requires VGC_LEAGUE_PUBLIC_ORIGIN');
+    const auth =
+      githubClientId && githubClientSecret && publicOrigin
+        ? new AuthService({
+            dbPath: AUTH_DB_PATH,
+            clientId: githubClientId,
+            clientSecret: githubClientSecret,
+            publicOrigin,
+            operatorSubjects: (process.env.VGC_LEAGUE_OPERATOR_GITHUB_IDS ?? '')
+              .split(',')
+              .map((value) => value.trim())
+              .filter(Boolean),
+          })
+        : undefined;
     const gui = new GuiServer({
       ...(host ? { host } : {}),
       ...(publicOrigin ? { publicOrigin } : {}),
       mutationsEnabled: !publicOrigin || process.env.VGC_LEAGUE_ENABLE_MUTATIONS === 'true',
       ...(logger ? { logger } : {}),
+      ...(auth ? { auth } : {}),
     });
     const url = await gui.listen(positiveInteger('port', values.port));
     if (logger) logger({ timestamp: new Date().toISOString(), level: 'info', event: 'server_started', url });
@@ -64,15 +85,21 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
       if (stopping) return;
       stopping = true;
       logger?.({ timestamp: new Date().toISOString(), level: 'info', event: 'server_stopping', signal });
-      void gui.shutdown().catch((error: unknown) => {
-        logger?.({
-          timestamp: new Date().toISOString(),
-          level: 'error',
-          event: 'shutdown_error',
-          error: error instanceof Error ? error.message : String(error),
-        });
-        process.exitCode = 1;
-      });
+      void (async () => {
+        try {
+          await gui.shutdown();
+        } catch (error) {
+          logger?.({
+            timestamp: new Date().toISOString(),
+            level: 'error',
+            event: 'shutdown_error',
+            error: error instanceof Error ? error.message : String(error),
+          });
+          process.exitCode = 1;
+        } finally {
+          auth?.close();
+        }
+      })();
     };
     process.once('SIGTERM', () => shutdown('SIGTERM'));
     process.once('SIGINT', () => shutdown('SIGINT'));

@@ -19,6 +19,12 @@ import { loadPool, validatePool } from './teams.js';
 import type { ExperimentMode, JsonObject, Pid, PlayerOptions } from './types.js';
 export const ROTATION_PROTOCOL_VERSION = 1;
 
+export interface ContributorAttribution {
+  provider: 'github';
+  subject: string;
+  login: string;
+}
+
 interface SeriesPlan {
   index: number;
   players: Record<Pid, string>;
@@ -52,6 +58,7 @@ export interface RotationOptions {
   onEvent?: (event: RotationEvent) => void;
   onNotice?: (message: string) => void;
   signal?: AbortSignal;
+  contributor?: ContributorAttribution;
 }
 
 export function makeRunDirectory(): string {
@@ -142,6 +149,7 @@ export async function runRotation(
         reasoning: options.reasoning ?? null,
         pool: pool.id,
         format: pool.format,
+        contributor: options.contributor ?? null,
       },
       null,
       2,
@@ -160,6 +168,7 @@ export async function runRotation(
       ...(options.reasoning === undefined ? {} : { reasoning: options.reasoning }),
       ...(options.apiKeys === undefined ? {} : { apiKeys: options.apiKeys }),
       ...(options.onEvent === undefined ? {} : { onEvent: options.onEvent }),
+      ...(options.contributor === undefined ? {} : { contributor: options.contributor }),
     });
     appendRow(recordsPath, row);
     options.onEvent?.({ type: 'series-end', index: plan.index, record: row });
@@ -336,6 +345,7 @@ async function playSeries(
     apiKeys?: Readonly<Record<string, string>>;
     onEvent?: (event: RotationEvent) => void;
     signal?: AbortSignal;
+    contributor?: ContributorAttribution;
   },
 ): Promise<SeriesRecord> {
   context.signal?.throwIfAborted();
@@ -392,6 +402,7 @@ async function playSeries(
     series_index: plan.index,
     format: context.pool.format,
     pool: context.pool.id,
+    ...(context.contributor === undefined ? {} : { contributor: context.contributor }),
     players: plan.players,
     teams: { p1: plan.teams.p1.id, p2: plan.teams.p2.id },
     winner: winnerSide ? plan.players[winnerSide] : null,

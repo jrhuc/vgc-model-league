@@ -204,10 +204,25 @@ another private access layer in front of the service. The image already sets
 `VGC_LEAGUE_HOST=0.0.0.0` and `VGC_LEAGUE_DATA_DIR=/data`; Railway supplies
 `PORT`.
 
-Hosted mode is deliberately read-only by default. Do not set
-`VGC_LEAGUE_ENABLE_MUTATIONS=true` on a public service: it is an explicit
-private-deployment override, not authentication. Arbitrary OpenAI-compatible
-endpoints are unavailable in hosted mode. `/healthz` reports liveness and
-`/readyz` checks the built assets, writable data volume, and pinned simulator.
-Back up `/data` off-volume and test restoration before treating a deployment
-as durable.
+Hosted mode is deliberately read-only when OAuth is absent. For contributor
+access, register a GitHub OAuth app with callback
+`https://<canonical-host>/auth/github/callback`, then configure:
+
+```text
+GITHUB_CLIENT_ID=<oauth-app-client-id>
+GITHUB_CLIENT_SECRET=<oauth-app-client-secret>
+VGC_LEAGUE_OPERATOR_GITHUB_IDS=<comma-separated-numeric-GitHub-ids>
+```
+
+The OAuth flow requests no scopes and uses state plus PKCE. Session hashes,
+roles, pool/run ownership, and mutation audit events live in
+`/data/vgcleague.sqlite`; browser cookies are `HttpOnly`, `Secure`, and
+`SameSite=Lax`, and every mutation also requires an exact-origin CSRF token.
+Users not listed as operators start as contributors. The unsafe
+`VGC_LEAGUE_ENABLE_MUTATIONS=true` escape hatch remains only for a separately
+protected private deployment without OAuth; it is not authentication.
+
+Arbitrary OpenAI-compatible endpoints are unavailable in hosted mode.
+`/healthz` reports liveness and `/readyz` checks the built assets, writable data
+volume, authentication database, and pinned simulator. Back up `/data`
+off-volume and test restoration before treating a deployment as durable.

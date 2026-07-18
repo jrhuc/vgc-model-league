@@ -1,0 +1,222 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import http from 'node:http';
+import os from 'node:os';
+import path from 'node:path';
+import test from 'node:test';
+
+import { AuthService } from '../src/auth.js';
+import { GuiServer } from '../src/gui/server.js';
+import type { runRotation } from '../src/rotation.js';
+
+type RawResponse = { status: number; headers: http.IncomingHttpHeaders; body: string };
+
+function request(
+  port: number,
+  options: { path: string; method?: string; headers?: Record<string, string>; body?: string },
+): Promise<RawResponse> {
+  const { promise, resolve, reject } = Promise.withResolvers<RawResponse>();
+  const outgoing = http.request(
+    {
+      host: '127.0.0.1',
+      port,
+      path: options.path,
+      method: options.method ?? 'GET',
+      headers: { host: 'league.example', ...(options.headers ?? {}) },
+    },
+    (incoming) => {
+      const chunks: Buffer[] = [];
+      incoming.on('data', (chunk: Buffer) => chunks.push(chunk));
+      incoming.on('end', () =>
+        resolve({
+          status: incoming.statusCode ?? 0,
+          headers: incoming.headers,
+          body: Buffer.concat(chunks).toString('utf8'),
+        }),
+      );
+    },
+  );
+  outgoing.on('error', reject);
+  outgoing.end(options.body);
+  return promise;
+}
+
+function cookieValue(headers: http.IncomingHttpHeaders, name: string): string {
+  const cookies = headers['set-cookie'] ?? [];
+  for (const cookie of cookies) {
+    if (cookie.startsWith(`${name}=`)) return cookie.slice(name.length + 1).split(';', 1)[0] ?? '';
+  }
+  return '';
+}
+
+async function login(port: number): Promise<{ cookie: string; csrf: string; login: string }> {
+  const start = await request(port, { path: '/auth/github' });
+  assert.equal(start.status, 302);
+  const location = new URL(String(start.headers.location));
+  const state = location.searchParams.get('state') ?? '';
+  const stateCookie = cookieValue(start.headers, 'vgc_oauth_state');
+  assert.equal(stateCookie, state);
+
+  const callback = await request(port, {
+    path: `/auth/github/callback?code=temporary-code&state=${encodeURIComponent(state)}`,
+    headers: { cookie: `vgc_oauth_state=${stateCookie}` },
+  });
+  assert.equal(callback.status, 302);
+  assert.equal(callback.headers.location, '/');
+  const sessionToken = cookieValue(callback.headers, 'vgc_session');
+  assert.ok(sessionToken);
+
+  const stateResponse = await request(port, {
+    path: '/api/state',
+    headers: { cookie: `vgc_session=${sessionToken}` },
+  });
+  assert.equal(stateResponse.status, 200);
+  const stateBody = JSON.parse(stateResponse.body) as {
+    auth: { csrfToken: string; user: { login: string; role: string } };
+  };
+  assert.equal(stateBody.auth.user.role, 'contributor');
+  return { cookie: `vgc_session=${sessionToken}`, csrf: stateBody.auth.csrfToken, login: stateBody.auth.user.login };
+}
+
+test('hosted GitHub OAuth protects mutations with sessions, CSRF, and run ownership', async (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'vgcleague-gui-auth-'));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  let profileId = 1;
+  const github = (async (input) =>
+    String(input).includes('/login/oauth/access_token')
+      ? new Response(JSON.stringify({ access_token: `token-${profileId}` }))
+      : new Response(JSON.stringify({ id: profileId, login: `user-${profileId}`, avatar_url: '' }))) as typeof fetch;
+  const auth = new AuthService({
+    dbPath: path.join(directory, 'league.sqlite'),
+    clientId: 'client-id',
+    clientSecret: 'client-secret',
+    publicOrigin: 'http://league.example',
+    fetch: github,
+  });
+  const runner = (async (_models, _seriesPerPair, _runDir, options) => {
+    const signal = options?.signal;
+    if (!signal?.aborted) {
+      const gate = Promise.withResolvers<void>();
+      signal?.addEventListener('abort', () => gate.resolve(), { once: true });
+      await gate.promise;
+    }
+    return [];
+  }) as typeof runRotation;
+  const gui = new GuiServer({
+    host: '127.0.0.1',
+    publicOrigin: 'http://league.example',
+    auth,
+    runner,
+    recordsPath: path.join(directory, 'records.jsonl'),
+  });
+  await gui.listen(0);
+  const address = gui.server.address();
+  assert.ok(address && typeof address === 'object');
+  const port = address.port;
+
+  try {
+    const anonymous = await request(port, { path: '/api/state' });
+    assert.equal(anonymous.status, 200);
+    const anonymousBody: unknown = JSON.parse(anonymous.body);
+    assert.ok(anonymousBody && typeof anonymousBody === 'object' && 'auth' in anonymousBody);
+    assert.deepEqual(anonymousBody.auth, {
+      mode: 'github',
+      user: null,
+      csrfToken: null,
+    });
+    assert.equal((await request(port, { path: '/api/events' })).status, 401);
+    assert.equal(
+      (
+        await request(port, {
+          path: '/api/run/stop',
+          method: 'POST',
+          headers: { origin: 'http://league.example', 'content-type': 'application/json' },
+          body: '{}',
+        })
+      ).status,
+      401,
+    );
+
+    const owner = await login(port);
+    assert.equal(
+      (
+        await request(port, {
+          path: '/api/run/stop',
+          method: 'POST',
+          headers: {
+            origin: 'http://league.example',
+            'content-type': 'application/json',
+            cookie: owner.cookie,
+            'x-csrf-token': 'wrong',
+          },
+          body: '{}',
+        })
+      ).status,
+      403,
+    );
+    const started = await request(port, {
+      path: '/api/run',
+      method: 'POST',
+      headers: {
+        origin: 'http://league.example',
+        'content-type': 'application/json',
+        cookie: owner.cookie,
+        'x-csrf-token': owner.csrf,
+      },
+      body: JSON.stringify({
+        models: ['random', 'random'],
+        pool: 'test',
+        seriesPerPair: 1,
+        concurrency: 1,
+        apiKeys: {},
+      }),
+    });
+    assert.equal(started.status, 200, started.body);
+
+    profileId = 2;
+    const other = await login(port);
+    const forbiddenStop = await request(port, {
+      path: '/api/run/stop',
+      method: 'POST',
+      headers: {
+        origin: 'http://league.example',
+        'content-type': 'application/json',
+        cookie: other.cookie,
+        'x-csrf-token': other.csrf,
+      },
+      body: '{}',
+    });
+    assert.equal(forbiddenStop.status, 403);
+    assert.equal((await request(port, { path: '/api/battle?index=0', headers: { cookie: other.cookie } })).status, 403);
+
+    const stopped = await request(port, {
+      path: '/api/run/stop',
+      method: 'POST',
+      headers: {
+        origin: 'http://league.example',
+        'content-type': 'application/json',
+        cookie: owner.cookie,
+        'x-csrf-token': owner.csrf,
+      },
+      body: '{}',
+    });
+    assert.equal(stopped.status, 200);
+
+    const logout = await request(port, {
+      path: '/api/logout',
+      method: 'POST',
+      headers: {
+        origin: 'http://league.example',
+        'content-type': 'application/json',
+        cookie: owner.cookie,
+        'x-csrf-token': owner.csrf,
+      },
+      body: '{}',
+    });
+    assert.equal(logout.status, 200);
+    assert.equal(cookieValue(logout.headers, 'vgc_session'), '');
+  } finally {
+    await gui.shutdown(1_000);
+    auth.close();
+  }
+});
