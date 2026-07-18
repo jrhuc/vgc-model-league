@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 
-import type { AppState, BattleMessage, PoolInfo, RunSnapshot, ServerEvent } from '../api';
-import { api } from './http';
+import type { AppState, AuthView, BattleMessage, PoolInfo, RunSnapshot, ServerEvent } from '../api';
+import { api, configureCsrf } from './http';
 import { ArenaView } from './views/arena';
 import { FixturesView } from './views/fixtures';
 import { PoolsView } from './views/pools';
@@ -15,6 +15,48 @@ const NAV = [
 ] as const;
 
 export type ViewId = (typeof NAV)[number]['id'];
+
+function canContribute(auth: AuthView): boolean {
+  return auth.mode === 'local' || auth.user?.role === 'contributor' || auth.user?.role === 'operator';
+}
+
+function AccessGate({ auth }: { auth: AuthView }) {
+  if (auth.mode === 'read-only') {
+    return (
+      <div class="access-gate panel">
+        <p class="eyebrow">Hosted mode</p>
+        <h2>Read-only</h2>
+        <p class="lede">
+          Public records stay open. Starting runs and publishing pools require GitHub authentication on this deployment.
+        </p>
+      </div>
+    );
+  }
+  if (!auth.user) {
+    return (
+      <div class="access-gate panel">
+        <p class="eyebrow">Sign in</p>
+        <h2>GitHub sign-in required</h2>
+        <p class="lede">
+          Sign in to start runs and publish team pools. Public records remain available without an account.
+        </p>
+        <a class="button primary" href="/auth/github">
+          Sign in with GitHub
+        </a>
+      </div>
+    );
+  }
+  return (
+    <div class="access-gate panel">
+      <p class="eyebrow">Access</p>
+      <h2>Insufficient role</h2>
+      <p class="lede">
+        Signed in as {auth.user.login} with role {auth.user.role}. Contributor or operator access is required for runs
+        and team pools.
+      </p>
+    </div>
+  );
+}
 
 export function App() {
   const [app, setApp] = useState<AppState | null>(null);
@@ -31,6 +73,7 @@ export function App() {
   useEffect(() => {
     api<AppState>('/api/state')
       .then((state) => {
+        configureCsrf(state.auth.csrfToken);
         setApp(state);
         setRun(state.run);
         runWasLive.current = state.run?.state === 'running';
@@ -39,10 +82,11 @@ export function App() {
       .catch((error: Error) => setBootError(error.message));
   }, []);
 
-  const booted = app !== null;
+  const contribute = app ? canContribute(app.auth) : false;
+  const eventsPath = app ? (contribute ? '/api/events' : '/api/events/public') : null;
   useEffect(() => {
-    if (!booted) return;
-    const events = new EventSource('/api/events');
+    if (!eventsPath) return;
+    const events = new EventSource(eventsPath);
     events.onmessage = (event: MessageEvent<string>) => {
       const message = JSON.parse(event.data) as ServerEvent;
       if (message.type === 'run') {
@@ -61,7 +105,7 @@ export function App() {
       }
     };
     return () => events.close();
-  }, [booted]);
+  }, [eventsPath]);
 
   useEffect(() => {
     if (run?.state !== 'running') return;
@@ -76,7 +120,7 @@ export function App() {
 
   const selectBattle = (index: number) => {
     setSelected(index);
-    api<BattleMessage>(`/api/battle?index=${index}`)
+    api<BattleMessage>(`${contribute ? '/api/battle' : '/api/battle/public'}?index=${index}`)
       .then((data) => {
         if (data.snapshot) setBattles((previous) => ({ ...previous, [index]: data }));
       })
@@ -93,6 +137,15 @@ export function App() {
     setApp((previous) => (previous ? { ...previous, pools } : previous));
   };
 
+  const logout = () => {
+    api<{ ok: boolean }>('/api/logout', {})
+      .catch(() => {})
+      .finally(() => {
+        configureCsrf(null);
+        window.location.assign('/');
+      });
+  };
+
   if (bootError) {
     return (
       <main class="shell">
@@ -103,6 +156,7 @@ export function App() {
   if (!app) return <main class="shell" />;
 
   const live = run?.state === 'running';
+  const user = app.auth.user;
   return (
     <>
       <header class="app-header">
@@ -124,14 +178,36 @@ export function App() {
             </button>
           ))}
         </nav>
-        <div class={`header-state ${live ? 'live' : ''}`}>
-          <span class="live-dot" />
-          <span>{live ? 'Run in progress' : run ? `Last run ${run.state}` : 'Idle'}</span>
+        <div class="header-aside">
+          <div class={`header-state ${live ? 'live' : ''}`}>
+            <span class="live-dot" />
+            <span>{live ? 'Run in progress' : run ? `Last run ${run.state}` : 'Idle'}</span>
+          </div>
+          {app.auth.mode === 'read-only' ? <span class="header-readonly">Read-only</span> : null}
+          {app.auth.mode === 'github' && !user ? (
+            <a class="header-auth-link" href="/auth/github">
+              Sign in with GitHub
+            </a>
+          ) : null}
+          {user ? (
+            <div class="header-user">
+              <span class="header-avatar" aria-hidden="true">
+                {user.login.slice(0, 1).toUpperCase()}
+              </span>
+              <div class="header-user-text">
+                <span class="header-login">{user.login}</span>
+                <span class="header-role">{user.role}</span>
+              </div>
+              <button type="button" class="header-logout" onClick={logout}>
+                Log out
+              </button>
+            </div>
+          ) : null}
         </div>
       </header>
       <main class="shell">
         <section class={`view ${view === 'fixtures' ? 'on' : ''}`}>
-          <FixturesView app={app} run={run} onStarted={onStarted} />
+          {contribute ? <FixturesView app={app} run={run} onStarted={onStarted} /> : <AccessGate auth={app.auth} />}
         </section>
         <section class={`view ${view === 'arena' ? 'on' : ''}`}>
           <ArenaView
@@ -146,7 +222,7 @@ export function App() {
           <ResultsView active={view === 'results'} epoch={recordsEpoch} />
         </section>
         <section class={`view ${view === 'pools' ? 'on' : ''}`}>
-          <PoolsView app={app} onPools={onPools} />
+          {contribute ? <PoolsView app={app} onPools={onPools} /> : <AccessGate auth={app.auth} />}
         </section>
       </main>
     </>

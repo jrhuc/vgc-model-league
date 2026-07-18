@@ -172,14 +172,19 @@ test('temperature is dropped after a 400 response', async () => {
   assert.equal(completion.text, 'ok');
 });
 
-test('API call errors map to ApiError', async () => {
-  const fetch = (async () => new Response('service unavailable', { status: 503 })) as typeof globalThis.fetch;
+test('API call errors map to ApiError without leaking credentials', async () => {
+  const fetch = (async () =>
+    new Response('service unavailable for moonshot-key', { status: 503 })) as typeof globalThis.fetch;
   const provider = makeProvider(parseSpec('kimi:kimi-k3'), { apiKey: 'moonshot-key', fetch });
 
   await assert.rejects(
     provider.complete('system', [{ role: 'user', content: 'hello' }]),
     (error: unknown) =>
-      error instanceof ApiError && error.status === 503 && error.message.startsWith('kimi:kimi-k3 503:'),
+      error instanceof ApiError &&
+      error.status === 503 &&
+      error.message.startsWith('kimi:kimi-k3 503:') &&
+      error.message.includes('[redacted]') &&
+      !error.message.includes('moonshot-key'),
   );
 });
 

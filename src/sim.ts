@@ -8,6 +8,7 @@ import type { BattleAgent, BattleOutcome, BattleRequest, Pid, PlayerOptions } fr
 interface RouteState {
   pov: Record<Pid, string[]>;
   log: string[];
+  publicLog: string[];
   pendingSplit: string[];
   winner: string | null;
   turns: number;
@@ -31,6 +32,7 @@ export function routeUpdateLines(lines: string[], state: RouteState): void {
       if (owner === 'p1' || owner === 'p2') {
         state.pov[owner].push(secret);
         state.log.push(secret);
+        if (publicLine) state.publicLog.push(publicLine);
         if (publicLine) state.pov[owner === 'p1' ? 'p2' : 'p1'].push(publicLine);
       }
       index += 3;
@@ -39,6 +41,7 @@ export function routeUpdateLines(lines: string[], state: RouteState): void {
     state.pov.p1.push(line);
     state.pov.p2.push(line);
     state.log.push(line);
+    state.publicLog.push(line);
     if (line.startsWith('|turn|')) state.turns = Number(line.slice(6));
     else if (line.startsWith('|win|')) state.winner = line.slice(5);
     else if (line === '|tie') state.winner = null;
@@ -92,12 +95,16 @@ export class SimBattle {
     }
   }
 
-  async run(agents: Record<Pid, BattleAgent>, onUpdate?: (lines: string[]) => void): Promise<BattleOutcome> {
+  async run(
+    agents: Record<Pid, BattleAgent>,
+    onUpdate?: (lines: string[], publicLines: string[]) => void,
+  ): Promise<BattleOutcome> {
     const { BattleStream } = loadShowdown(this.psDir);
     const stream = new BattleStream({ noCatch: true }) as BattleStream;
     const state: RouteState = {
       pov: { p1: [], p2: [] },
       log: [],
+      publicLog: [],
       pendingSplit: [],
       winner: null,
       turns: 0,
@@ -113,8 +120,11 @@ export class SimBattle {
 
     const route = (lines: string[]) => {
       const before = state.log.length;
+      const publicBefore = state.publicLog.length;
       routeUpdateLines(lines, state);
-      if (onUpdate && state.log.length > before) onUpdate(state.log.slice(before));
+      if (onUpdate && (state.log.length > before || state.publicLog.length > publicBefore)) {
+        onUpdate(state.log.slice(before), state.publicLog.slice(publicBefore));
+      }
     };
 
     const timerEvent = (pid: Pid, event: TimerEvent) => {

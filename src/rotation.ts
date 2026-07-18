@@ -4,7 +4,7 @@ import path from 'node:path';
 
 import type { GameEnd, GameStart } from './engines.js';
 import { LLMEngine, RandomEngine, scaffoldRevision } from './engines.js';
-import { defaultPsDir, REPO_ROOT, RUNS_DIR } from './paths.js';
+import { defaultPsDir, REPO_ROOT, RESULTS_PATH, RUNS_DIR } from './paths.js';
 import type { ReasoningLevel } from './providers.js';
 import { makeProvider, parseSpec, validateReasoning } from './providers.js';
 import type { Rng } from './random.js';
@@ -18,6 +18,12 @@ import type { Team, TeamPool } from './teams.js';
 import { loadPool, validatePool } from './teams.js';
 import type { ExperimentMode, JsonObject, Pid, PlayerOptions } from './types.js';
 export const ROTATION_PROTOCOL_VERSION = 1;
+
+export interface ContributorAttribution {
+  provider: 'github';
+  subject: string;
+  login: string;
+}
 
 interface SeriesPlan {
   index: number;
@@ -37,7 +43,7 @@ export type RotationEvent =
       seed: number;
     }
   | { type: 'series-start'; index: number }
-  | { type: 'game-update'; index: number; game: number; lines: string[] }
+  | { type: 'game-update'; index: number; game: number; lines: string[]; publicLines: string[] }
   | { type: 'game-end'; index: number; game: number; winner: string | null; turns: number; score: Record<Pid, number> }
   | { type: 'series-end'; index: number; record: SeriesRecord };
 
@@ -52,6 +58,7 @@ export interface RotationOptions {
   onEvent?: (event: RotationEvent) => void;
   onNotice?: (message: string) => void;
   signal?: AbortSignal;
+  contributor?: ContributorAttribution;
 }
 
 export function makeRunDirectory(): string {
@@ -113,7 +120,7 @@ export async function runRotation(
   }
 
   fs.mkdirSync(runDir, { recursive: true });
-  const recordsPath = options.recordsPath ?? path.join(REPO_ROOT, 'records', 'results.jsonl');
+  const recordsPath = options.recordsPath ?? RESULTS_PATH;
   const psDir = options.psDir ?? defaultPsDir();
   const pool = loadPool(options.pool ?? 'test');
   validatePool(pool, psDir);
@@ -142,6 +149,7 @@ export async function runRotation(
         reasoning: options.reasoning ?? null,
         pool: pool.id,
         format: pool.format,
+        contributor: options.contributor ?? null,
       },
       null,
       2,
@@ -160,6 +168,7 @@ export async function runRotation(
       ...(options.reasoning === undefined ? {} : { reasoning: options.reasoning }),
       ...(options.apiKeys === undefined ? {} : { apiKeys: options.apiKeys }),
       ...(options.onEvent === undefined ? {} : { onEvent: options.onEvent }),
+      ...(options.contributor === undefined ? {} : { contributor: options.contributor }),
     });
     appendRow(recordsPath, row);
     options.onEvent?.({ type: 'series-end', index: plan.index, record: row });
@@ -254,7 +263,7 @@ export interface Bo3Context {
   timer?: boolean;
   signal?: AbortSignal;
   onGameStart?: (game: number) => void;
-  onGameUpdate?: (game: number, lines: string[]) => void;
+  onGameUpdate?: (game: number, lines: string[], publicLines: string[]) => void;
   onGameEnd?: (game: number, winner: string | null, turns: number, score: Record<Pid, number>) => void;
 }
 
@@ -282,7 +291,7 @@ export async function playBo3(context: Bo3Context): Promise<Bo3Result> {
     };
     const outcome = await new SimBattle(context.format, players, gameSeed, context.psDir, context.timer ?? true).run(
       engines,
-      (lines) => context.onGameUpdate?.(gameNumber, lines),
+      (lines, publicLines) => context.onGameUpdate?.(gameNumber, lines, publicLines),
     );
     context.signal?.throwIfAborted();
     const winnerSide = (['p1', 'p2'] as const).find((pid) => names[pid] === outcome.winner);
@@ -336,6 +345,7 @@ async function playSeries(
     apiKeys?: Readonly<Record<string, string>>;
     onEvent?: (event: RotationEvent) => void;
     signal?: AbortSignal;
+    contributor?: ContributorAttribution;
   },
 ): Promise<SeriesRecord> {
   context.signal?.throwIfAborted();
@@ -376,7 +386,8 @@ async function playSeries(
     format: context.pool.format,
     psDir: context.psDir,
     ...(context.signal === undefined ? {} : { signal: context.signal }),
-    onGameUpdate: (game, lines) => context.onEvent?.({ type: 'game-update', index: plan.index, game, lines }),
+    onGameUpdate: (game, lines, publicLines) =>
+      context.onEvent?.({ type: 'game-update', index: plan.index, game, lines, publicLines }),
     onGameEnd: (game, winner, turns, score) =>
       context.onEvent?.({ type: 'game-end', index: plan.index, game, winner, turns, score }),
   });
@@ -392,6 +403,7 @@ async function playSeries(
     series_index: plan.index,
     format: context.pool.format,
     pool: context.pool.id,
+    ...(context.contributor === undefined ? {} : { contributor: context.contributor }),
     players: plan.players,
     teams: { p1: plan.teams.p1.id, p2: plan.teams.p2.id },
     winner: winnerSide ? plan.players[winnerSide] : null,

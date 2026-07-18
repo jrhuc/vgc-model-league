@@ -15,6 +15,7 @@ import {
   tool,
 } from 'ai';
 
+import { redactSecrets } from './sanitize.js';
 import type { CompleteOptions, Completion, JsonObject, Provider, ProviderMessage } from './types.js';
 
 import { isRecord } from './value.js';
@@ -306,7 +307,8 @@ export class SdkProvider implements Provider {
     const seconds = options.timeout ?? DEFAULT_TIMEOUT;
     const timeout = AbortSignal.timeout(Math.max(100, Math.round(seconds * 1000)));
     const abortSignal = options.signal ? AbortSignal.any([timeout, options.signal]) : timeout;
-    const model = this.languageModel(this.key());
+    const apiKey = this.key();
+    const model = this.languageModel(apiKey);
     const tools: ToolSet | undefined = options.tools?.length
       ? (Object.fromEntries(
           options.tools.map((definition) => [
@@ -376,11 +378,9 @@ export class SdkProvider implements Provider {
             sendTemperature = false;
             continue;
           }
+          const detail = redactSecrets(error.responseBody ?? error.message, [apiKey]);
           const status = error.statusCode ?? 0;
-          throw new ApiError(
-            status,
-            `${this.spec.provider}:${this.model} ${status}: ${(error.responseBody ?? error.message).slice(0, 2000)}`,
-          );
+          throw new ApiError(status, `${this.spec.provider}:${this.model} ${status}: ${detail}`);
         }
         throw error;
       }

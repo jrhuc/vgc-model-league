@@ -44,12 +44,15 @@ test('Rotation emits ordered events and protocol identity', async (t) => {
     concurrency: 1,
     recordsPath: path.join(directory, 'results.jsonl'),
     onEvent: (event) => events.push(event),
+    contributor: { provider: 'github', subject: '42', login: 'octocat' },
   });
   const config = JSON.parse(fs.readFileSync(path.join(directory, 'config.json'), 'utf8')) as Record<string, unknown>;
   assert.equal(config.mode, 'rotation');
   assert.equal(config.protocol_version, ROTATION_PROTOCOL_VERSION);
   assert.match(String(config.scaffold), /^[0-9a-f]{12}$/);
   assert.equal(rows[0]?.scaffold, config.scaffold);
+  assert.deepEqual(config.contributor, { provider: 'github', subject: '42', login: 'octocat' });
+  assert.deepEqual(rows[0]?.contributor, config.contributor);
   const planned = events[0];
   assert.equal(planned?.type, 'plans');
   if (planned?.type === 'plans') {

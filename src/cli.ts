@@ -2,7 +2,9 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
-import { REPO_ROOT, RESULTS_PATH } from './paths.js';
+import { AuthService } from './auth.js';
+import { GuiServer } from './gui/server.js';
+import { AUTH_DB_PATH, prepareDataDirectories, REPO_ROOT, RESULTS_PATH } from './paths.js';
 import type { ReasoningLevel } from './providers.js';
 import { REASONING_LEVELS } from './providers.js';
 import type { SeriesRecord } from './records.js';
@@ -13,7 +15,7 @@ import { makeRunDirectory, runRotation } from './rotation.js';
 const HELP = `Usage: vgcleague <command>
 
 Commands:
-  gui [--port <n>]                    serve the browser GUI on 127.0.0.1 (default port 8484)
+  gui [--port <n>] [--host <address>] [--origin <url>]  serve the browser GUI
   selfcheck                           run one random-vs-random series through the simulator
   rotation --models <spec> <spec>...  run the controlled team-rotation protocol
       [--series-per-pair <n>] [--pool <name>] [--seed <n>] [--concurrency <n>] [--reasoning <level>]
@@ -33,14 +35,86 @@ function positiveInteger(name: string, value: string): number {
   return parsed;
 }
 
+function environmentInteger(name: string, fallback: number, minimum: number, maximum: number): number {
+  const raw = process.env[name]?.trim();
+  if (!raw) return fallback;
+  const parsed = Number(raw);
+  if (!Number.isSafeInteger(parsed) || parsed < minimum || parsed > maximum) {
+    throw new Error(`${name} must be an integer from ${minimum} to ${maximum}`);
+  }
+  return parsed;
+}
+
 export async function main(argv = process.argv.slice(2)): Promise<number> {
+  prepareDataDirectories();
   const [command, ...rest] = argv;
   if (command === 'selfcheck') return selfcheck();
   if (command === 'gui') {
-    const { values } = parseArgs({ args: rest, options: { port: { type: 'string', default: '8484' } } });
-    const { GuiServer } = await import('./gui/server.js');
-    const url = await new GuiServer().listen(positiveInteger('port', values.port));
-    console.log(`VGC Model League GUI at ${url} (ctrl-c to stop)`);
+    const { values } = parseArgs({
+      args: rest,
+      options: {
+        port: { type: 'string', default: process.env.PORT ?? '8484' },
+        host: { type: 'string' },
+        origin: { type: 'string' },
+      },
+    });
+    const publicOrigin = values.origin ?? process.env.VGC_LEAGUE_PUBLIC_ORIGIN;
+    const host = values.host ?? process.env.VGC_LEAGUE_HOST;
+    const maxRunMinutes = environmentInteger('VGC_LEAGUE_MAX_RUN_MINUTES', 240, 1, 1440);
+    const logger = publicOrigin ? (entry: Record<string, unknown>) => console.log(JSON.stringify(entry)) : undefined;
+    const githubClientId = process.env.GITHUB_CLIENT_ID?.trim();
+    const githubClientSecret = process.env.GITHUB_CLIENT_SECRET?.trim();
+    if (Boolean(githubClientId) !== Boolean(githubClientSecret)) {
+      throw new Error('GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET must be configured together');
+    }
+    if (githubClientId && !publicOrigin) throw new Error('GitHub OAuth requires VGC_LEAGUE_PUBLIC_ORIGIN');
+    const auth =
+      githubClientId && githubClientSecret && publicOrigin
+        ? new AuthService({
+            dbPath: AUTH_DB_PATH,
+            clientId: githubClientId,
+            clientSecret: githubClientSecret,
+            publicOrigin,
+            operatorSubjects: (process.env.VGC_LEAGUE_OPERATOR_GITHUB_IDS ?? '')
+              .split(',')
+              .map((value) => value.trim())
+              .filter(Boolean),
+          })
+        : undefined;
+    const gui = new GuiServer({
+      ...(host ? { host } : {}),
+      ...(publicOrigin ? { publicOrigin } : {}),
+      mutationsEnabled: !publicOrigin || process.env.VGC_LEAGUE_ENABLE_MUTATIONS === 'true',
+      ...(logger ? { logger } : {}),
+      ...(auth ? { auth } : {}),
+      maxRunMs: maxRunMinutes * 60_000,
+    });
+    const url = await gui.listen(positiveInteger('port', values.port));
+    if (logger) logger({ timestamp: new Date().toISOString(), level: 'info', event: 'server_started', url });
+    else console.log(`VGC Model League GUI at ${url} (ctrl-c to stop)`);
+    let stopping = false;
+    const shutdown = (signal: string) => {
+      if (stopping) return;
+      stopping = true;
+      logger?.({ timestamp: new Date().toISOString(), level: 'info', event: 'server_stopping', signal });
+      void (async () => {
+        try {
+          await gui.shutdown();
+        } catch (error) {
+          logger?.({
+            timestamp: new Date().toISOString(),
+            level: 'error',
+            event: 'shutdown_error',
+            error: error instanceof Error ? error.message : String(error),
+          });
+          process.exitCode = 1;
+        } finally {
+          auth?.close();
+        }
+      })();
+    };
+    process.once('SIGTERM', () => shutdown('SIGTERM'));
+    process.once('SIGINT', () => shutdown('SIGINT'));
     return 0;
   }
   if (command === 'rotation') {

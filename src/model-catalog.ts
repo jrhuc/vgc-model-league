@@ -1,3 +1,5 @@
+import { readCappedText } from './sanitize.js';
+
 export interface ProviderOption {
   id: string;
   label: string;
@@ -143,10 +145,11 @@ export async function discoverModels(
   }
 
   const request = options.fetch ?? fetch;
+  const signal = options.signal ?? AbortSignal.timeout(20_000);
   let models: DiscoveredModel[];
-  if (provider.id === 'anthropic') models = await discoverAnthropic(request, apiKey ?? '', options.signal);
-  else if (provider.id === 'google') models = await discoverGoogle(request, apiKey ?? '', options.signal);
-  else models = await discoverOpenAICompatible(request, provider, apiKey, options.signal);
+  if (provider.id === 'anthropic') models = await discoverAnthropic(request, apiKey ?? '', signal);
+  else if (provider.id === 'google') models = await discoverGoogle(request, apiKey ?? '', signal);
+  else models = await discoverOpenAICompatible(request, provider, apiKey, signal);
   return normalizeModels(models);
 }
 
@@ -260,7 +263,8 @@ function requestInit(headers: Record<string, string>, signal: AbortSignal | unde
 }
 
 async function responseBody(response: Response, provider: string, apiKey: string | undefined): Promise<UnknownRecord> {
-  const raw = await response.text();
+  const raw = await readCappedText(response, 1_000_000);
+  if (raw === undefined) throw new Error(`${provider} model catalog response was too large`);
   if (!response.ok) {
     const detail = errorDetail(raw, apiKey);
     const status = response.statusText ? `${response.status} ${response.statusText}` : String(response.status);

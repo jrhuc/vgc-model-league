@@ -10,6 +10,7 @@ export interface SeriesRecord extends JsonObject {
   run_id?: string;
   series_index?: number;
   pool?: string;
+  contributor?: { provider: 'github'; subject: string; login: string };
   players: Record<Pid, string>;
   winner?: string | null;
 }
