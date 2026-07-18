@@ -33,6 +33,7 @@ COPY --from=build --chown=node:node /app/package.json /app/package-lock.json /ap
 COPY --from=build --chown=node:node /app/node_modules ./node_modules
 COPY --from=build --chown=node:node /app/dist ./dist
 COPY --from=build --chown=node:node /app/teams ./teams
+COPY --from=build --chown=node:node /app/pokemon-showdown/package.json ./pokemon-showdown/package.json
 COPY --from=build --chown=node:node /app/pokemon-showdown/dist ./pokemon-showdown/dist
 COPY --from=build --chown=node:node /app/pokemon-showdown/node_modules ./pokemon-showdown/node_modules
 
@@ -40,7 +41,6 @@ COPY --from=litestream /usr/local/bin/litestream /usr/local/bin/litestream
 COPY --chown=node:node litestream.yml ./litestream.yml
 COPY --chown=node:node --chmod=755 tools/docker-entrypoint.sh ./docker-entrypoint.sh
 RUN mkdir /data && chown node:node /data
-USER node
 EXPOSE 3000
 
 CMD ["/app/docker-entrypoint.sh"]

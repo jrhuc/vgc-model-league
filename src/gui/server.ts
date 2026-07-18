@@ -556,7 +556,13 @@ export class GuiServer {
       loadShowdown();
       this.options.auth?.ready();
       this.json(response, 200, { status: 'ready' });
-    } catch {
+    } catch (error) {
+      this.options.logger?.({
+        timestamp: new Date().toISOString(),
+        level: 'error',
+        event: 'readiness_check_failed',
+        error: redactSecrets(error instanceof Error ? error.message : String(error), []),
+      });
       this.json(response, 503, { status: 'not_ready' });
     }
   }
