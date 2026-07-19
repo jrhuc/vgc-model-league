@@ -40,8 +40,8 @@ Rules that keep this from rotting:
 configuration, event emission, and result persistence. Shared battle engines and Showdown integration stay outside it
 so future modes can reuse execution without inheriting Rotation scheduling.
 
-`ExperimentMode` contains `rotation`, `exhibition`, and `tournament`. A new mode extends that type only when its real
-orchestrator exists; Draft League must not arrive as conditionals scattered through `rotation.ts`. Every new run
+`ExperimentMode` contains `rotation`, `exhibition`, `tournament`, and `draft`. A new mode extends that type only when
+its real orchestrator exists, never as conditionals scattered through `rotation.ts`. Every new run
 config, live snapshot, and completed series carries `mode` and `protocol_version`. Protocol versions change when an
 evaluation rule changes enough to make unlike results incomparable. Because that bump is manual discipline, every row
 and run config also records `scaffold` — a hash of the decision/reflection system prompts, tool schemas, and sampling
@@ -54,6 +54,16 @@ single exhibition match the GUI offers as its default landing flow. The orchestr
 and `mapLimit` from rotation but owns its own scheduling, bracket state, and records. A drawn series advances the
 higher seed while the record keeps `winner: null`. Rows record `mode: "tournament"` (with `round` and, for inline
 teams, no `pool`), and standings never rate them.
+
+Draft League mode (`src/draftleague.ts` with the draft engine in `src/draft.ts`) opens with a snake draft over an
+immutable board (`boards/<id>.json`): full fixed sets derived from a real tournament pool, tiered and priced from
+published viability rankings, drafted under a points budget. Pick legality is decided by the real format validator run
+on the partial roster (ignoring only the team-size complaint), so species and item clauses are enforced exactly rather
+than re-implemented. Each LLM pick is a provider call with retries and a random-legal fallback; the full prompt and
+response go to per-drafter logs and every pick's rationale to a shared `draft/draft.jsonl` transcript inside the run
+directory. The drafted rosters then play a full round robin that seeds top-four (or top-two) playoffs reusing the
+bracket view. Rows record `mode: "draft"` with a `stage` field and the board id, and never rate the ladder. The
+shared best-of-three runner both tournament and draft use lives in `src/series.ts`.
 
 Reference opponents (for example VGC-Bench's behavior-cloned or reinforcement-learned policies) integrate by
 implementing `BattleAgent` (`act`/`observe`/`abandonDecision`). That interface is the interop seam: reference agents
@@ -77,8 +87,8 @@ resolves with the completed results instead of an error.
 
 Records queries and ratings are scoped by pool and by mode: unscoped views exclude the disposable `test` pool and keep
 only `rotation` rows, and any single pool — including `test` — can be selected explicitly, where non-rotation rows
-appear in the record list but never in standings or head-to-head. Before Draft League ships, that scoping must extend
-to protocol-version selection. Rotation Elo remains the default controlled rating;
+appear in the record list but never in standings or head-to-head. Protocol-version selection remains a future scoping
+extension. Rotation Elo remains the default controlled rating;
 Draft League and Tournament results have their own views and cannot silently enter it. The sequential Elo shown
 in standings is a provisional display rating recomputed from qualifying rows on every read — never stored — so a
 paired-comparison model (Bradley–Terry or similar) can replace it later without any schema change.

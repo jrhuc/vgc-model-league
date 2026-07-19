@@ -734,3 +734,119 @@ test('hosted tournament runs execute in the worker and stream the bracket', asyn
     await gui.shutdown(1_000);
   }
 });
+
+test('gui starts draft runs, validates the board, and mirrors draft state', async () => {
+  let received: { board?: string } | undefined;
+  const gui = new GuiServer({
+    draftRunner: async (_models, _runDir, options = {}) => {
+      received = { ...(options.board ? { board: options.board } : {}) };
+      options.onEvent?.({
+        type: 'draft',
+        draft: {
+          boardId: options.board ?? '',
+          budget: 70,
+          picksPerEntrant: 6,
+          entrants: ['random', 'random'],
+          board: [],
+          picks: [{ pick: 1, entrant: 0, mon: 'garchomp', rationale: 'strong pick', fallback: false }],
+          rosters: [['garchomp'], []],
+          budgets: [50, 70],
+          table: null,
+          phase: 'draft',
+        },
+      });
+      return [];
+    },
+  });
+  const base = await gui.listen(0);
+  try {
+    const state = await apiJson(`${base}api/state`);
+    const boards = state.data.boards as Array<Record<string, unknown>>;
+    assert.ok(boards.length >= 1, 'the bundled draft board is advertised');
+    assert.equal(boards[0]!.id, 'regmb-202607');
+
+    const unknown = await apiJson(`${base}api/run`, {
+      mode: 'draft',
+      models: ['random', 'random'],
+      board: 'nope',
+    });
+    assert.equal(unknown.status, 400);
+    assert.match(String(unknown.data.error), /unknown draft board/);
+
+    const tooMany = await apiJson(`${base}api/run`, {
+      mode: 'draft',
+      models: ['random', 'random', 'random', 'random', 'random', 'random'],
+      board: 'regmb-202607',
+    });
+    assert.equal(tooMany.status, 400);
+    assert.match(String(tooMany.data.error), /supports at most/);
+
+    const started = await apiJson(`${base}api/run`, {
+      mode: 'draft',
+      models: ['random', 'random'],
+      board: 'regmb-202607',
+    });
+    assert.equal(started.status, 200, JSON.stringify(started.data));
+    let run = (await apiJson(`${base}api/state`)).data.run as Record<string, unknown>;
+    for (let attempt = 0; attempt < 40 && run.state !== 'done'; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      run = (await apiJson(`${base}api/state`)).data.run as Record<string, unknown>;
+    }
+    assert.equal(run.state, 'done', String(run.error ?? ''));
+    assert.equal(run.mode, 'draft');
+    assert.equal(run.board, 'regmb-202607');
+    assert.equal(received?.board, 'regmb-202607');
+    const draft = run.draft as Record<string, unknown>;
+    assert.equal(draft.phase, 'draft');
+    const picks = draft.picks as Array<Record<string, unknown>>;
+    assert.equal(picks[0]!.rationale, 'strong pick');
+  } finally {
+    gui.close();
+  }
+});
+
+test('hosted draft runs execute in the worker and stream draft state', async (t) => {
+  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'vgcleague-draft-worker-'));
+  t.after(() => fs.rmSync(scratch, { recursive: true, force: true }));
+  const settled = Promise.withResolvers<Record<string, unknown>>();
+  const gui = new GuiServer({
+    host: '127.0.0.1',
+    publicOrigin: 'http://league.example',
+    mutationsEnabled: true,
+    recordsPath: path.join(scratch, 'results.jsonl'),
+    logger: (entry) => {
+      if (entry.event === 'run_finished') settled.resolve(entry);
+    },
+  });
+  await gui.listen(0);
+  const address = gui.server.address();
+  assert.ok(address && typeof address === 'object');
+  const port = address.port;
+  try {
+    const started = await rawJsonRequest(port, {
+      method: 'POST',
+      path: '/api/run',
+      headers: {
+        host: 'league.example',
+        origin: 'http://league.example',
+        'content-type': 'application/json',
+      },
+      body: '{"mode":"draft","models":["random","random"],"board":"regmb-202607","concurrency":1,"seed":5}',
+    });
+    assert.equal(started.status, 200, JSON.stringify(started.data));
+    const finished = await settled.promise;
+    assert.equal(finished.state, 'done');
+    const state = await rawJsonRequest(port, { path: '/api/state', headers: { host: 'league.example' } });
+    const run = state.data.run as Record<string, unknown>;
+    assert.equal(run.state, 'done', String(run.error ?? ''));
+    assert.equal(run.mode, 'draft');
+    assert.equal((run.rows as unknown[]).length, 2, 'one round-robin series and one playoff final');
+    const draft = run.draft as Record<string, unknown>;
+    assert.equal(draft.phase, 'done');
+    assert.equal((draft.picks as unknown[]).length, 12);
+    const bracket = run.bracket as Record<string, unknown> | null;
+    assert.ok(bracket && bracket.champion !== null, 'the playoff champion streams back from the worker');
+  } finally {
+    await gui.shutdown(2_000);
+  }
+});

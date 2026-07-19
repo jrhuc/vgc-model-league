@@ -20,7 +20,21 @@ process.on('message', (value: unknown) => {
 async function execute(message: RunWorkerStart): Promise<void> {
   controller = new AbortController();
   try {
-    if (message.mode === 'tournament') {
+    if (message.mode === 'draft') {
+      const { runDraftLeague } = await import('../draftleague.js');
+      await runDraftLeague(message.models, message.runDir, {
+        concurrency: message.concurrency,
+        recordsPath: message.recordsPath,
+        apiKeys: message.apiKeys,
+        signal: controller.signal,
+        ...(message.board === undefined ? {} : { board: message.board }),
+        ...(message.seed === undefined ? {} : { seed: message.seed }),
+        ...(message.reasoning === undefined ? {} : { reasoning: message.reasoning }),
+        ...(message.contributor === undefined ? {} : { contributor: message.contributor }),
+        onEvent: (event) => send({ type: 'event', event }),
+        onNotice: (notice) => send({ type: 'notice', message: notice }),
+      });
+    } else if (message.mode === 'tournament') {
       await runTournament(message.models, message.runDir, {
         concurrency: message.concurrency,
         recordsPath: message.recordsPath,

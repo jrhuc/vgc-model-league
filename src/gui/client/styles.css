@@ -318,3 +318,36 @@ textarea { min-height: 170px; resize: vertical; font: 12px/1.5 var(--mono); }
   .mode-tabs { grid-template-columns: 1fr; }
   .team-paste-grid { grid-template-columns: 1fr; }
 }
+
+.pools-manager { margin-top: 26px; }
+.pools-manager > summary { cursor: pointer; padding: 13px 16px; border: 1px solid var(--line-strong); background: var(--paper-strong); font: 800 12px/1 var(--mono); letter-spacing: .07em; text-transform: uppercase; color: var(--ink-soft); }
+.pools-manager > summary:hover { color: var(--ink); border-color: #7f8fa8; }
+.pools-manager[open] > summary { color: var(--blue); border-color: var(--blue); margin-bottom: 18px; }
+
+.board-fact-card { display: flex; flex-direction: column; gap: 5px; padding: 11px 12px; border: 1px solid var(--line-strong); background: white; }
+.board-fact-card b { font: 700 12px/1.2 var(--mono); }
+.board-fact-card span { color: var(--ink-soft); font: 500 11px/1.4 var(--body); }
+
+.draft-panel { margin: 0 0 18px; padding: 20px 24px 24px; }
+.phase-pill { padding: 6px 10px; border: 1px solid var(--line-strong); color: var(--ink-soft); font: 800 10px/1 var(--mono); letter-spacing: .08em; text-transform: uppercase; white-space: nowrap; }
+.draft-board { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; margin-bottom: 18px; }
+.board-chip { position: relative; display: flex; flex-direction: column; gap: 3px; padding: 8px 10px; border: 1px solid var(--line); background: white; }
+.board-chip b { font: 700 11px/1.2 var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.board-chip span { color: var(--ink-soft); font: 700 9px/1 var(--mono); letter-spacing: .06em; }
+.board-chip.taken { opacity: .45; background: var(--paper); }
+.board-chip small { position: absolute; top: 6px; right: 8px; color: var(--blue); font: 800 10px/1 var(--mono); }
+.draft-rosters { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; }
+.draft-roster { border: 1px solid var(--line); padding: 10px 12px; background: white; }
+.draft-roster-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.draft-roster-head b { min-width: 0; font: 700 11px/1.2 var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.draft-roster-head .muted { margin-left: auto; font: 700 9px/1 var(--mono); white-space: nowrap; }
+.draft-roster ul { margin: 0; padding: 0; list-style: none; }
+.draft-roster li { padding: 3px 0; border-top: 1px solid var(--line); font: 500 11px/1.4 var(--mono); }
+.draft-table { width: 100%; margin-top: 16px; border-collapse: collapse; }
+.draft-table th { text-align: left; padding: 6px 8px; color: var(--ink-soft); font: 800 9px/1 var(--mono); letter-spacing: .1em; text-transform: uppercase; border-bottom: 1px solid var(--line-strong); }
+.draft-table td { padding: 6px 8px; border-bottom: 1px solid var(--line); font: 500 11px/1.4 var(--mono); }
+.draft-feed { margin-top: 16px; max-height: 260px; overflow-y: auto; border: 1px solid var(--line); padding: 10px 14px; background: white; }
+.draft-feed h3 { margin: 0 0 8px; color: var(--ink-soft); font: 800 10px/1 var(--mono); letter-spacing: .1em; text-transform: uppercase; }
+.draft-feed-item { padding: 7px 0; border-top: 1px solid var(--line); }
+.draft-feed-head { font: 700 10px/1.3 var(--mono); color: var(--blue-dark); }
+.draft-feed-item p { margin: 4px 0 0; font: 500 11px/1.5 var(--body); color: var(--ink); }

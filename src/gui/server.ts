@@ -8,6 +8,9 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { AuthService, AuthSession, AuthUser } from '../auth.js';
 import { AuthError } from '../auth.js';
+import { listBoards } from '../draft.js';
+import type { DraftLeagueEvent } from '../draftleague.js';
+import { DRAFT_PROTOCOL_VERSION, runDraftLeague } from '../draftleague.js';
 import { discoverModels, PROVIDER_OPTIONS, providerOption } from '../model-catalog.js';
 import { DATA_DIR, prepareDataDirectories, RESULTS_PATH, TEAMS_DIR } from '../paths.js';
 import type { ReasoningLevel } from '../providers.js';
@@ -20,7 +23,6 @@ import type { MonState } from '../state.js';
 import { BattleState } from '../state.js';
 import type { Team, TeamDraft } from '../teams.js';
 import { createPool, inspectTeam, listPools, loadPool, packTeam, validateTeam } from '../teams.js';
-import type { TournamentEvent } from '../tournament.js';
 import { runTournament, TOURNAMENT_PROTOCOL_VERSION } from '../tournament.js';
 import type { ExperimentMode, JsonObject, Pid } from '../types.js';
 import { afterColon, isRecord } from '../value.js';
@@ -29,6 +31,7 @@ import type {
   BattleMessage,
   BattleSnapshot,
   BracketView,
+  DraftView,
   FormatInfo,
   ModelsResponse,
   MonView,
@@ -70,6 +73,7 @@ interface GuiServerOptions {
   recordsPath?: string;
   runner?: typeof runRotation;
   tournamentRunner?: typeof runTournament;
+  draftRunner?: typeof runDraftLeague;
   host?: string;
   publicOrigin?: string;
   mutationsEnabled?: boolean;
@@ -136,6 +140,7 @@ interface RunConfig {
   concurrency: number;
   teams?: Team[];
   format?: string;
+  board?: string;
   seed?: number;
   reasoning?: ReasoningLevel;
 }
@@ -143,6 +148,7 @@ interface RunConfig {
 class ActiveRun {
   rows: SeriesRow[] = [];
   bracket: BracketView | undefined;
+  draft: DraftView | undefined;
   state: 'running' | 'done' | 'failed' = 'running';
   error = '';
   notices: string[] = [];
@@ -635,6 +641,7 @@ export class GuiServer {
       defaultFormat: pools[0]?.format ?? 'gen9championsvgc2026regmbbo3',
       formats: championsFormats(),
       sampleTeams: this.sampleTeamsBody(pools),
+      boards: listBoards(),
       providers: PROVIDER_OPTIONS.filter((option) => !this.publicOrigin || option.id !== 'compat').map((option) => ({
         id: option.id,
         label: option.label,
@@ -690,6 +697,8 @@ export class GuiServer {
       canControl: !publicView,
       rows: run.rows.map((row, index) => ({ ...row, turn: battles.get(index)?.state.turn ?? 0 })),
       bracket: run.bracket ?? null,
+      draft: run.draft ?? null,
+      board: run.config.board ?? null,
     };
   }
 
@@ -716,8 +725,14 @@ export class GuiServer {
 
   private startRun(body: Record<string, unknown>, owner: AuthUser | undefined): JsonObject {
     if (this.run?.state === 'running') throw new HttpError(409, 'a run is already in progress');
-    const mode: ExperimentMode = body.mode === undefined || body.mode === 'rotation' ? 'rotation' : 'tournament';
-    if (mode === 'tournament' && body.mode !== 'tournament') throw new HttpError(400, 'unknown run mode');
+    const mode = (
+      body.mode === undefined || body.mode === 'rotation'
+        ? 'rotation'
+        : body.mode === 'tournament' || body.mode === 'draft'
+          ? body.mode
+          : undefined
+    ) as ExperimentMode | undefined;
+    if (!mode) throw new HttpError(400, 'unknown run mode');
     const models = Array.isArray(body.models) ? body.models.map(String).filter(Boolean) : [];
     // A tournament plays only n-1 series, so hosted mode can afford a fuller bracket.
     const maximumModels = this.publicOrigin && mode === 'rotation' ? 4 : 8;
@@ -755,7 +770,15 @@ export class GuiServer {
     let pool = '';
     let teams: Team[] | undefined;
     let format: string | undefined;
-    if (inlinePastes) {
+    let board: string | undefined;
+    if (mode === 'draft') {
+      board = String(body.board ?? '') || listBoards()[0]?.id || '';
+      const info = listBoards().find((entry) => entry.id === board);
+      if (!info) throw new HttpError(400, `unknown draft board ${JSON.stringify(board)}`);
+      if (models.length > info.maxEntrants) {
+        throw new HttpError(400, `board ${JSON.stringify(board)} supports at most ${info.maxEntrants} models`);
+      }
+    } else if (inlinePastes) {
       if (inlinePastes.length !== models.length) {
         throw new HttpError(400, 'bring exactly one team paste per model');
       }
@@ -793,13 +816,19 @@ export class GuiServer {
     const maximumConcurrency = this.publicOrigin ? 2 : 8;
     const config: RunConfig = {
       mode,
-      protocolVersion: mode === 'tournament' ? TOURNAMENT_PROTOCOL_VERSION : ROTATION_PROTOCOL_VERSION,
+      protocolVersion:
+        mode === 'tournament'
+          ? TOURNAMENT_PROTOCOL_VERSION
+          : mode === 'draft'
+            ? DRAFT_PROTOCOL_VERSION
+            : ROTATION_PROTOCOL_VERSION,
       models,
-      seriesPerPair: mode === 'tournament' ? 1 : clampInt(body.seriesPerPair, 1, maximumSeriesPerPair, 2),
+      seriesPerPair: mode === 'rotation' ? clampInt(body.seriesPerPair, 1, maximumSeriesPerPair, 2) : 1,
       pool,
       concurrency: clampInt(body.concurrency, 1, maximumConcurrency, 2),
       ...(teams === undefined ? {} : { teams }),
       ...(format === undefined ? {} : { format }),
+      ...(board === undefined ? {} : { board }),
       ...(seed === undefined ? {} : { seed }),
       ...(reasoning === undefined ? {} : { reasoning }),
     };
@@ -828,10 +857,36 @@ export class GuiServer {
   }
 
   private async launch(run: ActiveRun): Promise<void> {
-    const injected = run.config.mode === 'tournament' ? this.options.tournamentRunner : this.options.runner;
+    const injected =
+      run.config.mode === 'tournament'
+        ? this.options.tournamentRunner
+        : run.config.mode === 'draft'
+          ? this.options.draftRunner
+          : this.options.runner;
     try {
       if (this.publicOrigin && !injected) {
         await this.launchWorker(run);
+      } else if (run.config.mode === 'draft') {
+        await (this.options.draftRunner ?? runDraftLeague)(run.config.models, run.runDir, {
+          concurrency: run.config.concurrency,
+          recordsPath: this.options.recordsPath ?? RESULTS_PATH,
+          apiKeys: run.apiKeys,
+          signal: run.controller.signal,
+          ...(run.config.board === undefined ? {} : { board: run.config.board }),
+          ...(run.config.seed === undefined ? {} : { seed: run.config.seed }),
+          ...(run.config.reasoning === undefined ? {} : { reasoning: run.config.reasoning }),
+          ...(run.owner
+            ? {
+                contributor: {
+                  provider: 'github',
+                  subject: run.owner.providerSubject,
+                  login: run.owner.login,
+                },
+              }
+            : {}),
+          onEvent: (event) => this.onEvent(run, event),
+          onNotice: (message) => run.notices.push(message),
+        });
       } else if (run.config.mode === 'tournament') {
         await (this.options.tournamentRunner ?? runTournament)(run.config.models, run.runDir, {
           concurrency: run.config.concurrency,
@@ -972,7 +1027,7 @@ export class GuiServer {
     run.controller.signal.addEventListener('abort', abort, { once: true });
     const message: RunWorkerStart = {
       type: 'start',
-      mode: run.config.mode === 'tournament' ? 'tournament' : 'rotation',
+      mode: run.config.mode === 'tournament' || run.config.mode === 'draft' ? run.config.mode : 'rotation',
       models: run.config.models,
       seriesPerPair: run.config.seriesPerPair,
       runDir: run.runDir,
@@ -982,6 +1037,7 @@ export class GuiServer {
       apiKeys: run.apiKeys,
       ...(run.config.teams === undefined ? {} : { teams: run.config.teams }),
       ...(run.config.format === undefined ? {} : { format: run.config.format }),
+      ...(run.config.board === undefined ? {} : { board: run.config.board }),
       ...(run.config.seed === undefined ? {} : { seed: run.config.seed }),
       ...(run.config.reasoning === undefined ? {} : { reasoning: run.config.reasoning }),
       ...(run.owner
@@ -1007,9 +1063,11 @@ export class GuiServer {
     });
   }
 
-  private onEvent(run: ActiveRun, event: TournamentEvent): void {
+  private onEvent(run: ActiveRun, event: DraftLeagueEvent): void {
     if (run !== this.run) return;
-    if (event.type === 'bracket') {
+    if (event.type === 'draft') {
+      run.draft = event.draft;
+    } else if (event.type === 'bracket') {
       run.bracket = event.bracket;
     } else if (event.type === 'series-players') {
       const row = run.rows[event.index];

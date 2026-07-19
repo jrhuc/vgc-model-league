@@ -21,6 +21,8 @@ Commands:
       [--series-per-pair <n>] [--pool <name>] [--seed <n>] [--concurrency <n>] [--reasoning <level>]
   tournament --models <spec> <spec>...  play a single-elimination bo3 bracket; each model keeps one team
       [--pool <name>] [--seed <n>] [--concurrency <n>] [--reasoning <level>]
+  draft --models <spec> <spec>...     snake-draft rosters from a board, then round robin and playoffs
+      [--board <name>] [--seed <n>] [--concurrency <n>] [--reasoning <level>]
   exhibition --opponent <spec>        host one bo3 where a terminal agent plays a seat over a local bridge
       [--seat p1|p2] [--name <label>] [--pool <name>] [--seed <n>] [--port <n>] [--reasoning <level>]
       [--agent-dir <path>]
@@ -185,6 +187,49 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
     printResults(rows);
     const champion = rows[rows.length - 1];
     if (champion) console.log(`Champion: ${String(champion.advanced ?? champion.winner)}`);
+    return 0;
+  }
+  if (command === 'draft') {
+    const { values, positionals } = parseArgs({
+      args: rest,
+      allowPositionals: true,
+      options: {
+        models: { type: 'string', multiple: true },
+        board: { type: 'string', default: 'regmb-202607' },
+        seed: { type: 'string' },
+        concurrency: { type: 'string', default: '2' },
+        reasoning: { type: 'string' },
+      },
+    });
+    const models = [...(values.models ?? []), ...positionals];
+    if (models.length < 2) throw new Error('draft requires at least two --models');
+    const reasoning = values.reasoning as ReasoningLevel | undefined;
+    if (reasoning && !REASONING_LEVELS.includes(reasoning))
+      throw new Error(`--reasoning must be one of: ${REASONING_LEVELS.join(', ')}`);
+    const seed = values.seed === undefined ? undefined : Number(values.seed);
+    if (seed !== undefined && !Number.isSafeInteger(seed)) throw new Error('--seed must be an integer');
+    const { runDraftLeague } = await import('./draftleague.js');
+    const runDir = makeRunDirectory();
+    const rows = await runDraftLeague(models, runDir, {
+      board: values.board,
+      concurrency: positiveInteger('concurrency', values.concurrency),
+      recordsPath: RESULTS_PATH,
+      ...(seed === undefined ? {} : { seed }),
+      ...(reasoning === undefined ? {} : { reasoning }),
+      onEvent: (event) => {
+        if (event.type === 'draft' && event.draft.phase === 'draft' && event.draft.picks.length > 0) {
+          const pick = event.draft.picks[event.draft.picks.length - 1]!;
+          console.log(
+            `pick ${pick.pick}: ${event.draft.entrants[pick.entrant]} takes ${pick.mon}${pick.fallback ? ' (fallback)' : ''}`,
+          );
+        }
+      },
+      onNotice: (line) => console.log(line),
+    });
+    printResults(rows);
+    const finalRow = rows[rows.length - 1];
+    if (finalRow) console.log(`Champion: ${finalRow.winner ?? String(finalRow.players.p1)}`);
+    console.log(`Draft logs: ${path.join(runDir, 'draft')}`);
     return 0;
   }
   if (command === 'exhibition') {

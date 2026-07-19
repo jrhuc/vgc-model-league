@@ -48,6 +48,59 @@ export interface SeriesRowView {
   winner: string | null;
 }
 
+export interface BoardInfo {
+  id: string;
+  format: string;
+  monCount: number;
+  budget: number;
+  picks: number;
+  /** Largest entrant count the board can support with one spare roster of slack. */
+  maxEntrants: number;
+}
+
+export interface DraftBoardMonView {
+  id: string;
+  name: string;
+  tier: string;
+  cost: number;
+  item: string;
+  ability: string;
+  moves: string[];
+  teraType: string;
+}
+
+export interface DraftPickView {
+  pick: number;
+  entrant: number;
+  mon: string;
+  rationale: string;
+  fallback: boolean;
+}
+
+export interface DraftTableRow {
+  entrant: number;
+  w: number;
+  l: number;
+  gw: number;
+  gl: number;
+}
+
+export interface DraftView {
+  boardId: string;
+  budget: number;
+  picksPerEntrant: number;
+  entrants: string[];
+  board: DraftBoardMonView[];
+  picks: DraftPickView[];
+  /** Mon ids per entrant, in pick order. */
+  rosters: string[][];
+  /** Remaining points per entrant. */
+  budgets: number[];
+  /** Round-robin table, present once battles begin; sorted by rank. */
+  table: DraftTableRow[] | null;
+  phase: 'draft' | 'roundrobin' | 'playoffs' | 'done';
+}
+
 export interface BracketEntrantView {
   model: string;
   team: string;
@@ -83,6 +136,8 @@ export interface RunSnapshot {
   canControl: boolean;
   rows: SeriesRowView[];
   bracket: BracketView | null;
+  draft: DraftView | null;
+  board: string | null;
 }
 
 export interface SampleTeam {
@@ -98,6 +153,7 @@ export interface AppState {
   providers: ProviderInfo[];
   /** Ready-to-play pastes from the default pool that prefill the exhibition match form. */
   sampleTeams: SampleTeam[];
+  boards: BoardInfo[];
   auth: AuthView;
   run: RunSnapshot | null;
 }
@@ -179,15 +235,17 @@ export interface CreatePoolResponse {
 }
 
 export interface RunRequest {
-  mode?: 'rotation' | 'tournament';
+  mode?: 'rotation' | 'tournament' | 'draft';
   models: string[];
   apiKeys: Record<string, string>;
-  /** Required unless inline teams are supplied. */
+  /** Required for rotation and pool-based tournaments. */
   pool?: string;
   /** Inline team pastes, one per model in order; tournament mode only. */
   teams?: string[];
   /** Showdown format for inline teams; defaults to the server's default format. */
   format?: string;
+  /** Draft board id; draft mode only. */
+  board?: string;
   seriesPerPair?: number;
   concurrency: number;
   seed: string;

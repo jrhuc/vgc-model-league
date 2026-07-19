@@ -1,20 +1,23 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 
-import type { AppState, ModelInfo, ModelsResponse, ProviderInfo, RunSnapshot } from '../../api';
+import type { AppState, ModelInfo, ModelsResponse, PoolInfo, ProviderInfo, RunSnapshot } from '../../api';
 import { Dropdown, resolveOption } from '../components/dropdown';
 import { api } from '../http';
+import { PoolsView } from './pools';
 
 interface FixturesProps {
   app: AppState;
   run: RunSnapshot | null;
   onStarted: () => void;
+  onPools: (pools: PoolInfo[]) => void;
 }
 
-type RunMode = 'match' | 'tournament' | 'rotation';
+type RunMode = 'match' | 'tournament' | 'draft' | 'rotation';
 
 const MODES: Array<{ id: RunMode; label: string; hint: string }> = [
   { id: 'match', label: 'Match', hint: 'Two models, two teams, one best-of-three' },
   { id: 'tournament', label: 'Tournament', hint: 'Knockout bracket until a champion' },
+  { id: 'draft', label: 'Draft league', hint: 'Snake draft, round robin, playoffs' },
   { id: 'rotation', label: 'Rotation', hint: 'Mirrored round robin for ratings' },
 ];
 
@@ -61,6 +64,11 @@ const HEADINGS: Record<RunMode, { eyebrow: string; title: [string, string]; lede
     title: ['Build a', 'knockout bracket.'],
     lede: 'Every model draws one team from the pool and defends it through a single-elimination best-of-three bracket until a champion is crowned. Four or more models make a real bracket; fewer play a direct final.',
   },
+  draft: {
+    eyebrow: 'Draft league · protocol v1',
+    title: ['Draft rosters.', 'Crown a champion.'],
+    lede: 'Models snake-draft six fixed sets each from a tiered board under a points budget, explaining every pick. The drafted rosters then play a full round robin and the top seeds meet in playoffs.',
+  },
   rotation: {
     eyebrow: 'Rotation · protocol v1',
     title: ['Set up a', 'Rotation run.'],
@@ -68,9 +76,10 @@ const HEADINGS: Record<RunMode, { eyebrow: string; title: [string, string]; lede
   },
 };
 
-export function FixturesView({ app, run, onStarted }: FixturesProps) {
+export function FixturesView({ app, run, onStarted, onPools }: FixturesProps) {
   const providers = app.providers.filter((provider) => provider.discovery === 'list' || provider.models.length > 0);
   const [mode, setMode] = useState<RunMode>('match');
+  const board = app.boards[0] ?? null;
   const [models, setModels] = useState<string[]>([]);
   const apiKeysRef = useRef<Record<string, string>>({});
   const catalogKeyRef = useRef('');
@@ -101,7 +110,7 @@ export function FixturesView({ app, run, onStarted }: FixturesProps) {
 
   const provider = providers.find((item) => item.id === providerId) ?? null;
   const curated = Boolean(provider && provider.models.length > 0);
-  const maxModels = mode === 'match' ? 2 : 8;
+  const maxModels = mode === 'match' ? 2 : mode === 'draft' ? (board?.maxEntrants ?? 8) : 8;
 
   useEffect(() => {
     catalogGenerationRef.current += 1;
@@ -229,15 +238,25 @@ export function FixturesView({ app, run, onStarted }: FixturesProps) {
               seed: seed.trim(),
               reasoning: reasoning || undefined,
             }
-          : {
-              models,
-              apiKeys,
-              pool,
-              seriesPerPair: Number(series),
-              concurrency: Number(concurrency),
-              seed: seed.trim(),
-              reasoning: reasoning || undefined,
-            };
+          : mode === 'draft'
+            ? {
+                mode: 'draft',
+                models,
+                apiKeys,
+                board: board?.id ?? '',
+                concurrency: Number(concurrency),
+                seed: seed.trim(),
+                reasoning: reasoning || undefined,
+              }
+            : {
+                models,
+                apiKeys,
+                pool,
+                seriesPerPair: Number(series),
+                concurrency: Number(concurrency),
+                seed: seed.trim(),
+                reasoning: reasoning || undefined,
+              };
     api('/api/run', request)
       .then(() => {
         apiKeysRef.current = {};
@@ -268,7 +287,13 @@ export function FixturesView({ app, run, onStarted }: FixturesProps) {
   ];
   const pairs = pairings(models);
   const seriesPerPair = Math.max(1, Number(series) || 1);
-  const total = mode === 'rotation' ? pairs.length * seriesPerPair : Math.max(0, models.length - 1);
+  const draftSeries = models.length >= 2 ? pairs.length + (models.length >= 4 ? 3 : 1) : 0;
+  const total =
+    mode === 'rotation'
+      ? pairs.length * seriesPerPair
+      : mode === 'draft'
+        ? draftSeries
+        : Math.max(0, models.length - 1);
   const active = run?.state === 'running';
   const missingKeys = models.filter((spec) => needsKey(providers, spec) && !apiKeysRef.current[spec]);
   const poolInfo = app.pools.find((info) => info.name === pool);
@@ -278,12 +303,13 @@ export function FixturesView({ app, run, onStarted }: FixturesProps) {
 
   const missingPaste = mode === 'match' && pastes.some((paste) => !paste.trim());
   const poolTooSmall = mode === 'tournament' && poolInfo !== undefined && poolInfo.teamCount < models.length;
+  const boardOverflow = mode === 'draft' && (!board || models.length > board.maxEntrants);
   const startDisabled =
     models.length < 2 ||
     active ||
     missingKeys.length > 0 ||
     starting ||
-    (mode === 'match' ? models.length !== 2 || missingPaste : !pool || poolTooSmall);
+    (mode === 'match' ? models.length !== 2 || missingPaste : mode === 'draft' ? boardOverflow : !pool || poolTooSmall);
   const startLabel = active
     ? 'Run already in progress'
     : models.length < 2
@@ -298,7 +324,9 @@ export function FixturesView({ app, run, onStarted }: FixturesProps) {
               : 'Start the match'
           : mode === 'tournament'
             ? `Start the ${models.length}-model bracket`
-            : `Start ${total} series`;
+            : mode === 'draft'
+              ? `Start the ${models.length}-coach draft`
+              : `Start ${total} series`;
   const launchNote = active
     ? 'Stop or finish the current run before starting another.'
     : missingKeys.length
@@ -309,9 +337,15 @@ export function FixturesView({ app, run, onStarted }: FixturesProps) {
           ? poolTooSmall
             ? `Pool ${pool} has only ${poolInfo?.teamCount} teams for ${models.length} entrants.`
             : bracketPreview(models.length) || 'The bracket updates as you add models.'
-          : pairs.length
-            ? `${total} best-of-three series, mirrored in pairs · up to ${concurrency} in parallel.`
-            : 'The run card updates as you add models.';
+          : mode === 'draft'
+            ? boardOverflow
+              ? `Board ${board?.id ?? ''} supports at most ${board?.maxEntrants ?? 0} coaches.`
+              : models.length >= 2
+                ? `${models.length * (board?.picks ?? 6)} picks, then ${pairs.length} round-robin and ${models.length >= 4 ? 3 : 1} playoff series.`
+                : 'The draft plan updates as you add models.'
+            : pairs.length
+              ? `${total} best-of-three series, mirrored in pairs · up to ${concurrency} in parallel.`
+              : 'The run card updates as you add models.';
 
   return (
     <>
@@ -355,7 +389,9 @@ export function FixturesView({ app, run, onStarted }: FixturesProps) {
                   ? 'Exactly two models play the match.'
                   : mode === 'tournament'
                     ? 'Each model enters the bracket with its own team.'
-                    : 'Two models make a head-to-head. Three or more make a round robin.'}
+                    : mode === 'draft'
+                      ? `Each model coaches its own drafted roster${board ? ` (up to ${board.maxEntrants} coaches)` : ''}.`
+                      : 'Two models make a head-to-head. Three or more make a round robin.'}
               </p>
             </div>
             <div class="section-count">
@@ -538,13 +574,27 @@ export function FixturesView({ app, run, onStarted }: FixturesProps) {
                     ? models.length >= 2
                       ? `${models.length} entrants · single elimination`
                       : 'Waiting for models'
-                    : pairs.length
-                      ? `${pairs.length} matchup${pairs.length === 1 ? '' : 's'} · ${total} series · mirrored in pairs`
-                      : 'Waiting for models'}
+                    : mode === 'draft'
+                      ? models.length >= 2
+                        ? `${models.length} coaches · ${total} series after the draft`
+                        : 'Waiting for models'
+                      : pairs.length
+                        ? `${pairs.length} matchup${pairs.length === 1 ? '' : 's'} · ${total} series · mirrored in pairs`
+                        : 'Waiting for models'}
                 </span>
               </div>
               <div>
-                {mode === 'tournament' ? (
+                {mode === 'draft' ? (
+                  models.length < 2 ? (
+                    <p class="muted">Add at least two models to plan the draft.</p>
+                  ) : (
+                    <p class="muted">
+                      Snake draft over {board?.monCount ?? '?'} tiered sets with a {board?.budget ?? '?'}-point budget,
+                      then a full round robin seeds the {models.length >= 4 ? 'top-four playoffs' : 'final'}. Every
+                      pick's rationale is logged and shown live.
+                    </p>
+                  )
+                ) : mode === 'tournament' ? (
                   models.length < 2 ? (
                     <p class="muted">Add at least two models to build the bracket.</p>
                   ) : (
@@ -585,7 +635,7 @@ export function FixturesView({ app, run, onStarted }: FixturesProps) {
             </div>
           </div>
           <div class="settings-body">
-            {mode !== 'match' && (
+            {(mode === 'tournament' || mode === 'rotation') && (
               <div class="pool-choice">
                 <Dropdown
                   id="pool"
@@ -598,6 +648,21 @@ export function FixturesView({ app, run, onStarted }: FixturesProps) {
                 <div class="pool-facts">
                   <span>{poolInfo ? poolInfo.format.replace(/^gen[0-9]+/, '') : 'No format'}</span>
                   <span>{poolInfo ? `${poolInfo.teamCount} teams` : 'Empty'}</span>
+                </div>
+              </div>
+            )}
+            {mode === 'draft' && (
+              <div class="pool-choice">
+                <div class="field">
+                  <span class="field-label">Draft board</span>
+                  <div class="board-fact-card">
+                    <b>{board ? board.id : 'No board bundled'}</b>
+                    <span>
+                      {board
+                        ? `${board.monCount} tiered sets · ${board.budget} points · ${board.picks} picks each`
+                        : 'Draft runs need a bundled board file.'}
+                    </span>
+                  </div>
                 </div>
               </div>
             )}
@@ -668,6 +733,12 @@ export function FixturesView({ app, run, onStarted }: FixturesProps) {
           </div>
         </aside>
       </div>
+      {(mode === 'tournament' || mode === 'rotation') && (
+        <details class="pools-manager">
+          <summary>Manage team pools</summary>
+          <PoolsView app={app} onPools={onPools} />
+        </details>
+      )}
     </>
   );
 }

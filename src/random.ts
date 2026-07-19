@@ -1,5 +1,14 @@
 export type Rng = () => number;
 
+export function shuffle<T>(items: readonly T[], random: Rng): T[] {
+  const result = [...items];
+  for (let index = result.length - 1; index > 0; index -= 1) {
+    const swap = Math.floor(random() * (index + 1));
+    [result[index], result[swap]] = [result[swap]!, result[index]!];
+  }
+  return result;
+}
+
 export function seededRng(seed: number | string): Rng {
   let state = 0x811c9dc5;
   for (const character of String(seed)) {

@@ -1,19 +1,17 @@
-import { randomBytes, randomUUID } from 'node:crypto';
+import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import type { LLMEngine, RandomEngine } from './engines.js';
 import { scaffoldRevision } from './engines.js';
 import type { BracketView } from './gui/api.js';
 import { defaultPsDir, RESULTS_PATH } from './paths.js';
 import type { ReasoningLevel } from './providers.js';
 import { parseSpec, validateReasoning } from './providers.js';
-import type { Rng } from './random.js';
-import { seededRng } from './random.js';
+import { seededRng, shuffle } from './random.js';
 import type { SeriesRecord } from './records.js';
 import { appendRow } from './records.js';
-import { ShowdownReference } from './reference.js';
 import type { ContributorAttribution, RotationEvent } from './rotation.js';
-import { makeEngine, mapLimit, playBo3 } from './rotation.js';
+import { mapLimit } from './rotation.js';
+import { playRecordedSeries } from './series.js';
 import { showdownCommit } from './showdown.js';
 import type { Team } from './teams.js';
 import { loadPool, validatePool, validateTeam } from './teams.js';
@@ -94,15 +92,6 @@ export function buildBracket(count: number): BracketMatch[][] {
     );
   }
   return rounds;
-}
-
-function shuffle<T>(items: readonly T[], random: Rng): T[] {
-  const result = [...items];
-  for (let index = result.length - 1; index > 0; index -= 1) {
-    const swap = Math.floor(random() * (index + 1));
-    [result[index], result[swap]] = [result[swap]!, result[index]!];
-  }
-  return result;
 }
 
 export async function runTournament(
@@ -289,41 +278,16 @@ async function playMatch(
   const players: Record<Pid, string> = { p1: sides.p1.model, p2: sides.p2.model };
   context.onEvent?.({ type: 'series-players', index, players });
   context.onEvent?.({ type: 'series-start', index });
-  const seriesId = randomUUID().replaceAll('-', '').slice(0, 12);
-  const seriesDir = path.join(context.runDir, 'series', seriesId);
-  fs.mkdirSync(seriesDir, { recursive: true });
-  const names: Record<Pid, string> = { p1: `p1-${players.p1}`, p2: `p2-${players.p2}` };
-  const reference = Object.values(players).some((player) => player !== 'random')
-    ? new ShowdownReference(context.format, context.psDir)
-    : undefined;
-  const engines = Object.fromEntries(
-    (['p1', 'p2'] as const).map((pid) => [
-      pid,
-      makeEngine(
-        pid,
-        players[pid],
-        context.seriesSeeds.engineSeeds[pid],
-        path.join(seriesDir, `${pid}-decisions.jsonl`),
-        path.join(seriesDir, `${pid}-trace.jsonl`),
-        context.format,
-        context.psDir,
-        context.reasoning,
-        reference,
-        context.signal,
-        context.apiKeys?.[players[pid]],
-      ),
-    ]),
-  ) as Record<Pid, RandomEngine | LLMEngine>;
-  const { score, games, winnerSide } = await playBo3({
-    engines,
-    names,
+  const { winnerSide, fields } = await playRecordedSeries({
     players,
     teams: { p1: sides.p1.team, p2: sides.p2.team },
     gameSeeds: context.seriesSeeds.gameSeeds,
-    seriesId,
-    seriesDir,
+    engineSeeds: context.seriesSeeds.engineSeeds,
     format: context.format,
     psDir: context.psDir,
+    runDir: context.runDir,
+    ...(context.reasoning === undefined ? {} : { reasoning: context.reasoning }),
+    ...(context.apiKeys === undefined ? {} : { apiKeys: context.apiKeys }),
     ...(context.signal === undefined ? {} : { signal: context.signal }),
     onGameUpdate: (game, lines, publicLines) =>
       context.onEvent?.({ type: 'game-update', index, game, lines, publicLines }),
@@ -343,26 +307,13 @@ async function playMatch(
     mode: 'tournament',
     protocol_version: TOURNAMENT_PROTOCOL_VERSION,
     scaffold: context.scaffold,
-    timestamp: new Date().toISOString(),
-    run_id: path.basename(context.runDir),
-    series_id: seriesId,
     series_index: index,
     round: match.round + 1,
-    format: context.format,
     ...(context.poolId === null ? {} : { pool: context.poolId }),
     ...(context.contributor === undefined ? {} : { contributor: context.contributor }),
-    players,
-    teams: { p1: sides.p1.team.id, p2: sides.p2.team.id },
-    winner: winnerSide ? players[winnerSide] : null,
-    winner_side: winnerSide ?? null,
     advanced: entrants[match.winner]!.model,
-    score,
-    turns: games.reduce((sum, game) => sum + Number(game.turns), 0),
-    games,
     run_seed: context.runSeed,
-    engine_seeds: context.seriesSeeds.engineSeeds,
-    reasoning: context.reasoning ?? null,
-    decision_stats: Object.fromEntries((['p1', 'p2'] as const).map((pid) => [pid, engines[pid].decisionStats()])),
     ps_commit: showdownCommit(context.psDir),
-  };
+    ...fields,
+  } as SeriesRecord;
 }
