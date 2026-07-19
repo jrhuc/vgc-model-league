@@ -101,7 +101,6 @@ export const DEX_TOOLS: ToolDefinition[] = [
 type SpeciesSet = [name: string, item?: string | null, nature?: string | null];
 
 export interface ReferenceQuery {
-  speciesItems?: Array<[string, string | null]>;
   speciesSets?: SpeciesSet[];
   moves?: string[];
   items?: string[];
@@ -144,23 +143,12 @@ function baseStats(stats: Dex.StatsTable): string {
   return `base stats HP ${stats.hp}, Atk ${stats.atk}, Def ${stats.def}, SpA ${stats.spa}, SpD ${stats.spd}, Spe ${stats.spe}`;
 }
 
-function speedRange(base: number, nature?: { plus?: string; minus?: string }): [number, number] {
-  const modifier = nature?.plus === 'spe' ? 1.1 : nature?.minus === 'spe' ? 0.9 : nature ? 1 : undefined;
-  const stat = (iv: number, ev: number, multiplier: number) =>
-    Math.floor((Math.floor(((2 * base + iv + Math.floor(ev / 4)) * 50) / 100) + 5) * multiplier);
-  return modifier === undefined
-    ? [stat(0, 0, 0.9), stat(31, 252, 1.1)]
-    : [stat(0, 0, modifier), stat(31, 252, modifier)];
-}
-
 function statRange(
   base: number,
-  nature?: { plus?: string; minus?: string },
-  statName?: 'atk' | 'def' | 'spa' | 'spd' | 'spe',
+  nature: { plus?: string; minus?: string } | undefined,
+  statName: 'atk' | 'def' | 'spa' | 'spd' | 'spe',
 ): [number, number] {
-  if (!statName || statName === 'spe') return speedRange(base, nature);
-  const modifier =
-    nature && statName ? (nature.plus === statName ? 1.1 : nature.minus === statName ? 0.9 : 1) : undefined;
+  const modifier = nature ? (nature.plus === statName ? 1.1 : nature.minus === statName ? 0.9 : 1) : undefined;
   const stat = (iv: number, ev: number, multiplier: number) =>
     Math.floor((Math.floor(((2 * base + iv + Math.floor(ev / 4)) * 50) / 100) + 5) * multiplier);
   return modifier === undefined
@@ -245,7 +233,7 @@ export class ShowdownReference {
       seen.add(key);
       const nature = mon.nature ? this.dex.natures.get(mon.nature) : undefined;
       const knownNature = nature?.exists ? nature : undefined;
-      const [low, high] = speedRange(species.baseStats.spe, knownNature);
+      const [low, high] = statRange(species.baseStats.spe, knownNature, 'spe');
       const speed = knownNature ? `Spe ${low}-${high} ${knownNature.name}` : `Spe ${low}-${high}`;
       const moveBits = uniqueNames(mon.moves ?? [])
         .flatMap((moveName) => {
@@ -288,10 +276,7 @@ export class ShowdownReference {
   }
 
   render(query: ReferenceQuery = {}): string[] {
-    const speciesSets: SpeciesSet[] = [
-      ...(query.speciesSets ?? []),
-      ...(query.speciesItems ?? []).map(([name, item]): SpeciesSet => [name, item]),
-    ];
+    const speciesSets = query.speciesSets ?? [];
     const moves = uniqueNames(query.moves ?? []);
     const items = uniqueNames([...(query.items ?? []), ...speciesSets.map((set) => set[1])]);
     const abilities = uniqueNames(query.abilities ?? []);
@@ -320,7 +305,7 @@ export class ShowdownReference {
       for (const [, , natureName] of sets) {
         const nature = natureName ? this.dex.natures.get(natureName) : undefined;
         const knownNature = nature?.exists ? nature : undefined;
-        const [low, high] = speedRange(species.baseStats.spe, knownNature);
+        const [low, high] = statRange(species.baseStats.spe, knownNature, 'spe');
         const detail = knownNature
           ? `Speed ${low}-${high} with ${knownNature.name} alignment (full legal IV/EV range)`
           : `Speed ${low}-${high} (full legal IV/EV/nature range)`;
@@ -338,7 +323,7 @@ export class ShowdownReference {
             if (id(visibleItem ?? '') !== id(itemName)) return [];
             const nature = natureName ? this.dex.natures.get(natureName) : undefined;
             const knownNature = nature?.exists ? nature : undefined;
-            const [low, high] = speedRange(mega.baseStats.spe, knownNature);
+            const [low, high] = statRange(mega.baseStats.spe, knownNature, 'spe');
             return [`Speed ${low}-${high}${knownNature ? ` with ${knownNature.name} alignment` : ''}`];
           });
           const megaAbilities = uniqueNames(Object.values(mega.abilities));
@@ -401,7 +386,7 @@ export class ShowdownReference {
     return `Unknown tool: ${name}`;
   }
 
-  lookupSpecies(name: string, item?: unknown, nature?: unknown): string {
+  private lookupSpecies(name: string, item?: unknown, nature?: unknown): string {
     if (!name.trim()) return 'Species name is required.';
     const lines = this.render({
       speciesSets: [

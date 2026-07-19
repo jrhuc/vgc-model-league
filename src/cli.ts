@@ -224,7 +224,6 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
           );
         }
       },
-      onNotice: (line) => console.log(line),
     });
     printResults(rows);
     const finalRow = rows[rows.length - 1];

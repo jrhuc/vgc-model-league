@@ -5,15 +5,22 @@ import path from 'node:path';
 import test from 'node:test';
 
 import type { DraftState } from '../src/draft.js';
-import { boardInfo, legalPicks, loadBoard, runDraft, snakeOrder } from '../src/draft.js';
+import { boardInfo, draftScaffoldRevision, legalPicks, loadBoard, runDraft, snakeOrder } from '../src/draft.js';
 import type { DraftLeagueEvent } from '../src/draftleague.js';
 import { DRAFT_PROTOCOL_VERSION, runDraftLeague } from '../src/draftleague.js';
+import { scaffoldRevision } from '../src/engines.js';
 import { seededRng } from '../src/random.js';
 import { loadRows } from '../src/records.js';
 import { loadShowdown } from '../src/showdown.js';
 import type { Completion, Provider } from '../src/types.js';
 
 const BOARD = loadBoard('regmb-202607');
+
+test('draft scaffold identity is distinct and stable', () => {
+  assert.match(draftScaffoldRevision(), /^[0-9a-f]{12}$/);
+  assert.equal(draftScaffoldRevision(), draftScaffoldRevision());
+  assert.notEqual(draftScaffoldRevision(), scaffoldRevision());
+});
 
 function freshState(): DraftState {
   return {
@@ -66,8 +73,23 @@ test('legal picks enforce exclusivity, item clause, and budget feasibility', () 
 
   state.budgets[0] = 20;
   const constrained = legalPicks(state, 0);
-  // 5 picks remain; a 20-cost pick would leave 0 for 4 picks at minimum cost 3.
+  // Five picks remain, so every choice must leave enough for four available sets.
   assert.ok(constrained.every((mon) => mon.cost <= 20 - 3 * 4));
+});
+
+test('budget feasibility follows the remaining board instead of a fixed minimum cost', () => {
+  const available = new Set(BOARD.mons.slice(0, 6).map((mon) => mon.id));
+  const state: DraftState = {
+    board: {
+      ...BOARD,
+      mons: BOARD.mons.map((mon) => (available.has(mon.id) ? { ...mon, cost: 12 } : mon)),
+    },
+    taken: new Map(BOARD.mons.filter((mon) => !available.has(mon.id)).map((mon) => [mon.id, 1])),
+    rosters: [[], []],
+    budgets: [65, BOARD.budget],
+  };
+
+  assert.deepEqual(legalPicks(state, 0), []);
 });
 
 function scriptedProvider(responses: string[]): Provider {
@@ -84,22 +106,27 @@ function scriptedProvider(responses: string[]): Provider {
 test('llm drafters get retries with feedback and their rationale is logged', async (t) => {
   const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-draft-logs-'));
   t.after(() => fs.rmSync(logDir, { recursive: true, force: true }));
+  let receivedReasoning = '';
   const outcome = await runDraft(
     ['fake:model', 'random'],
     { ...BOARD, picks: 4 },
     {
       logDir,
       rng: seededRng(1),
-      makeDraftProvider: () =>
-        scriptedProvider([
+      reasoningByModel: { 'fake:model': 'high' },
+      makeDraftProvider: (_spec, _apiKey, reasoning) => {
+        receivedReasoning = reasoning ?? '';
+        return scriptedProvider([
           'I will take {"pick": "not-a-mon", "reasoning": "bad id"}',
           '{"pick": "garchomp", "reasoning": "Best stats on the board and Life Orb pressure."}',
           '{"pick": "incineroar", "reasoning": "Fake Out support."}',
           '{"pick": "sinistcha", "reasoning": "Redirection and Matcha Gotcha."}',
           '{"pick": "farigiraf", "reasoning": "Trick Room insurance."}',
-        ]),
+        ]);
+      },
     },
   );
+  assert.equal(receivedReasoning, 'high');
   assert.equal(outcome.rosters[0]!.length, 4);
   assert.equal(outcome.rosters[1]!.length, 4);
   assert.equal(outcome.rosters[0]![0]!.id, 'garchomp');
@@ -165,10 +192,14 @@ test('a full draft league drafts, plays a round robin, and crowns a playoff cham
     assert.equal(row.protocol_version, DRAFT_PROTOCOL_VERSION);
     assert.equal(row.board, 'regmb-202607');
     assert.equal(row.pool, undefined);
+    assert.equal(row.scaffold, scaffoldRevision());
+    assert.equal(row.draft_scaffold, draftScaffoldRevision());
   }
 
   const config = JSON.parse(fs.readFileSync(path.join(directory, 'config.json'), 'utf8')) as Record<string, unknown>;
   assert.equal(config.mode, 'draft');
+  assert.equal(config.scaffold, scaffoldRevision());
+  assert.equal(config.draft_scaffold, draftScaffoldRevision());
   const rosters = config.rosters as string[][];
   assert.equal(rosters.length, 4);
   const drafted = rosters.flat();

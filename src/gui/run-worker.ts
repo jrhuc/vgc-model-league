@@ -1,3 +1,4 @@
+import type { DraftLeagueEvent } from '../draftleague.js';
 import { runRotation } from '../rotation.js';
 import { redactSecrets } from '../sanitize.js';
 import { runTournament } from '../tournament.js';
@@ -19,47 +20,36 @@ process.on('message', (value: unknown) => {
 
 async function execute(message: RunWorkerStart): Promise<void> {
   controller = new AbortController();
+  const commonOptions = {
+    concurrency: message.concurrency,
+    recordsPath: message.recordsPath,
+    apiKeys: message.apiKeys,
+    signal: controller.signal,
+    ...(message.seed === undefined ? {} : { seed: message.seed }),
+    ...(message.reasoning === undefined ? {} : { reasoning: message.reasoning }),
+    ...(message.reasoningByModel === undefined ? {} : { reasoningByModel: message.reasoningByModel }),
+    ...(message.contributor === undefined ? {} : { contributor: message.contributor }),
+    onEvent: (event: DraftLeagueEvent) => send({ type: 'event', event }),
+  };
   try {
     if (message.mode === 'draft') {
       const { runDraftLeague } = await import('../draftleague.js');
       await runDraftLeague(message.models, message.runDir, {
-        concurrency: message.concurrency,
-        recordsPath: message.recordsPath,
-        apiKeys: message.apiKeys,
-        signal: controller.signal,
+        ...commonOptions,
         ...(message.board === undefined ? {} : { board: message.board }),
-        ...(message.seed === undefined ? {} : { seed: message.seed }),
-        ...(message.reasoning === undefined ? {} : { reasoning: message.reasoning }),
-        ...(message.contributor === undefined ? {} : { contributor: message.contributor }),
-        onEvent: (event) => send({ type: 'event', event }),
-        onNotice: (notice) => send({ type: 'notice', message: notice }),
       });
     } else if (message.mode === 'tournament') {
       await runTournament(message.models, message.runDir, {
-        concurrency: message.concurrency,
-        recordsPath: message.recordsPath,
-        apiKeys: message.apiKeys,
-        signal: controller.signal,
+        ...commonOptions,
         ...(message.teams === undefined ? {} : { teams: message.teams }),
         ...(message.format === undefined ? {} : { format: message.format }),
         ...(message.pool ? { pool: message.pool } : {}),
-        ...(message.seed === undefined ? {} : { seed: message.seed }),
-        ...(message.reasoning === undefined ? {} : { reasoning: message.reasoning }),
-        ...(message.contributor === undefined ? {} : { contributor: message.contributor }),
-        onEvent: (event) => send({ type: 'event', event }),
         onNotice: (notice) => send({ type: 'notice', message: notice }),
       });
     } else {
       await runRotation(message.models, message.seriesPerPair, message.runDir, {
+        ...commonOptions,
         pool: message.pool,
-        concurrency: message.concurrency,
-        recordsPath: message.recordsPath,
-        apiKeys: message.apiKeys,
-        signal: controller.signal,
-        ...(message.seed === undefined ? {} : { seed: message.seed }),
-        ...(message.reasoning === undefined ? {} : { reasoning: message.reasoning }),
-        ...(message.contributor === undefined ? {} : { contributor: message.contributor }),
-        onEvent: (event) => send({ type: 'event', event }),
         onNotice: (notice) => send({ type: 'notice', message: notice }),
       });
     }

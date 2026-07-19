@@ -1,21 +1,19 @@
-import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { scaffoldRevision } from './engines.js';
 import type { BracketView } from './gui/api.js';
 import { defaultPsDir, RESULTS_PATH } from './paths.js';
-import type { ReasoningLevel } from './providers.js';
-import { parseSpec, validateReasoning } from './providers.js';
-import { seededRng, shuffle } from './random.js';
+import type { ModelReasoningConfig } from './providers.js';
+import { validateModelExecution } from './providers.js';
+import { resolveSeed, seededRng, seriesEntropy, shuffle } from './random.js';
 import type { SeriesRecord } from './records.js';
 import { appendRow } from './records.js';
-import type { ContributorAttribution, RotationEvent } from './rotation.js';
-import { mapLimit } from './rotation.js';
+import type { RotationEvent } from './rotation.js';
 import { playRecordedSeries } from './series.js';
 import { showdownCommit } from './showdown.js';
 import type { Team } from './teams.js';
 import { loadPool, validatePool, validateTeam } from './teams.js';
-import type { Pid } from './types.js';
+import type { ContributorAttribution, Pid } from './types.js';
 
 export const TOURNAMENT_PROTOCOL_VERSION = 1;
 
@@ -24,12 +22,11 @@ export type TournamentEvent =
   | { type: 'bracket'; bracket: BracketView }
   | { type: 'series-players'; index: number; players: Record<Pid, string> };
 
-export interface TournamentOptions {
+export interface TournamentOptions extends ModelReasoningConfig {
   seed?: number;
   concurrency?: number;
   recordsPath?: string;
   psDir?: string;
-  reasoning?: ReasoningLevel;
   apiKeys?: Readonly<Record<string, string>>;
   pool?: string;
   /** Inline teams paired to models by index; replaces the pool as the team source. */
@@ -53,6 +50,13 @@ export interface BracketMatch {
   seriesIndex: number | null;
   slots: [number | null, number | null];
   winner: number | null;
+}
+
+export function higherSeed(slots: readonly [number, number], seeding: readonly number[]): number {
+  const firstRank = seeding.indexOf(slots[0]);
+  const secondRank = seeding.indexOf(slots[1]);
+  if (firstRank < 0 || secondRank < 0) throw new Error('bracket entrant is missing from the seeding');
+  return firstRank < secondRank ? slots[0] : slots[1];
 }
 
 /**
@@ -100,20 +104,12 @@ export async function runTournament(
   options: TournamentOptions = {},
 ): Promise<SeriesRecord[]> {
   if (models.length < 2) throw new Error('a tournament needs at least two models');
-  for (const model of models) validateReasoning(parseSpec(model), options.reasoning);
-  if (options.apiKeys) {
-    for (const model of models) {
-      if (model !== 'random' && options.apiKeys[model] === undefined)
-        throw new Error(
-          `no API key was supplied for ${model}; key-carrying runs never fall back to server environment keys`,
-        );
-    }
-  }
+  validateModelExecution(models, options);
 
   fs.mkdirSync(runDir, { recursive: true });
   const recordsPath = options.recordsPath ?? RESULTS_PATH;
   const psDir = options.psDir ?? defaultPsDir();
-  const seed = options.seed ?? randomBytes(6).readUIntBE(0, 6);
+  const seed = resolveSeed(options.seed);
   const random = seededRng(seed);
   const scaffold = scaffoldRevision();
 
@@ -154,16 +150,7 @@ export async function runTournament(
   const rounds = buildBracket(entrants.length);
   const matches = rounds.flat();
   const seriesCount = entrants.length - 1;
-  const seriesSeeds = Array.from({ length: seriesCount }, () => ({
-    gameSeeds: Array.from(
-      { length: 3 },
-      () => Array.from({ length: 4 }, () => 1 + Math.floor(random() * 0xffff)) as [number, number, number, number],
-    ),
-    engineSeeds: {
-      p1: Math.floor(random() * Number.MAX_SAFE_INTEGER),
-      p2: Math.floor(random() * Number.MAX_SAFE_INTEGER),
-    } as Record<Pid, number>,
-  }));
+  const seriesSeeds = Array.from({ length: seriesCount }, () => seriesEntropy(random));
 
   const bracketView = (): BracketView => ({
     entrants: entrants.map((entrant) => ({ model: entrant.model, team: entrant.team.id })),
@@ -185,6 +172,7 @@ export async function runTournament(
         concurrency: options.concurrency ?? 2,
         reasoning: options.reasoning ?? null,
         pool: poolId,
+        reasoning_by_model: options.reasoningByModel ?? null,
         format,
         entrants: entrants.map((entrant) => ({ model: entrant.model, team: entrant.team.id })),
         contributor: options.contributor ?? null,
@@ -221,12 +209,17 @@ export async function runTournament(
   options.onEvent?.({ type: 'bracket', bracket: bracketView() });
 
   const results: SeriesRecord[] = [];
-  for (const round of rounds) {
-    if (options.signal?.aborted) break;
-    const playable = round.filter(
-      (match) => match.seriesIndex !== null && match.slots[0] !== null && match.slots[1] !== null,
-    );
-    const roundResults = await mapLimit(playable, options.concurrency ?? 2, options.signal, async (match, signal) => {
+  const started = new Set<BracketMatch>();
+  const active = new Set<Promise<void>>();
+  const controller = new AbortController();
+  const forwardAbort = () => controller.abort();
+  if (options.signal?.aborted) controller.abort();
+  else options.signal?.addEventListener('abort', forwardAbort, { once: true });
+  const concurrency = Math.max(1, Math.min(options.concurrency ?? 2, seriesCount));
+  let failure: { error: unknown } | undefined;
+
+  const runMatch = async (match: BracketMatch): Promise<void> => {
+    try {
       const row = await playMatch(match, entrants, {
         runDir,
         format,
@@ -234,22 +227,52 @@ export async function runTournament(
         runSeed: seed,
         scaffold,
         psDir,
-        signal,
+        signal: controller.signal,
         seriesSeeds: seriesSeeds[match.seriesIndex!]!,
         ...(options.reasoning === undefined ? {} : { reasoning: options.reasoning }),
         ...(options.apiKeys === undefined ? {} : { apiKeys: options.apiKeys }),
+        ...(options.reasoningByModel === undefined ? {} : { reasoningByModel: options.reasoningByModel }),
         ...(options.onEvent === undefined ? {} : { onEvent: options.onEvent }),
         ...(options.onNotice === undefined ? {} : { onNotice: options.onNotice }),
         ...(options.contributor === undefined ? {} : { contributor: options.contributor }),
       });
       appendRow(recordsPath, row);
+      results.push(row);
       propagate(match);
       options.onEvent?.({ type: 'series-end', index: match.seriesIndex!, record: row });
       options.onEvent?.({ type: 'bracket', bracket: bracketView() });
-      return row;
-    });
-    results.push(...roundResults);
-  }
+    } catch (error) {
+      if (!controller.signal.aborted) {
+        failure ??= { error };
+        controller.abort();
+      }
+    }
+  };
+
+  const startReady = (): void => {
+    while (active.size < concurrency && !controller.signal.aborted) {
+      const match = matches.find(
+        (candidate) =>
+          candidate.seriesIndex !== null &&
+          candidate.slots[0] !== null &&
+          candidate.slots[1] !== null &&
+          !started.has(candidate),
+      );
+      if (!match) break;
+      started.add(match);
+      const task = runMatch(match);
+      active.add(task);
+      void task.finally(() => {
+        active.delete(task);
+        startReady();
+      });
+    }
+  };
+
+  startReady();
+  while (active.size) await Promise.race(active);
+  options.signal?.removeEventListener('abort', forwardAbort);
+  if (failure && !options.signal?.aborted) throw failure.error;
   return results;
 }
 
@@ -264,13 +287,12 @@ async function playMatch(
     scaffold: string;
     psDir: string;
     seriesSeeds: { gameSeeds: Array<[number, number, number, number]>; engineSeeds: Record<Pid, number> };
-    reasoning?: ReasoningLevel;
     apiKeys?: Readonly<Record<string, string>>;
     onEvent?: (event: TournamentEvent) => void;
     onNotice?: (message: string) => void;
     signal?: AbortSignal;
     contributor?: ContributorAttribution;
-  },
+  } & ModelReasoningConfig,
 ): Promise<SeriesRecord> {
   context.signal?.throwIfAborted();
   const index = match.seriesIndex!;
@@ -286,6 +308,7 @@ async function playMatch(
     format: context.format,
     psDir: context.psDir,
     runDir: context.runDir,
+    ...(context.reasoningByModel === undefined ? {} : { reasoningByModel: context.reasoningByModel }),
     ...(context.reasoning === undefined ? {} : { reasoning: context.reasoning }),
     ...(context.apiKeys === undefined ? {} : { apiKeys: context.apiKeys }),
     ...(context.signal === undefined ? {} : { signal: context.signal }),
@@ -297,9 +320,14 @@ async function playMatch(
 
   // A drawn series cannot leave the bracket unresolved: the higher seed advances,
   // while the record keeps winner null so results stay honest.
-  match.winner = winnerSide ? match.slots[winnerSide === 'p1' ? 0 : 1]! : match.slots[0]!;
+  match.winner = winnerSide
+    ? match.slots[winnerSide === 'p1' ? 0 : 1]!
+    : higherSeed(
+        [match.slots[0]!, match.slots[1]!],
+        entrants.map((_, entrant) => entrant),
+      );
   if (!winnerSide) {
-    context.onNotice?.(`series ${index + 1} was drawn; ${sides.p1.model} advances as the higher seed`);
+    context.onNotice?.(`series ${index + 1} was drawn; ${entrants[match.winner]!.model} advances as the higher seed`);
   }
 
   return {

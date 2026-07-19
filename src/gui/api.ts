@@ -3,6 +3,7 @@ import type { ExperimentMode, Pid } from '../types.js';
 export interface ModelInfo {
   id: string;
   label: string;
+  reasoningLevels: string[];
 }
 
 export interface ProviderInfo {
@@ -124,7 +125,7 @@ export interface RunSnapshot {
   runId: string;
   mode: ExperimentMode;
   protocolVersion: number;
-  state: 'running' | 'done' | 'failed';
+  state: 'running' | 'done' | 'failed' | 'stopped';
   error: string;
   notices: string[];
   seed: number | null;
@@ -214,6 +215,10 @@ export interface ModelsResponse {
   models: ModelInfo[];
 }
 
+export interface ReasoningLevelsResponse {
+  levels: string[];
+}
+
 export interface TeamMemberView {
   species: string;
   item: string;
@@ -232,22 +237,4 @@ export interface CreatePoolResponse {
   ok: boolean;
   name: string;
   pools: PoolInfo[];
-}
-
-export interface RunRequest {
-  mode?: 'rotation' | 'tournament' | 'draft';
-  models: string[];
-  apiKeys: Record<string, string>;
-  /** Required for rotation and pool-based tournaments. */
-  pool?: string;
-  /** Inline team pastes, one per model in order; tournament mode only. */
-  teams?: string[];
-  /** Showdown format for inline teams; defaults to the server's default format. */
-  format?: string;
-  /** Draft board id; draft mode only. */
-  board?: string;
-  seriesPerPair?: number;
-  concurrency: number;
-  seed: string;
-  reasoning?: string;
 }

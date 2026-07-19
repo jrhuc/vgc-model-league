@@ -13,8 +13,8 @@ import type { DraftLeagueEvent } from '../draftleague.js';
 import { DRAFT_PROTOCOL_VERSION, runDraftLeague } from '../draftleague.js';
 import { discoverModels, PROVIDER_OPTIONS, providerOption } from '../model-catalog.js';
 import { DATA_DIR, prepareDataDirectories, RESULTS_PATH, TEAMS_DIR } from '../paths.js';
-import type { ReasoningLevel } from '../providers.js';
-import { parseSpec, REASONING_LEVELS, validateReasoning } from '../providers.js';
+import type { ModelReasoningConfig, ReasoningLevel } from '../providers.js';
+import { parseSpec, REASONING_LEVELS, reasoningLevels, validateReasoning } from '../providers.js';
 import { h2h, loadRows, scopeRows, standings } from '../records.js';
 import { makeRunDirectory, ROTATION_PROTOCOL_VERSION, runRotation } from '../rotation.js';
 import { redactSecrets } from '../sanitize.js';
@@ -33,6 +33,7 @@ import type {
   BracketView,
   DraftView,
   FormatInfo,
+  ModelInfo,
   ModelsResponse,
   MonView,
   RecordsResponse,
@@ -131,7 +132,7 @@ interface PendingServerEvent {
   publicEvent: ServerEvent;
 }
 
-interface RunConfig {
+interface RunConfig extends ModelReasoningConfig {
   mode: ExperimentMode;
   protocolVersion: number;
   models: string[];
@@ -142,14 +143,13 @@ interface RunConfig {
   format?: string;
   board?: string;
   seed?: number;
-  reasoning?: ReasoningLevel;
 }
 
 class ActiveRun {
   rows: SeriesRow[] = [];
   bracket: BracketView | undefined;
   draft: DraftView | undefined;
-  state: 'running' | 'done' | 'failed' = 'running';
+  state: 'running' | 'done' | 'failed' | 'stopped' = 'running';
   error = '';
   notices: string[] = [];
   seed: number | undefined;
@@ -157,6 +157,7 @@ class ActiveRun {
   timeoutTimer: NodeJS.Timeout | undefined;
   timedOut = false;
   interrupted = false;
+  userStopped = false;
   readonly battles = new Map<number, { game: number; state: BattleState }>();
   readonly publicBattles = new Map<number, { game: number; state: BattleState }>();
   readonly controller = new AbortController();
@@ -453,7 +454,9 @@ export class GuiServer {
     if (method === 'GET' && !url.pathname.startsWith('/api/') && this.serveStatic(url.pathname, response)) return;
     if (key === 'GET /api/state') this.json(response, 200, this.stateBody(session));
     else if (key === 'GET /api/records') this.json(response, 200, this.recordsBody(url.searchParams.get('pool')));
-    else if (key === 'GET /api/events/public') {
+    else if (key === 'GET /api/reasoning') {
+      this.json(response, 200, this.reasoningBody(url.searchParams.get('spec') ?? ''));
+    } else if (key === 'GET /api/events/public') {
       this.openEvents(response, undefined, true);
     } else if (key === 'GET /api/events') {
       this.requireAuthenticatedViewer(session);
@@ -486,8 +489,11 @@ export class GuiServer {
     } else if (key === 'POST /api/run') {
       this.json(response, 200, this.startRun(await this.readJson(request), actor));
     } else if (key === 'POST /api/run/stop') {
-      if (actor && this.run && this.options.auth) this.options.auth.stopExperiment(actor, this.run.runId);
-      this.run?.controller.abort();
+      if (this.run?.state === 'running') {
+        if (actor && this.options.auth) this.options.auth.stopExperiment(actor, this.run.runId);
+        this.run.userStopped = true;
+        this.run.controller.abort();
+      }
       this.json(response, 200, { ok: true });
     } else if (key === 'POST /api/pool') {
       this.json(response, 200, this.makePool(await this.readJson(request), actor));
@@ -633,6 +639,26 @@ export class GuiServer {
     return this.sampleTeamsCache.teams;
   }
 
+  private modelInfo(providerId: string, model: { id: string; displayName?: string }): ModelInfo {
+    return {
+      id: model.id,
+      label: model.displayName ?? model.id,
+      reasoningLevels: reasoningLevels(parseSpec(`${providerId}:${model.id}`)),
+    };
+  }
+
+  private reasoningBody(value: string): { levels: ReasoningLevel[] } {
+    try {
+      const spec = parseSpec(value);
+      if (this.publicOrigin && spec.provider === 'compat') {
+        throw new Error('OpenAI-compatible custom endpoints are disabled in hosted mode');
+      }
+      return { levels: reasoningLevels(spec) };
+    } catch (error) {
+      throw new HttpError(400, error instanceof Error ? error.message : String(error));
+    }
+  }
+
   private stateBody(session: AuthSession | undefined): AppState {
     const pools = listPools(this.options.teamsDir ?? TEAMS_DIR);
     return {
@@ -648,7 +674,7 @@ export class GuiServer {
         description: option.description,
         discovery: option.discovery,
         requiresKey: option.requiresKey,
-        models: (option.models ?? []).map((model) => ({ id: model.id, label: model.displayName ?? model.id })),
+        models: (option.models ?? []).map((model) => this.modelInfo(option.id, model)),
       })),
       auth: this.options.auth
         ? {
@@ -717,7 +743,7 @@ export class GuiServer {
       const models = await discoverModels(option, apiKey.trim() || undefined, {
         signal: AbortSignal.timeout(20_000),
       });
-      return { models: models.map((model) => ({ id: model.id, label: model.displayName ?? model.id })) };
+      return { models: models.map((model) => this.modelInfo(option.id, model)) };
     } catch (error) {
       throw new HttpError(400, redactSecrets(error instanceof Error ? error.message : String(error), [apiKey]));
     }
@@ -741,8 +767,25 @@ export class GuiServer {
       throw new HttpError(400, `a run supports at most ${maximumModels} model specs`);
     }
     const reasoning = body.reasoning ? (String(body.reasoning) as ReasoningLevel) : undefined;
-    if (reasoning && !REASONING_LEVELS.includes(reasoning))
+    if (reasoning && !REASONING_LEVELS.includes(reasoning)) {
       throw new HttpError(400, `reasoning must be one of: ${REASONING_LEVELS.join(', ')}`);
+    }
+    if (body.reasoningByModel !== undefined && !isRecord(body.reasoningByModel)) {
+      throw new HttpError(400, 'reasoningByModel must be an object');
+    }
+    const reasoningByModel: Record<string, ReasoningLevel> = {};
+    for (const [model, value] of Object.entries(isRecord(body.reasoningByModel) ? body.reasoningByModel : {})) {
+      const level = String(value) as ReasoningLevel;
+      if (!models.includes(model)) throw new HttpError(400, `reasoning configured for unselected model ${model}`);
+      if (model === 'random') throw new HttpError(400, 'random does not support configurable reasoning');
+      if (!REASONING_LEVELS.includes(level)) {
+        throw new HttpError(400, `reasoning for ${model} must be one of: ${REASONING_LEVELS.join(', ')}`);
+      }
+      reasoningByModel[model] = level;
+    }
+    if (reasoning && Object.keys(reasoningByModel).length) {
+      throw new HttpError(400, 'choose either shared reasoning or per-model reasoning, not both');
+    }
     const suppliedKeys = isRecord(body.apiKeys) ? body.apiKeys : {};
     const apiKeys: Record<string, string> = {};
     const missing: string[] = [];
@@ -753,7 +796,7 @@ export class GuiServer {
         if (this.publicOrigin && spec.provider === 'compat') {
           throw new Error('OpenAI-compatible custom endpoints are disabled in hosted mode');
         }
-        validateReasoning(spec, reasoning);
+        validateReasoning(spec, reasoningByModel[model] ?? reasoning);
         const apiKey = typeof suppliedKeys[model] === 'string' ? suppliedKeys[model].trim() : '';
         const option = providerOption(spec.provider);
         if (!apiKey && (option?.requiresKey ?? spec.provider !== 'compat')) {
@@ -831,6 +874,7 @@ export class GuiServer {
       ...(board === undefined ? {} : { board }),
       ...(seed === undefined ? {} : { seed }),
       ...(reasoning === undefined ? {} : { reasoning }),
+      ...(Object.keys(reasoningByModel).length ? { reasoningByModel } : {}),
     };
     const run = new ActiveRun(config, apiKeys, owner);
     if (owner && this.options.auth) {
@@ -863,72 +907,45 @@ export class GuiServer {
         : run.config.mode === 'draft'
           ? this.options.draftRunner
           : this.options.runner;
+    const commonOptions = {
+      concurrency: run.config.concurrency,
+      recordsPath: this.options.recordsPath ?? RESULTS_PATH,
+      apiKeys: run.apiKeys,
+      signal: run.controller.signal,
+      ...(run.config.seed === undefined ? {} : { seed: run.config.seed }),
+      ...(run.config.reasoning === undefined ? {} : { reasoning: run.config.reasoning }),
+      ...(run.config.reasoningByModel === undefined ? {} : { reasoningByModel: run.config.reasoningByModel }),
+      ...(run.owner
+        ? {
+            contributor: {
+              provider: 'github' as const,
+              subject: run.owner.providerSubject,
+              login: run.owner.login,
+            },
+          }
+        : {}),
+      onEvent: (event: DraftLeagueEvent) => this.onEvent(run, event),
+    };
     try {
       if (this.publicOrigin && !injected) {
         await this.launchWorker(run);
       } else if (run.config.mode === 'draft') {
         await (this.options.draftRunner ?? runDraftLeague)(run.config.models, run.runDir, {
-          concurrency: run.config.concurrency,
-          recordsPath: this.options.recordsPath ?? RESULTS_PATH,
-          apiKeys: run.apiKeys,
-          signal: run.controller.signal,
+          ...commonOptions,
           ...(run.config.board === undefined ? {} : { board: run.config.board }),
-          ...(run.config.seed === undefined ? {} : { seed: run.config.seed }),
-          ...(run.config.reasoning === undefined ? {} : { reasoning: run.config.reasoning }),
-          ...(run.owner
-            ? {
-                contributor: {
-                  provider: 'github',
-                  subject: run.owner.providerSubject,
-                  login: run.owner.login,
-                },
-              }
-            : {}),
-          onEvent: (event) => this.onEvent(run, event),
-          onNotice: (message) => run.notices.push(message),
         });
       } else if (run.config.mode === 'tournament') {
         await (this.options.tournamentRunner ?? runTournament)(run.config.models, run.runDir, {
-          concurrency: run.config.concurrency,
-          recordsPath: this.options.recordsPath ?? RESULTS_PATH,
-          apiKeys: run.apiKeys,
-          signal: run.controller.signal,
+          ...commonOptions,
           ...(run.config.pool ? { pool: run.config.pool } : {}),
           ...(run.config.teams === undefined ? {} : { teams: run.config.teams }),
           ...(run.config.format === undefined ? {} : { format: run.config.format }),
-          ...(run.config.seed === undefined ? {} : { seed: run.config.seed }),
-          ...(run.config.reasoning === undefined ? {} : { reasoning: run.config.reasoning }),
-          ...(run.owner
-            ? {
-                contributor: {
-                  provider: 'github',
-                  subject: run.owner.providerSubject,
-                  login: run.owner.login,
-                },
-              }
-            : {}),
-          onEvent: (event) => this.onEvent(run, event),
           onNotice: (message) => run.notices.push(message),
         });
       } else {
         await (this.options.runner ?? runRotation)(run.config.models, run.config.seriesPerPair, run.runDir, {
+          ...commonOptions,
           pool: run.config.pool,
-          concurrency: run.config.concurrency,
-          recordsPath: this.options.recordsPath ?? RESULTS_PATH,
-          apiKeys: run.apiKeys,
-          signal: run.controller.signal,
-          ...(run.config.seed === undefined ? {} : { seed: run.config.seed }),
-          ...(run.config.reasoning === undefined ? {} : { reasoning: run.config.reasoning }),
-          ...(run.owner
-            ? {
-                contributor: {
-                  provider: 'github',
-                  subject: run.owner.providerSubject,
-                  login: run.owner.login,
-                },
-              }
-            : {}),
-          onEvent: (event) => this.onEvent(run, event),
           onNotice: (message) => run.notices.push(message),
         });
       }
@@ -938,6 +955,8 @@ export class GuiServer {
       } else if (run.interrupted) {
         run.state = 'failed';
         run.error = 'run interrupted by server shutdown';
+      } else if (run.userStopped) {
+        run.state = 'stopped';
       } else {
         run.state = 'done';
       }
@@ -948,17 +967,18 @@ export class GuiServer {
       } else if (run.interrupted) {
         run.state = 'failed';
         run.error = 'run interrupted by server shutdown';
-      } else if (run.controller.signal.aborted) {
-        run.state = 'done';
+      } else if (run.userStopped) {
+        run.state = 'stopped';
       } else {
         run.state = 'failed';
         run.error = redactSecrets(error instanceof Error ? error.message : String(error), Object.values(run.apiKeys));
       }
     } finally {
       clearTimeout(run.timeoutTimer);
+      const persistedState = run.state === 'running' ? 'failed' : run.state;
       if (this.options.auth && run.owner) {
         try {
-          this.options.auth.finishExperiment(run.runId, run.state === 'failed' ? 'failed' : 'done');
+          this.options.auth.finishExperiment(run.runId, persistedState);
         } catch (error) {
           run.state = 'failed';
           run.error = redactSecrets(error instanceof Error ? error.message : String(error), Object.values(run.apiKeys));
@@ -1040,6 +1060,7 @@ export class GuiServer {
       ...(run.config.board === undefined ? {} : { board: run.config.board }),
       ...(run.config.seed === undefined ? {} : { seed: run.config.seed }),
       ...(run.config.reasoning === undefined ? {} : { reasoning: run.config.reasoning }),
+      ...(run.config.reasoningByModel === undefined ? {} : { reasoningByModel: run.config.reasoningByModel }),
       ...(run.owner
         ? {
             contributor: {

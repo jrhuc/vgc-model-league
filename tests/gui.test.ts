@@ -110,7 +110,13 @@ test('gui serves the built app shell and setup state', async () => {
     assert.ok(providers.some((provider) => provider.id === 'anthropic'));
     assert.ok(providers.every((provider) => !('envKey' in provider) && !('keyPresent' in provider)));
     const meta = providers.find((provider) => provider.id === 'meta');
-    assert.deepEqual(meta?.models, [{ id: 'muse-spark-1.1', label: 'Muse Spark 1.1' }]);
+    assert.deepEqual(meta?.models, [
+      {
+        id: 'muse-spark-1.1',
+        label: 'Muse Spark 1.1',
+        reasoningLevels: ['off', 'minimal', 'low', 'medium', 'high', 'xhigh'],
+      },
+    ]);
     const formats = data.formats as Array<{ id: string; label: string }>;
     assert.ok(formats.some((format) => format.id === FORMAT));
     assert.ok(formats.every((format) => format.id.startsWith('gen9champions') && format.id.endsWith('bo3')));
@@ -331,6 +337,68 @@ test('gui requires browser credentials and never exposes server keys', async () 
   }
 });
 
+test('gui validates shared and per-model reasoning before launching', async () => {
+  let received: Record<string, string> | undefined;
+  const gui = new GuiServer({
+    runner: async (_models, _seriesPerPair, _runDir, options = {}) => {
+      received = options.reasoningByModel ? { ...options.reasoningByModel } : undefined;
+      return [];
+    },
+  });
+  const base = await gui.listen(0);
+  const models = ['anthropic:claude-opus-4-10', 'meta:muse-spark-1.1'];
+  const apiKeys = Object.fromEntries(models.map((model) => [model, 'browser-key']));
+  try {
+    const capabilities = await apiJson(`${base}api/reasoning?spec=${encodeURIComponent('anthropic:claude-opus-4-10')}`);
+    assert.deepEqual(capabilities.data.levels, ['low', 'medium', 'high', 'xhigh', 'max']);
+
+    const unsupportedShared = await apiJson(`${base}api/run`, {
+      models,
+      apiKeys,
+      pool: 'test',
+      reasoning: 'minimal',
+    });
+    assert.equal(unsupportedShared.status, 400);
+    assert.match(String(unsupportedShared.data.error), /does not support reasoning=minimal/);
+
+    const unsupportedIndividual = await apiJson(`${base}api/run`, {
+      models,
+      apiKeys,
+      pool: 'test',
+      reasoningByModel: { 'meta:muse-spark-1.1': 'max' },
+    });
+    assert.equal(unsupportedIndividual.status, 400);
+    assert.match(String(unsupportedIndividual.data.error), /does not support reasoning=max/);
+
+    const ambiguous = await apiJson(`${base}api/run`, {
+      models,
+      apiKeys,
+      pool: 'test',
+      reasoning: 'low',
+      reasoningByModel: { 'meta:muse-spark-1.1': 'minimal' },
+    });
+    assert.equal(ambiguous.status, 400);
+    assert.match(String(ambiguous.data.error), /either shared reasoning or per-model reasoning/);
+
+    const started = await apiJson(`${base}api/run`, {
+      models,
+      apiKeys,
+      pool: 'test',
+      reasoningByModel: {
+        'anthropic:claude-opus-4-10': 'max',
+        'meta:muse-spark-1.1': 'minimal',
+      },
+    });
+    assert.equal(started.status, 200, JSON.stringify(started.data));
+    assert.deepEqual(received, {
+      'anthropic:claude-opus-4-10': 'max',
+      'meta:muse-spark-1.1': 'minimal',
+    });
+  } finally {
+    gui.close();
+  }
+});
+
 test('gui rejects a second run while one is active and stops on request', async () => {
   const gui = new GuiServer({
     runner: (_models, _seriesPerPair, _runDir, options = {}) =>
@@ -366,7 +434,7 @@ test('gui rejects a second run while one is active and stops on request', async 
       await new Promise((resolve) => setTimeout(resolve, 50));
       run = (await apiJson(`${base}api/state`)).data.run as Record<string, unknown>;
     }
-    assert.equal(run.state, 'done');
+    assert.equal(run.state, 'stopped');
   } finally {
     gui.close();
   }

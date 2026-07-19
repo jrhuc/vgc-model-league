@@ -4,7 +4,7 @@ import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 
 import type { MenuHints, SlotMenu, TargetNames } from './choices.js';
-import { buildMenus, compose } from './choices.js';
+import { buildMenus } from './choices.js';
 import { REFLECTION_SYSTEM, renderDecision, SYSTEM } from './prompts.js';
 import type { ReasoningLevel } from './providers.js';
 import { ApiError, assistantToolMessage, makeProvider, parseSpec, toolResultMessage } from './providers.js';
@@ -64,7 +64,7 @@ export abstract class BaseEngine implements BattleAgent {
       automatic = false;
     }
     this.actionCommitted(request, context, menus, choices, parts, automatic);
-    return request.teamPreview ? `team ${parts.join('')}` : compose(parts);
+    return request.teamPreview ? `team ${parts.join('')}` : parts.join(', ');
   }
 
   protected abstract decideJoint(
@@ -163,7 +163,7 @@ export class RandomEngine extends BaseEngine {
         total += weights[index]!;
         index += 1;
       }
-      const item = candidates[index < 0 ? candidates.length - 1 : index]!;
+      const item = candidates[index]!;
       choices.push(menu.indexOf(item));
       parts.push(item.part);
     }
@@ -186,7 +186,6 @@ interface ToolTrace extends JsonObject {
 }
 
 interface PendingDecision extends JsonObject {
-  events?: string[];
   prompt?: string;
   rawResponse?: string;
   rationale?: string;
@@ -257,7 +256,6 @@ export class LLMEngine extends BaseEngine {
   readonly reference: ShowdownReference;
   private state: BattleState;
   private transcript: string[] = [];
-  private mechanics: string[] = [];
   private notebook = '';
   private gameId: string;
   private seriesId?: string;
@@ -305,7 +303,6 @@ export class LLMEngine extends BaseEngine {
     this.seriesId = context.seriesId;
     this.seriesScore = { ...(context.seriesScore ?? { p1: 0, p2: 0 }) };
     this.state = new BattleState(this.pid);
-    this.mechanics = [];
     this.pending = undefined;
     this.remember(`[Game ${context.gameNumber} begins; series score ${this.scoreText()}]`);
   }
@@ -336,8 +333,7 @@ export class LLMEngine extends BaseEngine {
     const generation = this.generation;
     this.state.feed(events);
     this.rememberEvents(events);
-    this.mechanics = this.reference.renderCompact(this.state.compactMons());
-    this.pending = { events, rawResponse: '', notebook: this.notebook, generation };
+    this.pending = { rawResponse: '', notebook: this.notebook, generation };
     const choice = await super.act(request, context);
     return generation === this.generation ? choice : '';
   }
@@ -352,6 +348,7 @@ export class LLMEngine extends BaseEngine {
     const deadline = turnSeconds === undefined ? undefined : started + 1000 * turnSeconds;
     const generation = this.generation;
     const sides = this.state.activeMatchupSides();
+    const mechanics = this.reference.renderCompact(this.state.compactMons());
     const matchups = this.reference.renderActiveMatchups(
       [...sides.allies, ...sides.foes],
       [...sides.foes, ...sides.allies],
@@ -363,7 +360,7 @@ export class LLMEngine extends BaseEngine {
       transcript: this.transcript,
       notebook: this.notebook,
       seriesContext: `Series ${this.seriesId ?? '?'}; game ${this.gameNumber}; score ${this.scoreText()}`,
-      mechanics: this.mechanics,
+      mechanics,
       matchups,
     });
     if (turnSeconds !== undefined)
@@ -502,7 +499,7 @@ export class LLMEngine extends BaseEngine {
       this.decisions += 1;
       if (pending.fallback) this.fallbacks += 1;
     }
-    const action = request.teamPreview ? `team ${parts.join('')}` : compose(parts);
+    const action = request.teamPreview ? `team ${parts.join('')}` : parts.join(', ');
     this.remember(`Decision: ${action}.`);
     const phase = request.teamPreview ? 'team_preview' : request.forceSwitch ? 'forced_switch' : 'turn';
     const selection = choices.map((choice, slot) => menus[slot]?.[choice]?.label ?? parts[slot] ?? 'pass');

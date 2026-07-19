@@ -1,41 +1,37 @@
-import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
 import type { DraftBoardMon } from './draft.js';
-import { describeBoardMon, loadBoard, runDraft } from './draft.js';
+import { describeBoardMon, draftScaffoldRevision, loadBoard, runDraft } from './draft.js';
 import { scaffoldRevision } from './engines.js';
 import type { BracketView, DraftTableRow, DraftView } from './gui/api.js';
 import { BOARDS_DIR, defaultPsDir, RESULTS_PATH } from './paths.js';
-import type { ReasoningLevel } from './providers.js';
-import { parseSpec, validateReasoning } from './providers.js';
-import { seededRng, shuffle } from './random.js';
+import type { ModelReasoningConfig } from './providers.js';
+import { validateModelExecution } from './providers.js';
+import { resolveSeed, seededRng, seriesEntropy, shuffle } from './random.js';
 import type { SeriesRecord } from './records.js';
 import { appendRow } from './records.js';
-import type { ContributorAttribution } from './rotation.js';
 import { mapLimit } from './rotation.js';
 import { playRecordedSeries } from './series.js';
 import { showdownCommit } from './showdown.js';
 import type { Team } from './teams.js';
 import { validateTeam } from './teams.js';
-import type { TournamentEvent } from './tournament.js';
-import type { Pid } from './types.js';
+import { higherSeed, type TournamentEvent } from './tournament.js';
+import type { ContributorAttribution, Pid } from './types.js';
 
 export const DRAFT_PROTOCOL_VERSION = 1;
 
 export type DraftLeagueEvent = TournamentEvent | { type: 'draft'; draft: DraftView };
 
-export interface DraftLeagueOptions {
+export interface DraftLeagueOptions extends ModelReasoningConfig {
   seed?: number;
   concurrency?: number;
   recordsPath?: string;
   psDir?: string;
   boardsDir?: string;
-  reasoning?: ReasoningLevel;
   apiKeys?: Readonly<Record<string, string>>;
   board?: string;
   onEvent?: (event: DraftLeagueEvent) => void;
-  onNotice?: (message: string) => void;
   signal?: AbortSignal;
   contributor?: ContributorAttribution;
 }
@@ -55,15 +51,7 @@ export async function runDraftLeague(
   options: DraftLeagueOptions = {},
 ): Promise<SeriesRecord[]> {
   if (models.length < 2) throw new Error('a draft league needs at least two models');
-  for (const model of models) validateReasoning(parseSpec(model), options.reasoning);
-  if (options.apiKeys) {
-    for (const model of models) {
-      if (model !== 'random' && options.apiKeys[model] === undefined)
-        throw new Error(
-          `no API key was supplied for ${model}; key-carrying runs never fall back to server environment keys`,
-        );
-    }
-  }
+  validateModelExecution(models, options);
 
   fs.mkdirSync(runDir, { recursive: true });
   const recordsPath = options.recordsPath ?? RESULTS_PATH;
@@ -74,9 +62,10 @@ export async function runDraftLeague(
       `board ${JSON.stringify(board.id)} has ${board.mons.length} sets, too few for ${models.length} rosters of ${board.picks} with slack`,
     );
   }
-  const seed = options.seed ?? randomBytes(6).readUIntBE(0, 6);
+  const seed = resolveSeed(options.seed);
   const random = seededRng(seed);
   const scaffold = scaffoldRevision();
+  const draftScaffold = draftScaffoldRevision();
 
   // Draft order doubles as entrant identity everywhere downstream.
   const entrants = shuffle(models, random);
@@ -89,18 +78,8 @@ export async function runDraftLeague(
   const playoffRounds: number = entrants.length >= 4 ? 2 : 1;
   const playoffSeriesCount = entrants.length >= 4 ? 3 : 1;
   const plans: SeriesPlanned[] = [];
-  const makeSeeds = () => ({
-    gameSeeds: Array.from(
-      { length: 3 },
-      () => Array.from({ length: 4 }, () => 1 + Math.floor(random() * 0xffff)) as [number, number, number, number],
-    ),
-    engineSeeds: {
-      p1: Math.floor(random() * Number.MAX_SAFE_INTEGER),
-      p2: Math.floor(random() * Number.MAX_SAFE_INTEGER),
-    } as Record<Pid, number>,
-  });
   for (const pair of pairs) {
-    plans.push({ index: plans.length, stage: 'roundrobin', round: 0, entrants: pair, ...makeSeeds() });
+    plans.push({ index: plans.length, stage: 'roundrobin', round: 0, entrants: pair, ...seriesEntropy(random) });
   }
   for (let series = 0; series < playoffSeriesCount; series += 1) {
     plans.push({
@@ -108,7 +87,7 @@ export async function runDraftLeague(
       stage: 'playoff',
       round: playoffRounds === 2 && series < 2 ? 1 : 2,
       entrants: null,
-      ...makeSeeds(),
+      ...seriesEntropy(random),
     });
   }
 
@@ -151,6 +130,7 @@ export async function runDraftLeague(
     logDir: path.join(runDir, 'draft'),
     rng: random,
     ...(options.reasoning === undefined ? {} : { reasoning: options.reasoning }),
+    ...(options.reasoningByModel === undefined ? {} : { reasoningByModel: options.reasoningByModel }),
     ...(options.apiKeys === undefined ? {} : { apiKeys: options.apiKeys }),
     ...(options.signal === undefined ? {} : { signal: options.signal }),
     onPick: (view, state) => {
@@ -191,10 +171,12 @@ export async function runDraftLeague(
         mode: 'draft',
         protocol_version: DRAFT_PROTOCOL_VERSION,
         scaffold,
+        draft_scaffold: draftScaffold,
         models,
         seed,
         concurrency: options.concurrency ?? 2,
         reasoning: options.reasoning ?? null,
+        reasoning_by_model: options.reasoningByModel ?? null,
         board: board.id,
         format: board.format,
         entrants,
@@ -227,6 +209,7 @@ export async function runDraftLeague(
       signal,
       ...(options.reasoning === undefined ? {} : { reasoning: options.reasoning }),
       ...(options.apiKeys === undefined ? {} : { apiKeys: options.apiKeys }),
+      ...(options.reasoningByModel === undefined ? {} : { reasoningByModel: options.reasoningByModel }),
       onGameUpdate: (game, lines, publicLines) =>
         options.onEvent?.({ type: 'game-update', index: plan.index, game, lines, publicLines }),
       onGameEnd: (game, winner, turns, score) =>
@@ -237,6 +220,7 @@ export async function runDraftLeague(
       mode: 'draft',
       protocol_version: DRAFT_PROTOCOL_VERSION,
       scaffold,
+      draft_scaffold: draftScaffold,
       series_index: plan.index,
       stage: plan.stage,
       ...(plan.stage === 'playoff' ? { round: plan.round } : {}),
@@ -297,8 +281,8 @@ export async function runDraftLeague(
 
   const resolve = (matchIndex: number, roundIndex: number, winnerSide: Pid | undefined): number => {
     const match = bracket.rounds[roundIndex]![matchIndex]!;
-    // A drawn playoff series advances the higher seed, mirroring tournament mode.
-    const winner = winnerSide === 'p2' ? match.slots[1]! : match.slots[0]!;
+    const slots = [match.slots[0]!, match.slots[1]!] as const;
+    const winner = winnerSide === 'p1' ? slots[0] : winnerSide === 'p2' ? slots[1] : higherSeed(slots, seeding);
     match.winner = winner;
     const next = bracket.rounds[roundIndex + 1]?.[matchIndex >> 1];
     if (next) next.slots[matchIndex % 2] = winner;

@@ -1,6 +1,14 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 
-import type { AppState, ModelInfo, ModelsResponse, PoolInfo, ProviderInfo, RunSnapshot } from '../../api';
+import type {
+  AppState,
+  ModelInfo,
+  ModelsResponse,
+  PoolInfo,
+  ProviderInfo,
+  ReasoningLevelsResponse,
+  RunSnapshot,
+} from '../../api';
 import { Dropdown, resolveOption } from '../components/dropdown';
 import { api } from '../http';
 import { PoolsView } from './pools';
@@ -81,6 +89,7 @@ export function FixturesView({ app, run, onStarted, onPools }: FixturesProps) {
   const [mode, setMode] = useState<RunMode>('match');
   const board = app.boards[0] ?? null;
   const [models, setModels] = useState<string[]>([]);
+  const [reasoningLevelsByModel, setReasoningLevelsByModel] = useState<Record<string, string[]>>({});
   const apiKeysRef = useRef<Record<string, string>>({});
   const catalogKeyRef = useRef('');
   const catalogGenerationRef = useRef(0);
@@ -95,6 +104,7 @@ export function FixturesView({ app, run, onStarted, onPools }: FixturesProps) {
   const [launchMsg, setLaunchMsg] = useState('');
   const [manualSpec, setManualSpec] = useState('');
   const [manualKey, setManualKey] = useState('');
+  const [resolvingManual, setResolvingManual] = useState(false);
   const [pool, setPool] = useState(
     () => app.pools.find((info) => info.name !== 'test')?.name ?? app.pools[0]?.name ?? '',
   );
@@ -105,12 +115,20 @@ export function FixturesView({ app, run, onStarted, onPools }: FixturesProps) {
   const [series, setSeries] = useState('2');
   const [concurrency, setConcurrency] = useState('2');
   const [reasoning, setReasoning] = useState('');
+  const [sharedReasoning, setSharedReasoning] = useState(true);
+  const [reasoningByModel, setReasoningByModel] = useState<Record<string, string>>({});
   const [seed, setSeed] = useState('');
   const [starting, setStarting] = useState(false);
 
   const provider = providers.find((item) => item.id === providerId) ?? null;
   const curated = Boolean(provider && provider.models.length > 0);
   const maxModels = mode === 'match' ? 2 : mode === 'draft' ? (board?.maxEntrants ?? 8) : 8;
+  const reasoningModels = models.filter((model) => model !== 'random');
+  const sharedReasoningLevels = app.reasoningLevels.filter(
+    (level) =>
+      reasoningModels.length > 0 && reasoningModels.every((model) => reasoningLevelsByModel[model]?.includes(level)),
+  );
+  const sharedReasoningKey = sharedReasoningLevels.join('\0');
 
   useEffect(() => {
     catalogGenerationRef.current += 1;
@@ -130,13 +148,18 @@ export function FixturesView({ app, run, onStarted, onPools }: FixturesProps) {
     }
   }, [providerId]);
 
-  const addModel = (spec: string, key: string) => {
+  useEffect(() => {
+    if (reasoning && !sharedReasoningLevels.includes(reasoning)) setReasoning('');
+  }, [reasoning, sharedReasoningKey]);
+
+  const addModel = (spec: string, key: string, supportedReasoning: string[] = []) => {
     setSetupMsg('');
     if (models.length >= maxModels) {
       setSetupMsg(mode === 'match' ? 'An exhibition match takes exactly two models.' : `At most ${maxModels} models.`);
       return;
     }
     if (key.trim()) apiKeysRef.current[spec] = key.trim();
+    setReasoningLevelsByModel((previous) => ({ ...previous, [spec]: supportedReasoning }));
     setModels((previous) => [...previous, spec]);
   };
 
@@ -144,7 +167,19 @@ export function FixturesView({ app, run, onStarted, onPools }: FixturesProps) {
     setModels((previous) => {
       const next = [...previous];
       const [removed] = next.splice(index, 1);
-      if (removed !== undefined && !next.includes(removed)) delete apiKeysRef.current[removed];
+      if (removed !== undefined && !next.includes(removed)) {
+        delete apiKeysRef.current[removed];
+        setReasoningLevelsByModel((levels) => {
+          const updated = { ...levels };
+          delete updated[removed];
+          return updated;
+        });
+        setReasoningByModel((levels) => {
+          const updated = { ...levels };
+          delete updated[removed];
+          return updated;
+        });
+      }
       return next;
     });
   };
@@ -194,21 +229,47 @@ export function FixturesView({ app, run, onStarted, onPools }: FixturesProps) {
       setSetupMsg(`Paste a run-only ${provider.label} key first.`);
       return;
     }
-    addModel(spec, key);
+    addModel(spec, key, catalog.find((model) => model.id === option.value)?.reasoningLevels ?? []);
     setApiKeyText('');
     setModelText('');
   };
 
   const addManual = () => {
     const spec = manualSpec.trim();
-    if (!spec) return;
+    if (!spec || resolvingManual) return;
     if (needsKey(providers, spec) && !manualKey.trim()) {
       setSetupMsg('Bring an API key for this manual provider.');
       return;
     }
-    addModel(spec, manualKey);
-    setManualSpec('');
-    setManualKey('');
+    setSetupMsg('');
+    setResolvingManual(true);
+    api<ReasoningLevelsResponse>(`/api/reasoning?spec=${encodeURIComponent(spec)}`)
+      .then((data) => {
+        addModel(spec, manualKey, data.levels);
+        setManualSpec('');
+        setManualKey('');
+      })
+      .catch((error: Error) => setSetupMsg(error.message))
+      .finally(() => setResolvingManual(false));
+  };
+
+  const selectSharedReasoning = () => {
+    const configured = reasoningModels.map((model) => reasoningByModel[model] ?? '');
+    const first = configured[0] ?? '';
+    setReasoning(
+      first && configured.every((level) => level === first) && sharedReasoningLevels.includes(first) ? first : '',
+    );
+    setSharedReasoning(true);
+  };
+
+  const selectIndividualReasoning = () => {
+    if (reasoning) {
+      setReasoningByModel((previous) => ({
+        ...previous,
+        ...Object.fromEntries(reasoningModels.map((model) => [model, reasoning])),
+      }));
+    }
+    setSharedReasoning(false);
   };
 
   const start = () => {
@@ -216,47 +277,30 @@ export function FixturesView({ app, run, onStarted, onPools }: FixturesProps) {
     setStarting(true);
     const apiKeys: Record<string, string> = {};
     for (const spec of models) if (apiKeysRef.current[spec]) apiKeys[spec] = apiKeysRef.current[spec]!;
-    const request =
-      mode === 'match'
+    const selectedReasoning = Object.fromEntries(
+      Object.entries(reasoningByModel).filter(([model, level]) => models.includes(model) && level),
+    );
+    const reasoningRequest = sharedReasoning
+      ? { ...(reasoning ? { reasoning } : {}) }
+      : { ...(Object.keys(selectedReasoning).length ? { reasoningByModel: selectedReasoning } : {}) };
+    const request = {
+      models,
+      apiKeys,
+      seed: seed.trim(),
+      ...reasoningRequest,
+      ...(mode === 'match'
         ? {
             mode: 'tournament',
-            models,
-            apiKeys,
             teams: [pastes[0], pastes[1]],
             format: app.defaultFormat,
             concurrency: 1,
-            seed: seed.trim(),
-            reasoning: reasoning || undefined,
           }
         : mode === 'tournament'
-          ? {
-              mode: 'tournament',
-              models,
-              apiKeys,
-              pool,
-              concurrency: Number(concurrency),
-              seed: seed.trim(),
-              reasoning: reasoning || undefined,
-            }
+          ? { mode: 'tournament', pool, concurrency: Number(concurrency) }
           : mode === 'draft'
-            ? {
-                mode: 'draft',
-                models,
-                apiKeys,
-                board: board?.id ?? '',
-                concurrency: Number(concurrency),
-                seed: seed.trim(),
-                reasoning: reasoning || undefined,
-              }
-            : {
-                models,
-                apiKeys,
-                pool,
-                seriesPerPair: Number(series),
-                concurrency: Number(concurrency),
-                seed: seed.trim(),
-                reasoning: reasoning || undefined,
-              };
+            ? { mode: 'draft', board: board?.id ?? '', concurrency: Number(concurrency) }
+            : { pool, seriesPerPair: Number(series), concurrency: Number(concurrency) }),
+    };
     api('/api/run', request)
       .then(() => {
         apiKeysRef.current = {};
@@ -283,7 +327,7 @@ export function FixturesView({ app, run, onStarted, onPools }: FixturesProps) {
   }));
   const reasoningOptions = [
     { value: '', label: 'Provider default' },
-    ...app.reasoningLevels.map((level) => ({ value: level, label: level })),
+    ...sharedReasoningLevels.map((level) => ({ value: level, label: level })),
   ];
   const pairs = pairings(models);
   const seriesPerPair = Math.max(1, Number(series) || 1);
@@ -492,7 +536,7 @@ export function FixturesView({ app, run, onStarted, onPools }: FixturesProps) {
               <button type="button" class="button primary" disabled={!catalog.length} onClick={addFromCatalog}>
                 Add model
               </button>
-              <button type="button" class="button" onClick={() => addModel('random', '')}>
+              <button type="button" class="button" onClick={() => addModel('random', '', [])}>
                 Add random baseline
               </button>
             </div>
@@ -527,8 +571,8 @@ export function FixturesView({ app, run, onStarted, onPools }: FixturesProps) {
                     onInput={(event) => setManualKey(event.currentTarget.value)}
                   />
                 </div>
-                <button type="button" class="button" onClick={addManual}>
-                  Add manual model
+                <button type="button" class="button" disabled={resolvingManual} onClick={addManual}>
+                  {resolvingManual ? 'Checking model…' : 'Add manual model'}
                 </button>
               </div>
             </details>
@@ -697,14 +741,70 @@ export function FixturesView({ app, run, onStarted, onPools }: FixturesProps) {
                   />
                 </div>
               )}
-              <div class="wide">
-                <Dropdown
-                  id="reasoning"
-                  label="Reasoning effort"
-                  options={reasoningOptions}
-                  value={reasoning}
-                  onChange={setReasoning}
-                />
+              <div class="reasoning-settings wide">
+                <div class="reasoning-heading">
+                  <span class="field-label">Reasoning assignment</span>
+                  <fieldset class="reasoning-mode">
+                    <legend class="hidden">Reasoning assignment</legend>
+                    <button
+                      type="button"
+                      aria-pressed={sharedReasoning}
+                      class={sharedReasoning ? 'on' : ''}
+                      onClick={selectSharedReasoning}
+                    >
+                      Shared
+                    </button>
+                    <button
+                      type="button"
+                      aria-pressed={!sharedReasoning}
+                      class={!sharedReasoning ? 'on' : ''}
+                      onClick={selectIndividualReasoning}
+                    >
+                      Per model
+                    </button>
+                  </fieldset>
+                </div>
+                {sharedReasoning ? (
+                  <>
+                    <Dropdown
+                      id="reasoning"
+                      label="Shared reasoning effort"
+                      options={reasoningOptions}
+                      value={reasoning}
+                      onChange={setReasoning}
+                    />
+                    <p class="reasoning-help">
+                      {reasoningModels.length
+                        ? sharedReasoningLevels.length
+                          ? `${sharedReasoningLevels.length} level${sharedReasoningLevels.length === 1 ? '' : 's'} supported by every selected model.`
+                          : 'The selected models share no configurable level; use provider defaults or assign levels individually.'
+                        : 'Random baselines do not use reasoning controls.'}
+                    </p>
+                  </>
+                ) : reasoningModels.length ? (
+                  <div class="individual-reasoning">
+                    {models.map((model, index) =>
+                      model === 'random' ? null : (
+                        <Dropdown
+                          id={`reasoning-${index}`}
+                          key={`${model}-${index}`}
+                          label={`${String.fromCharCode(65 + index)} · ${model}`}
+                          options={[
+                            { value: '', label: 'Provider default' },
+                            ...(reasoningLevelsByModel[model] ?? []).map((level) => ({
+                              value: level,
+                              label: level,
+                            })),
+                          ]}
+                          value={reasoningByModel[model] ?? ''}
+                          onChange={(level) => setReasoningByModel((previous) => ({ ...previous, [model]: level }))}
+                        />
+                      ),
+                    )}
+                  </div>
+                ) : (
+                  <p class="reasoning-help">Random baselines do not use reasoning controls.</p>
+                )}
               </div>
               <div class="field wide">
                 <label class="field-label" for="seed">

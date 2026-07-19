@@ -7,6 +7,7 @@ export interface SeriesRecord extends JsonObject {
   mode?: ExperimentMode;
   protocol_version?: number;
   scaffold?: string;
+  draft_scaffold?: string;
   run_id?: string;
   series_index?: number;
   pool?: string;
@@ -30,7 +31,12 @@ export function scopeRows(rows: SeriesRecord[], pool?: string): SeriesRecord[] {
 }
 
 function playedRows(rows: SeriesRecord[]): SeriesRecord[] {
-  return rows.filter((row) => typeof row.players?.p1 === 'string' && typeof row.players.p2 === 'string');
+  return rows.filter(
+    (row) =>
+      (row.mode ?? 'rotation') === 'rotation' &&
+      typeof row.players?.p1 === 'string' &&
+      typeof row.players.p2 === 'string',
+  );
 }
 
 export interface Standing {

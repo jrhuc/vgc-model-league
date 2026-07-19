@@ -2,6 +2,12 @@ export type Pid = 'p1' | 'p2';
 export type JsonObject = Record<string, unknown>;
 export type ExperimentMode = 'rotation' | 'exhibition' | 'tournament' | 'draft';
 
+export interface ContributorAttribution {
+  provider: 'github';
+  subject: string;
+  login: string;
+}
+
 export interface PlayerOptions {
   name: string;
   team: string;

@@ -153,7 +153,11 @@ function Bracket({
       <div class="section-head">
         <div>
           <h2>Bracket</h2>
-          <p>Single elimination · best-of-three · each model keeps its team</p>
+          <p>
+            {bracket.entrants.length === 2
+              ? 'One best-of-three · each model brings its own team'
+              : 'Single elimination · best-of-three · each model keeps its team'}
+          </p>
         </div>
         {champion && (
           <div class="champion-banner">
@@ -289,6 +293,14 @@ export function ArenaView({ run, battles, selected, onSelect, onGoFixtures }: Ar
   const entry = effective === null ? null : battles[effective];
   const done = run.rows.filter((item) => item.status === 'done').length;
   const total = run.rows.length;
+  const runKind =
+    run.mode === 'tournament'
+      ? run.bracket?.entrants.length === 2 && !run.pool
+        ? 'Match'
+        : 'Tournament'
+      : run.mode === 'draft'
+        ? 'Draft league'
+        : 'Rotation';
 
   const stop = () => {
     setStopError('');
@@ -303,13 +315,18 @@ export function ArenaView({ run, battles, selected, onSelect, onGoFixtures }: Ar
       <div class="arena-topline">
         <div>
           <p class="eyebrow">
-            {run.mode === 'tournament' ? 'Tournament' : run.mode === 'draft' ? 'Draft league' : 'Rotation'} · protocol v
-            {run.protocolVersion} · {run.runId}
+            {runKind} · protocol v{run.protocolVersion} · {run.runId}
             {run.seed === null ? '' : ` · seed ${run.seed}`}
           </p>
           <div class="run-identity">
             <h1>
-              {run.state === 'running' ? 'Run in progress' : run.state === 'done' ? 'Run complete' : 'Run failed'}
+              {run.state === 'running'
+                ? 'Run in progress'
+                : run.state === 'done'
+                  ? 'Run complete'
+                  : run.state === 'stopped'
+                    ? 'Run stopped'
+                    : 'Run failed'}
             </h1>
             <span class={`status-pill ${run.state}`}>{run.state}</span>
           </div>

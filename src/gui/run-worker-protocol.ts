@@ -1,9 +1,9 @@
 import type { DraftLeagueEvent } from '../draftleague.js';
-import type { ReasoningLevel } from '../providers.js';
-import type { ContributorAttribution } from '../rotation.js';
+import type { ModelReasoningConfig } from '../providers.js';
 import type { Team } from '../teams.js';
+import type { ContributorAttribution } from '../types.js';
 
-export interface RunWorkerStart {
+export interface RunWorkerStart extends ModelReasoningConfig {
   type: 'start';
   mode: 'rotation' | 'tournament' | 'draft';
   models: string[];
@@ -17,7 +17,6 @@ export interface RunWorkerStart {
   format?: string;
   board?: string;
   seed?: number;
-  reasoning?: ReasoningLevel;
   contributor?: ContributorAttribution;
 }
 

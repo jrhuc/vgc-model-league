@@ -118,6 +118,7 @@ export function App() {
 
   const selectBattle = (index: number) => {
     setSelected(index);
+    if (battles[index]?.snapshot) return;
     api<BattleMessage>(`${contribute ? '/api/battle' : '/api/battle/public'}?index=${index}`)
       .then((data) => {
         if (data.snapshot) setBattles((previous) => ({ ...previous, [index]: data }));

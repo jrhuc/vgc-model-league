@@ -1,5 +1,16 @@
 # Architecture
 
+## How to use this document
+
+This is a living record of prior decisions, not a source of truth or a substitute for engineering judgment. It may be
+stale, contradictory, or shaped by constraints that no longer apply. Verify its claims against the current code,
+requirements, and evidence. When a documented decision causes a workaround, challenge the decision first; replace it
+when a simpler or more correct architecture is justified, and update this record to explain the new choice.
+
+Deletion is a first-class design tool. Before adding a branch, adapter, abstraction, compatibility path, or parallel
+implementation, ask whether the obsolete code or assumption can be removed instead. Prefer a smaller clean cutover
+over preserving code that no longer earns its maintenance cost.
+
 ## Surfaces
 
 - **CLI** (`src/cli.ts`) — headless entry point for agents and scripts: `rotation`, `selfcheck`, `standings`,
@@ -44,16 +55,20 @@ so future modes can reuse execution without inheriting Rotation scheduling.
 its real orchestrator exists, never as conditionals scattered through `rotation.ts`. Every new run
 config, live snapshot, and completed series carries `mode` and `protocol_version`. Protocol versions change when an
 evaluation rule changes enough to make unlike results incomparable. Because that bump is manual discipline, every row
-and run config also records `scaffold` — a hash of the decision/reflection system prompts, tool schemas, and sampling
-parameters — so unintentional scaffold drift is detectable after the fact even when `protocol_version` did not move.
+and run config records `scaffold` — a hash of the battle decision/reflection prompts, tool schemas, and sampling
+parameters — so unintentional drift is detectable after the fact even when `protocol_version` did not move.
+Reasoning capability rules stay centralized in `providers.ts`: AI SDK and provider model-list APIs expose no complete
+preflight effort metadata. The GUI receives each model's levels from the server, intersects them for shared mode, and
+can instead send a validated per-model map; it never duplicates provider-family rules in browser code.
+
 
 Tournament mode (`src/tournament.ts`) is a single-elimination best-of-three bracket. Each entrant is assigned one team
 — drawn without replacement from a pool, or supplied inline as validated pastes — and keeps it for the whole bracket;
 classic seed ordering spreads byes so any entrant count from two upward works, and two entrants degenerate into the
-single exhibition match the GUI offers as its default landing flow. The orchestrator reuses `playBo3`, `makeEngine`,
-and `mapLimit` from rotation but owns its own scheduling, bracket state, and records. A drawn series advances the
-higher seed while the record keeps `winner: null`. Rows record `mode: "tournament"` (with `round` and, for inline
-teams, no `pool`), and standings never rate them.
+single exhibition match the GUI offers as its default landing flow. The orchestrator reuses the shared
+`playRecordedSeries` runner and starts any dependency-ready match as soon as both feeder winners are known, bounded by
+the run's concurrency. A drawn series advances the higher seed while the record keeps `winner: null`. Rows record
+`mode: "tournament"` (with `round` and, for inline teams, no `pool`), and standings never rate them.
 
 Draft League mode (`src/draftleague.ts` with the draft engine in `src/draft.ts`) opens with a snake draft over an
 immutable board (`boards/<id>.json`): full fixed sets derived from a real tournament pool, tiered and priced from
@@ -61,9 +76,11 @@ published viability rankings, drafted under a points budget. Pick legality is de
 on the partial roster (ignoring only the team-size complaint), so species and item clauses are enforced exactly rather
 than re-implemented. Each LLM pick is a provider call with retries and a random-legal fallback; the full prompt and
 response go to per-drafter logs and every pick's rationale to a shared `draft/draft.jsonl` transcript inside the run
-directory. The drafted rosters then play a full round robin that seeds top-four (or top-two) playoffs reusing the
-bracket view. Rows record `mode: "draft"` with a `stage` field and the board id, and never rate the ladder. The
-shared best-of-three runner both tournament and draft use lives in `src/series.ts`.
+directory. Draft configs and rows add `draft_scaffold`, a separate hash of the draft prompt, retry, token, timeout, and
+fallback policy; runtime board/model data remains in the config instead of the hash. The drafted rosters then play a
+full round robin that seeds top-four (or top-two) playoffs reusing the bracket view. Rows record `mode: "draft"` with a
+`stage` field and board id and never rate the ladder. Rotation, tournament, and draft share the recorded-series runner
+in `src/series.ts`; exhibition reuses its lower-level best-of-three loop around the external seat bridge.
 
 Reference opponents (for example VGC-Bench's behavior-cloned or reinforcement-learned policies) integrate by
 implementing `BattleAgent` (`act`/`observe`/`abandonDecision`). That interface is the interop seam: reference agents
@@ -82,8 +99,8 @@ post-hoc audits possible, including checking whether a player acted on informati
 
 Run failure semantics are part of the protocol: the first failed series aborts the scheduler's shared signal, so
 queued series never start and in-flight series stop consuming provider credits; the failure is reported only after
-every worker has settled. Completed series are already persisted. A user-initiated stop behaves the same way but
-resolves with the completed results instead of an error.
+every worker has settled. Completed series are already persisted. A user stop preserves those rows and ends in the
+explicit, non-resumable `stopped` state; timeouts and server interruptions remain failures.
 
 Records queries and ratings are scoped by pool and by mode: unscoped views exclude the disposable `test` pool and keep
 only `rotation` rows, and any single pool — including `test` — can be selected explicitly, where non-rotation rows

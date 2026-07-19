@@ -1,4 +1,4 @@
-import { randomBytes, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -6,12 +6,13 @@ import { LLMEngine, scaffoldRevision } from './engines.js';
 import { defaultPsDir, RESULTS_PATH } from './paths.js';
 import type { ReasoningLevel } from './providers.js';
 import { parseSpec, validateReasoning } from './providers.js';
-import { seededRng } from './random.js';
+import { resolveSeed, seededRng } from './random.js';
 import type { SeriesRecord } from './records.js';
 import { appendRow } from './records.js';
 import { ShowdownReference } from './reference.js';
-import { makeEngine, playBo3, ROTATION_PROTOCOL_VERSION } from './rotation.js';
+import { ROTATION_PROTOCOL_VERSION } from './rotation.js';
 import { SeatBridge } from './seat.js';
+import { makeEngine, playBo3 } from './series.js';
 import { showdownCommit } from './showdown.js';
 import type { Team } from './teams.js';
 import { loadPool, validatePool } from './teams.js';
@@ -50,7 +51,7 @@ export async function runExhibition(runDir: string, options: ExhibitionOptions):
   const psDir = options.psDir ?? defaultPsDir();
   const pool = loadPool(options.pool ?? 'test');
   validatePool(pool, psDir);
-  const seed = options.seed ?? randomBytes(6).readUIntBE(0, 6);
+  const seed = resolveSeed(options.seed);
   const random = seededRng(seed);
   const firstTeam = Math.floor(random() * pool.teams.length);
   let secondTeam = Math.floor(random() * (pool.teams.length - 1));

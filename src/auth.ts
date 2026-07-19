@@ -275,7 +275,7 @@ export class AuthService {
     }
   }
 
-  finishExperiment(runId: string, status: 'done' | 'failed'): void {
+  finishExperiment(runId: string, status: 'done' | 'failed' | 'stopped'): void {
     const timestamp = this.now();
     this.db.exec('BEGIN IMMEDIATE');
     try {
@@ -334,7 +334,10 @@ export class AuthService {
       ) STRICT;
     `);
     const applied = this.db.prepare('SELECT 1 FROM schema_migrations WHERE version = 1').get();
-    if (applied) return;
+    if (applied) {
+      this.migrateStoppedExperiments();
+      return;
+    }
     this.db.exec('BEGIN IMMEDIATE');
     try {
       this.db.exec(`
@@ -392,6 +395,36 @@ export class AuthService {
         CREATE INDEX audit_events_created_at ON audit_events(created_at);
       `);
       this.db.prepare('INSERT INTO schema_migrations (version, applied_at) VALUES (1, ?)').run(this.now());
+      this.db.exec('COMMIT');
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
+    this.migrateStoppedExperiments();
+  }
+
+  private migrateStoppedExperiments(): void {
+    if (this.db.prepare('SELECT 1 FROM schema_migrations WHERE version = 2').get()) return;
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      this.db.exec(`
+        CREATE TABLE experiments_v2 (
+          run_id TEXT PRIMARY KEY,
+          pool_id TEXT NOT NULL,
+          owner_user_id INTEGER NOT NULL REFERENCES users(id),
+          status TEXT NOT NULL CHECK (status IN ('running', 'done', 'failed', 'stopped')),
+          config_json TEXT NOT NULL,
+          created_at INTEGER NOT NULL,
+          ended_at INTEGER
+        ) STRICT;
+        INSERT INTO experiments_v2
+          (run_id, pool_id, owner_user_id, status, config_json, created_at, ended_at)
+          SELECT run_id, pool_id, owner_user_id, status, config_json, created_at, ended_at FROM experiments;
+        DROP TABLE experiments;
+        ALTER TABLE experiments_v2 RENAME TO experiments;
+        CREATE INDEX experiments_owner_user_id ON experiments(owner_user_id);
+      `);
+      this.db.prepare('INSERT INTO schema_migrations (version, applied_at) VALUES (2, ?)').run(this.now());
       this.db.exec('COMMIT');
     } catch (error) {
       this.db.exec('ROLLBACK');

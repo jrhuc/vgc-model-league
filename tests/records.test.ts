@@ -49,6 +49,13 @@ test('scoping keeps the test pool out of overall views but selectable', () => {
     ['a', 'legacy-a'],
   );
   assert.equal(scopeRows(rows, 'regmb-202607').length, 3);
+  const rated = standings(scopeRows(rows, 'regmb-202607'));
+  assert.deepEqual(
+    rated.map((item) => item.spec),
+    ['a', 'b'],
+    'explicit pool views list every mode but rate only rotation rows',
+  );
+  assert.deepEqual(Object.keys(h2h(scopeRows(rows, 'regmb-202607'))), ['a', 'b']);
   assert.deepEqual(
     scopeRows(rows, 'test').map((item) => item.players.p2),
     ['b'],

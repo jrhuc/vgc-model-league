@@ -105,7 +105,7 @@ export function buildMenus(request: BattleRequest, hints?: MenuHints): SlotMenu[
     const base = pokemon.map(
       (mon, index): MenuItem => ({ label: `Pick ${pokemonSpecies(mon)}`, part: String(index + 1), kind: 'team' }),
     );
-    return Array.from({ length: count }, () => base.map((item) => ({ ...item })));
+    return Array.from({ length: count }, () => base.slice());
   }
   if (request.forceSwitch) {
     const active = pokemon.filter((mon) => mon.active);
@@ -155,8 +155,4 @@ export function buildMenus(request: BattleRequest, hints?: MenuHints): SlotMenu[
     });
   }
   return [[{ label: 'Pass', part: 'pass', kind: 'pass' }]];
-}
-
-export function compose(parts: string[]): string {
-  return parts.join(', ');
 }

@@ -1,4 +1,4 @@
-import type { CompactMon, MatchupMon, ReferenceQuery } from './reference.js';
+import type { CompactMon, MatchupMon } from './reference.js';
 import type { BattleRequest, JsonObject, Pid } from './types.js';
 
 import { afterColon, asRecord, asRecords, asStrings, text } from './value.js';
@@ -261,19 +261,6 @@ export class BattleState {
     return active[slot] ? BattleState.requestName(active[slot]) : 'Pokémon';
   }
 
-  referenceQuery(): ReferenceQuery {
-    const mons = Object.values(this.sides).flatMap((side) =>
-      side.sheet.length ? side.sheet : [...side.mons.values()],
-    );
-    return {
-      speciesSets: mons.map((mon) => [mon.species, mon.item ?? null, mon.nature ?? null]),
-      moves: mons.flatMap((mon) => [...mon.moves.values()].map((move) => move.name)),
-      items: mons.flatMap((mon) => (mon.item ? [mon.item] : [])),
-      abilities: mons.flatMap((mon) => (mon.ability ? [mon.ability] : [])),
-      natures: mons.flatMap((mon) => (mon.nature ? [mon.nature] : [])),
-    };
-  }
-
   /** Active + brought/revealed bench only, for compact always-on mechanics. */
   compactMons(): CompactMon[] {
     const out: CompactMon[] = [];
@@ -356,23 +343,26 @@ export class BattleState {
   /** Mons a spectator should see: team-preview ghosts are dropped once a richer entry covers the species. */
   visibleMons(pid: Pid): MonState[] {
     const side = this.sides[pid];
-    const all = [...side.mons.values()];
-    const rich = new Set(
-      all
-        .filter((mon) => mon.hp !== undefined || mon.moves.size || mon.item || mon.ability)
-        .map((mon) => this.speciesKey(mon.species)),
-    );
-    for (const mon of all) {
-      if (mon.hp === undefined && !mon.moves.size) continue;
-      const sheetMon = side.sheet.find((candidate) => this.monKey(candidate.ident) === this.monKey(mon.ident));
-      if (sheetMon) rich.add(this.speciesKey(sheetMon.species));
-    }
-    return all.filter((mon) => !(mon.preview && mon.hp === undefined && rich.has(this.speciesKey(mon.species))));
+    return this.withoutPreviewGhosts(side, [...side.mons.values()]);
   }
 
   activeSlot(pid: Pid, mon: MonState): string | undefined {
     const key = this.monKey(mon.ident);
     return Object.entries(this.sides[pid].active).find(([, active]) => active === key)?.[0];
+  }
+
+  private withoutPreviewGhosts(side: SideState, mons: MonState[]): MonState[] {
+    const rich = new Set(
+      mons
+        .filter((mon) => mon.hp !== undefined || mon.moves.size || mon.item || mon.ability)
+        .map((mon) => this.speciesKey(mon.species)),
+    );
+    for (const mon of mons) {
+      if (mon.hp === undefined && !mon.moves.size) continue;
+      const sheetMon = side.sheet.find((candidate) => this.monKey(candidate.ident) === this.monKey(mon.ident));
+      if (sheetMon) rich.add(this.speciesKey(sheetMon.species));
+    }
+    return mons.filter((mon) => !(mon.preview && mon.hp === undefined && rich.has(this.speciesKey(mon.species))));
   }
 
   private formatTimed(effect: TimedEffect | undefined): string {
@@ -406,17 +396,10 @@ export class BattleState {
     const title = own ? 'Your side' : 'Opponent side';
     const conditions = this.conditionLabels(pid);
     const lines = [`${title} conditions: ${conditions.length ? conditions.join(', ') : 'none'}`];
-    let mons = [...side.mons.values()].filter((mon) => !own || mon.brought !== false);
-    const rich = new Set(
-      mons
-        .filter((mon) => mon.hp !== undefined || mon.moves.size || mon.item || mon.ability)
-        .map((mon) => this.speciesKey(mon.species)),
+    const mons = this.withoutPreviewGhosts(
+      side,
+      [...side.mons.values()].filter((mon) => !own || mon.brought !== false),
     );
-    for (const mon of mons.filter((candidate) => candidate.hp !== undefined || candidate.moves.size)) {
-      const sheetMon = side.sheet.find((candidate) => this.monKey(candidate.ident) === this.monKey(mon.ident));
-      if (sheetMon) rich.add(this.speciesKey(sheetMon.species));
-    }
-    mons = mons.filter((mon) => !(mon.preview && mon.hp === undefined && rich.has(this.speciesKey(mon.species))));
     if (!own && side.showteam) {
       const knownSpecies = new Set(mons.map((mon) => this.speciesKey(mon.species)));
       const knownIdentities = new Set(mons.map((mon) => this.monKey(mon.ident)));

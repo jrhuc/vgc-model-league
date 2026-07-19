@@ -23,10 +23,33 @@ import { isRecord } from './value.js';
 export const REASONING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const;
 export type ReasoningLevel = (typeof REASONING_LEVELS)[number];
 
+export interface ModelReasoningConfig {
+  reasoning?: ReasoningLevel;
+  reasoningByModel?: Readonly<Record<string, ReasoningLevel>>;
+}
+
+export function reasoningForModel(model: string, config: ModelReasoningConfig): ReasoningLevel | undefined {
+  return config.reasoningByModel?.[model] ?? config.reasoning;
+}
+
+export function validateModelExecution(
+  models: readonly string[],
+  config: ModelReasoningConfig & { apiKeys?: Readonly<Record<string, string>> },
+): void {
+  for (const model of models) validateReasoning(parseSpec(model), reasoningForModel(model, config));
+  if (!config.apiKeys) return;
+  for (const model of models) {
+    if (model !== 'random' && config.apiKeys[model] === undefined)
+      throw new Error(
+        `no API key was supplied for ${model}; key-carrying runs never fall back to server environment keys`,
+      );
+  }
+}
+
 export const USAGE =
   'Usage: anthropic:<model>, openai:<model>, google:<model>, xai:<model>, deepseek:<model>, meta:<model>, kimi:<model>, zai:<model>, openrouter:<model>, cerebras:<model>, compat:<base_url>:<model>, or random';
 
-export const COMPAT_BASE_URLS: Record<string, string> = {
+const COMPAT_BASE_URLS: Record<string, string> = {
   xai: 'https://api.x.ai/v1',
   deepseek: 'https://api.deepseek.com',
   meta: 'https://api.meta.ai/v1',
@@ -48,7 +71,7 @@ export interface ProviderSpec {
   baseUrl?: string;
 }
 
-export function envKeyName(spec: ProviderSpec): string | undefined {
+function envKeyName(spec: ProviderSpec): string | undefined {
   if (spec.provider === 'random') return undefined;
   if (spec.provider === 'anthropic') return 'ANTHROPIC_API_KEY';
   if (spec.provider === 'openai') return 'OPENAI_API_KEY';

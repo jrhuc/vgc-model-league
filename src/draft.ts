@@ -1,16 +1,48 @@
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
 import type { BoardInfo, DraftBoardMonView, DraftPickView } from './gui/api.js';
 import { BOARDS_DIR, defaultPsDir } from './paths.js';
-import type { ReasoningLevel } from './providers.js';
-import { makeProvider, parseSpec } from './providers.js';
+import type { ModelReasoningConfig, ReasoningLevel } from './providers.js';
+import { makeProvider, parseSpec, reasoningForModel } from './providers.js';
 import type { Rng } from './random.js';
 import { loadShowdown } from './showdown.js';
 import type { Provider } from './types.js';
 import { text } from './value.js';
 
 const BOARD_SLUG = /^[a-z0-9][a-z0-9-]{0,63}$/;
+
+const DRAFT_PROMPT_POLICY = {
+  systemTemplate: [
+    'You are {{model}}, drafting a roster for a Pokémon VGC draft league in the format {{format}}.',
+    'League rules: {{coaches}} coaches snake-draft {{picks}} Pokémon each from a shared board.',
+    'Every set is fixed (moves, item, ability, EVs cannot be changed). A drafted Pokémon is exclusive to its coach.',
+    'Each coach has {{budget}} points; higher-tier Pokémon cost more. You must be able to afford {{picks}} picks in total.',
+    'Item Clause applies: you cannot draft two Pokémon holding the same item.',
+    'After the draft you keep this roster for a round robin of best-of-three matches, then playoffs. Games are 4v4 doubles picked from your {{picks}}.',
+    'Draft for a coherent team: consider synergy, speed control, mode coverage, and what opponents have already taken.',
+    'Reply with a single JSON object: {"pick": "<board-id>", "reasoning": "<2-4 sentences on why>"} and nothing else.',
+  ],
+  turnTemplate:
+    'Overall pick {{pick}}. You have {{budget}} points left and {{remaining}} picks remaining; every choice must leave enough budget to complete the roster.',
+  boardHeading: 'BOARD (id | tier | cost | set):',
+  rosterHeading: 'YOUR ROSTER:',
+  emptyRoster: '- (empty)',
+  availableStatus: 'available',
+  unavailableStatus: 'unavailable to you',
+  takenTemplate: 'taken by {{model}}',
+  pickInstruction: 'Choose one Pokémon marked [available]. Reply with only the JSON object.',
+  rejectionTemplate: 'That pick was rejected: {{error}}. Reply again with only the JSON object.',
+  maxTokens: 8192,
+  timeoutSeconds: 240,
+  attempts: 3,
+  fallback: 'uniform-random-legal',
+} as const;
+
+export function draftScaffoldRevision(): string {
+  return createHash('sha256').update(JSON.stringify(DRAFT_PROMPT_POLICY)).digest('hex').slice(0, 12);
+}
 
 export interface DraftBoardMon {
   id: string;
@@ -79,7 +111,14 @@ export function loadBoard(name: string, boardsDir = BOARDS_DIR): DraftBoard {
       cost: Number(record.cost),
       packed: text(record.packed),
     };
-    if (!BOARD_SLUG.test(mon.id) || !mon.name || !mon.species || !mon.packed || !Number.isInteger(mon.cost)) {
+    if (
+      !BOARD_SLUG.test(mon.id) ||
+      !mon.name ||
+      !mon.species ||
+      !mon.packed ||
+      !Number.isInteger(mon.cost) ||
+      mon.cost < 1
+    ) {
       throw new Error(`invalid board entry ${JSON.stringify(record.id)} in ${file}`);
     }
     if (seen.has(mon.id)) throw new Error(`duplicate board entry ${JSON.stringify(mon.id)} in ${file}`);
@@ -87,6 +126,14 @@ export function loadBoard(name: string, boardsDir = BOARDS_DIR): DraftBoard {
     return mon;
   });
   if (mons.length < picks * 2) throw new Error(`${file} needs at least ${picks * 2} draftable sets`);
+  const minimumRosterCost = mons
+    .map((mon) => mon.cost)
+    .sort((a, b) => a - b)
+    .slice(0, picks)
+    .reduce((sum, cost) => sum + cost, 0);
+  if (minimumRosterCost > budget) {
+    throw new Error(`${file} needs a budget that can afford at least one ${picks}-Pokémon roster`);
+  }
   return { id, format, budget, picks, source: text(manifest.source), mons };
 }
 
@@ -107,8 +154,6 @@ export function describeBoardMon(mon: DraftBoardMon, psDir = defaultPsDir()): Dr
 
 /** Pokémon-Showdown set objects are format-defined; keep them opaque. */
 type ShowdownSet = NonNullable<ReturnType<ReturnType<typeof loadShowdown>['Teams']['unpack']>>[number];
-
-const MIN_COST = 3;
 
 export interface DraftState {
   board: DraftBoard;
@@ -137,9 +182,16 @@ export function legalPicks(state: DraftState, drafter: number, psDir = defaultPs
   const picksLeft = state.board.picks - roster.length;
   const budget = state.budgets[drafter]!;
   const rosterSets = roster.map((mon) => unpackMon(mon, psDir));
-  return state.board.mons.filter((mon) => {
-    if (state.taken.has(mon.id)) return false;
-    if (mon.cost > budget - MIN_COST * (picksLeft - 1)) return false;
+  const available = state.board.mons.filter((mon) => !state.taken.has(mon.id));
+  const cheapest = [...available].sort((a, b) => a.cost - b.cost);
+  return available.filter((mon) => {
+    const remaining = cheapest.filter((candidate) => candidate !== mon).slice(0, picksLeft - 1);
+    if (
+      remaining.length < picksLeft - 1 ||
+      mon.cost + remaining.reduce((sum, candidate) => sum + candidate.cost, 0) > budget
+    ) {
+      return false;
+    }
     const problems: string[] = validator.validateTeam([...rosterSets, unpackMon(mon, psDir)]) ?? [];
     return problems.every((problem) => /must bring at least/i.test(problem));
   });
@@ -155,9 +207,8 @@ export interface DraftSeatLog {
   error?: string;
 }
 
-export interface RunDraftOptions {
+export interface RunDraftOptions extends ModelReasoningConfig {
   psDir?: string;
-  reasoning?: ReasoningLevel;
   apiKeys?: Readonly<Record<string, string>>;
   /** Per-drafter prompt/response logs and the shared draft transcript land here. */
   logDir: string;
@@ -189,16 +240,21 @@ function slug(value: string): string {
 }
 
 function draftSystemPrompt(board: DraftBoard, models: string[], drafter: number): string {
-  return [
-    `You are ${models[drafter]}, drafting a roster for a Pokémon VGC draft league in the format ${board.format}.`,
-    `League rules: ${models.length} coaches snake-draft ${board.picks} Pokémon each from a shared board.`,
-    'Every set is fixed (moves, item, ability, EVs cannot be changed). A drafted Pokémon is exclusive to its coach.',
-    `Each coach has ${board.budget} points; higher-tier Pokémon cost more. You must be able to afford ${board.picks} picks in total.`,
-    'Item Clause applies: you cannot draft two Pokémon holding the same item.',
-    'After the draft you keep this roster for a round robin of best-of-three matches, then playoffs. Games are 4v4 doubles picked from your 6.',
-    'Draft for a coherent team: consider synergy, speed control, mode coverage, and what opponents have already taken.',
-    'Reply with a single JSON object: {"pick": "<board-id>", "reasoning": "<2-4 sentences on why>"} and nothing else.',
-  ].join('\n');
+  const values: Record<string, string> = {
+    model: models[drafter]!,
+    format: board.format,
+    coaches: String(models.length),
+    picks: String(board.picks),
+    budget: String(board.budget),
+  };
+  return DRAFT_PROMPT_POLICY.systemTemplate
+    .map((line) =>
+      Object.entries(values).reduce(
+        (rendered, [name, value]) => rendered.replaceAll(`{{${name}}}`, value),
+        line as string,
+      ),
+    )
+    .join('\n');
 }
 
 function describeSet(mon: DraftBoardMon, psDir: string): string {
@@ -224,27 +280,33 @@ function draftUserPrompt(
   drafter: number,
   models: string[],
   pickNumber: number,
+  legalPicks: readonly DraftBoardMon[],
   psDir: string,
 ): string {
-  const legal = new Set(legalPicks(state, drafter, psDir).map((mon) => mon.id));
+  const legal = new Set(legalPicks.map((mon) => mon.id));
   const lines: string[] = [];
   lines.push(
-    `Overall pick ${pickNumber + 1}. You have ${state.budgets[drafter]} points left and ${
-      state.board.picks - state.rosters[drafter]!.length
-    } picks remaining (minimum cost per pick is ${MIN_COST}).`,
+    DRAFT_PROMPT_POLICY.turnTemplate
+      .replace('{{pick}}', String(pickNumber + 1))
+      .replace('{{budget}}', String(state.budgets[drafter]))
+      .replace('{{remaining}}', String(state.board.picks - state.rosters[drafter]!.length)),
   );
-  lines.push('', 'BOARD (id | tier | cost | set):');
+  lines.push('', DRAFT_PROMPT_POLICY.boardHeading);
   for (const mon of state.board.mons) {
     const owner = state.taken.get(mon.id);
     const status =
-      owner === undefined ? (legal.has(mon.id) ? 'available' : 'unavailable to you') : `taken by ${models[owner]}`;
+      owner === undefined
+        ? legal.has(mon.id)
+          ? DRAFT_PROMPT_POLICY.availableStatus
+          : DRAFT_PROMPT_POLICY.unavailableStatus
+        : DRAFT_PROMPT_POLICY.takenTemplate.replace('{{model}}', models[owner]!);
     lines.push(`- ${mon.id} | ${mon.tier} | ${mon.cost} | ${describeSet(mon, psDir)} [${status}]`);
   }
-  lines.push('', 'YOUR ROSTER:');
+  lines.push('', DRAFT_PROMPT_POLICY.rosterHeading);
   lines.push(
     ...(state.rosters[drafter]!.length
       ? state.rosters[drafter]!.map((mon) => `- ${mon.name} (${mon.cost}) · ${describeSet(mon, psDir)}`)
-      : ['- (empty)']),
+      : [DRAFT_PROMPT_POLICY.emptyRoster]),
   );
   for (const [index, model] of models.entries()) {
     if (index === drafter) continue;
@@ -257,7 +319,7 @@ function draftUserPrompt(
       }`,
     );
   }
-  lines.push('', 'Choose one Pokémon marked [available]. Reply with only the JSON object.');
+  lines.push('', DRAFT_PROMPT_POLICY.pickInstruction);
   return lines.join('\n');
 }
 
@@ -303,8 +365,9 @@ export async function runDraft(models: string[], board: DraftBoard, options: Run
           ...(reasoning === undefined ? {} : { reasoning }),
           ...(apiKey === undefined ? {} : { apiKey }),
         }));
-    return make(model, options.apiKeys?.[model], options.reasoning);
+    return make(model, options.apiKeys?.[model], reasoningForModel(model, options));
   });
+  const systemPrompts = models.map((_, drafter) => draftSystemPrompt(board, models, drafter));
   const seatLogs = models.map((model, index) => path.join(options.logDir, `drafter-${index}-${slug(model)}.jsonl`));
   const transcript = path.join(options.logDir, 'draft.jsonl');
   const picks: DraftPickView[] = [];
@@ -323,12 +386,12 @@ export async function runDraft(models: string[], board: DraftBoard, options: Run
     let fallback = false;
     const provider = providers[drafter];
     if (provider) {
-      const system = draftSystemPrompt(board, models, drafter);
+      const system = systemPrompts[drafter]!;
       const messages: Array<{ role: 'user'; content: string }> = [
-        { role: 'user', content: draftUserPrompt(state, drafter, models, pickNumber, psDir) },
+        { role: 'user', content: draftUserPrompt(state, drafter, models, pickNumber, legal, psDir) },
       ];
       let lastError = '';
-      for (let attempt = 1; attempt <= 3 && !chosen; attempt += 1) {
+      for (let attempt = 1; attempt <= DRAFT_PROMPT_POLICY.attempts && !chosen; attempt += 1) {
         options.signal?.throwIfAborted();
         const promptForAttempt = messages[messages.length - 1]!.content;
         let response = '';
@@ -336,8 +399,8 @@ export async function runDraft(models: string[], board: DraftBoard, options: Run
         let error: string | undefined;
         try {
           const completion = await provider.complete(system, messages, {
-            maxTokens: 8192,
-            timeout: 240,
+            maxTokens: DRAFT_PROMPT_POLICY.maxTokens,
+            timeout: DRAFT_PROMPT_POLICY.timeoutSeconds,
             ...(options.signal === undefined ? {} : { signal: options.signal }),
           });
           response = completion.text;
@@ -348,7 +411,7 @@ export async function runDraft(models: string[], board: DraftBoard, options: Run
             lastError = parsed;
             messages.push({
               role: 'user',
-              content: `That pick was rejected: ${parsed}. Reply again with only the JSON object.`,
+              content: DRAFT_PROMPT_POLICY.rejectionTemplate.replace('{{error}}', parsed),
             });
           } else {
             chosen = parsed.mon;
