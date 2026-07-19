@@ -4,14 +4,12 @@ import type { AppState, AuthView, BattleMessage, PoolInfo, RunSnapshot, ServerEv
 import { api, configureCsrf } from './http';
 import { ArenaView } from './views/arena';
 import { FixturesView } from './views/fixtures';
-import { PoolsView } from './views/pools';
 import { ResultsView } from './views/results';
 
 const NAV = [
   { id: 'fixtures', label: 'New run' },
   { id: 'arena', label: 'Live run' },
   { id: 'results', label: 'Record book' },
-  { id: 'pools', label: 'Team pools' },
 ] as const;
 
 export type ViewId = (typeof NAV)[number]['id'];
@@ -120,6 +118,7 @@ export function App() {
 
   const selectBattle = (index: number) => {
     setSelected(index);
+    if (battles[index]?.snapshot) return;
     api<BattleMessage>(`${contribute ? '/api/battle' : '/api/battle/public'}?index=${index}`)
       .then((data) => {
         if (data.snapshot) setBattles((previous) => ({ ...previous, [index]: data }));
@@ -207,7 +206,11 @@ export function App() {
       </header>
       <main class="shell">
         <section class={`view ${view === 'fixtures' ? 'on' : ''}`}>
-          {contribute ? <FixturesView app={app} run={run} onStarted={onStarted} /> : <AccessGate auth={app.auth} />}
+          {contribute ? (
+            <FixturesView app={app} run={run} onStarted={onStarted} onPools={onPools} />
+          ) : (
+            <AccessGate auth={app.auth} />
+          )}
         </section>
         <section class={`view ${view === 'arena' ? 'on' : ''}`}>
           <ArenaView
@@ -220,9 +223,6 @@ export function App() {
         </section>
         <section class={`view ${view === 'results' ? 'on' : ''}`}>
           <ResultsView active={view === 'results'} epoch={recordsEpoch} />
-        </section>
-        <section class={`view ${view === 'pools' ? 'on' : ''}`}>
-          {contribute ? <PoolsView app={app} onPools={onPools} /> : <AccessGate auth={app.auth} />}
         </section>
       </main>
     </>

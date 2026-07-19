@@ -38,17 +38,37 @@ test('built client bundle boots and renders the app against the live server', as
     assert.match(text, /VGC MODEL LEAGUE/);
     assert.match(text, /Model lineup/);
     assert.match(text, /Control sheet/);
-    assert.match(text, /Team pools/);
     assert.match(text, /No models selected/);
     const navButtons = window.document.querySelectorAll('.nav-button');
-    assert.equal(navButtons.length, 4);
+    assert.equal(navButtons.length, 3, 'pool management lives inside run setup, not the top nav');
 
+    const modeTabs = window.document.querySelectorAll('.mode-tab');
+    assert.equal(modeTabs.length, 4, 'match, tournament, draft, and rotation modes are offered');
+    const pasteField = window.document.querySelector('#teamPaste0') as HTMLTextAreaElement | null;
+    assert.ok(pasteField, 'the default match view shows team paste fields');
+    assert.ok(pasteField.value.trim().length > 0, 'sample teams prefill the match form');
+    assert.ok(window.document.querySelector('#teamPaste1'));
+    assert.equal(window.document.querySelector('#pool'), null, 'a match needs no team pool');
+
+    (modeTabs[3] as unknown as HTMLButtonElement).click();
+    await waitFor(() => window.document.querySelector('#pool') !== null);
     const poolDropdown = window.document.querySelector('#pool') as HTMLButtonElement | null;
     assert.equal(poolDropdown?.getAttribute('role'), 'combobox');
     assert.ok(
       (window.document.querySelector('.pool-facts')?.textContent ?? '').includes('teams'),
       'selected pool should show its team count',
     );
+    assert.ok(
+      (window.document.querySelector('.pools-manager > summary')?.textContent ?? '').includes('Manage team pools'),
+      'pool creation is collapsed into the run setup page',
+    );
+
+    (modeTabs[2] as unknown as HTMLButtonElement).click();
+    await waitFor(() => rendered().includes('Draft board'));
+    assert.match(rendered(), /Snake draft/);
+
+    (modeTabs[0] as unknown as HTMLButtonElement).click();
+    await waitFor(() => window.document.querySelector('#teamPaste0') !== null);
 
     const modelSearch = window.document.querySelector('#modelSearch');
     assert.ok(modelSearch, 'model combobox input should render');

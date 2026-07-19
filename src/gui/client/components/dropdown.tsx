@@ -9,7 +9,7 @@ export interface DropdownOption {
   description?: string;
 }
 
-export function filterOptions(options: DropdownOption[], text: string): DropdownOption[] {
+function filterOptions(options: DropdownOption[], text: string): DropdownOption[] {
   const query = text.trim().toLowerCase();
   if (!query) return options;
   return options.filter(

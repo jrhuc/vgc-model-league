@@ -65,7 +65,7 @@ test('GitHub OAuth uses state and PKCE, then creates a hashed durable session', 
   auth.startExperiment(result.session.user, 'run-1', 'test', { models: ['random', 'random'] });
   assert.equal(auth.canControlExperiment(result.session.user, 'run-1'), true);
   auth.stopExperiment(result.session.user, 'run-1');
-  auth.finishExperiment('run-1', 'done');
+  auth.finishExperiment('run-1', 'stopped');
   auth.recordPool(result.session.user, 'pool-1', 'gen9championsvgc2026regmbbo3');
   auth.logout(result.sessionToken, result.session.csrfToken);
   assert.equal(auth.session(result.sessionToken), undefined);
@@ -73,13 +73,62 @@ test('GitHub OAuth uses state and PKCE, then creates a hashed durable session', 
 
   const inspection = new DatabaseSync(database, { readOnly: true });
   const storedSession = inspection.prepare('SELECT token_hash FROM sessions').get();
+  const experiment = inspection.prepare("SELECT status FROM experiments WHERE run_id = 'run-1'").get() as {
+    status: string;
+  };
+  assert.equal(experiment.status, 'stopped');
   assert.equal(storedSession, undefined);
   const audit = inspection.prepare('SELECT action FROM audit_events ORDER BY id').all() as Array<{ action: string }>;
   assert.deepEqual(
     audit.map((entry) => entry.action),
-    ['auth.login', 'experiment.start', 'experiment.stop', 'experiment.done', 'pool.publish', 'auth.logout'],
+    ['auth.login', 'experiment.start', 'experiment.stop', 'experiment.stopped', 'pool.publish', 'auth.logout'],
   );
   inspection.close();
+});
+
+test('v1 experiment tables migrate to the stopped terminal state', (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'vgcleague-auth-v1-'));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const dbPath = path.join(directory, 'league.sqlite');
+  const legacy = new DatabaseSync(dbPath);
+  legacy.exec(`
+    CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL) STRICT;
+    INSERT INTO schema_migrations VALUES (1, 1);
+    CREATE TABLE users (
+      id INTEGER PRIMARY KEY,
+      provider TEXT NOT NULL,
+      provider_subject TEXT NOT NULL,
+      login TEXT NOT NULL,
+      avatar_url TEXT NOT NULL,
+      role TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    ) STRICT;
+    CREATE TABLE experiments (
+      run_id TEXT PRIMARY KEY,
+      pool_id TEXT NOT NULL,
+      owner_user_id INTEGER NOT NULL REFERENCES users(id),
+      status TEXT NOT NULL CHECK (status IN ('running', 'done', 'failed')),
+      config_json TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      ended_at INTEGER
+    ) STRICT;
+    CREATE INDEX experiments_owner_user_id ON experiments(owner_user_id);
+  `);
+  legacy.close();
+
+  new AuthService({
+    dbPath,
+    clientId: 'client-id',
+    clientSecret: 'client-secret',
+    publicOrigin: 'https://league.example',
+  }).close();
+
+  const migrated = new DatabaseSync(dbPath, { readOnly: true });
+  const table = migrated.prepare("SELECT sql FROM sqlite_master WHERE name = 'experiments'").get() as { sql: string };
+  assert.match(table.sql, /'stopped'/);
+  assert.ok(migrated.prepare('SELECT 1 FROM schema_migrations WHERE version = 2').get());
+  migrated.close();
 });
 
 test('sessions expire and contributor ownership gates another user', async () => {

@@ -1,0 +1,313 @@
+{
+  "id": "regmb-202607",
+  "format": "gen9championsvgc2026regmbbo3",
+  "budget": 70,
+  "picks": 6,
+  "source": "Sets from the regmb-202607 tournament-team pool; tiers from Smogon's 'VGC Regulation M-B Viability Rankings' (smogon.com/forums/threads/3785289), unranked species default to C-.",
+  "mons": [
+    {
+      "id": "basculegion",
+      "name": "Basculegion",
+      "species": "Basculegion",
+      "tier": "S",
+      "cost": 20,
+      "packed": "Basculegion||SitrusBerry|Adaptability|Protect,WaveCrash,LastRespects,AquaJet|Adamant|24,18,18,,6,|M|||50|"
+    },
+    {
+      "id": "charizard-mega-y",
+      "name": "Charizard-Mega-Y",
+      "species": "Charizard",
+      "tier": "S",
+      "cost": 20,
+      "packed": "Charizard||CharizarditeY|Blaze|WeatherBall,HeatWave,SolarBeam,Protect|Modest|23,,18,1,,24||||50|"
+    },
+    {
+      "id": "garchomp",
+      "name": "Garchomp",
+      "species": "Garchomp",
+      "tier": "S",
+      "cost": 20,
+      "packed": "Garchomp||LifeOrb|RoughSkin|DragonClaw,RockSlide,Earthquake,Protect|Jolly|2,32,,,,32||||50|"
+    },
+    {
+      "id": "kingambit",
+      "name": "Kingambit",
+      "species": "Kingambit",
+      "tier": "S",
+      "cost": 20,
+      "packed": "Kingambit||LifeOrb|Defiant|KowtowCleave,IronHead,Protect,SuckerPunch|Brave|32,32,1,,1,||||50|"
+    },
+    {
+      "id": "floette-mega",
+      "name": "Floette-Mega",
+      "species": "Floette-Eternal",
+      "tier": "A+",
+      "cost": 17,
+      "packed": "Floette-Eternal||Floettite|FlowerVeil|Moonblast,DazzlingGleam,LightofRuin,Protect|Timid|2,,,32,,32|F|||50|"
+    },
+    {
+      "id": "incineroar",
+      "name": "Incineroar",
+      "species": "Incineroar",
+      "tier": "A+",
+      "cost": 17,
+      "packed": "Incineroar||SitrusBerry|Intimidate|DarkestLariat,FlareBlitz,FakeOut,PartingShot|Impish|32,,32,,2,||||50|"
+    },
+    {
+      "id": "aerodactyl-mega",
+      "name": "Aerodactyl-Mega",
+      "species": "Aerodactyl",
+      "tier": "A",
+      "cost": 15,
+      "packed": "Aerodactyl||Aerodactylite|Unnerve|RockSlide,IceFang,Tailwind,WideGuard|Jolly|28,11,9,,1,17||||50|"
+    },
+    {
+      "id": "sinistcha",
+      "name": "Sinistcha",
+      "species": "Sinistcha",
+      "tier": "A",
+      "cost": 15,
+      "packed": "Sinistcha||CobaBerry|Hospitality|Protect,TrickRoom,MatchaGotcha,RagePowder|Relaxed|32,,4,,30,|||||"
+    },
+    {
+      "id": "whimsicott",
+      "name": "Whimsicott",
+      "species": "Whimsicott",
+      "tier": "A",
+      "cost": 15,
+      "packed": "Whimsicott||FocusSash|Prankster|Moonblast,Tailwind,Encore,Protect|Timid|2,,,32,,32||||50|"
+    },
+    {
+      "id": "delphox-mega",
+      "name": "Delphox-Mega",
+      "species": "Delphox",
+      "tier": "A-",
+      "cost": 13,
+      "packed": "Delphox||Delphoxite|Blaze|HeatWave,Psychic,NastyPlot,Protect|Timid|15,,25,7,,19|||||"
+    },
+    {
+      "id": "farigiraf",
+      "name": "Farigiraf",
+      "species": "Farigiraf",
+      "tier": "A-",
+      "cost": 13,
+      "packed": "Farigiraf||SitrusBerry|ArmorTail|PsychicFangs,HyperVoice,HelpingHand,TrickRoom|Relaxed|29,,20,,17,||||50|"
+    },
+    {
+      "id": "sneasler",
+      "name": "Sneasler",
+      "species": "Sneasler",
+      "tier": "A-",
+      "cost": 13,
+      "packed": "Sneasler||WhiteHerb|Unburden|Protect,CloseCombat,FakeOut,GunkShot|Adamant|18,,31,,,17||||50|"
+    },
+    {
+      "id": "sylveon",
+      "name": "Sylveon",
+      "species": "Sylveon",
+      "tier": "A-",
+      "cost": 13,
+      "packed": "Sylveon||FairyFeather|Pixilate|Detect,HyperVoice,HyperBeam,QuickAttack|Modest|18,,10,21,,17||||50|"
+    },
+    {
+      "id": "blastoise-mega",
+      "name": "Blastoise-Mega",
+      "species": "Blastoise-Mega",
+      "tier": "B+",
+      "cost": 11,
+      "packed": "Blastoise-Mega||Blastoisinite|RainDish|FakeOut,WaterSpout,AuraSphere,DarkPulse|Quiet|32,,,32,2,||||50|"
+    },
+    {
+      "id": "grimmsnarl",
+      "name": "Grimmsnarl",
+      "species": "Grimmsnarl",
+      "tier": "B+",
+      "cost": 11,
+      "packed": "Grimmsnarl||LightClay|Prankster|FoulPlay,PartingShot,LightScreen,Reflect|Calm|32,,20,,14,|||||"
+    },
+    {
+      "id": "pelipper",
+      "name": "Pelipper",
+      "species": "Pelipper",
+      "tier": "B+",
+      "cost": 11,
+      "packed": "Pelipper||QuickClaw|Drizzle|WeatherBall,Hurricane,Tailwind,Protect|Timid|1,,,32,1,32||||50|"
+    },
+    {
+      "id": "venusaur",
+      "name": "Venusaur",
+      "species": "Venusaur",
+      "tier": "B+",
+      "cost": 11,
+      "packed": "Venusaur||LifeOrb|Chlorophyll|LeafStorm,SludgeBomb,EarthPower,Protect|Modest|2,,,32,,32||||50|"
+    },
+    {
+      "id": "archaludon",
+      "name": "Archaludon",
+      "species": "Archaludon",
+      "tier": "B",
+      "cost": 9,
+      "packed": "Archaludon||Leftovers|Stamina|DracoMeteor,FlashCannon,ElectroShot,Protect|Modest|27,,2,5,32,||||50|"
+    },
+    {
+      "id": "gholdengo",
+      "name": "Gholdengo",
+      "species": "Gholdengo",
+      "tier": "B",
+      "cost": 9,
+      "packed": "Gholdengo||FocusSash|GoodasGold|MakeItRain,ShadowBall,PowerGem,Protect|Timid|2,,,32,,32||||50|"
+    },
+    {
+      "id": "metagross-mega",
+      "name": "Metagross-Mega",
+      "species": "Metagross",
+      "tier": "B",
+      "cost": 9,
+      "packed": "Metagross||Metagrossite|ClearBody|Protect,BodyPress,PsychicFangs,IronHead|Jolly|14,27,,,,25|||||"
+    },
+    {
+      "id": "swampert-mega",
+      "name": "Swampert-Mega",
+      "species": "Swampert",
+      "tier": "B",
+      "cost": 9,
+      "packed": "Swampert||Swampertite|Damp|Protect,IcePunch,WaveCrash,Earthquake|Adamant|18,30,,,,18|||||"
+    },
+    {
+      "id": "toxapex",
+      "name": "Toxapex",
+      "species": "Toxapex",
+      "tier": "B",
+      "cost": 9,
+      "packed": "Toxapex||Leftovers|Regenerator|Toxic,Infestation,WideGuard,BanefulBunker|Bold|32,,21,,13,||||50|"
+    },
+    {
+      "id": "froslass-mega",
+      "name": "Froslass-Mega",
+      "species": "Froslass",
+      "tier": "B-",
+      "cost": 7,
+      "packed": "Froslass||Froslassite|CursedBody|Protect,Blizzard,AuroraVeil,ShadowBall|Modest|24,,,6,4,32|F|||50|"
+    },
+    {
+      "id": "maushold-four",
+      "name": "Maushold-Four",
+      "species": "Maushold-Four",
+      "tier": "B-",
+      "cost": 7,
+      "packed": "Maushold-Four||ChopleBerry|FriendGuard|Feint,HelpingHand,Protect,FollowMe|Impish|32,,20,,14,|||||"
+    },
+    {
+      "id": "torkoal",
+      "name": "Torkoal",
+      "species": "Torkoal",
+      "tier": "B-",
+      "cost": 7,
+      "packed": "Krakatoa|Torkoal|Charcoal|Drought|Eruption,WeatherBall,HelpingHand,Protect|Quiet|32,,,32,2,||||50|"
+    },
+    {
+      "id": "dragonite-mega",
+      "name": "Dragonite-Mega",
+      "species": "Dragonite",
+      "tier": "C+",
+      "cost": 5,
+      "packed": "Dragonite||Dragoninite|InnerFocus|DracoMeteor,AirSlash,Tailwind,Haze|Timid|11,,,32,,23||||50|"
+    },
+    {
+      "id": "lycanroc-dusk",
+      "name": "Lycanroc-Dusk",
+      "species": "Lycanroc-Dusk",
+      "tier": "C+",
+      "cost": 5,
+      "packed": "Lycanroc-Dusk||FocusSash|ToughClaws|Protect,Accelerock,RockSlide,CloseCombat|Adamant|1,32,,,1,32||||50|"
+    },
+    {
+      "id": "mamoswine",
+      "name": "Mamoswine",
+      "species": "Mamoswine",
+      "tier": "C+",
+      "cost": 5,
+      "packed": "Mamoswine||FocusSash|Oblivious|HighHorsepower,RockTomb,IceShard,Protect|Jolly|2,32,,,,32||||50|"
+    },
+    {
+      "id": "mawile-mega",
+      "name": "Mawile-Mega",
+      "species": "Mawile",
+      "tier": "C+",
+      "cost": 5,
+      "packed": "Claire Densmore|Mawile|Mawilite|HyperCutter|PlayRough,RockSlide,SuckerPunch,SwordsDance|Brave|32,,22,,12,||||50|"
+    },
+    {
+      "id": "pyroar-mega",
+      "name": "Pyroar-Mega",
+      "species": "Pyroar",
+      "tier": "C+",
+      "cost": 5,
+      "packed": "Mufasa|Pyroar|Pyroarite|Unnerve|HeatWave,Overheat,SolarBeam,Protect|Timid|2,,,32,,32|F|||50|"
+    },
+    {
+      "id": "scovillain-mega",
+      "name": "Scovillain-Mega",
+      "species": "Scovillain",
+      "tier": "C+",
+      "cost": 5,
+      "packed": "Scovillain||Scovillainite|Moody|Protect,GigaDrain,Overheat,RagePowder|Bold|32,,15,,15,4||||50|"
+    },
+    {
+      "id": "volcarona",
+      "name": "Volcarona",
+      "species": "Volcarona",
+      "tier": "C",
+      "cost": 4,
+      "packed": "Volcarona||Leftovers|FlameBody|HeatWave,GigaDrain,QuiverDance,Protect|Modest|32,,11,5,,18||||50|"
+    },
+    {
+      "id": "camerupt-mega",
+      "name": "Camerupt-Mega",
+      "species": "Camerupt-Mega",
+      "tier": "C-",
+      "cost": 3,
+      "packed": "Camerupt-Mega||Cameruptite|SolidRock|HeatWave,EarthPower,Protect,AncientPower|Quiet|32,,,32,2,||||50|"
+    },
+    {
+      "id": "decidueye-hisui",
+      "name": "Decidueye-Hisui",
+      "species": "Decidueye-Hisui",
+      "tier": "C-",
+      "cost": 3,
+      "packed": "Legowlas|DecidueyeHisui|LifeOrb|Scrappy|CloseCombat,LeafBlade,BraveBird,Protect|Brave|32,32,,,2,||||50|"
+    },
+    {
+      "id": "gyarados-mega",
+      "name": "Gyarados-Mega",
+      "species": "Gyarados",
+      "tier": "C-",
+      "cost": 3,
+      "packed": "Gyarados||Gyaradosite|Intimidate|Waterfall,LashOut,DragonDance,Protect|Adamant|11,25,,,,30||||50|"
+    },
+    {
+      "id": "kangaskhan",
+      "name": "Kangaskhan",
+      "species": "Kangaskhan",
+      "tier": "C-",
+      "cost": 3,
+      "packed": "Checkmate|Kangaskhan|SilkScarf|Scrappy|LastResort,FakeOut|Brave|32,32,2,,,|F|||50|"
+    },
+    {
+      "id": "staraptor",
+      "name": "Staraptor",
+      "species": "Staraptor",
+      "tier": "C-",
+      "cost": 3,
+      "packed": "Staraptor||ChoiceScarf|Intimidate|FinalGambit,BraveBird,CloseCombat,Uturn|Jolly|32,14,,,,20||||50|"
+    },
+    {
+      "id": "vanilluxe",
+      "name": "Vanilluxe",
+      "species": "Vanilluxe",
+      "tier": "C-",
+      "cost": 3,
+      "packed": "Vanilluxe||NeverMeltIce|SnowWarning|Blizzard,FreezeDry,Protect,IceShard|Quiet|32,,,32,2,||||50|"
+    }
+  ]
+}

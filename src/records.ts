@@ -7,6 +7,7 @@ export interface SeriesRecord extends JsonObject {
   mode?: ExperimentMode;
   protocol_version?: number;
   scaffold?: string;
+  draft_scaffold?: string;
   run_id?: string;
   series_index?: number;
   pool?: string;
@@ -21,16 +22,21 @@ export const TEST_POOL = 'test';
 /**
  * With a pool, only that pool's rows qualify; without one, every pool except the
  * disposable test pool qualifies (legacy rows without a pool field stay in), and
- * exhibition rows never rate the rotation ladder.
+ * only rotation rows rate the ladder — exhibition and tournament results never do.
  */
 export function scopeRows(rows: SeriesRecord[], pool?: string): SeriesRecord[] {
   return pool === undefined
-    ? rows.filter((row) => row.pool !== TEST_POOL && row.mode !== 'exhibition')
+    ? rows.filter((row) => row.pool !== TEST_POOL && (row.mode ?? 'rotation') === 'rotation')
     : rows.filter((row) => row.pool === pool);
 }
 
 function playedRows(rows: SeriesRecord[]): SeriesRecord[] {
-  return rows.filter((row) => typeof row.players?.p1 === 'string' && typeof row.players.p2 === 'string');
+  return rows.filter(
+    (row) =>
+      (row.mode ?? 'rotation') === 'rotation' &&
+      typeof row.players?.p1 === 'string' &&
+      typeof row.players.p2 === 'string',
+  );
 }
 
 export interface Standing {

@@ -21,6 +21,7 @@
     "start": "node dist/src/cli.js gui",
     "vgcleague": "node dist/src/cli.js",
     "build-pool": "node dist/tools/build-pool.js",
+    "build-board": "node dist/tools/build-draft-board.js",
     "capture-requests": "node dist/tools/capture-requests.js"
   },
   "engines": {

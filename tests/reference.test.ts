@@ -43,7 +43,7 @@ test('reference reads exact data from the configured Showdown checkout', () => {
 
 test('Mega formes require the visible matching stone', () => {
   const rendered = new ShowdownReference('gen9championsvgc2026regmb')
-    .render({ speciesItems: [['Charizard', 'Choice Specs']], items: ['Choice Specs'] })
+    .render({ speciesSets: [['Charizard', 'Choice Specs']], items: ['Choice Specs'] })
     .join('\n');
   assert.match(rendered, /Species Charizard: Fire\/Flying; base stats .* Spe 100/);
   assert.doesNotMatch(rendered, /Charizard-Mega/);

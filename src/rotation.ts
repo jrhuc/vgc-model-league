@@ -1,29 +1,21 @@
-import { randomBytes, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
-import type { GameEnd, GameStart } from './engines.js';
-import { LLMEngine, RandomEngine, scaffoldRevision } from './engines.js';
-import { defaultPsDir, REPO_ROOT, RESULTS_PATH, RUNS_DIR } from './paths.js';
-import type { ReasoningLevel } from './providers.js';
-import { makeProvider, parseSpec, validateReasoning } from './providers.js';
+import { scaffoldRevision } from './engines.js';
+import { defaultPsDir, RESULTS_PATH, RUNS_DIR } from './paths.js';
+import type { ModelReasoningConfig } from './providers.js';
+import { validateModelExecution } from './providers.js';
 import type { Rng } from './random.js';
-import { seededRng } from './random.js';
+import { resolveSeed, seededRng, seriesEntropy } from './random.js';
 import type { SeriesRecord } from './records.js';
 import { appendRow } from './records.js';
-import { ShowdownReference } from './reference.js';
+import { playRecordedSeries } from './series.js';
 import { showdownCommit } from './showdown.js';
-import { SimBattle } from './sim.js';
-import type { Team, TeamPool } from './teams.js';
+import type { Team } from './teams.js';
 import { loadPool, validatePool } from './teams.js';
-import type { ExperimentMode, JsonObject, Pid, PlayerOptions } from './types.js';
+import type { ContributorAttribution, ExperimentMode, Pid } from './types.js';
 export const ROTATION_PROTOCOL_VERSION = 1;
-
-export interface ContributorAttribution {
-  provider: 'github';
-  subject: string;
-  login: string;
-}
 
 interface SeriesPlan {
   index: number;
@@ -47,12 +39,11 @@ export type RotationEvent =
   | { type: 'game-end'; index: number; game: number; winner: string | null; turns: number; score: Record<Pid, number> }
   | { type: 'series-end'; index: number; record: SeriesRecord };
 
-export interface RotationOptions {
+export interface RotationOptions extends ModelReasoningConfig {
   seed?: number;
   concurrency?: number;
   recordsPath?: string;
   psDir?: string;
-  reasoning?: ReasoningLevel;
   apiKeys?: Readonly<Record<string, string>>;
   pool?: string;
   onEvent?: (event: RotationEvent) => void;
@@ -68,35 +59,6 @@ export function makeRunDirectory(): string {
   return directory;
 }
 
-export function makeEngine(
-  pid: Pid,
-  spec: string,
-  seed: number,
-  decisionLog: string,
-  traceLog: string,
-  format: string,
-  psDir: string,
-  reasoning?: ReasoningLevel,
-  reference?: ShowdownReference,
-  signal?: AbortSignal,
-  apiKey?: string,
-): RandomEngine | LLMEngine {
-  if (spec === 'random') return new RandomEngine(pid, seed);
-  return new LLMEngine(pid, spec, {
-    provider: makeProvider(parseSpec(spec), {
-      reasoning,
-      ...(apiKey === undefined ? {} : { apiKey }),
-    }),
-    decisionLog,
-    traceLog,
-    format,
-    psDir,
-    ...(reasoning === undefined ? {} : { reasoning }),
-    ...(reference === undefined ? {} : { reference }),
-    ...(signal === undefined ? {} : { signal }),
-  });
-}
-
 export async function runRotation(
   models: string[],
   seriesPerPair: number,
@@ -109,22 +71,14 @@ export async function runRotation(
     if (options.onNotice) options.onNotice(message);
     else console.error(message);
   }
-  for (const model of models) validateReasoning(parseSpec(model), options.reasoning);
-  if (options.apiKeys) {
-    for (const model of models) {
-      if (model !== 'random' && options.apiKeys[model] === undefined)
-        throw new Error(
-          `no API key was supplied for ${model}; key-carrying runs never fall back to server environment keys`,
-        );
-    }
-  }
+  validateModelExecution(models, options);
 
   fs.mkdirSync(runDir, { recursive: true });
   const recordsPath = options.recordsPath ?? RESULTS_PATH;
   const psDir = options.psDir ?? defaultPsDir();
   const pool = loadPool(options.pool ?? 'test');
   validatePool(pool, psDir);
-  const seed = options.seed ?? randomBytes(6).readUIntBE(0, 6);
+  const seed = resolveSeed(options.seed);
   const scaffold = scaffoldRevision();
   const plans = makePlans(models, seriesPerPair, pool.teams, seededRng(seed));
   options.onEvent?.({
@@ -147,6 +101,7 @@ export async function runRotation(
         seed,
         concurrency: options.concurrency ?? 2,
         reasoning: options.reasoning ?? null,
+        reasoning_by_model: options.reasoningByModel ?? null,
         pool: pool.id,
         format: pool.format,
         contributor: options.contributor ?? null,
@@ -158,18 +113,36 @@ export async function runRotation(
   );
 
   return mapLimit(plans, options.concurrency ?? 2, options.signal, async (plan, signal) => {
-    const row = await playSeries(plan, {
-      runDir,
-      pool,
-      runSeed: seed,
-      scaffold,
+    options.onEvent?.({ type: 'series-start', index: plan.index });
+    const { fields } = await playRecordedSeries({
+      players: plan.players,
+      teams: plan.teams,
+      gameSeeds: plan.gameSeeds,
+      engineSeeds: plan.engineSeeds,
+      format: pool.format,
       psDir,
+      runDir,
       signal,
       ...(options.reasoning === undefined ? {} : { reasoning: options.reasoning }),
+      ...(options.reasoningByModel === undefined ? {} : { reasoningByModel: options.reasoningByModel }),
       ...(options.apiKeys === undefined ? {} : { apiKeys: options.apiKeys }),
-      ...(options.onEvent === undefined ? {} : { onEvent: options.onEvent }),
-      ...(options.contributor === undefined ? {} : { contributor: options.contributor }),
+      onGameUpdate: (game, lines, publicLines) =>
+        options.onEvent?.({ type: 'game-update', index: plan.index, game, lines, publicLines }),
+      onGameEnd: (game, winner, turns, score) =>
+        options.onEvent?.({ type: 'game-end', index: plan.index, game, winner, turns, score }),
     });
+    const row = {
+      schema_version: 1,
+      mode: 'rotation',
+      protocol_version: ROTATION_PROTOCOL_VERSION,
+      scaffold,
+      series_index: plan.index,
+      pool: pool.id,
+      ...(options.contributor === undefined ? {} : { contributor: options.contributor }),
+      run_seed: seed,
+      ps_commit: showdownCommit(psDir),
+      ...fields,
+    } as SeriesRecord;
     appendRow(recordsPath, row);
     options.onEvent?.({ type: 'series-end', index: plan.index, record: row });
     return row;
@@ -232,194 +205,10 @@ export function makePlans(models: string[], seriesPerPair: number, teams: Team[]
           index: plans.length,
           players,
           teams: { p1: matchup[0], p2: matchup[1] },
-          gameSeeds: Array.from(
-            { length: 3 },
-            () =>
-              Array.from({ length: 4 }, () => 1 + Math.floor(random() * 0xffff)) as [number, number, number, number],
-          ),
-          engineSeeds: {
-            p1: Math.floor(random() * Number.MAX_SAFE_INTEGER),
-            p2: Math.floor(random() * Number.MAX_SAFE_INTEGER),
-          },
+          ...seriesEntropy(random),
         });
       }
     }
   }
   return plans;
-}
-
-export interface Bo3Context {
-  engines: Record<Pid, RandomEngine | LLMEngine>;
-  /** Showdown player names; game winners come back as these. */
-  names: Record<Pid, string>;
-  /** Recorded participant labels (model specs or seat names). */
-  players: Record<Pid, string>;
-  teams: Record<Pid, Team>;
-  gameSeeds: Array<[number, number, number, number]>;
-  seriesId: string;
-  seriesDir: string;
-  format: string;
-  psDir: string;
-  timer?: boolean;
-  signal?: AbortSignal;
-  onGameStart?: (game: number) => void;
-  onGameUpdate?: (game: number, lines: string[], publicLines: string[]) => void;
-  onGameEnd?: (game: number, winner: string | null, turns: number, score: Record<Pid, number>) => void;
-}
-
-export interface Bo3Result {
-  score: Record<Pid, number>;
-  games: JsonObject[];
-  winnerSide: Pid | undefined;
-}
-
-export async function playBo3(context: Bo3Context): Promise<Bo3Result> {
-  const { engines, names, seriesId } = context;
-  const score: Record<Pid, number> = { p1: 0, p2: 0 };
-  const games: JsonObject[] = [];
-
-  for (const [index, gameSeed] of context.gameSeeds.entries()) {
-    context.signal?.throwIfAborted();
-    const gameNumber = index + 1;
-    const gameId = `${seriesId}-${gameNumber}`;
-    const start: GameStart = { gameId, gameNumber, seriesId, seriesScore: { ...score } };
-    for (const engine of Object.values(engines)) engine.beginGame(start);
-    context.onGameStart?.(gameNumber);
-    const players: Record<Pid, PlayerOptions> = {
-      p1: { name: names.p1, team: context.teams.p1.packed },
-      p2: { name: names.p2, team: context.teams.p2.packed },
-    };
-    const outcome = await new SimBattle(context.format, players, gameSeed, context.psDir, context.timer ?? true).run(
-      engines,
-      (lines, publicLines) => context.onGameUpdate?.(gameNumber, lines, publicLines),
-    );
-    context.signal?.throwIfAborted();
-    const winnerSide = (['p1', 'p2'] as const).find((pid) => names[pid] === outcome.winner);
-    if (winnerSide) score[winnerSide] += 1;
-    await Promise.all(
-      (['p1', 'p2'] as const).map(async (pid) => {
-        const end: GameEnd = {
-          outcome: {
-            winner: outcome.winner,
-            winner_side: winnerSide ?? null,
-            won: winnerSide === pid,
-            turns: outcome.turns,
-            pov_lines: outcome.pov[pid],
-            errors: outcome.errors[pid],
-            fallbacks: outcome.fallbacks[pid],
-          },
-          gameNumber,
-          seriesScore: { ...score },
-        };
-        await engines[pid].endGame(end);
-      }),
-    );
-    const logPath = path.join(context.seriesDir, `game-${gameNumber}.log`);
-    fs.writeFileSync(logPath, `${outcome.log.join('\n')}\n`, 'utf8');
-    games.push({
-      number: gameNumber,
-      winner: winnerSide ? context.players[winnerSide] : null,
-      winner_side: winnerSide ?? null,
-      turns: outcome.turns,
-      seed: gameSeed,
-      errors: outcome.errors,
-      fallbacks: outcome.fallbacks,
-      log: relative(logPath),
-    });
-    context.onGameEnd?.(gameNumber, winnerSide ? context.players[winnerSide] : null, outcome.turns, { ...score });
-    if (Math.max(...Object.values(score)) === 2) break;
-  }
-
-  return { score, games, winnerSide: score.p1 === score.p2 ? undefined : score.p1 > score.p2 ? 'p1' : 'p2' };
-}
-
-async function playSeries(
-  plan: SeriesPlan,
-  context: {
-    runDir: string;
-    pool: TeamPool;
-    runSeed: number;
-    scaffold: string;
-    psDir: string;
-    reasoning?: ReasoningLevel;
-    apiKeys?: Readonly<Record<string, string>>;
-    onEvent?: (event: RotationEvent) => void;
-    signal?: AbortSignal;
-    contributor?: ContributorAttribution;
-  },
-): Promise<SeriesRecord> {
-  context.signal?.throwIfAborted();
-  context.onEvent?.({ type: 'series-start', index: plan.index });
-  const seriesId = randomUUID().replaceAll('-', '').slice(0, 12);
-  const seriesDir = path.join(context.runDir, 'series', seriesId);
-  fs.mkdirSync(seriesDir, { recursive: true });
-  const names: Record<Pid, string> = { p1: `p1-${plan.players.p1}`, p2: `p2-${plan.players.p2}` };
-  const reference = Object.values(plan.players).some((player) => player !== 'random')
-    ? new ShowdownReference(context.pool.format, context.psDir)
-    : undefined;
-  const engines = Object.fromEntries(
-    (['p1', 'p2'] as const).map((pid) => [
-      pid,
-      makeEngine(
-        pid,
-        plan.players[pid],
-        plan.engineSeeds[pid],
-        path.join(seriesDir, `${pid}-decisions.jsonl`),
-        path.join(seriesDir, `${pid}-trace.jsonl`),
-        context.pool.format,
-        context.psDir,
-        context.reasoning,
-        reference,
-        context.signal,
-        context.apiKeys?.[plan.players[pid]],
-      ),
-    ]),
-  ) as Record<Pid, RandomEngine | LLMEngine>;
-  const { score, games, winnerSide } = await playBo3({
-    engines,
-    names,
-    players: plan.players,
-    teams: plan.teams,
-    gameSeeds: plan.gameSeeds,
-    seriesId,
-    seriesDir,
-    format: context.pool.format,
-    psDir: context.psDir,
-    ...(context.signal === undefined ? {} : { signal: context.signal }),
-    onGameUpdate: (game, lines, publicLines) =>
-      context.onEvent?.({ type: 'game-update', index: plan.index, game, lines, publicLines }),
-    onGameEnd: (game, winner, turns, score) =>
-      context.onEvent?.({ type: 'game-end', index: plan.index, game, winner, turns, score }),
-  });
-
-  return {
-    schema_version: 1,
-    mode: 'rotation',
-    protocol_version: ROTATION_PROTOCOL_VERSION,
-    scaffold: context.scaffold,
-    timestamp: new Date().toISOString(),
-    run_id: path.basename(context.runDir),
-    series_id: seriesId,
-    series_index: plan.index,
-    format: context.pool.format,
-    pool: context.pool.id,
-    ...(context.contributor === undefined ? {} : { contributor: context.contributor }),
-    players: plan.players,
-    teams: { p1: plan.teams.p1.id, p2: plan.teams.p2.id },
-    winner: winnerSide ? plan.players[winnerSide] : null,
-    winner_side: winnerSide ?? null,
-    score,
-    turns: games.reduce((sum, game) => sum + Number(game.turns), 0),
-    games,
-    run_seed: context.runSeed,
-    engine_seeds: plan.engineSeeds,
-    reasoning: context.reasoning ?? null,
-    decision_stats: Object.fromEntries((['p1', 'p2'] as const).map((pid) => [pid, engines[pid].decisionStats()])),
-    ps_commit: showdownCommit(context.psDir),
-  };
-}
-
-function relative(file: string): string {
-  const value = path.relative(REPO_ROOT, file);
-  return value.startsWith('..') ? file : value;
 }

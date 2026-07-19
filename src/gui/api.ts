@@ -3,6 +3,7 @@ import type { ExperimentMode, Pid } from '../types.js';
 export interface ModelInfo {
   id: string;
   label: string;
+  reasoningLevels: string[];
 }
 
 export interface ProviderInfo {
@@ -48,11 +49,83 @@ export interface SeriesRowView {
   winner: string | null;
 }
 
+export interface BoardInfo {
+  id: string;
+  format: string;
+  monCount: number;
+  budget: number;
+  picks: number;
+  /** Largest entrant count the board can support with one spare roster of slack. */
+  maxEntrants: number;
+}
+
+export interface DraftBoardMonView {
+  id: string;
+  name: string;
+  tier: string;
+  cost: number;
+  item: string;
+  ability: string;
+  moves: string[];
+  teraType: string;
+}
+
+export interface DraftPickView {
+  pick: number;
+  entrant: number;
+  mon: string;
+  rationale: string;
+  fallback: boolean;
+}
+
+export interface DraftTableRow {
+  entrant: number;
+  w: number;
+  l: number;
+  gw: number;
+  gl: number;
+}
+
+export interface DraftView {
+  boardId: string;
+  budget: number;
+  picksPerEntrant: number;
+  entrants: string[];
+  board: DraftBoardMonView[];
+  picks: DraftPickView[];
+  /** Mon ids per entrant, in pick order. */
+  rosters: string[][];
+  /** Remaining points per entrant. */
+  budgets: number[];
+  /** Round-robin table, present once battles begin; sorted by rank. */
+  table: DraftTableRow[] | null;
+  phase: 'draft' | 'roundrobin' | 'playoffs' | 'done';
+}
+
+export interface BracketEntrantView {
+  model: string;
+  team: string;
+}
+
+export interface BracketMatchView {
+  /** Index into RunSnapshot.rows; null for byes, which play no series. */
+  seriesIndex: number | null;
+  /** Entrant indices; null until the feeding match resolves. */
+  slots: [number | null, number | null];
+  winner: number | null;
+}
+
+export interface BracketView {
+  entrants: BracketEntrantView[];
+  rounds: BracketMatchView[][];
+  champion: number | null;
+}
+
 export interface RunSnapshot {
   runId: string;
   mode: ExperimentMode;
   protocolVersion: number;
-  state: 'running' | 'done' | 'failed';
+  state: 'running' | 'done' | 'failed' | 'stopped';
   error: string;
   notices: string[];
   seed: number | null;
@@ -63,6 +136,14 @@ export interface RunSnapshot {
   endTime: number | null;
   canControl: boolean;
   rows: SeriesRowView[];
+  bracket: BracketView | null;
+  draft: DraftView | null;
+  board: string | null;
+}
+
+export interface SampleTeam {
+  name: string;
+  paste: string;
 }
 
 export interface AppState {
@@ -71,6 +152,9 @@ export interface AppState {
   defaultFormat: string;
   formats: FormatInfo[];
   providers: ProviderInfo[];
+  /** Ready-to-play pastes from the default pool that prefill the exhibition match form. */
+  sampleTeams: SampleTeam[];
+  boards: BoardInfo[];
   auth: AuthView;
   run: RunSnapshot | null;
 }
@@ -131,6 +215,10 @@ export interface ModelsResponse {
   models: ModelInfo[];
 }
 
+export interface ReasoningLevelsResponse {
+  levels: string[];
+}
+
 export interface TeamMemberView {
   species: string;
   item: string;
@@ -149,14 +237,4 @@ export interface CreatePoolResponse {
   ok: boolean;
   name: string;
   pools: PoolInfo[];
-}
-
-export interface RunRequest {
-  models: string[];
-  apiKeys: Record<string, string>;
-  pool: string;
-  seriesPerPair: number;
-  concurrency: number;
-  seed: string;
-  reasoning?: string;
 }

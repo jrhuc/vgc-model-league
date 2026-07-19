@@ -8,30 +8,37 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { AuthService, AuthSession, AuthUser } from '../auth.js';
 import { AuthError } from '../auth.js';
+import { listBoards } from '../draft.js';
+import type { DraftLeagueEvent } from '../draftleague.js';
+import { DRAFT_PROTOCOL_VERSION, runDraftLeague } from '../draftleague.js';
 import { discoverModels, PROVIDER_OPTIONS, providerOption } from '../model-catalog.js';
 import { DATA_DIR, prepareDataDirectories, RESULTS_PATH, TEAMS_DIR } from '../paths.js';
-import type { ReasoningLevel } from '../providers.js';
-import { parseSpec, REASONING_LEVELS, validateReasoning } from '../providers.js';
+import type { ModelReasoningConfig, ReasoningLevel } from '../providers.js';
+import { parseSpec, REASONING_LEVELS, reasoningLevels, validateReasoning } from '../providers.js';
 import { h2h, loadRows, scopeRows, standings } from '../records.js';
-import type { RotationEvent } from '../rotation.js';
 import { makeRunDirectory, ROTATION_PROTOCOL_VERSION, runRotation } from '../rotation.js';
 import { redactSecrets } from '../sanitize.js';
 import { loadShowdown } from '../showdown.js';
 import type { MonState } from '../state.js';
 import { BattleState } from '../state.js';
-import type { TeamDraft } from '../teams.js';
-import { createPool, inspectTeam, listPools } from '../teams.js';
+import type { Team, TeamDraft } from '../teams.js';
+import { createPool, inspectTeam, listPools, loadPool, packTeam, validateTeam } from '../teams.js';
+import { runTournament, TOURNAMENT_PROTOCOL_VERSION } from '../tournament.js';
 import type { ExperimentMode, JsonObject, Pid } from '../types.js';
 import { afterColon, isRecord } from '../value.js';
 import type {
   AppState,
   BattleMessage,
   BattleSnapshot,
+  BracketView,
+  DraftView,
   FormatInfo,
+  ModelInfo,
   ModelsResponse,
   MonView,
   RecordsResponse,
   RunSnapshot,
+  SampleTeam,
   SeriesRowView,
   ServerEvent,
 } from './api.js';
@@ -66,6 +73,8 @@ interface GuiServerOptions {
   teamsDir?: string;
   recordsPath?: string;
   runner?: typeof runRotation;
+  tournamentRunner?: typeof runTournament;
+  draftRunner?: typeof runDraftLeague;
   host?: string;
   publicOrigin?: string;
   mutationsEnabled?: boolean;
@@ -123,20 +132,24 @@ interface PendingServerEvent {
   publicEvent: ServerEvent;
 }
 
-interface RunConfig {
+interface RunConfig extends ModelReasoningConfig {
   mode: ExperimentMode;
   protocolVersion: number;
   models: string[];
   seriesPerPair: number;
   pool: string;
   concurrency: number;
+  teams?: Team[];
+  format?: string;
+  board?: string;
   seed?: number;
-  reasoning?: ReasoningLevel;
 }
 
 class ActiveRun {
   rows: SeriesRow[] = [];
-  state: 'running' | 'done' | 'failed' = 'running';
+  bracket: BracketView | undefined;
+  draft: DraftView | undefined;
+  state: 'running' | 'done' | 'failed' | 'stopped' = 'running';
   error = '';
   notices: string[] = [];
   seed: number | undefined;
@@ -144,6 +157,7 @@ class ActiveRun {
   timeoutTimer: NodeJS.Timeout | undefined;
   timedOut = false;
   interrupted = false;
+  userStopped = false;
   readonly battles = new Map<number, { game: number; state: BattleState }>();
   readonly publicBattles = new Map<number, { game: number; state: BattleState }>();
   readonly controller = new AbortController();
@@ -228,6 +242,7 @@ export class GuiServer {
   private readonly workerStopGraceMs: number;
   private flushTimer: NodeJS.Timeout | undefined;
   private heartbeatTimer: NodeJS.Timeout | undefined;
+  private sampleTeamsCache: { pool: string; teams: SampleTeam[] } | undefined;
 
   constructor(options: GuiServerOptions = {}) {
     this.options = options;
@@ -439,7 +454,9 @@ export class GuiServer {
     if (method === 'GET' && !url.pathname.startsWith('/api/') && this.serveStatic(url.pathname, response)) return;
     if (key === 'GET /api/state') this.json(response, 200, this.stateBody(session));
     else if (key === 'GET /api/records') this.json(response, 200, this.recordsBody(url.searchParams.get('pool')));
-    else if (key === 'GET /api/events/public') {
+    else if (key === 'GET /api/reasoning') {
+      this.json(response, 200, this.reasoningBody(url.searchParams.get('spec') ?? ''));
+    } else if (key === 'GET /api/events/public') {
       this.openEvents(response, undefined, true);
     } else if (key === 'GET /api/events') {
       this.requireAuthenticatedViewer(session);
@@ -472,8 +489,11 @@ export class GuiServer {
     } else if (key === 'POST /api/run') {
       this.json(response, 200, this.startRun(await this.readJson(request), actor));
     } else if (key === 'POST /api/run/stop') {
-      if (actor && this.run && this.options.auth) this.options.auth.stopExperiment(actor, this.run.runId);
-      this.run?.controller.abort();
+      if (this.run?.state === 'running') {
+        if (actor && this.options.auth) this.options.auth.stopExperiment(actor, this.run.runId);
+        this.run.userStopped = true;
+        this.run.controller.abort();
+      }
       this.json(response, 200, { ok: true });
     } else if (key === 'POST /api/pool') {
       this.json(response, 200, this.makePool(await this.readJson(request), actor));
@@ -597,6 +617,48 @@ export class GuiServer {
     return data as Record<string, unknown>;
   }
 
+  private defaultFormatId(): string {
+    return listPools(this.options.teamsDir ?? TEAMS_DIR)[0]?.format ?? 'gen9championsvgc2026regmbbo3';
+  }
+
+  private sampleTeamsBody(pools: { name: string }[]): SampleTeam[] {
+    const source = pools[0]?.name;
+    if (!source) return [];
+    if (this.sampleTeamsCache?.pool !== source) {
+      try {
+        const { Teams } = loadShowdown();
+        const teams = loadPool(source, this.options.teamsDir ?? TEAMS_DIR).teams.slice(0, 2);
+        this.sampleTeamsCache = {
+          pool: source,
+          teams: teams.map((team) => ({ name: team.id, paste: Teams.export(Teams.unpack(team.packed) ?? []) })),
+        };
+      } catch {
+        this.sampleTeamsCache = { pool: source, teams: [] };
+      }
+    }
+    return this.sampleTeamsCache.teams;
+  }
+
+  private modelInfo(providerId: string, model: { id: string; displayName?: string }): ModelInfo {
+    return {
+      id: model.id,
+      label: model.displayName ?? model.id,
+      reasoningLevels: reasoningLevels(parseSpec(`${providerId}:${model.id}`)),
+    };
+  }
+
+  private reasoningBody(value: string): { levels: ReasoningLevel[] } {
+    try {
+      const spec = parseSpec(value);
+      if (this.publicOrigin && spec.provider === 'compat') {
+        throw new Error('OpenAI-compatible custom endpoints are disabled in hosted mode');
+      }
+      return { levels: reasoningLevels(spec) };
+    } catch (error) {
+      throw new HttpError(400, error instanceof Error ? error.message : String(error));
+    }
+  }
+
   private stateBody(session: AuthSession | undefined): AppState {
     const pools = listPools(this.options.teamsDir ?? TEAMS_DIR);
     return {
@@ -604,13 +666,15 @@ export class GuiServer {
       reasoningLevels: [...REASONING_LEVELS],
       defaultFormat: pools[0]?.format ?? 'gen9championsvgc2026regmbbo3',
       formats: championsFormats(),
+      sampleTeams: this.sampleTeamsBody(pools),
+      boards: listBoards(),
       providers: PROVIDER_OPTIONS.filter((option) => !this.publicOrigin || option.id !== 'compat').map((option) => ({
         id: option.id,
         label: option.label,
         description: option.description,
         discovery: option.discovery,
         requiresKey: option.requiresKey,
-        models: (option.models ?? []).map((model) => ({ id: model.id, label: model.displayName ?? model.id })),
+        models: (option.models ?? []).map((model) => this.modelInfo(option.id, model)),
       })),
       auth: this.options.auth
         ? {
@@ -633,8 +697,10 @@ export class GuiServer {
     const all = loadRows(this.options.recordsPath ?? RESULTS_PATH);
     const pool = poolParam?.trim() || null;
     const rows = scopeRows(all, pool ?? undefined);
+    // Only rotation rows rate the ladder, even inside an explicitly selected pool.
+    const rated = rows.filter((row) => (row.mode ?? 'rotation') === 'rotation');
     const pools = [...new Set(all.map((row) => (typeof row.pool === 'string' ? row.pool : '')))].filter(Boolean).sort();
-    return { count: rows.length, pool, pools, standings: standings(rows), h2h: h2h(rows), records: rows };
+    return { count: rows.length, pool, pools, standings: standings(rated), h2h: h2h(rated), records: rows };
   }
 
   private runBody(publicView = false): RunSnapshot | null {
@@ -656,6 +722,9 @@ export class GuiServer {
       endTime: run.endTime ?? null,
       canControl: !publicView,
       rows: run.rows.map((row, index) => ({ ...row, turn: battles.get(index)?.state.turn ?? 0 })),
+      bracket: run.bracket ?? null,
+      draft: run.draft ?? null,
+      board: run.config.board ?? null,
     };
   }
 
@@ -674,7 +743,7 @@ export class GuiServer {
       const models = await discoverModels(option, apiKey.trim() || undefined, {
         signal: AbortSignal.timeout(20_000),
       });
-      return { models: models.map((model) => ({ id: model.id, label: model.displayName ?? model.id })) };
+      return { models: models.map((model) => this.modelInfo(option.id, model)) };
     } catch (error) {
       throw new HttpError(400, redactSecrets(error instanceof Error ? error.message : String(error), [apiKey]));
     }
@@ -682,15 +751,41 @@ export class GuiServer {
 
   private startRun(body: Record<string, unknown>, owner: AuthUser | undefined): JsonObject {
     if (this.run?.state === 'running') throw new HttpError(409, 'a run is already in progress');
+    const mode = (
+      body.mode === undefined || body.mode === 'rotation'
+        ? 'rotation'
+        : body.mode === 'tournament' || body.mode === 'draft'
+          ? body.mode
+          : undefined
+    ) as ExperimentMode | undefined;
+    if (!mode) throw new HttpError(400, 'unknown run mode');
     const models = Array.isArray(body.models) ? body.models.map(String).filter(Boolean) : [];
-    const maximumModels = this.publicOrigin ? 4 : 8;
+    // A tournament plays only n-1 series, so hosted mode can afford a fuller bracket.
+    const maximumModels = this.publicOrigin && mode === 'rotation' ? 4 : 8;
     if (models.length < 2) throw new HttpError(400, 'a run needs at least two model specs');
     if (models.length > maximumModels) {
       throw new HttpError(400, `a run supports at most ${maximumModels} model specs`);
     }
     const reasoning = body.reasoning ? (String(body.reasoning) as ReasoningLevel) : undefined;
-    if (reasoning && !REASONING_LEVELS.includes(reasoning))
+    if (reasoning && !REASONING_LEVELS.includes(reasoning)) {
       throw new HttpError(400, `reasoning must be one of: ${REASONING_LEVELS.join(', ')}`);
+    }
+    if (body.reasoningByModel !== undefined && !isRecord(body.reasoningByModel)) {
+      throw new HttpError(400, 'reasoningByModel must be an object');
+    }
+    const reasoningByModel: Record<string, ReasoningLevel> = {};
+    for (const [model, value] of Object.entries(isRecord(body.reasoningByModel) ? body.reasoningByModel : {})) {
+      const level = String(value) as ReasoningLevel;
+      if (!models.includes(model)) throw new HttpError(400, `reasoning configured for unselected model ${model}`);
+      if (model === 'random') throw new HttpError(400, 'random does not support configurable reasoning');
+      if (!REASONING_LEVELS.includes(level)) {
+        throw new HttpError(400, `reasoning for ${model} must be one of: ${REASONING_LEVELS.join(', ')}`);
+      }
+      reasoningByModel[model] = level;
+    }
+    if (reasoning && Object.keys(reasoningByModel).length) {
+      throw new HttpError(400, 'choose either shared reasoning or per-model reasoning, not both');
+    }
     const suppliedKeys = isRecord(body.apiKeys) ? body.apiKeys : {};
     const apiKeys: Record<string, string> = {};
     const missing: string[] = [];
@@ -701,7 +796,7 @@ export class GuiServer {
         if (this.publicOrigin && spec.provider === 'compat') {
           throw new Error('OpenAI-compatible custom endpoints are disabled in hosted mode');
         }
-        validateReasoning(spec, reasoning);
+        validateReasoning(spec, reasoningByModel[model] ?? reasoning);
         const apiKey = typeof suppliedKeys[model] === 'string' ? suppliedKeys[model].trim() : '';
         const option = providerOption(spec.provider);
         if (!apiKey && (option?.requiresKey ?? spec.provider !== 'compat')) {
@@ -714,22 +809,72 @@ export class GuiServer {
       }
     }
     if (missing.length) throw new HttpError(400, `bring an API key for: ${missing.join(', ')}`);
-    const pool = String(body.pool ?? '');
-    if (!listPools(this.options.teamsDir ?? TEAMS_DIR).some((info) => info.name === pool))
-      throw new HttpError(400, `unknown team pool ${JSON.stringify(pool)}`);
+    const inlinePastes = mode === 'tournament' && Array.isArray(body.teams) ? body.teams.map(String) : undefined;
+    let pool = '';
+    let teams: Team[] | undefined;
+    let format: string | undefined;
+    let board: string | undefined;
+    if (mode === 'draft') {
+      board = String(body.board ?? '') || listBoards()[0]?.id || '';
+      const info = listBoards().find((entry) => entry.id === board);
+      if (!info) throw new HttpError(400, `unknown draft board ${JSON.stringify(board)}`);
+      if (models.length > info.maxEntrants) {
+        throw new HttpError(400, `board ${JSON.stringify(board)} supports at most ${info.maxEntrants} models`);
+      }
+    } else if (inlinePastes) {
+      if (inlinePastes.length !== models.length) {
+        throw new HttpError(400, 'bring exactly one team paste per model');
+      }
+      format = String(body.format ?? '').trim() || this.defaultFormatId();
+      if (!championsFormats().some((info) => info.id === format)) {
+        throw new HttpError(400, `unknown format ${JSON.stringify(format)}`);
+      }
+      teams = inlinePastes.map((paste, index) => {
+        if (!paste.trim() || paste.length > 20_000) {
+          throw new HttpError(400, `team ${index + 1} must be a non-empty paste under 20k characters`);
+        }
+        try {
+          const packed = packTeam(paste);
+          validateTeam(packed, format!);
+          return { id: `paste-${index + 1}`, packed };
+        } catch (error) {
+          const detail = error instanceof Error ? error.message : String(error);
+          throw new HttpError(400, `team ${index + 1} is not legal in ${format}: ${detail}`);
+        }
+      });
+    } else {
+      pool = String(body.pool ?? '');
+      const info = listPools(this.options.teamsDir ?? TEAMS_DIR).find((entry) => entry.name === pool);
+      if (!info) throw new HttpError(400, `unknown team pool ${JSON.stringify(pool)}`);
+      if (mode === 'tournament' && info.teamCount < models.length) {
+        throw new HttpError(
+          400,
+          `pool ${JSON.stringify(pool)} has ${info.teamCount} teams for ${models.length} entrants`,
+        );
+      }
+    }
     const seed = body.seed === undefined || body.seed === null || body.seed === '' ? undefined : Number(body.seed);
     if (seed !== undefined && !Number.isSafeInteger(seed)) throw new HttpError(400, 'seed must be an integer');
     const maximumSeriesPerPair = this.publicOrigin ? 4 : 20;
     const maximumConcurrency = this.publicOrigin ? 2 : 8;
     const config: RunConfig = {
-      mode: 'rotation',
-      protocolVersion: ROTATION_PROTOCOL_VERSION,
+      mode,
+      protocolVersion:
+        mode === 'tournament'
+          ? TOURNAMENT_PROTOCOL_VERSION
+          : mode === 'draft'
+            ? DRAFT_PROTOCOL_VERSION
+            : ROTATION_PROTOCOL_VERSION,
       models,
-      seriesPerPair: clampInt(body.seriesPerPair, 1, maximumSeriesPerPair, 2),
+      seriesPerPair: mode === 'rotation' ? clampInt(body.seriesPerPair, 1, maximumSeriesPerPair, 2) : 1,
       pool,
       concurrency: clampInt(body.concurrency, 1, maximumConcurrency, 2),
+      ...(teams === undefined ? {} : { teams }),
+      ...(format === undefined ? {} : { format }),
+      ...(board === undefined ? {} : { board }),
       ...(seed === undefined ? {} : { seed }),
       ...(reasoning === undefined ? {} : { reasoning }),
+      ...(Object.keys(reasoningByModel).length ? { reasoningByModel } : {}),
     };
     const run = new ActiveRun(config, apiKeys, owner);
     if (owner && this.options.auth) {
@@ -756,28 +901,51 @@ export class GuiServer {
   }
 
   private async launch(run: ActiveRun): Promise<void> {
+    const injected =
+      run.config.mode === 'tournament'
+        ? this.options.tournamentRunner
+        : run.config.mode === 'draft'
+          ? this.options.draftRunner
+          : this.options.runner;
+    const commonOptions = {
+      concurrency: run.config.concurrency,
+      recordsPath: this.options.recordsPath ?? RESULTS_PATH,
+      apiKeys: run.apiKeys,
+      signal: run.controller.signal,
+      ...(run.config.seed === undefined ? {} : { seed: run.config.seed }),
+      ...(run.config.reasoning === undefined ? {} : { reasoning: run.config.reasoning }),
+      ...(run.config.reasoningByModel === undefined ? {} : { reasoningByModel: run.config.reasoningByModel }),
+      ...(run.owner
+        ? {
+            contributor: {
+              provider: 'github' as const,
+              subject: run.owner.providerSubject,
+              login: run.owner.login,
+            },
+          }
+        : {}),
+      onEvent: (event: DraftLeagueEvent) => this.onEvent(run, event),
+    };
     try {
-      if (this.publicOrigin && !this.options.runner) {
+      if (this.publicOrigin && !injected) {
         await this.launchWorker(run);
+      } else if (run.config.mode === 'draft') {
+        await (this.options.draftRunner ?? runDraftLeague)(run.config.models, run.runDir, {
+          ...commonOptions,
+          ...(run.config.board === undefined ? {} : { board: run.config.board }),
+        });
+      } else if (run.config.mode === 'tournament') {
+        await (this.options.tournamentRunner ?? runTournament)(run.config.models, run.runDir, {
+          ...commonOptions,
+          ...(run.config.pool ? { pool: run.config.pool } : {}),
+          ...(run.config.teams === undefined ? {} : { teams: run.config.teams }),
+          ...(run.config.format === undefined ? {} : { format: run.config.format }),
+          onNotice: (message) => run.notices.push(message),
+        });
       } else {
         await (this.options.runner ?? runRotation)(run.config.models, run.config.seriesPerPair, run.runDir, {
+          ...commonOptions,
           pool: run.config.pool,
-          concurrency: run.config.concurrency,
-          recordsPath: this.options.recordsPath ?? RESULTS_PATH,
-          apiKeys: run.apiKeys,
-          signal: run.controller.signal,
-          ...(run.config.seed === undefined ? {} : { seed: run.config.seed }),
-          ...(run.config.reasoning === undefined ? {} : { reasoning: run.config.reasoning }),
-          ...(run.owner
-            ? {
-                contributor: {
-                  provider: 'github',
-                  subject: run.owner.providerSubject,
-                  login: run.owner.login,
-                },
-              }
-            : {}),
-          onEvent: (event) => this.onEvent(run, event),
           onNotice: (message) => run.notices.push(message),
         });
       }
@@ -787,6 +955,8 @@ export class GuiServer {
       } else if (run.interrupted) {
         run.state = 'failed';
         run.error = 'run interrupted by server shutdown';
+      } else if (run.userStopped) {
+        run.state = 'stopped';
       } else {
         run.state = 'done';
       }
@@ -797,17 +967,18 @@ export class GuiServer {
       } else if (run.interrupted) {
         run.state = 'failed';
         run.error = 'run interrupted by server shutdown';
-      } else if (run.controller.signal.aborted) {
-        run.state = 'done';
+      } else if (run.userStopped) {
+        run.state = 'stopped';
       } else {
         run.state = 'failed';
         run.error = redactSecrets(error instanceof Error ? error.message : String(error), Object.values(run.apiKeys));
       }
     } finally {
       clearTimeout(run.timeoutTimer);
+      const persistedState = run.state === 'running' ? 'failed' : run.state;
       if (this.options.auth && run.owner) {
         try {
-          this.options.auth.finishExperiment(run.runId, run.state === 'failed' ? 'failed' : 'done');
+          this.options.auth.finishExperiment(run.runId, persistedState);
         } catch (error) {
           run.state = 'failed';
           run.error = redactSecrets(error instanceof Error ? error.message : String(error), Object.values(run.apiKeys));
@@ -876,6 +1047,7 @@ export class GuiServer {
     run.controller.signal.addEventListener('abort', abort, { once: true });
     const message: RunWorkerStart = {
       type: 'start',
+      mode: run.config.mode === 'tournament' || run.config.mode === 'draft' ? run.config.mode : 'rotation',
       models: run.config.models,
       seriesPerPair: run.config.seriesPerPair,
       runDir: run.runDir,
@@ -883,8 +1055,12 @@ export class GuiServer {
       concurrency: run.config.concurrency,
       recordsPath: this.options.recordsPath ?? RESULTS_PATH,
       apiKeys: run.apiKeys,
+      ...(run.config.teams === undefined ? {} : { teams: run.config.teams }),
+      ...(run.config.format === undefined ? {} : { format: run.config.format }),
+      ...(run.config.board === undefined ? {} : { board: run.config.board }),
       ...(run.config.seed === undefined ? {} : { seed: run.config.seed }),
       ...(run.config.reasoning === undefined ? {} : { reasoning: run.config.reasoning }),
+      ...(run.config.reasoningByModel === undefined ? {} : { reasoningByModel: run.config.reasoningByModel }),
       ...(run.owner
         ? {
             contributor: {
@@ -908,9 +1084,16 @@ export class GuiServer {
     });
   }
 
-  private onEvent(run: ActiveRun, event: RotationEvent): void {
+  private onEvent(run: ActiveRun, event: DraftLeagueEvent): void {
     if (run !== this.run) return;
-    if (event.type === 'plans') {
+    if (event.type === 'draft') {
+      run.draft = event.draft;
+    } else if (event.type === 'bracket') {
+      run.bracket = event.bracket;
+    } else if (event.type === 'series-players') {
+      const row = run.rows[event.index];
+      if (row) row.players = event.players;
+    } else if (event.type === 'plans') {
       run.seed = event.seed;
       run.rows = event.plans.map((plan) => ({
         players: plan.players,
@@ -953,7 +1136,7 @@ export class GuiServer {
         row.game = event.game + 1;
         row.turns += event.turns;
       }
-    } else {
+    } else if (event.type === 'series-end') {
       const row = run.rows[event.index];
       if (row) {
         row.status = 'done';
