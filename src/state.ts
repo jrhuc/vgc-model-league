@@ -83,11 +83,18 @@ export const PROTECT_MOVES = new Set([
   'burningbulwark',
 ]);
 
+export interface SideTimer {
+  seconds: number | null;
+  turnSeconds: number | null;
+}
+
 export class BattleState {
   turn = 0;
   weather: TimedEffect | undefined;
   fields = new Map<string, TimedEffect>();
   sides: Record<Pid, SideState> = { p1: new SideState(), p2: new SideState() };
+  /** Time remaining reported with each player's latest decision request; synthetic GUI-only lines. */
+  timers: Record<Pid, SideTimer | undefined> = { p1: undefined, p2: undefined };
 
   constructor(readonly pid: Pid) {}
 
@@ -238,6 +245,10 @@ export class BattleState {
       mon.species = args[1]!;
       mon.ability = undefined;
     } else if (kind === 'showteam' && args.length >= 2) this.showTeam(args[0]!, args.slice(1).join('|'));
+    else if (kind === '-vgctimer' && (args[0] === 'p1' || args[0] === 'p2')) {
+      const parse = (value: string | undefined) => (value && Number.isFinite(Number(value)) ? Number(value) : null);
+      this.timers[args[0]] = { seconds: parse(args[1]), turnSeconds: parse(args[2]) };
+    }
   }
 
   render(request: BattleRequest): string {

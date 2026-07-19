@@ -175,11 +175,25 @@ export interface SideView {
   mons: MonView[];
 }
 
+export interface BattleLogEntryView {
+  turn: number;
+  kind: string;
+  text: string;
+}
+
+export interface SideTimerView {
+  /** Remaining time bank in seconds; null when the simulator did not report one. */
+  seconds: number | null;
+  turnSeconds: number | null;
+}
+
 export interface BattleSnapshot {
   turn: number;
   weather: string;
   fields: string[];
   sides: Record<Pid, SideView>;
+  timers: Record<Pid, SideTimerView | null>;
+  log: BattleLogEntryView[];
 }
 
 export interface BattleMessage {

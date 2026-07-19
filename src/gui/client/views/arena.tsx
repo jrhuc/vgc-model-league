@@ -1,6 +1,16 @@
-import { useEffect, useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 
-import type { BattleMessage, BracketView, DraftView, MonView, RunSnapshot, SeriesRowView, SideView } from '../../api';
+import type {
+  BattleLogEntryView,
+  BattleMessage,
+  BracketView,
+  DraftView,
+  MonView,
+  RunSnapshot,
+  SeriesRowView,
+  SideTimerView,
+  SideView,
+} from '../../api';
 import { api } from '../http';
 
 interface ArenaProps {
@@ -215,27 +225,52 @@ function hpPercent(value: string): number {
 }
 
 function Mon({ mon }: { mon: MonView }) {
+  const percent = hpPercent(mon.hp);
+  const tone = percent <= 25 ? 'danger' : percent <= 50 ? 'warn' : '';
   const details: string[] = [];
   if (mon.fainted) details.push('Fainted');
   else if (mon.hp) details.push(`HP ${mon.hp}`);
-  if (mon.status) details.push(mon.status);
   if (mon.boosts) details.push(mon.boosts);
   if (mon.lastMove) details.push(mon.lastMove);
   return (
     <div class={`mon ${mon.slot ? 'active ' : ''}${mon.fainted ? 'fainted' : ''}`}>
       <div class="mon-top">
-        <span class="mon-name">{mon.species}</span>
+        <span class="mon-name">
+          {mon.species}
+          {mon.status && !mon.fainted && <span class={`status-chip ${mon.status}`}>{mon.status.toUpperCase()}</span>}
+        </span>
         <span class="slot">{mon.slot ? `${mon.slot} ACTIVE` : ''}</span>
       </div>
       <div class="hp-track">
-        <i style={`width:${hpPercent(mon.hp)}%`} />
+        <i class={tone} style={`width:${percent}%`} />
       </div>
       <div class="mon-data">{details.join(' · ') || 'Not revealed'}</div>
     </div>
   );
 }
 
-function Side({ pid, side, right }: { pid: string; side: SideView; right: boolean }) {
+function timerText(timer: SideTimerView | null | undefined): string {
+  if (!timer || timer.seconds === null) return '';
+  const clock = (total: number) => {
+    const clamped = Math.max(0, Math.floor(total));
+    return `${Math.floor(clamped / 60)}:${String(clamped % 60).padStart(2, '0')}`;
+  };
+  const move = timer.turnSeconds === null ? '' : ` · move ${clock(timer.turnSeconds)}`;
+  return `Bank ${clock(timer.seconds)}${move}`;
+}
+
+function Side({
+  pid,
+  side,
+  right,
+  timer,
+}: {
+  pid: string;
+  side: SideView;
+  right: boolean;
+  timer: SideTimerView | null | undefined;
+}) {
+  const clock = timerText(timer);
   return (
     <div class={`side ${right ? 'right' : ''}`}>
       <div class="side-name">
@@ -243,6 +278,7 @@ function Side({ pid, side, right }: { pid: string; side: SideView; right: boolea
         <span>
           {pid.toUpperCase()} · {side.conditions.length ? side.conditions.join(' · ') : 'No side conditions'}
         </span>
+        {clock && <span class="side-timer">⏱ {clock}</span>}
       </div>
       {side.mons.length ? (
         side.mons.map((mon, index) => <Mon key={`${mon.species}-${index}`} mon={mon} />)
@@ -251,6 +287,44 @@ function Side({ pid, side, right }: { pid: string; side: SideView; right: boolea
           <span class="mon-data">Roster not revealed</span>
         </div>
       )}
+    </div>
+  );
+}
+
+function TurnLog({ log, game }: { log: BattleLogEntryView[]; game: number }) {
+  const scroller = useRef<HTMLDivElement>(null);
+  const pinned = useRef(true);
+  useEffect(() => {
+    const element = scroller.current;
+    if (element && pinned.current) element.scrollTop = element.scrollHeight;
+  }, [log.length, game]);
+  return (
+    <div class="turn-log">
+      <div class="turn-log-head">
+        <h3>Turn log</h3>
+        <span>Game {game}</span>
+      </div>
+      <div
+        class="turn-log-scroll"
+        ref={scroller}
+        onScroll={(event) => {
+          const element = event.currentTarget;
+          pinned.current = element.scrollHeight - element.scrollTop - element.clientHeight < 40;
+        }}
+      >
+        {log.length === 0 && <div class="log-line detail">Waiting for the first events…</div>}
+        {log.map((entry, index) =>
+          entry.kind === 'turn' ? (
+            <div class="log-turn" key={index}>
+              <span>{entry.text}</span>
+            </div>
+          ) : (
+            <div class={`log-line ${entry.kind}`} key={index}>
+              {entry.text}
+            </div>
+          ),
+        )}
+      </div>
     </div>
   );
 }
@@ -420,16 +494,20 @@ export function ArenaView({ run, battles, selected, onSelect, onGoFixtures }: Ar
           ) : (
             <>
               <div class="field-meta">
-                <span>Game {entry.game}</span>
+                <span>Game {entry.game} · Bo3</span>
+                <span class="series-score">
+                  {row.score.p1}–{row.score.p2}
+                </span>
                 <span class="turn-badge">{entry.snapshot.turn ? `Turn ${entry.snapshot.turn}` : 'Team preview'}</span>
-                <span>{entry.snapshot.weather || 'Clear'}</span>
+                <span>{entry.snapshot.weather === 'none' ? 'Clear skies' : entry.snapshot.weather}</span>
                 <span>{entry.snapshot.fields.join(' · ') || 'Open field'}</span>
               </div>
               <div class="field-surface">
-                <Side pid="p1" side={entry.snapshot.sides.p1} right={false} />
+                <Side pid="p1" side={entry.snapshot.sides.p1} right={false} timer={entry.snapshot.timers?.p1} />
                 <div class="center-mark">VS</div>
-                <Side pid="p2" side={entry.snapshot.sides.p2} right={true} />
+                <Side pid="p2" side={entry.snapshot.sides.p2} right={true} timer={entry.snapshot.timers?.p2} />
               </div>
+              <TurnLog log={entry.snapshot.log ?? []} game={entry.game} />
             </>
           )}
           {run.notices.length > 0 && <div class="notice-strip">{run.notices.join('\n')}</div>}

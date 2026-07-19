@@ -137,6 +137,8 @@ export class SimBattle {
       const line = `|timer|${event}`;
       state.pov[pid].push(line);
       state.log.push(line);
+      const spectatorLine = `|-vgctimeout|${pid}|${event}`;
+      onUpdate?.([spectatorLine], [spectatorLine]);
     };
 
     const start: Record<string, unknown> = { formatid: this.format };
@@ -186,6 +188,10 @@ export class SimBattle {
           if (!payload) continue;
           const request = JSON.parse(payload) as BattleRequest;
           lastRequest[pid] = request;
+          if (request.timer) {
+            const line = `|-vgctimer|${pid}|${request.timer.seconds ?? ''}|${request.timer.turnSeconds ?? ''}`;
+            onUpdate?.([line], [line]);
+          }
           if (suppressRequest[pid]) {
             suppressRequest[pid] = false;
             continue;

@@ -42,6 +42,7 @@ import type {
   SeriesRowView,
   ServerEvent,
 } from './api.js';
+import { BattleLog } from './battlelog.js';
 import type { RunWorkerInput, RunWorkerOutput, RunWorkerStart } from './run-worker-protocol.js';
 
 type SeriesRow = Omit<SeriesRowView, 'turn'>;
@@ -158,8 +159,8 @@ class ActiveRun {
   timedOut = false;
   interrupted = false;
   userStopped = false;
-  readonly battles = new Map<number, { game: number; state: BattleState }>();
-  readonly publicBattles = new Map<number, { game: number; state: BattleState }>();
+  readonly battles = new Map<number, { game: number; state: BattleState; log: BattleLog }>();
+  readonly publicBattles = new Map<number, { game: number; state: BattleState; log: BattleLog }>();
   readonly controller = new AbortController();
   readonly runDir = makeRunDirectory();
   readonly runId = path.basename(this.runDir);
@@ -204,7 +205,7 @@ function snapshotMon(battle: BattleState, pid: Pid, mon: MonState): MonView {
   };
 }
 
-function snapshotBattle(battle: BattleState, players: Record<Pid, string> | undefined): BattleSnapshot {
+function snapshotBattle(battle: BattleState, players: Record<Pid, string> | undefined, log: BattleLog): BattleSnapshot {
   const side = (pid: Pid) => ({
     player: players?.[pid] ?? pid,
     conditions: battle.conditionLabels(pid),
@@ -215,6 +216,8 @@ function snapshotBattle(battle: BattleState, players: Record<Pid, string> | unde
     weather: battle.weatherLabel(),
     fields: battle.fieldLabels(),
     sides: { p1: side('p1'), p2: side('p2') },
+    timers: { p1: battle.timers.p1 ?? null, p2: battle.timers.p2 ?? null },
+    log: log.entries,
   };
 }
 
@@ -731,7 +734,11 @@ export class GuiServer {
   private battleBody(index: number, publicView = false): BattleMessage {
     const entry = (publicView ? this.run?.publicBattles : this.run?.battles)?.get(index);
     if (!entry) return { index, game: 0, snapshot: null };
-    return { index, game: entry.game, snapshot: snapshotBattle(entry.state, this.run?.rows[index]?.players) };
+    return {
+      index,
+      game: entry.game,
+      snapshot: snapshotBattle(entry.state, this.run?.rows[index]?.players, entry.log),
+    };
   }
 
   private async modelsBody(providerId: string, apiKey: string): Promise<ModelsResponse> {
@@ -1112,16 +1119,18 @@ export class GuiServer {
     } else if (event.type === 'game-update') {
       let entry = run.battles.get(event.index);
       if (!entry || entry.game !== event.game) {
-        entry = { game: event.game, state: new BattleState('p1') };
+        entry = { game: event.game, state: new BattleState('p1'), log: new BattleLog() };
         run.battles.set(event.index, entry);
       }
       entry.state.feed(event.lines);
+      entry.log.feed(event.lines);
       let publicEntry = run.publicBattles.get(event.index);
       if (!publicEntry || publicEntry.game !== event.game) {
-        publicEntry = { game: event.game, state: new BattleState('p1') };
+        publicEntry = { game: event.game, state: new BattleState('p1'), log: new BattleLog() };
         run.publicBattles.set(event.index, publicEntry);
       }
       publicEntry.state.feed(event.publicLines);
+      publicEntry.log.feed(event.publicLines);
       const row = run.rows[event.index];
       if (row && row.status === 'running') row.game = event.game;
       this.queue(
