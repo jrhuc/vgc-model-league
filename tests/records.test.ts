@@ -6,7 +6,7 @@ import test from 'node:test';
 
 import type { SeriesRecord } from '../src/records.js';
 
-import { appendRow, h2h, scopeRows, standings } from '../src/records.js';
+import { appendRow, h2h, loadRows, scopeRows, standings } from '../src/records.js';
 import { writeReport } from '../src/report.js';
 
 function row(p1: string, p2: string, winner: string | null): SeriesRecord {
@@ -76,6 +76,14 @@ test('ratings follow scheduled order rather than completion order', () => {
     { ...row('a', 'c', 'a'), run_id: 'run', series_index: 2 },
   ];
   assert.deepEqual(standings(rows), standings([...rows].reverse()));
+});
+
+test('record loading ignores whitespace-only lines', (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-model-league-records-'));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const records = path.join(directory, 'results.jsonl');
+  fs.writeFileSync(records, `${JSON.stringify(row('a', 'b', 'a'))}\n   \n`);
+  assert.deepEqual(loadRows(records), [row('a', 'b', 'a')]);
 });
 
 test('HTML reports include nested games and filter pools', (t) => {

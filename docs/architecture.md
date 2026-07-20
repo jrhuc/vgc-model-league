@@ -1,31 +1,20 @@
 # Architecture
 
-## How to use this document
-
-This is a living record of prior decisions, not a source of truth or a substitute for engineering judgment. It may be
-stale, contradictory, or shaped by constraints that no longer apply. Verify its claims against the current code,
-requirements, and evidence. When a documented decision causes a workaround, challenge the decision first; replace it
-when a simpler or more correct architecture is justified, and update this record to explain the new choice.
-
-Deletion is a first-class design tool. Before adding a branch, adapter, abstraction, compatibility path, or parallel
-implementation, ask whether the obsolete code or assumption can be removed instead. Prefer a smaller clean cutover
-over preserving code that no longer earns its maintenance cost.
-
 ## Surfaces
 
-- **CLI** (`src/cli.ts`) — headless entry point for agents and scripts: `rotation`, `selfcheck`, `standings`,
-  `report`, and `gui`.
-- **GUI** (`src/gui/`) — the human interface. A `node:http` server (`server.ts`) exposes a JSON API and serves a
-  Preact single-page client; live run state streams over SSE (`/api/events`).
+- **CLI** (`src/cli.ts`): headless commands for `gui`, `selfcheck`,
+  `rotation`, `tournament`, `draft`, `exhibition`, `standings`, and `report`.
+- **GUI** (`src/gui/`): a `node:http` server (`server.ts`) exposes a JSON API,
+  serves a Preact single-page client, and streams live run state over SSE.
 
-There is intentionally no terminal UI. Agents use the stable CLI; humans use the GUI. Keeping one interface for each
-audience avoids duplicating setup, catalog, live-view, and validation behavior.
+There is no terminal UI. Agents use the CLI; humans use the GUI. This avoids
+duplicating setup, catalog, live-view, and validation behavior.
 
 ## GUI structure
 
 ```
 src/gui/
-  api.ts        typed client/server contract — the only shared module, no runtime deps
+  api.ts        typed client/server contract; the only shared module, no runtime deps
   server.ts     node:http server: JSON API, SSE, static assets, security gate
   client/       Preact + TSX app, built by Vite into dist/gui
     app.tsx     state root: /api/state boot, SSE subscription, navigation
@@ -33,82 +22,80 @@ src/gui/
     components/ shared widgets (dropdown)
 ```
 
-Rules that keep this from rotting:
+Constraints:
 
 - **The server is authoritative.** All game logic, validation, standings/Elo math, and file access live in `src/`
   outside the client. The client renders API responses; it never recomputes domain results.
 - **Every request/response shape is declared in `src/gui/api.ts`** and imported by both sides (`import type` only on
   the client). Change the contract file first; the compiler finds the rest.
 - **One view = one file.** Extract shared components only when actually used twice.
-- Build: `tsc` (server) → `tsc -p tsconfig.client.json --noEmit` (client typecheck) → `vite build` → `dist/gui`.
-  `npm run dev:gui` rebuilds on change; the server serves whatever is in `dist/gui`, no dev server involved.
+- Build: `tsc -p tsconfig.json` (server) → `tsc -p tsconfig.client.json` (client) → `vite build` → `dist/gui`.
+  `npm run dev:gui` rebuilds on change; the server serves `dist/gui` without a Vite dev server.
 - Tests: `tests/gui.test.ts` covers the API surface; `tests/gui-dom.test.ts` boots the built bundle in happy-dom
   against a live server and asserts the app renders. Add a DOM smoke case per new view.
 
 ## Experiment boundaries
 
-`src/rotation.ts` is the current experiment orchestrator. It owns Rotation planning, mirrored assignments, run
-configuration, event emission, and result persistence. Shared battle engines and Showdown integration stay outside it
-so future modes can reuse execution without inheriting Rotation scheduling.
+`src/rotation.ts` owns Rotation planning, mirrored assignments, run
+configuration, event emission, and result persistence. Shared battle engines
+and Showdown integration remain outside each experiment orchestrator.
 
-`ExperimentMode` contains `rotation`, `exhibition`, `tournament`, and `draft`. A new mode extends that type only when
-its real orchestrator exists, never as conditionals scattered through `rotation.ts`. Every new run
-config, live snapshot, and completed series carries `mode` and `protocol_version`. Protocol versions change when an
-evaluation rule changes enough to make unlike results incomparable. Because that bump is manual discipline, every row
-and run config records `scaffold` — a hash of the battle decision/reflection prompts, tool schemas, and sampling
-parameters — so unintentional drift is detectable after the fact even when `protocol_version` did not move.
-Reasoning capability rules stay centralized in `providers.ts`: AI SDK and provider model-list APIs expose no complete
-preflight effort metadata. The GUI receives each model's levels from the server, intersects them for shared mode, and
-can instead send a validated per-model map; it never duplicates provider-family rules in browser code.
+`ExperimentMode` contains `rotation`, `exhibition`, `tournament`, and `draft`.
+Each run config, live snapshot, and completed series carries `mode` and
+`protocol_version`. Protocol versions change when evaluation rules make results
+incomparable. Rows and run configs also record `scaffold`, a hash of the battle
+decision and reflection prompts, tool schemas, and sampling parameters.
 
+Reasoning capability rules live in `providers.ts`. The server reports supported
+levels for each model, and the GUI either selects a shared level or sends a
+validated per-model map.
 
-Tournament mode (`src/tournament.ts`) is a single-elimination best-of-three bracket. Each entrant is assigned one team
-— drawn without replacement from a pool, or supplied inline as validated pastes — and keeps it for the whole bracket;
-classic seed ordering spreads byes so any entrant count from two upward works, and two entrants degenerate into the
-single exhibition match the GUI offers as its default landing flow. The orchestrator reuses the shared
-`playRecordedSeries` runner and starts any dependency-ready match as soon as both feeder winners are known, bounded by
-the run's concurrency. A drawn series advances the higher seed while the record keeps `winner: null`. Rows record
-`mode: "tournament"` (with `round` and, for inline teams, no `pool`), and standings never rate them.
+Tournament mode (`src/tournament.ts`) runs a single-elimination best-of-three
+bracket. Entrants receive teams drawn without replacement from a pool or
+supplied as validated pastes, and keep those teams through the bracket. Byes
+fill incomplete brackets. Dependency-ready matches run up to the configured
+concurrency. A drawn series advances the higher seed while its record keeps
+`winner: null`. Rows use `mode: "tournament"` and include the round; inline-team
+rows have no pool. Tournament rows are not rated.
 
-Draft League mode (`src/draftleague.ts` with the draft engine in `src/draft.ts`) opens with a snake draft over an
-immutable board (`boards/<id>.json`): full fixed sets derived from a real tournament pool, tiered and priced from
-published viability rankings, drafted under a points budget. Pick legality is decided by the real format validator run
-on the partial roster (ignoring only the team-size complaint), so species and item clauses are enforced exactly rather
-than re-implemented. Each LLM pick is a provider call with retries and a random-legal fallback; the full prompt and
-response go to per-drafter logs and every pick's rationale to a shared `draft/draft.jsonl` transcript inside the run
-directory. Draft configs and rows add `draft_scaffold`, a separate hash of the draft prompt, retry, token, timeout, and
-fallback policy; runtime board/model data remains in the config instead of the hash. The drafted rosters then play a
-full round robin that seeds top-four (or top-two) playoffs reusing the bracket view. Rows record `mode: "draft"` with a
-`stage` field and board id and never rate the ladder. Rotation, tournament, and draft share the recorded-series runner
-in `src/series.ts`; exhibition reuses its lower-level best-of-three loop around the external seat bridge.
+Draft League mode (`src/draftleague.ts`, with drafting in `src/draft.ts`) starts
+with a snake draft from an immutable `boards/<id>.json` board. The board holds
+fixed sets with tier prices and a points budget. The format validator checks
+each partial roster while ignoring only the incomplete-team-size error.
 
-Reference opponents (for example VGC-Bench's behavior-cloned or reinforcement-learned policies) integrate by
-implementing `BattleAgent` (`act`/`observe`/`abandonDecision`). That interface is the interop seam: reference agents
-never acquire `LLMEngine`'s notebook, reflection, or tool machinery, and the league scaffold never leaks into them.
+Each model gets up to three attempts per pick before a uniform random legal
+fallback. Per-model logs contain prompts and responses; `draft/draft.jsonl`
+contains the shared pick transcript. Draft configs and rows include
+`draft_scaffold`, a hash of the draft prompt and execution policy. Drafted
+rosters play a round robin followed by top-four or top-two playoffs. Draft rows
+use `mode: "draft"`, include the stage and board id, and are not rated.
+Rotation, tournament, and draft use `src/series.ts`; exhibition uses the
+lower-level best-of-three loop with the external seat bridge.
 
-Exhibition mode (`src/exhibition.ts`) is the opposite integration: an external terminal agent plays one seat
-*through* the full `LLMEngine` scaffold. The engine's provider calls are surfaced by `src/seat.ts` as exchanges on a
-token-authenticated localhost bridge, so the agent answers exactly the prompts an API model would receive — the
-information surface is identical by construction, not by auditing. Hidden-information containment relies on process
-separation: the host process owns the battle (both `|split|` halves), the opponent engine, and any opponent API key;
-the agent's workspace contains only the thin client, instructions, and its token, and the bridge has no endpoint
-that serializes anything beyond that seat's own view. The Showdown move timer is disabled for these series because
-agent turns take minutes. Rows record `mode: "exhibition"` and the seat side, and unscoped standings drop them, so
-agent seats never rate the Rotation ladder. The seat's decision/trace logs plus the bridge's tool-lookup log make
-post-hoc audits possible, including checking whether a player acted on information its seat view never contained.
+Reference opponents implement `BattleAgent`
+(`act`/`observe`/`abandonDecision`). They do not use `LLMEngine` notebooks,
+reflections, or tools.
+
+Exhibition mode (`src/exhibition.ts`) lets an external terminal agent play one
+seat through the `LLMEngine` scaffold. `src/seat.ts` exposes provider exchanges
+through a token-authenticated localhost bridge, so the agent receives the same
+prompts as an API model. The host process owns both `|split|` battle-log halves,
+the opponent engine, and any opponent API key. The agent workspace contains
+only the thin client, instructions, and its token. The bridge exposes only that
+seat's view. The Showdown move timer is disabled because agent turns take
+minutes. Rows use `mode: "exhibition"` and include the seat side. They are not
+rated. Decision, trace, and bridge tool logs support later audits.
 
 Run failure semantics are part of the protocol: the first failed series aborts the scheduler's shared signal, so
 queued series never start and in-flight series stop consuming provider credits; the failure is reported only after
 every worker has settled. Completed series are already persisted. A user stop preserves those rows and ends in the
 explicit, non-resumable `stopped` state; timeouts and server interruptions remain failures.
 
-Records queries and ratings are scoped by pool and by mode: unscoped views exclude the disposable `test` pool and keep
-only `rotation` rows, and any single pool — including `test` — can be selected explicitly, where non-rotation rows
-appear in the record list but never in standings or head-to-head. Protocol-version selection remains a future scoping
-extension. Rotation Elo remains the default controlled rating;
-Draft League and Tournament results have their own views and cannot silently enter it. The sequential Elo shown
-in standings is a provisional display rating recomputed from qualifying rows on every read — never stored — so a
-paired-comparison model (Bradley–Terry or similar) can replace it later without any schema change.
+Unscoped record queries exclude the disposable `test` pool and keep only
+`rotation` rows. Selecting a pool, including `test`, shows its non-rotation rows
+in the record list, but standings and head-to-head calculations still use only
+rotation rows. Protocol-version selection is not implemented. Standings
+recompute sequential Elo from qualifying rows on every read; Elo is not stored.
 
 ## Pokémon Showdown boundary
 
@@ -126,22 +113,27 @@ checkouts are not claimed to match the pin, but their actual commit is still cap
 faults still share the application process today; production job isolation should place the complete run, not a
 networked Showdown server alone, in its worker boundary.
 
-## Trust model — local operator and deployment gate
+## Local and hosted access
 
 Local mode remains the default: the server binds `127.0.0.1`, accepts only loopback `Host` values, and permits the
 operator UI to mutate state. Hosted mode binds the configured interface and accepts exactly
-`VGC_LEAGUE_PUBLIC_ORIGIN` as both canonical `Host` and mutation `Origin`. Without GitHub OAuth it is read-only by
-default; `VGC_LEAGUE_ENABLE_MUTATIONS=true` remains an unauthenticated override suitable only behind a separately
-enforced private access layer. With OAuth configured, authenticated contributors and operators may mutate within the
-ownership gates below. Public multi-user runs remain blocked on rate limits and execution isolation.
+`VGC_LEAGUE_PUBLIC_ORIGIN` as both canonical `Host` and mutation `Origin`.
+Without GitHub OAuth it is read-only by default.
+`VGC_LEAGUE_ENABLE_MUTATIONS=true` enables unauthenticated mutations and is
+appropriate only behind a separate private-access layer. With OAuth,
+contributors and operators may mutate within the ownership gates below. Public
+deployment still requires the operational controls in
+[`deployment.md`](deployment.md).
 
-Both modes defend themselves:
+Security controls:
 
-- **Host allowlist** on every application request — loopback names locally or the one configured public origin when
-  hosted. This blocks DNS rebinding and direct access through an unintended Railway hostname.
-- **Exact Origin check on mutations** — hosted mutations require the configured origin; a present local origin must
-  match the request host exactly.
-- **`application/json` required on mutations** — blocks HTML-form CSRF, which cannot set that header.
+- **Host allowlist:** every request must use a loopback host locally or the
+  configured public origin when hosted. This blocks DNS rebinding and direct
+  access through an unintended Railway hostname.
+- **Origin check:** hosted mutations require the configured origin; a present
+  local origin must match the request host.
+- **JSON mutations:** mutating requests require `application/json`, which HTML
+  forms cannot set.
 - **Path traversal guards** on static assets and pool manifests; only known asset extensions and regular team files
   inside their pool directory are read.
 - **Keys**: provider API keys are held in browser memory and sent only for catalog lookup and the run; the server
@@ -157,56 +149,56 @@ Both modes defend themselves:
 - `/healthz` is a process liveness check. `/readyz` verifies assets, writable persistent paths, the configured
   authentication database, and the pinned Showdown runtime. SSE sends proxy heartbeats every 25 seconds.
 
-## Trust model — deployed multi-user site prerequisites
+## Hosted deployment
 
-Before public multi-user runs ship, the following gates apply. Implemented controls are marked; deployment operations
-still block a general public mutation surface:
+The application implements the following controls. Public deployment also
+requires the operational work in [`deployment.md`](deployment.md).
 
-1. **Authentication, attribution, and run ownership — implemented.** GitHub OAuth and server-side sessions protect
-   every mutating route at the `server.ts` choke point. Pools and active experiments get owners; completed records
-   retain the stable GitHub subject and login for provenance. Anonymous access remains read-only.
-2. **Quotas and rate limits — implemented.** Because provider keys are bring-your-own, token spend lands on the
-   submitter, not the site; the economic abuse surface is CPU and egress. The single global worker also guarantees at
-   most one active run per user. Hosted model/series/concurrency caps, a configurable run deadline, and route-specific
-   authenticated-user limits bound application resources; Cloudflare remains the coarse network/edge limiter.
-3. **Key handling — implemented for admitted runs.** Keys remain browser-held, cross IPC once, and are removed from
-   the web process after the worker accepts them. The worker has a secret-minimized environment and wipes its copy on
-   exit. A per-user encrypted vault remains the named prerequisite for any future durable queue.
-4. **Execution isolation — implemented.** Hosted runs execute in a separate, heap-bounded child process with a hard
-   deadline and bounded abort grace. Worker failures and forced kills become failed experiments without terminating
-   the HTTP process. Specs and pastes still pass through `createPool`/`inspectTeam`/`parseSpec` before admission.
-5. **Transport and headers — implemented.** Hosted mode requires one exact origin and HTTPS is enforced operationally.
-6. **Evidence admission.** Public ratings admit server-produced evidence only, from day one. Client-submitted
-   `results.jsonl`-shaped rows may be accepted as unverified exhibits with full provenance (`schema_version`, `mode`,
-   `protocol_version`, `scaffold`, model identity, Showdown commit, pool id, run seed, engine seeds), but they never
-   enter shared standings. Replay can verify only outcome integrity — that the recorded choices under the recorded
-   seed produce the recorded result — not that a hosted model actually produced those choices, and that second claim
-   is the one a leaderboard rests on. So replay verification is not a promotion path from exhibit to rating; it is a
-   spot-check. Ratings are recomputed from qualifying rows, never stored as authoritative values.
-7. **Public spectating — implemented.** `/api/events/public` and `/api/battle/public` are built from Showdown's
-   public split-log branch. Exact HP and player-private protocol lines feed only the owner/operator stream. Public-only
-   streams remain public for their lifetime; authenticated streams select private data only while that user owns the
-   current run or has the operator role.
+1. **Authentication, attribution, and run ownership:** GitHub OAuth and
+   server-side sessions protect every mutating route. Pools and active
+   experiments have owners; completed records retain the contributor's stable
+   GitHub subject and login. Anonymous access is read-only.
+2. **Quotas and rate limits:** one global worker, hosted run limits, a
+   configurable run deadline, and route-specific per-user limits bound
+   application resource use. Provider keys are supplied by each user.
+3. **Key handling:** keys remain in browser memory, cross IPC once, leave the
+   web process after worker admission, and are cleared in the worker on exit.
+4. **Execution isolation:** hosted runs use a separate, heap-bounded child
+   process with a hard deadline and bounded abort grace. Worker failures become
+   failed experiments without terminating the HTTP process. Inputs still pass
+   through the normal validators before admission.
+5. **Transport and headers:** hosted mode accepts one exact origin. HTTPS is a
+   deployment requirement.
+6. **Evidence admission:** only server-produced evidence enters public
+   ratings. Client-submitted result rows may be retained as unverified
+   exhibits, but replay can verify only that recorded choices reproduce the
+   outcome. It cannot verify which model produced those choices. Replayed
+   exhibits therefore do not enter ratings.
+7. **Public spectating:** `/api/events/public` and `/api/battle/public` use
+   Showdown's public split-log branch. Exact HP and player-private protocol
+   lines are available only to the owner or operator. A stream opened as public
+   remains public for its lifetime.
 
-### Recorded deployment decisions
+### Data and hosting decisions
 
-The public product is a shared research commons, not a set of private user silos. Anonymous visitors may read model
-profiles, published pools, standings, and verified evidence. Authentication establishes contribution provenance and
-operational authority: authenticated contributors may submit pools and, within quotas, runs; operators may moderate
-invalid evidence and control jobs. Models are measured subjects, never user accounts. Deleting an account may detach
-or pseudonymize attribution, but does not rewrite immutable non-personal experimental evidence.
+Anonymous visitors may read model profiles, published pools, standings, and
+verified evidence. Authentication records contribution provenance and grants
+operational permissions. Contributors may publish pools and start runs within
+configured limits; operators may control any active run. Models are measured
+subjects, not accounts.
 
-Use GitHub OAuth first, through an authorization-code flow with `state` and PKCE and no scopes beyond identity. Store
-the stable provider subject, not the mutable username, as the account key. Sessions are opaque random tokens whose
-hashes live server-side; rotate them after login and sensitive actions, expire them, and send only `HttpOnly`, `Secure`,
-`SameSite=Lax` cookies. Keep authorization to three roles initially: reader, contributor, and operator. Exact-origin
-checks remain mandatory; cookie-authenticated mutations also require a CSRF token.
+GitHub OAuth uses an authorization-code flow with state, PKCE, and no requested
+scopes. The stable numeric GitHub subject is the account key. Sessions use
+opaque random tokens whose hashes are stored in SQLite. They expire after seven
+days and travel in `HttpOnly`, `Secure`, `SameSite=Lax` cookies. Authorization
+has reader, contributor, and operator roles. Mutations require exact-origin and
+CSRF checks.
 
-The first durable store is SQLite on one persistent volume. Use transactions for pool publication, job admission, and
-result ingestion. The schema separates users/sessions, immutable pool versions, experiments/jobs, series/games,
-decisions, derived observations, and artifact references. Ownership and contributor attribution are columns on shared
-entities, not tenancy boundaries. Elo and other summaries remain derived views. Move to Postgres only when multiple
-application instances need concurrent writes; do not introduce it speculatively.
+SQLite stores users, sessions, OAuth flows, immutable pool ownership,
+experiments, and audit events on one persistent volume. Pool publication and
+experiment state changes use transactions. Series, game, and decision evidence
+remains in append-only files. Elo and other summaries are derived. Move to
+Postgres only if multiple application instances need concurrent writes.
 
 Initial hosting target:
 
@@ -214,77 +206,52 @@ Initial hosting target:
 Browser -> Cloudflare DNS/TLS/WAF -> Railway Docker service -> SQLite + artifacts on /data
                                       |
                                       +-> bounded benchmark worker process
-Encrypted scheduled backup -------------------------------> object storage
+SQLite continuous replica -------------------------------> object storage
 ```
 
-Cloudflare terminates public TLS, applies coarse DDoS/WAF and edge rate limits, and proxies one canonical origin.
-Railway runs the conventional long-lived Node service because the application needs SSE, a persistent filesystem, and
-long benchmark jobs. Start with one instance and a persistent `/data` volume; add object storage for encrypted backups
-and large artifacts before the volume becomes the only copy. Do not move the stateful application into an ephemeral
-edge/container runtime merely to reduce hosting cost.
+Cloudflare terminates TLS, applies edge rate limits and WAF policy, and proxies
+one canonical origin. Railway runs one long-lived Node service because the
+application uses SSE, persistent files, and long benchmark jobs. Mount one
+persistent volume at `/data` and keep the application out of ephemeral edge
+runtimes.
 
-### Delivery sequence
+### Implementation status
 
-0. **Static public results site.** The research-commons goal does not need auth, quotas, or SSRF hardening to start
-   existing. `writeReport` already produces a self-contained HTML record book; publish that plus exported replay
-   logs as a static site with zero attack surface. Run submission stays local. Later phases stop being blockers for
-   being public at all.
-1. **Private deployment hardening.** Containerize the existing app; add `/healthz` and `/readyz`, graceful shutdown,
-   a persistent data directory, structured logs with secret redaction, dependency/image updates, and a single
-   configured public origin. Back up SQLite with continuous replication to object storage (Litestream-style) rather
-   than scheduled dumps — near-free, and the restore drill becomes point-in-time recovery. SSE through the proxy
-   works but idles out (Cloudflare ≈100s): send heartbeat comments on `/api/events` roughly every 25 seconds.
-
-The code-owned part of step 1 is implemented: `Dockerfile` runs as a non-root user, `railway.toml` points Railway at
-`/readyz`, `PORT`/host/public-origin configuration is supported, SIGTERM triggers bounded graceful shutdown, and
-`VGC_LEAGUE_DATA_DIR=/data` seeds the bundled pools then keeps pools, runs, and records on the mounted volume.
-Hosted mode emits structured request/lifecycle logs without bodies or credentials. The image bundles Litestream
-0.5.14 and conditionally runs continuous SQLite replication plus restore-if-missing when
-`LITESTREAM_REPLICA_URL` is configured. Remote deletion is disabled so object credentials need not delete backups.
-Deployment is not operationally complete until the replica bucket has encryption, versioning/lifecycle retention, and
-a tested point-in-time restore. Railway daily/weekly/monthly volume backups cover non-SQLite artifacts and fast
-whole-volume rollback; they complement rather than replace the off-platform SQLite replica because Railway backups
-remain tied to the same project and are deleted if the volume is wiped.
-2. **Identity and durable state — implemented.** GitHub OAuth, hashed sessions, the narrow role model, SQLite
-   migrations, immutable pool ownership, experiment ownership, and mutation audit events are live. Public reads stay
-   unauthenticated.
-
-The code-owned part of step 2 is implemented. GitHub's authorization-code flow uses one-time `state`, an
-`HttpOnly` state cookie, PKCE S256, an exact redirect URI, and no requested scopes; the returned access token is used
-once to resolve the stable numeric GitHub subject and is never stored. Opaque session tokens are hashed in SQLite,
-expire after seven days, rotate at login, and travel in `HttpOnly`, `Secure`, `SameSite=Lax` cookies. Exact-origin
-checks and per-session CSRF tokens protect every mutation. Roles are reader/contributor/operator; new users are
-contributors and `VGC_LEAGUE_OPERATOR_GITHUB_IDS` bootstraps operators by stable subject.
-
-SQLite migration 1 creates users, sessions, OAuth flows, immutable pool ownership, experiments, and audit events.
-Pool publication and experiment admission/finalization use transactions; failed ownership registration removes the
-new filesystem artifact. Run configs and result rows carry contributor provenance. Series/game/decision evidence
-remains in append-only files for now rather than being falsely duplicated into incomplete relational tables.
-3. **Admission control and execution isolation — implemented.** Runs are admitted only when the single worker slot is
-   free; there is no durable server-side queue. Per-user active limits, route limits, strict hosted
-   model/series/concurrency caps, and `VGC_LEAGUE_MAX_RUN_MINUTES` bound resource use. Hosted execution moves into a
-   child process with a 768 MiB V8 heap, sanitized environment, IPC-only key transfer, bounded abort grace, and hard
-   kill fallback. Cancellation survives browser disconnects; malformed, crashed, and hung workers cannot take down
-   the web process. Interrupted experiment rows are failed during the next single-instance startup.
-4. **Public security gate — code implemented, operations pending.** CSP, HSTS, content/referrer/permissions headers,
-   exact-origin CSRF protection, generic external errors, correlation IDs, hosted-mode SSRF removal, route/user rate
-   limits, process isolation, and public/private event separation are in place. Public launch still requires
-   Cloudflare policy, configured Railway volume backup schedules, an encrypted/versioned Litestream destination, a
-   deployment-level restore drill for both layers, and a tested image rollback.
-5. **Research corpus and scale.** Server-produced evidence feeds public ratings; client submissions remain unverified
-   exhibits (see trust model item 6). Retain simulator/model/scaffold/pool/protocol provenance, expose reproducible
-   exports, and add moderation workflows. Split workers or move from SQLite only after measured load requires it.
+- **Static reports:** `writeReport` produces a self-contained HTML record book
+  that can be published with exported replay logs while run submission stays
+  local.
+- **Deployment hardening:** the container runs as a non-root user,
+  `railway.toml` checks `/readyz`, SIGTERM triggers bounded graceful shutdown,
+  and `VGC_LEAGUE_DATA_DIR=/data` keeps pools, runs, and records on the mounted
+  volume. Hosted logs omit request bodies and credentials. Litestream restores
+  a missing SQLite database and continuously replicates it when
+  `LITESTREAM_REPLICA_URL` is set.
+- **Identity and durable state:** GitHub OAuth, hashed sessions, roles, SQLite
+  migrations, pool and experiment ownership, and mutation audit events are
+  implemented. Public reads remain unauthenticated.
+- **Admission and isolation:** there is one worker slot and no durable queue.
+  Hosted limits and `VGC_LEAGUE_MAX_RUN_MINUTES` bound each run. Runs execute
+  in a child process with a 768 MiB V8 heap, restricted environment, IPC-only
+  key transfer, abort grace period, and hard-kill fallback. Startup marks
+  interrupted experiments as failed.
+- **Public deployment:** application controls are implemented. Launch still
+  requires edge policy, Railway volume backups, an encrypted and versioned
+  Litestream destination, restore drills for both backup layers, and a tested
+  image rollback.
+- **Research corpus:** server-produced evidence can feed public ratings.
+  Client submissions remain unverified exhibits. Split workers or replace
+  SQLite only after measured load requires it.
 
 Provider keys remain bring-your-own and memory-only through these phases. Never include them in job configuration,
 artifacts, logs, or database rows. A future encrypted vault is a separate opt-in feature with its own threat model, not
 a prerequisite for public deployment.
 
-## Records are the data currency
+## Records
 
-`records/results.jsonl` is append-only and backward compatible: readers tolerate unknown fields, missing optional
-ones, and malformed rows (a row without players is skipped by ratings rather than crashing the reader). New rows
-record `mode: "rotation"`, `protocol_version: 1`, and `scaffold`; the fields remain optional in the TypeScript reader
-so pre-versioning rows still load, and legacy rows without a `pool` field stay in unscoped views. Anything worth
-analyzing later—decisions, token usage, latency, provider failures, or behavioral opportunities—should be captured at
-run time as structured evidence (post-game reflections carry `series_over` for exactly this reason). Backfilling from
-logs is possible but expensive; additive schema fields are cheap.
+`records/results.jsonl` is append-only and backward compatible. Readers
+tolerate unknown fields and missing optional fields; ratings skip malformed
+rows without players. New rows record `mode`, `protocol_version`, and
+`scaffold`, while the TypeScript reader keeps these fields optional for older
+rows. Legacy rows without `pool` remain in unscoped views. Decisions, token
+usage, latency, provider failures, and behavior counters are recorded as
+structured evidence at run time. Post-game reflections include `series_over`.

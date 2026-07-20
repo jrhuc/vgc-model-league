@@ -1,13 +1,11 @@
 # VGC Model League
 
-VGC Model League measures how well general-purpose language models play
-competitive Pokémon — full VGC best-of-three on Pokémon Showdown — with a
-practical game interface but no Pokémon-specific training. Each model gets open
-team sheets, complete legal action menus, reference and damage tools, a private
-series notebook, and a review step between games. Showdown decides legality,
-timers, and outcomes. There is no fine-tuning, no search policy, and no
-battle-log pretraining: the scaffold is domain-aware, the model is not
-domain-trained.
+VGC Model League evaluates general-purpose language models in full VGC
+best-of-three games on Pokémon Showdown. Each model receives open team sheets,
+legal action menus, reference and damage tools, a private series notebook, and
+a review step between games. Showdown determines legality, timers, and
+outcomes. The project adds no fine-tuning or search policy; its scaffold is
+domain-aware, but it does not specialize the model.
 
 The league asks:
 
@@ -15,21 +13,21 @@ The league asks:
 - Do models adapt between games in a best-of-three, or replay the same plan?
 - How do reliability, latency, token use, and provider configuration trade off
   against competitive strength?
-- Which tendencies — leads, brings, switching, Protect use, targeting,
-  recovery after a loss — distinguish model families and generations?
+- Which tendencies in leads, brings, switching, Protect use, targeting, and
+  recovery after a loss distinguish model families and generations?
 
 ## Modes
 
 | Mode | What happens | Rates the ladder? |
 | --- | --- | --- |
 | **Match** | Two models, two teams (pasted or sampled), one best-of-three. The GUI's default flow. | No |
-| **Tournament** | Single-elimination best-of-three bracket. Each model is assigned one team and defends it until a champion is crowned; byes handle any entrant count. | No |
+| **Tournament** | Single-elimination best-of-three bracket. Each model keeps one assigned team through the bracket; byes fill incomplete brackets. | No |
 | **Draft League** | Models snake-draft rosters from a fixed board, then play a round robin and playoffs. Draft rationale is logged. | No |
 | **Rotation** | Models rotate through immutable team pools with mirrored assignments to cancel side and team bias. Produces the controlled league Elo. | Yes |
 | **Exhibition** | One best-of-three where a seat is played by an external terminal agent over a local bridge instead of a provider API. | No |
 
-Every result records `mode` and `protocol_version`; only rotation rows enter
-the rating, so the other modes can never contaminate it.
+Every result records `mode` and `protocol_version`. Only rotation rows enter
+the rating.
 
 ## Setup
 
@@ -70,9 +68,10 @@ npm run vgcleague -- standings --pool regmb-202607
 npm run vgcleague -- report    --pool regmb-202607
 ```
 
-Common flags: `--seed` for reproducibility, `--concurrency` for parallel
-series, `--reasoning <level>` applied to every model (rejected if a provider
-does not support it).
+All experiment commands accept `--seed` for reproducibility and
+`--reasoning <level>` for provider reasoning effort. Rotation, tournament, and
+draft also accept `--concurrency` for parallel series. Unsupported reasoning
+levels are rejected before the run starts.
 
 A failed series aborts the whole run: queued series never start, in-flight
 series are cancelled, and completed series are already persisted. A run
@@ -84,14 +83,13 @@ scoping.
 
 ### Exhibition seats
 
-The host process runs the battle, the opponent engine, and its API key, and
-serves a token-authenticated bridge on `127.0.0.1`. It writes an agent
-workspace (default `runs/<run>/agent/`) containing a thin client (`seat.mjs`),
-instructions (`SEAT.md`), and the connection token — start the terminal agent
-in that directory. The agent seat goes through the same `LLMEngine` scaffold
-as an API model, so it cannot receive information an API model would not. The
-move timer is disabled because agent turns take minutes, and the bridge logs
-every tool lookup so traces can be audited afterwards.
+The host process runs the battle, the opponent engine, and its API key. It
+serves a token-authenticated bridge on `127.0.0.1` and writes an agent workspace
+(default `runs/<run>/agent/`) with a thin client (`seat.mjs`), instructions
+(`SEAT.md`), and the connection token. Start the terminal agent in that
+directory. The agent seat uses the same `LLMEngine` scaffold as an API model.
+The move timer is disabled because agent turns take minutes. The bridge logs
+every tool lookup for later auditing.
 
 ## Teams and draft boards
 
@@ -103,13 +101,13 @@ reproducible. `teams/regmb-202607` is the current Reg M-B snapshot
 Two ways to build a pool, both validated by the pinned simulator and rejected
 on duplicate species sets:
 
-- `npm run build-pool -- teams/<pool>/sources.json` — from Pokepaste sources.
-- The GUI pool manager — paste Showdown teambuilder exports.
+- From Pokepaste sources: `npm run build-pool -- teams/<pool>/sources.json`.
+- In the GUI pool manager, paste Showdown teambuilder exports.
 
-Draft boards live at `boards/<board>.json`: a fixed menu of full competitive
-sets that models draft from, derived from the tournament teams of the matching
-pool (`npm run build-board` regenerates one from a pool). Boards are immutable
-for the same reason pools are.
+Draft boards live at `boards/<board>.json`. Each board contains fixed
+competitive sets derived from a tournament-team pool. Regenerate a board with
+`npm run build-board -- <pool>`. Boards are immutable snapshots like team
+pools.
 
 ## Model interface
 
@@ -141,8 +139,8 @@ decision log.
 ## Evidence
 
 `runs/` holds run configuration, series logs, decision timelines, technical
-traces (prompts, menus, raw responses, usage, tool calls), and — for draft
-runs — per-model draft logs with full pick rationale.
+traces (prompts, menus, raw responses, usage, and tool calls), and per-model
+draft logs when applicable.
 
 `records/results.jsonl` holds one row per completed best-of-three: nested
 games, protocol identity, assignments, seeds, model specs, Showdown commit,
@@ -154,21 +152,19 @@ Both directories are local and gitignored.
 
 ## Deployment
 
-The repository ships a multi-stage `Dockerfile` and `railway.toml` for hosted
-deployment: GitHub OAuth for contributors, public read-only spectating, one
-sandboxed run at a time, and layered SQLite/volume backups. See
-[docs/deployment.md](docs/deployment.md) for the full checklist and
+The repository includes a multi-stage `Dockerfile` and `railway.toml` for
+hosted deployment with GitHub OAuth, public read-only spectating, one isolated
+run at a time, and SQLite and volume backups. See
+[docs/deployment.md](docs/deployment.md) for deployment instructions and
 [docs/architecture.md](docs/architecture.md) for the client/server contract
 and trust model.
 
-## Prior work
+## Related work
 
-[VGC-Bench](https://arxiv.org/abs/2506.10326) is the closest prior work: a VGC
-training environment, behavior-cloned and reinforcement-learned agents, and
-team-generalization protocols. Its question is how specialized policies learn;
-this project asks how capable hosted general-purpose models are under one thin
-scaffold. Its policies could later serve as reference opponents here via the
-`BattleAgent` interface. [PokéLLMon](https://arxiv.org/abs/2402.01118) and
-[PokéChamp](https://arxiv.org/abs/2503.04094) are adjacent language-model
-agents; both add a learned or search component this project leaves out on
-purpose.
+[VGC-Bench](https://arxiv.org/abs/2506.10326) provides a VGC training
+environment, behavior-cloned and reinforcement-learned agents, and
+team-generalization protocols. Its specialized policies could serve as
+reference opponents through the `BattleAgent` interface.
+[PokéLLMon](https://arxiv.org/abs/2402.01118) and
+[PokéChamp](https://arxiv.org/abs/2503.04094) are language-model Pokémon agents
+that add learned or search components not used here.

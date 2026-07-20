@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { LLMEngine, scaffoldRevision } from './engines.js';
+import { LLMEngine, type RandomEngine, scaffoldRevision } from './engines.js';
 import { defaultPsDir, RESULTS_PATH } from './paths.js';
 import type { ReasoningLevel } from './providers.js';
 import { parseSpec, validateReasoning } from './providers.js';
@@ -140,7 +140,7 @@ export async function runExhibition(runDir: string, options: ExhibitionOptions):
         options.reasoning,
         reference,
       ),
-    } as Record<Pid, LLMEngine>;
+    } as Record<Pid, LLMEngine | RandomEngine>;
 
     const result = await playBo3({
       engines,
@@ -306,7 +306,7 @@ hidden information, so work only inside this directory.
 
 Loop:
 
-1. \`node seat.mjs wait\` — blocks until the host needs your response, then prints the prompt.
+1. \`node seat.mjs wait\`: blocks until the host needs your response, then prints the prompt.
 2. Think. For mechanics questions use the lookup tools: \`node seat.mjs tools\` lists them,
    \`node seat.mjs tool <name> '<json arguments>'\` runs one.
 3. Write your JSON reply to a file, then \`node seat.mjs submit <file>\`.
@@ -314,15 +314,15 @@ Loop:
 
 Two exchange kinds:
 
-- **decision** — pick actions from the numbered menus. The exact required JSON reply format
+- **decision**: pick actions from the numbered menus. The exact required JSON reply format
   is in the system prompt: print it once with \`node seat.mjs system\`.
-- **reflection** — after each game, return the requested game-review JSON.
+- **reflection**: after each game, return the requested game-review JSON.
 
 Notes:
 
 - An invalid reply gets one correction exchange; a second invalid reply forfeits that
   decision to a default legal action.
-- There is no move timer. Take the time you need, but submit every exchange — the game
+- There is no move timer. Take the time you need, but submit every exchange; the game
   cannot continue without you.
 - \`node seat.mjs status\` shows the game number and series score.
 - When the host process exits, requests fail with a connection error; the series is over.

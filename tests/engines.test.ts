@@ -1,8 +1,18 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { LLMEngine } from '../src/engines.js';
+import type { ChoiceSubstitution } from '../src/engines.js';
+import { BaseEngine, LLMEngine, RandomEngine } from '../src/engines.js';
 import { ApiError } from '../src/providers.js';
-import type { BattleRequest, CompleteOptions, Completion, Provider, ProviderMessage } from '../src/types.js';
+import { SimBattle } from '../src/sim.js';
+import { loadPool } from '../src/teams.js';
+import type {
+  AgentContext,
+  BattleRequest,
+  CompleteOptions,
+  Completion,
+  Provider,
+  ProviderMessage,
+} from '../src/types.js';
 
 function request(activeCount = 1): BattleRequest {
   return {
@@ -52,6 +62,11 @@ const emptyStats = {
   team_previews: 0,
   bring_changes: 0,
   lead_changes: 0,
+  substituted_actions: 0,
+  parse_failures: 0,
+  provider_retries: 0,
+  threat_turns: 0,
+  threat_hits: 0,
 };
 const oneMoveStats = { ...emptyStats, decisions: 1, move_selections: 1 };
 
@@ -73,22 +88,27 @@ class ScriptedProvider implements Provider {
 }
 
 test('LLM choices parse prose, retry, and record fallbacks', async () => {
-  const cases: Array<[Array<string>, string, boolean, number]> = [
-    [[decision([1], 'remember speed', 'remember speed')], 'move 2', false, 1],
-    [[`I choose this: ${decision([1], 'reason', 'x')}.`], 'move 2', false, 1],
-    [[`${decision([0])} then ${decision([1])}`], 'move 2', false, 1],
-    [[`${decision([1])} earlier draft was {"choices":[9]}`], 'move 2', false, 1],
-    [['{"choices":[1],"notes":"legacy"}', decision([1])], 'move 2', false, 2],
-    [['invalid', decision([1])], 'move 2', false, 2],
-    [['invalid', decision([9])], 'move 1', true, 2],
+  const cases: Array<[Array<string>, string, boolean, number, number]> = [
+    [[decision([1], 'remember speed', 'remember speed')], 'move 2', false, 1, 0],
+    [[`I choose this: ${decision([1], 'reason', 'x')}.`], 'move 2', false, 1, 0],
+    [[`${decision([0])} then ${decision([1])}`], 'move 2', false, 1, 0],
+    [[`${decision([1])} earlier draft was {"choices":[9]}`], 'move 2', false, 1, 0],
+    [['{"choices":[1],"notes":"legacy"}', decision([1])], 'move 2', false, 2, 1],
+    [['invalid', decision([1])], 'move 2', false, 2, 1],
+    [['invalid', decision([9])], 'move 1', true, 2, 2],
   ];
-  for (const [responses, expected, fallback, calls] of cases) {
+  for (const [responses, expected, fallback, calls, parseFailures] of cases) {
     const provider = new ScriptedProvider(responses);
     const decisions: Record<string, unknown>[] = [];
     const engine = new LLMEngine('p1', 'scripted', { provider, decisionLog: decisions });
     assert.equal(await engine.act(request(), { povLines: ['|turn|1'] }), expected);
     assert.equal(decisions[0]!.fallback, fallback);
-    assert.deepEqual(engine.decisionStats(), { ...oneMoveStats, fallbacks: Number(fallback) });
+    assert.equal(decisions[0]!.parse_failures, parseFailures);
+    assert.deepEqual(engine.decisionStats(), {
+      ...oneMoveStats,
+      fallbacks: Number(fallback),
+      parse_failures: parseFailures,
+    });
     assert.equal(provider.calls.length, calls);
   }
 });
@@ -102,6 +122,44 @@ test('timer context bounds the provider request', async () => {
   const call = provider.calls[0]!;
   assert.match(String(call.messages.at(-1)!.content), /Showdown timer: 55 seconds/);
   assert.ok(call.options.timeout! > 55 && call.options.timeout! <= 56);
+});
+
+test('simulator timer restarts while an invalid choice is retried', { timeout: 20_000 }, async () => {
+  class InvalidOnceEngine extends RandomEngine {
+    private invalid = true;
+    readonly timerBanks: number[] = [];
+
+    override async act(battleRequest: BattleRequest, context: AgentContext): Promise<string> {
+      if (battleRequest.active && battleRequest.timer?.seconds !== undefined)
+        this.timerBanks.push(battleRequest.timer.seconds);
+      if (this.invalid && battleRequest.active && !battleRequest.teamPreview) {
+        this.invalid = false;
+        return 'move 99';
+      }
+      return super.act(battleRequest, context);
+    }
+  }
+
+  const pool = loadPool();
+  const timerLines: string[] = [];
+  const retrying = new InvalidOnceEngine('p1', 1);
+  const battle = new SimBattle(
+    pool.format,
+    {
+      p1: { name: 'invalid-once', team: pool.teams[0]!.packed },
+      p2: { name: 'random', team: pool.teams[1]!.packed },
+    },
+    [1, 2, 3, 4],
+  );
+  const outcome = await battle.run({ p1: retrying, p2: new RandomEngine('p2', 2) }, (lines) =>
+    timerLines.push(...lines.filter((line) => line.includes('vgctimer'))),
+  );
+  assert.ok(outcome.errors.p1 >= 1);
+  assert.ok(retrying.timerBanks[1]! < retrying.timerBanks[0]!);
+  assert.equal(
+    timerLines.filter((line) => line.startsWith('|-vgctimer|p1|')).length,
+    timerLines.filter((line) => line === '|-vgctimerstop|p1').length,
+  );
 });
 
 test('doubles use one call and retain compact private context', async () => {
@@ -145,7 +203,7 @@ test('transient API errors retry before falling back', async () => {
     decisionLog: decisions,
   });
   assert.equal(await flaky.act(request(), { povLines: [] }), 'move 2');
-  assert.deepEqual(flaky.decisionStats(), oneMoveStats);
+  assert.deepEqual(flaky.decisionStats(), { ...oneMoveStats, provider_retries: 1 });
 
   const persistentProvider = new ScriptedProvider([
     new ApiError(503, 'overloaded'),
@@ -296,6 +354,75 @@ test('the closing review of a decided series is marked series_over', async () =>
   assert.equal(decisions[0]!.kind, 'game_reflection');
   assert.equal(decisions[0]!.series_over, true);
   assert.equal(decisions[0]!.fallback, true);
+});
+
+function megaRequest(): BattleRequest {
+  const base = request(2);
+  base.active = base.active!.map((active) => ({ ...active!, canMegaEvo: true }));
+  return base;
+}
+
+test('a double-Mega joint choice is retried with the conflict explained, not silently defaulted', async () => {
+  const provider = new ScriptedProvider([decision([1, 1], 'mega both'), decision([1, 0], 'mega one')]);
+  const decisions: Record<string, unknown>[] = [];
+  const engine = new LLMEngine('p1', 'scripted', { provider, decisionLog: decisions });
+  assert.equal(await engine.act(megaRequest(), { povLines: ['|turn|1'] }), 'move 1 mega, move 1');
+  assert.equal(provider.calls.length, 2);
+  assert.match(String(provider.calls[1]!.messages.at(-1)!.content), /only one Pokémon can Mega Evolve/);
+  assert.equal(decisions[0]!.fallback, false);
+  assert.equal(decisions[0]!.rationale, 'mega one');
+  assert.ok(!('requested_choices' in decisions[0]!));
+});
+
+test('a persistent illegal joint choice becomes a flagged legal fallback', async () => {
+  const provider = new ScriptedProvider([decision([1, 1], 'mega both'), decision([1, 1], 'mega both again')]);
+  const decisions: Record<string, unknown>[] = [];
+  const engine = new LLMEngine('p1', 'scripted', { provider, decisionLog: decisions });
+  assert.equal(await engine.act(megaRequest(), { povLines: ['|turn|1'] }), 'move 1, move 1');
+  assert.equal(decisions[0]!.fallback, true);
+  assert.equal(decisions[0]!.rationale, 'Recorded legal fallback.');
+  assert.equal(decisions[0]!.parse_failures, 2);
+});
+
+test('engines that commit conflicting choices record the substitution', async () => {
+  class FixedEngine extends BaseEngine {
+    committed: { choices: number[]; parts: string[]; substitution?: ChoiceSubstitution } | undefined;
+    protected decideJoint(): number[] {
+      return [1, 1];
+    }
+    protected override actionCommitted(
+      _request: BattleRequest,
+      _context: unknown,
+      _menus: unknown,
+      choices: number[],
+      parts: string[],
+      _automatic: boolean,
+      substitution?: ChoiceSubstitution,
+    ): void {
+      this.committed = { choices, parts, ...(substitution ? { substitution } : {}) };
+    }
+  }
+  const engine = new FixedEngine('p1');
+  assert.equal(await engine.act(megaRequest(), { povLines: [] }), 'move 1, move 1');
+  assert.deepEqual(engine.committed?.choices, [0, 0]);
+  assert.deepEqual(engine.committed?.substitution?.requested, [1, 1]);
+  assert.match(String(engine.committed?.substitution?.reason), /only one Pokémon can Mega Evolve/);
+});
+
+test('threat predictions are scored against the next revealed foe action', async () => {
+  const provider = new ScriptedProvider([
+    decision([0], 'x', 'n', ['Garchomp will click Rock Slide into our left slot']),
+    decision([0], 'x', 'n', ['expecting a Tailwind turn']),
+    decision([0], 'x', 'n'),
+  ]);
+  const engine = new LLMEngine('p1', 'scripted', { provider, decisionLog: [] });
+  engine.beginGame({ gameId: 'game-1', gameNumber: 1, seriesId: 'series-1' });
+  await engine.act(request(), { povLines: ['|turn|1'] });
+  await engine.act(request(), { povLines: ['|move|p2a: Garchomp|Rock Slide|p1a: Mon1', '|turn|2'] });
+  await engine.act(request(), { povLines: ['|move|p2a: Garchomp|Earthquake|p1a: Mon1', '|turn|3'] });
+  const stats = engine.decisionStats();
+  assert.equal(stats.threat_turns, 2);
+  assert.equal(stats.threat_hits, 1);
 });
 
 test('abandoned decisions cannot mutate memory or statistics', async () => {

@@ -49,6 +49,58 @@ test('Mega formes require the visible matching stone', () => {
   assert.doesNotMatch(rendered, /Charizard-Mega/);
 });
 
+test('active matchup chart resolves Weather Ball under the live weather', () => {
+  const reference = new ShowdownReference('gen9championsvgc2026regmb');
+  const attackers = [{ species: 'Politoed', moves: ['Weather Ball'], ally: true }];
+  const defenders = [{ species: 'Incineroar', moves: [], ally: false }];
+  const clear = reference.renderActiveMatchups(attackers, defenders).join('\n');
+  assert.match(clear, /Weather Ball \(Normal\): Incineroar neutral/);
+  const rain = reference.renderActiveMatchups(attackers, defenders, 'RainDance').join('\n');
+  assert.match(rain, /Weather Ball \(currently Water in RainDance\): Incineroar super-effective \(2x\)/);
+  const sun = reference.renderActiveMatchups(attackers, defenders, 'SunnyDay').join('\n');
+  assert.match(sun, /currently Fire in SunnyDay\): Incineroar not very effective/);
+  const renderedRain = reference.renderActiveMatchups(attackers, defenders, 'RainDance (4 turns left)').join('\n');
+  assert.match(renderedRain, /currently Water in RainDance \(4 turns left\)/);
+  assert.match(
+    reference.lookup('estimate_damage', {
+      attacker: 'Politoed',
+      defender: 'Incineroar',
+      move: 'Weather Ball',
+      weather: 'RainDance (4 turns left)',
+    }),
+    /weather 1\.5x/,
+  );
+});
+
+test('active matchups exclude same-side targets and handle primal weather', () => {
+  const reference = new ShowdownReference('gen9championsvgc2026regmb');
+  const attackers = [
+    { species: 'Politoed', moves: ['Weather Ball'], ally: true },
+    { species: 'Incineroar', moves: ['Flare Blitz'], ally: false },
+  ];
+  const defenders = [
+    { species: 'Swampert', moves: [], ally: true },
+    { species: 'Gholdengo', moves: [], ally: false },
+  ];
+  const rain = reference.renderActiveMatchups(attackers, defenders, 'PrimordialSea').join('\n');
+  assert.match(rain, /Politoed Weather Ball \(currently Water in PrimordialSea\): Gholdengo/);
+  assert.doesNotMatch(rain, /Politoed Weather Ball.*Swampert/);
+  assert.match(rain, /Incineroar Flare Blitz \(Fire\): Swampert/);
+  assert.doesNotMatch(rain, /Incineroar Flare Blitz.*Gholdengo/);
+
+  const sun = reference.renderActiveMatchups(attackers, defenders, 'DesolateLand').join('\n');
+  assert.match(sun, /Weather Ball \(currently Fire in DesolateLand\)/);
+  assert.match(
+    reference.lookup('estimate_damage', {
+      attacker: 'Incineroar',
+      defender: 'Gholdengo',
+      move: 'Flare Blitz',
+      weather: 'PrimordialSea (5 turns left)',
+    }),
+    /fails in Primordial Sea \(0 damage\)/,
+  );
+});
+
 test('lookup tools return one entry and reject missing data', () => {
   const reference = new ShowdownReference('gen9championsvgc2026regmb');
   assert.match(reference.lookup('lookup_move', { name: 'Earthquake' }), /Earthquake/);
@@ -65,6 +117,7 @@ test('lookup tools return one entry and reject missing data', () => {
 
 test('default Showdown checkout matches the pinned revision', () => {
   assert.equal(showdownCommit(), SHOWDOWN_LOCK.commit);
+  assert.match(ShowdownReference.renderRevision(), /^[0-9a-f]{12}$/);
 });
 
 test('missing Showdown checkout fails immediately', () => {
@@ -150,4 +203,49 @@ test('compact reference omits ability essays and full move text', () => {
   assert.match(compact, /Earthquake Ground\/Physical\/100/);
   assert.doesNotMatch(compact, /Damage doubles if the target is using Dig/);
   assert.doesNotMatch(compact, /abilities Damp\/Torrent/);
+});
+
+test('compact reference tags non-single-target moves', () => {
+  const compact = new ShowdownReference('gen9championsvgc2026regmb')
+    .renderCompact([
+      {
+        species: 'Sylveon',
+        item: 'Fairy Feather',
+        nature: 'Modest',
+        moves: ['Hyper Voice', 'Earthquake', 'Tailwind', 'Rage Powder', 'Quick Attack'],
+        active: false,
+      },
+    ])
+    .join('\n');
+  assert.match(compact, /Hyper Voice Normal\/Special\/90\/spread/);
+  assert.match(compact, /Earthquake Ground\/Physical\/100\/spread\+ally/);
+  assert.match(compact, /Tailwind Flying\/Status\/no power\/ally-side/);
+  assert.match(compact, /Rage Powder Bug\/Status\/no power\/self/);
+  assert.match(compact, /Quick Attack Normal\/Physical\/40[,\n]/);
+});
+
+test('move lookups surface powder and sound interactions missing from descriptions', () => {
+  const reference = new ShowdownReference('gen9championsvgc2026regmb');
+  assert.match(
+    reference.lookup('lookup_move', { name: 'Rage Powder' }),
+    /powder move: no effect on Grass types, Overcoat, or Safety Goggles holders \(including redirection\)/,
+  );
+  assert.match(
+    reference.lookup('lookup_move', { name: 'Hyper Voice' }),
+    /sound move: blocked by Soundproof, bypasses Substitute/,
+  );
+  assert.doesNotMatch(reference.lookup('lookup_move', { name: 'Earthquake' }), /powder move|sound move/);
+});
+
+test('compact reference shows the mega outcome for stone holders only', () => {
+  const reference = new ShowdownReference('gen9championsvgc2026regmb');
+  const holder = reference
+    .renderCompact([{ species: 'Swampert', item: 'Swampertite', nature: 'Adamant', moves: [], active: false }])
+    .join('\n');
+  assert.match(holder, /if Mega Evolved -> Swampert-Mega: Water\/Ground, ability Swift Swim/);
+  assert.match(holder, /Atk 150/);
+  const wrongStone = reference
+    .renderCompact([{ species: 'Swampert', item: 'Gengarite', nature: 'Adamant', moves: [], active: false }])
+    .join('\n');
+  assert.doesNotMatch(wrongStone, /Mega Evolved/);
 });

@@ -10,7 +10,7 @@ export const SYSTEM = [
   "At preview, identify each side's likely modes, intended Mega, speed control, damage plan, defensive pivots, and endgame before choosing a lead and back two.",
   'Only one Pokémon can Mega Evolve per battle. If you bring multiple Mega Stones, evaluate every non-chosen holder strictly in its base forme.',
   'Each turn, compare plausible opposing joint actions before locking in. Account for priority, speed/Trick Room order, targeting, spread reduction, accuracy, Protect odds, switches, and the remaining win condition.',
-  'Do not take a free super-effective hit when Protect, switching, redirecting, or KOing the threat first is available—especially when you move second.',
+  'Do not take a free super-effective hit when Protect, switching, redirecting, or KOing the threat first is available, especially when you move second.',
   'Use lookup_matchup and estimate_damage before committing to damaging moves when type interaction or KO chance matters. Use other Showdown lookup tools for unclear mechanics. Never transfer Mega-only traits to a base forme.',
   'Use the per-turn timer fully when the line is non-obvious. You may lock in once the joint action is clear; do not idle until the bank is empty.',
   'Your private notebook is a full replacement carried across every turn and game. Keep only durable facts and plans.',
@@ -23,6 +23,7 @@ export const REFLECTION_SYSTEM = [
   'You are reviewing one completed game in a best-of-three VGC series.',
   'Use only the supplied private battle evidence and authoritative outcome. Do not invent hidden information.',
   'Identify the main reason for the result and one concrete adjustment for the next game.',
+  'Question the team-preview plan itself — whether the four brought and the intended Mega suited this opponent — not only how the game was piloted.',
   'Update the private notebook with only durable series information; do not repeat the review verbatim.',
   'Give concise conclusions.',
   'Respond with exactly one JSON object: {"summary":"why the game was won or lost","adjustment":"what to do better next game","notebook":"updated durable series notes"}.',
@@ -54,10 +55,11 @@ export function renderDecision(input: DecisionPrompt): string {
   );
   if (input.menus.some((menu) => menu.some((item) => item.kind === 'team')))
     lines.push(
-      'Team-preview requirement: name the intended Mega and the role of all four picks in the rationale. If multiple Mega Stones are selected, justify each non-Mega base-form role.',
+      "Team-preview requirement: first work out how your own six are built to win — the team's gameplan, primary win condition, and each member's part in it — and record that plus the intended Mega in the notebook.",
+      'In the rationale name the intended Mega and the role of all four picks. If multiple Mega Stones are selected, justify each non-chosen holder using only its base forme (base ability and stats).',
     );
   for (const [slot, menu] of input.menus.entries()) {
-    lines.push(`Slot ${slot + 1} — ${input.slotNames[slot] ?? `slot ${slot + 1}`}:`);
+    lines.push(`Slot ${slot + 1}: ${input.slotNames[slot] ?? `slot ${slot + 1}`}:`);
     for (const [index, item] of menu.entries()) lines.push(`  ${index}. ${item.label}`);
   }
   lines.push(

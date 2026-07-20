@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { AuthService } from './auth.js';
 import { GuiServer } from './gui/server.js';
-import { AUTH_DB_PATH, prepareDataDirectories, REPO_ROOT, RESULTS_PATH } from './paths.js';
+import { AUTH_DB_PATH, prepareDataDirectories, RESULTS_PATH } from './paths.js';
 import type { ReasoningLevel } from './providers.js';
 import { REASONING_LEVELS } from './providers.js';
 import type { SeriesRecord } from './records.js';
@@ -19,7 +19,7 @@ Commands:
   selfcheck                           run one random-vs-random series through the simulator
   rotation --models <spec> <spec>...  run the controlled team-rotation protocol
       [--series-per-pair <n>] [--pool <name>] [--seed <n>] [--concurrency <n>] [--reasoning <level>]
-  tournament --models <spec> <spec>...  play a single-elimination bo3 bracket; each model keeps one team
+  tournament --models <spec> <spec>...  play a single-elimination BO3 bracket; each model keeps one team
       [--pool <name>] [--seed <n>] [--concurrency <n>] [--reasoning <level>]
   draft --models <spec> <spec>...     snake-draft rosters from a board, then round robin and playoffs
       [--board <name>] [--seed <n>] [--concurrency <n>] [--reasoning <level>]
@@ -31,12 +31,28 @@ Commands:
 
 Without --pool, standings and report cover every pool except the disposable "test" pool
 and keep only rotation rows; pass --pool <name> to inspect everything in one pool.
-Exhibition and tournament rows record their mode and never rate the rotation ladder.`;
+Draft, exhibition, and tournament rows record their mode and never rate the rotation ladder.`;
 
 function positiveInteger(name: string, value: string): number {
   const parsed = Number(value);
-  if (!Number.isInteger(parsed) || parsed < 1) throw new Error(`--${name} must be an integer of at least 1`);
+  if (!Number.isSafeInteger(parsed) || parsed < 1) throw new Error(`--${name} must be an integer of at least 1`);
   return parsed;
+}
+
+function optionalInteger(name: string, value: string | undefined): number | undefined {
+  if (value === undefined) return undefined;
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed)) throw new Error(`--${name} must be an integer`);
+  return parsed;
+}
+
+function reasoningLevel(value: string | undefined): ReasoningLevel | undefined {
+  if (value === undefined) return undefined;
+  const level = value as ReasoningLevel;
+  if (!REASONING_LEVELS.includes(level)) {
+    throw new Error(`--reasoning must be one of: ${REASONING_LEVELS.join(', ')}`);
+  }
+  return level;
 }
 
 function environmentInteger(name: string, fallback: number, minimum: number, maximum: number): number {
@@ -95,7 +111,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
     });
     const url = await gui.listen(positiveInteger('port', values.port));
     if (logger) logger({ timestamp: new Date().toISOString(), level: 'info', event: 'server_started', url });
-    else console.log(`VGC Model League GUI at ${url} (ctrl-c to stop)`);
+    else console.log(`VGC Model League GUI at ${url} (Ctrl-C to stop)`);
     let stopping = false;
     const shutdown = (signal: string) => {
       if (stopping) return;
@@ -136,11 +152,8 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
     });
     const models = [...(values.models ?? []), ...positionals];
     if (models.length < 2) throw new Error('rotation requires at least two --models');
-    const reasoning = values.reasoning as ReasoningLevel | undefined;
-    if (reasoning && !REASONING_LEVELS.includes(reasoning))
-      throw new Error(`--reasoning must be one of: ${REASONING_LEVELS.join(', ')}`);
-    const seed = values.seed === undefined ? undefined : Number(values.seed);
-    if (seed !== undefined && !Number.isSafeInteger(seed)) throw new Error('--seed must be an integer');
+    const reasoning = reasoningLevel(values.reasoning);
+    const seed = optionalInteger('seed', values.seed);
     const rows = await runRotation(
       models,
       positiveInteger('series-per-pair', values['series-per-pair']),
@@ -170,11 +183,8 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
     });
     const models = [...(values.models ?? []), ...positionals];
     if (models.length < 2) throw new Error('tournament requires at least two --models');
-    const reasoning = values.reasoning as ReasoningLevel | undefined;
-    if (reasoning && !REASONING_LEVELS.includes(reasoning))
-      throw new Error(`--reasoning must be one of: ${REASONING_LEVELS.join(', ')}`);
-    const seed = values.seed === undefined ? undefined : Number(values.seed);
-    if (seed !== undefined && !Number.isSafeInteger(seed)) throw new Error('--seed must be an integer');
+    const reasoning = reasoningLevel(values.reasoning);
+    const seed = optionalInteger('seed', values.seed);
     const { runTournament } = await import('./tournament.js');
     const rows = await runTournament(models, makeRunDirectory(), {
       pool: values.pool,
@@ -203,11 +213,8 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
     });
     const models = [...(values.models ?? []), ...positionals];
     if (models.length < 2) throw new Error('draft requires at least two --models');
-    const reasoning = values.reasoning as ReasoningLevel | undefined;
-    if (reasoning && !REASONING_LEVELS.includes(reasoning))
-      throw new Error(`--reasoning must be one of: ${REASONING_LEVELS.join(', ')}`);
-    const seed = values.seed === undefined ? undefined : Number(values.seed);
-    if (seed !== undefined && !Number.isSafeInteger(seed)) throw new Error('--seed must be an integer');
+    const reasoning = reasoningLevel(values.reasoning);
+    const seed = optionalInteger('seed', values.seed);
     const { runDraftLeague } = await import('./draftleague.js');
     const runDir = makeRunDirectory();
     const rows = await runDraftLeague(models, runDir, {
@@ -226,8 +233,9 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
       },
     });
     printResults(rows);
-    const finalRow = rows[rows.length - 1];
-    if (finalRow) console.log(`Champion: ${finalRow.winner ?? String(finalRow.players.p1)}`);
+    const champion = rows[rows.length - 1]?.advanced;
+    if (typeof champion !== 'string' || !champion) throw new Error('draft final did not identify a champion');
+    console.log(`Champion: ${champion}`);
     console.log(`Draft logs: ${path.join(runDir, 'draft')}`);
     return 0;
   }
@@ -247,11 +255,8 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
     });
     if (!values.opponent) throw new Error('exhibition requires --opponent <spec|random>');
     if (values.seat !== 'p1' && values.seat !== 'p2') throw new Error('--seat must be p1 or p2');
-    const reasoning = values.reasoning as ReasoningLevel | undefined;
-    if (reasoning && !REASONING_LEVELS.includes(reasoning))
-      throw new Error(`--reasoning must be one of: ${REASONING_LEVELS.join(', ')}`);
-    const seed = values.seed === undefined ? undefined : Number(values.seed);
-    if (seed !== undefined && !Number.isSafeInteger(seed)) throw new Error('--seed must be an integer');
+    const reasoning = reasoningLevel(values.reasoning);
+    const seed = optionalInteger('seed', values.seed);
     const { runExhibition } = await import('./exhibition.js');
     const row = await runExhibition(makeRunDirectory(), {
       opponent: values.opponent,
@@ -278,7 +283,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
       args: rest,
       options: {
         pool: { type: 'string' },
-        out: { type: 'string', default: path.join(REPO_ROOT, 'records', 'report.html') },
+        out: { type: 'string', default: path.join(path.dirname(RESULTS_PATH), 'report.html') },
       },
     });
     if (command === 'report') {
@@ -357,5 +362,10 @@ function printStandings(rows: SeriesRecord[]): void {
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  process.exitCode = await main();
+  try {
+    process.exitCode = await main();
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exitCode = 1;
+  }
 }

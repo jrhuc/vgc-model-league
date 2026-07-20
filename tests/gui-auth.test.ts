@@ -3,11 +3,14 @@ import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
+import test, { after } from 'node:test';
 
 import { AuthService } from '../src/auth.js';
 import { GuiServer } from '../src/gui/server.js';
 import type { runRotation } from '../src/rotation.js';
+
+const RUNS_SCRATCH = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-gui-runs-'));
+after(() => fs.rmSync(RUNS_SCRATCH, { recursive: true, force: true }));
 
 type RawResponse = { status: number; headers: http.IncomingHttpHeaders; body: string };
 
@@ -179,6 +182,7 @@ test('hosted GitHub OAuth protects mutations with sessions, CSRF, and run owners
     return [];
   }) as typeof runRotation;
   const gui = new GuiServer({
+    runsDir: RUNS_SCRATCH,
     host: '127.0.0.1',
     publicOrigin: 'http://league.example',
     auth,

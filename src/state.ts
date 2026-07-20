@@ -86,6 +86,8 @@ export const PROTECT_MOVES = new Set([
 export interface SideTimer {
   seconds: number | null;
   turnSeconds: number | null;
+  at: number;
+  running: boolean;
 }
 
 export class BattleState {
@@ -93,7 +95,6 @@ export class BattleState {
   weather: TimedEffect | undefined;
   fields = new Map<string, TimedEffect>();
   sides: Record<Pid, SideState> = { p1: new SideState(), p2: new SideState() };
-  /** Time remaining reported with each player's latest decision request; synthetic GUI-only lines. */
   timers: Record<Pid, SideTimer | undefined> = { p1: undefined, p2: undefined };
 
   constructor(readonly pid: Pid) {}
@@ -192,8 +193,14 @@ export class BattleState {
     } else if ((kind === '-start' || kind === '-end') && args.length >= 2) {
       const mon = this.mon(args[0]!);
       const effect = this.effect(args[1]!);
-      if (kind === '-start') mon.volatiles.add(effect);
-      else mon.volatiles.delete(effect);
+      if (kind === '-start') {
+        if (/^perish\d$/.test(this.speciesKey(effect))) {
+          for (const volatile of mon.volatiles) {
+            if (/^perish\d$/.test(this.speciesKey(volatile))) mon.volatiles.delete(volatile);
+          }
+        }
+        mon.volatiles.add(effect);
+      } else mon.volatiles.delete(effect);
     } else if (kind === '-weather' && args[0] !== undefined) {
       if (args[0] === 'none' || !args[0]) this.weather = undefined;
       else if (
@@ -247,7 +254,12 @@ export class BattleState {
     } else if (kind === 'showteam' && args.length >= 2) this.showTeam(args[0]!, args.slice(1).join('|'));
     else if (kind === '-vgctimer' && (args[0] === 'p1' || args[0] === 'p2')) {
       const parse = (value: string | undefined) => (value && Number.isFinite(Number(value)) ? Number(value) : null);
-      this.timers[args[0]] = { seconds: parse(args[1]), turnSeconds: parse(args[2]) };
+      this.timers[args[0]] = { seconds: parse(args[1]), turnSeconds: parse(args[2]), at: Date.now(), running: true };
+    } else if ((kind === '-vgctimerstop' || kind === '-vgctimeout') && (args[0] === 'p1' || args[0] === 'p2')) {
+      this.stopTimer(args[0]);
+    } else if (kind === 'win' || kind === 'tie') {
+      this.stopTimer('p1');
+      this.stopTimer('p2');
     }
   }
 
@@ -272,7 +284,6 @@ export class BattleState {
     return active[slot] ? BattleState.requestName(active[slot]) : 'Pokémon';
   }
 
-  /** Active + brought/revealed bench only, for compact always-on mechanics. */
   compactMons(): CompactMon[] {
     const out: CompactMon[] = [];
     for (const pid of ['p1', 'p2'] as const) {
@@ -337,6 +348,19 @@ export class BattleState {
     };
     const foe: Pid = this.pid === 'p1' ? 'p2' : 'p1';
     return { allies: collect(this.pid, true), foes: collect(foe, false) };
+  }
+
+  private stopTimer(pid: Pid): void {
+    const timer = this.timers[pid];
+    if (!timer?.running) return;
+    const now = Date.now();
+    const drained = (now - timer.at) / 1000;
+    this.timers[pid] = {
+      seconds: timer.seconds === null ? null : Math.max(0, timer.seconds - drained),
+      turnSeconds: timer.turnSeconds === null ? null : Math.max(0, timer.turnSeconds - drained),
+      at: now,
+      running: false,
+    };
   }
 
   weatherLabel(): string {

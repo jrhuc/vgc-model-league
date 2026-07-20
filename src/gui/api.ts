@@ -95,7 +95,6 @@ export interface DraftView {
   picks: DraftPickView[];
   /** Mon ids per entrant, in pick order. */
   rosters: string[][];
-  /** Remaining points per entrant. */
   budgets: number[];
   /** Round-robin table, present once battles begin; sorted by rank. */
   table: DraftTableRow[] | null;
@@ -146,13 +145,18 @@ export interface SampleTeam {
   paste: string;
 }
 
+export interface PoolTeamsResponse {
+  name: string;
+  format: string;
+  teams: SampleTeam[];
+}
+
 export interface AppState {
   pools: PoolInfo[];
   reasoningLevels: string[];
   defaultFormat: string;
   formats: FormatInfo[];
   providers: ProviderInfo[];
-  /** Ready-to-play pastes from the default pool that prefill the exhibition match form. */
   sampleTeams: SampleTeam[];
   boards: BoardInfo[];
   auth: AuthView;
@@ -166,6 +170,7 @@ export interface MonView {
   status: string;
   fainted: boolean;
   boosts: string;
+  volatiles: string;
   lastMove: string;
 }
 
@@ -182,9 +187,23 @@ export interface BattleLogEntryView {
 }
 
 export interface SideTimerView {
-  /** Remaining time bank in seconds; null when the simulator did not report one. */
+  /** Remaining time bank in seconds as of snapshot generation; null when the simulator did not report one. */
   seconds: number | null;
   turnSeconds: number | null;
+  /** True while the player is deciding; clients may count down from the snapshot time. */
+  running: boolean;
+}
+
+export interface DecisionView {
+  game: number;
+  turn: number;
+  pid: Pid;
+  phase: string;
+  selection: string[];
+  rationale: string;
+  automatic: boolean;
+  fallback: boolean;
+  substituted: boolean;
 }
 
 export interface BattleSnapshot {
@@ -194,11 +213,13 @@ export interface BattleSnapshot {
   sides: Record<Pid, SideView>;
   timers: Record<Pid, SideTimerView | null>;
   log: BattleLogEntryView[];
+  decisions: DecisionView[];
 }
 
 export interface BattleMessage {
   index: number;
   game: number;
+  revision: number;
   snapshot: BattleSnapshot | null;
 }
 

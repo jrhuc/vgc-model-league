@@ -51,7 +51,7 @@ export function Dropdown({
   placeholder = 'Select an option',
   searchable = false,
   onSubmit,
-  emptyText = 'No options match.',
+  emptyText = 'No matching options.',
   disabled = false,
 }: DropdownProps) {
   const [open, setOpen] = useState(false);
@@ -137,6 +137,7 @@ export function Dropdown({
           id={id}
           role="combobox"
           aria-autocomplete="list"
+          aria-haspopup="listbox"
           aria-expanded={open && !unavailable}
           aria-controls={listId}
           aria-activedescendant={open && shown.length ? `${id}-option-${clamped}` : undefined}
@@ -162,6 +163,7 @@ export function Dropdown({
           type="button"
           class="dropdown-trigger"
           role="combobox"
+          aria-haspopup="listbox"
           aria-expanded={open && !unavailable}
           aria-controls={listId}
           aria-activedescendant={open && shown.length ? `${id}-option-${clamped}` : undefined}
@@ -201,7 +203,7 @@ export function Dropdown({
             <div class="dropdown-empty">{emptyText}</div>
           )}
           {matches.length > shown.length && (
-            <div class="dropdown-empty">+ {matches.length - shown.length} more — keep typing to narrow</div>
+            <div class="dropdown-empty">+ {matches.length - shown.length} more. Keep typing to narrow.</div>
           )}
         </div>
       )}

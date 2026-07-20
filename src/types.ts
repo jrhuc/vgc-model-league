@@ -58,6 +58,8 @@ export interface ToolCall {
   id: string;
   name: string;
   arguments: JsonObject;
+  /** Provider metadata that must be replayed with the call (e.g. Gemini 3 thought signatures). */
+  providerMetadata?: JsonObject;
 }
 
 export interface Completion {

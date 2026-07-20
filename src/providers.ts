@@ -11,6 +11,7 @@ import {
   jsonSchema,
   type LanguageModel,
   type ModelMessage,
+  type ToolCallPart,
   type ToolSet,
   tool,
 } from 'ai';
@@ -40,9 +41,7 @@ export function validateModelExecution(
   if (!config.apiKeys) return;
   for (const model of models) {
     if (model !== 'random' && config.apiKeys[model] === undefined)
-      throw new Error(
-        `no API key was supplied for ${model}; key-carrying runs never fall back to server environment keys`,
-      );
+      throw new Error(`API key missing for ${model}; this run cannot use environment keys`);
   }
 }
 
@@ -240,6 +239,9 @@ function convertMessages(messages: ProviderMessage[]): ModelMessage[] {
             toolCallId: call.id,
             toolName: call.name,
             input: call.arguments,
+            ...(call.providerMetadata
+              ? { providerOptions: call.providerMetadata as NonNullable<ToolCallPart['providerOptions']> }
+              : {}),
           })),
         ],
       });
@@ -387,6 +389,7 @@ export class SdkProvider implements Provider {
             id: call.toolCallId,
             name: call.toolName,
             arguments: parseToolArguments(call.input),
+            ...(call.providerMetadata ? { providerMetadata: call.providerMetadata as JsonObject } : {}),
           })),
           ...(reasoningText ? { reasoning: reasoningText } : {}),
         };

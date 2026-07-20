@@ -121,8 +121,75 @@ test('OpenAI uses Responses API with reasoning and tools', async () => {
   assert.deepEqual(completion, {
     text: 'hello',
     usage: { input_tokens: 10, output_tokens: 5 },
-    toolCalls: [{ id: 'call_1', name: 'lookup_move', arguments: { name: 'Protect' } }],
+    toolCalls: [
+      {
+        id: 'call_1',
+        name: 'lookup_move',
+        arguments: { name: 'Protect' },
+        providerMetadata: { openai: { itemId: 'fc_1' } },
+      },
+    ],
   });
+});
+
+test('Gemini thought signatures round-trip through replayed tool calls', async () => {
+  let body: Record<string, unknown> = {};
+  const fetch = (async (_input, init) => {
+    body = JSON.parse(String(init?.body));
+    return jsonResponse({
+      candidates: [
+        {
+          content: {
+            role: 'model',
+            parts: [{ functionCall: { name: 'estimate_damage', args: { move: 'Surf' } }, thoughtSignature: 'sig-2' }],
+          },
+          finishReason: 'STOP',
+        },
+      ],
+      usageMetadata: { promptTokenCount: 12, candidatesTokenCount: 4, totalTokenCount: 16 },
+    });
+  }) as typeof globalThis.fetch;
+  const provider = makeProvider(parseSpec('google:gemini-3.1-flash-lite'), { apiKey: 'google-key', fetch });
+
+  const completion = await provider.complete(
+    'system',
+    [
+      { role: 'user', content: 'hello' },
+      {
+        role: 'assistant',
+        content: null,
+        toolCalls: [
+          {
+            id: 'call_1',
+            name: 'estimate_damage',
+            arguments: { move: 'Thunderbolt' },
+            providerMetadata: { google: { thoughtSignature: 'sig-1' } },
+          },
+        ],
+      },
+      toolResultMessage('call_1', '42%'),
+    ],
+    {
+      tools: [
+        {
+          name: 'estimate_damage',
+          description: 'Estimate damage',
+          parameters: {
+            type: 'object',
+            properties: { move: { type: 'string' } },
+            required: ['move'],
+            additionalProperties: false,
+          },
+        },
+      ],
+    },
+  );
+
+  const replayed = (body.contents as Array<{ parts: Array<Record<string, unknown>> }>)
+    .flatMap((content) => content.parts)
+    .find((part) => 'functionCall' in part);
+  assert.equal(replayed?.thoughtSignature, 'sig-1');
+  assert.deepEqual(completion.toolCalls[0]?.providerMetadata, { google: { thoughtSignature: 'sig-2' } });
 });
 
 test('compat provider uses chat completions', async () => {

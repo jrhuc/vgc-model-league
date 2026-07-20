@@ -4,6 +4,7 @@ import type {
   BattleLogEntryView,
   BattleMessage,
   BracketView,
+  DecisionView,
   DraftView,
   MonView,
   RunSnapshot,
@@ -13,9 +14,11 @@ import type {
 } from '../../api';
 import { api } from '../http';
 
+export type StoredBattle = BattleMessage & { receivedAt: number };
+
 interface ArenaProps {
   run: RunSnapshot | null;
-  battles: Record<number, BattleMessage>;
+  battles: Record<number, StoredBattle>;
   selected: number | null;
   onSelect: (index: number) => void;
   onGoFixtures: () => void;
@@ -120,7 +123,7 @@ function DraftPanel({ draft }: { draft: DraftView }) {
       )}
       {recent.length > 0 && (
         <div class="draft-feed">
-          <h3>Pick rationale</h3>
+          <h3>Recent picks</h3>
           {recent.map((pick) => (
             <div class="draft-feed-item" key={pick.pick}>
               <span class="draft-feed-head">
@@ -231,6 +234,7 @@ function Mon({ mon }: { mon: MonView }) {
   if (mon.fainted) details.push('Fainted');
   else if (mon.hp) details.push(`HP ${mon.hp}`);
   if (mon.boosts) details.push(mon.boosts);
+  if (mon.volatiles && !mon.fainted) details.push(mon.volatiles);
   if (mon.lastMove) details.push(mon.lastMove);
   return (
     <div class={`mon ${mon.slot ? 'active ' : ''}${mon.fainted ? 'fainted' : ''}`}>
@@ -249,14 +253,30 @@ function Mon({ mon }: { mon: MonView }) {
   );
 }
 
-function timerText(timer: SideTimerView | null | undefined): string {
-  if (!timer || timer.seconds === null) return '';
-  const clock = (total: number) => {
-    const clamped = Math.max(0, Math.floor(total));
-    return `${Math.floor(clamped / 60)}:${String(clamped % 60).padStart(2, '0')}`;
+function clockText(total: number): string {
+  const clamped = Math.max(0, Math.floor(total));
+  return `${Math.floor(clamped / 60)}:${String(clamped % 60).padStart(2, '0')}`;
+}
+
+function timerInfo(
+  timer: SideTimerView | null | undefined,
+  receivedAt: number,
+): { text: string; urgent: boolean; running: boolean } | null {
+  if (!timer || timer.seconds === null) return null;
+  const drained = timer.running ? Math.max(0, (Date.now() - receivedAt) / 1000) : 0;
+  const seconds = Math.max(0, timer.seconds - drained);
+  const turnSeconds = timer.turnSeconds === null ? null : Math.max(0, timer.turnSeconds - drained);
+  const move = turnSeconds === null ? '' : `Move ${clockText(turnSeconds)} · `;
+  return {
+    text: `${move}Bank ${clockText(seconds)}`,
+    urgent: timer.running && ((turnSeconds !== null && turnSeconds <= 20) || seconds <= 60),
+    running: timer.running,
   };
-  const move = timer.turnSeconds === null ? '' : ` · move ${clock(timer.turnSeconds)}`;
-  return `Bank ${clock(timer.seconds)}${move}`;
+}
+
+function monRank(mon: MonView): number {
+  if (mon.slot) return mon.slot.charCodeAt(0) - 65;
+  return mon.fainted ? 9 : 5;
 }
 
 function Side({
@@ -264,13 +284,16 @@ function Side({
   side,
   right,
   timer,
+  receivedAt,
 }: {
   pid: string;
   side: SideView;
   right: boolean;
   timer: SideTimerView | null | undefined;
+  receivedAt: number;
 }) {
-  const clock = timerText(timer);
+  const clock = timerInfo(timer, receivedAt);
+  const mons = [...side.mons].sort((a, b) => monRank(a) - monRank(b));
   return (
     <div class={`side ${right ? 'right' : ''}`}>
       <div class="side-name">
@@ -278,10 +301,20 @@ function Side({
         <span>
           {pid.toUpperCase()} · {side.conditions.length ? side.conditions.join(' · ') : 'No side conditions'}
         </span>
-        {clock && <span class="side-timer">⏱ {clock}</span>}
+        {clock && (
+          <span class={`side-timer ${clock.urgent ? 'urgent' : ''}`} aria-live="off">
+            {clock.running && (
+              <>
+                <span class="thinking-dot" aria-hidden="true" />
+                <span class="visually-hidden">Thinking. </span>
+              </>
+            )}
+            {clock.text}
+          </span>
+        )}
       </div>
-      {side.mons.length ? (
-        side.mons.map((mon, index) => <Mon key={`${mon.species}-${index}`} mon={mon} />)
+      {mons.length ? (
+        mons.map((mon, index) => <Mon key={`${mon.slot || 'x'}-${mon.species}-${index}`} mon={mon} />)
       ) : (
         <div class="mon">
           <span class="mon-data">Roster not revealed</span>
@@ -291,40 +324,167 @@ function Side({
   );
 }
 
-function TurnLog({ log, game }: { log: BattleLogEntryView[]; game: number }) {
+function usePinnedScroll(dependency: number, game: number) {
   const scroller = useRef<HTMLDivElement>(null);
   const pinned = useRef(true);
   useEffect(() => {
+    pinned.current = true;
+  }, [game]);
+  useEffect(() => {
     const element = scroller.current;
     if (element && pinned.current) element.scrollTop = element.scrollHeight;
-  }, [log.length, game]);
+  }, [dependency, game]);
+  const onScroll = (event: { currentTarget: HTMLDivElement }) => {
+    const element = event.currentTarget;
+    pinned.current = element.scrollHeight - element.scrollTop - element.clientHeight < 40;
+  };
+  return { scroller, onScroll };
+}
+
+function decisionLabel(decision: DecisionView): string {
+  if (decision.phase === 'team_preview') return `G${decision.game} · Preview`;
+  if (decision.phase === 'forced_switch') return `T${decision.turn} · Switch`;
+  return `T${decision.turn}`;
+}
+
+function DecisionFeed({
+  decisions,
+  players,
+  game,
+}: {
+  decisions: DecisionView[];
+  players: Record<string, string> | undefined;
+  game: number;
+}) {
+  const { scroller, onScroll } = usePinnedScroll(decisions.length, game);
+  return (
+    <div
+      class="turn-log-scroll"
+      ref={scroller}
+      onScroll={onScroll}
+      role="tabpanel"
+      id="arena-decisions-panel"
+      aria-labelledby="arena-decisions-tab"
+    >
+      {decisions.length === 0 && <div class="log-line detail">No decisions yet.</div>}
+      {decisions.map((decision, index) => (
+        <div class={`decision-entry ${decision.pid}`} key={index}>
+          <div class="decision-head">
+            <span class="decision-turn">{decisionLabel(decision)}</span>
+            <span class="decision-player">{players?.[decision.pid] ?? decision.pid}</span>
+            {decision.fallback && <span class="decision-flag">fallback</span>}
+            {decision.substituted && <span class="decision-flag">substituted</span>}
+            {decision.automatic && <span class="decision-flag auto">forced</span>}
+          </div>
+          <div class="decision-selection">{decision.selection.join(' · ')}</div>
+          {!decision.automatic && decision.rationale && <div class="decision-rationale">{decision.rationale}</div>}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function TurnLog({
+  log,
+  decisions,
+  players,
+  game,
+}: {
+  log: BattleLogEntryView[];
+  decisions: DecisionView[];
+  players: Record<string, string> | undefined;
+  game: number;
+}) {
+  const [tab, setTab] = useState<'log' | 'decisions'>('log');
+  const logTabRef = useRef<HTMLButtonElement>(null);
+  const decisionsTabRef = useRef<HTMLButtonElement>(null);
+  const { scroller, onScroll } = usePinnedScroll(log.length, game);
+
+  const focusTab = (next: 'log' | 'decisions') => {
+    setTab(next);
+    const target = next === 'log' ? logTabRef.current : decisionsTabRef.current;
+    target?.focus();
+  };
+
+  const onTabKeyDown = (event: KeyboardEvent) => {
+    if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+      event.preventDefault();
+      focusTab(tab === 'log' ? 'decisions' : 'log');
+      return;
+    }
+    if (event.key === 'Home') {
+      event.preventDefault();
+      focusTab('log');
+      return;
+    }
+    if (event.key === 'End') {
+      event.preventDefault();
+      focusTab('decisions');
+    }
+  };
+
   return (
     <div class="turn-log">
       <div class="turn-log-head">
-        <h3>Turn log</h3>
+        <div class="log-tabs" role="tablist" aria-label="Battle detail">
+          <button
+            type="button"
+            role="tab"
+            id="arena-log-tab"
+            ref={logTabRef}
+            aria-controls="arena-log-panel"
+            aria-selected={tab === 'log'}
+            tabIndex={tab === 'log' ? 0 : -1}
+            class={`log-tab ${tab === 'log' ? 'active' : ''}`}
+            onClick={() => focusTab('log')}
+            onKeyDown={onTabKeyDown}
+          >
+            Turn log
+          </button>
+          <button
+            type="button"
+            role="tab"
+            id="arena-decisions-tab"
+            ref={decisionsTabRef}
+            aria-controls="arena-decisions-panel"
+            aria-selected={tab === 'decisions'}
+            tabIndex={tab === 'decisions' ? 0 : -1}
+            class={`log-tab ${tab === 'decisions' ? 'active' : ''}`}
+            onClick={() => focusTab('decisions')}
+            onKeyDown={onTabKeyDown}
+          >
+            Decisions{decisions.length ? ` (${decisions.length})` : ''}
+          </button>
+        </div>
         <span>Game {game}</span>
       </div>
-      <div
-        class="turn-log-scroll"
-        ref={scroller}
-        onScroll={(event) => {
-          const element = event.currentTarget;
-          pinned.current = element.scrollHeight - element.scrollTop - element.clientHeight < 40;
-        }}
-      >
-        {log.length === 0 && <div class="log-line detail">Waiting for the first events…</div>}
-        {log.map((entry, index) =>
-          entry.kind === 'turn' ? (
-            <div class="log-turn" key={index}>
-              <span>{entry.text}</span>
-            </div>
-          ) : (
-            <div class={`log-line ${entry.kind}`} key={index}>
-              {entry.text}
-            </div>
-          ),
-        )}
-      </div>
+      {tab === 'decisions' ? (
+        <div role="tabpanel" id="arena-decisions-panel" aria-labelledby="arena-decisions-tab">
+          <DecisionFeed decisions={decisions} players={players} game={game} />
+        </div>
+      ) : (
+        <div
+          class="turn-log-scroll"
+          ref={scroller}
+          onScroll={onScroll}
+          role="tabpanel"
+          id="arena-log-panel"
+          aria-labelledby="arena-log-tab"
+        >
+          {log.length === 0 && <div class="log-line detail">Waiting for the first events.</div>}
+          {log.map((entry, index) =>
+            entry.kind === 'turn' ? (
+              <div class="log-turn" key={index}>
+                <span>{entry.text}</span>
+              </div>
+            ) : (
+              <div class={`log-line ${entry.kind}`} key={index}>
+                {entry.text}
+              </div>
+            ),
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -405,7 +565,7 @@ export function ArenaView({ run, battles, selected, onSelect, onGoFixtures }: Ar
             <span class={`status-pill ${run.state}`}>{run.state}</span>
           </div>
           <p class="kicker" style="margin:10px 0 0">
-            {run.pool || (run.board ? `board ${run.board}` : 'pasted teams')} · {run.models.join(' vs ')}
+            {run.pool || (run.board ? `board ${run.board}` : 'assigned teams')} · {run.models.join(' vs ')}
           </p>
           <div class="progress-rail">
             <div class="progress-fill" style={`width:${total ? Math.round((done * 100) / total) : 0}%`} />
@@ -428,7 +588,9 @@ export function ArenaView({ run, battles, selected, onSelect, onGoFixtures }: Ar
         </div>
       )}
       {run.draft && <DraftPanel draft={run.draft} />}
-      {run.bracket && <Bracket bracket={run.bracket} rows={run.rows} selected={effective} onSelect={onSelect} />}
+      {run.bracket && run.bracket.entrants.length > 2 && (
+        <Bracket bracket={run.bracket} rows={run.rows} selected={effective} onSelect={onSelect} />
+      )}
       <div class="arena-grid">
         <section class="panel series-board">
           <div class="section-head">
@@ -442,7 +604,7 @@ export function ArenaView({ run, battles, selected, onSelect, onGoFixtures }: Ar
           <div class="board-list">
             {run.rows.length === 0 ? (
               <div class="empty-contenders" style="margin:18px">
-                Planning series assignments…
+                Assigning series.
               </div>
             ) : (
               run.rows.map((item, index) => (
@@ -450,6 +612,7 @@ export function ArenaView({ run, battles, selected, onSelect, onGoFixtures }: Ar
                   type="button"
                   key={index}
                   class={`board-row ${effective === index ? 'selected' : ''}`}
+                  aria-pressed={effective === index}
                   onClick={() => onSelect(index)}
                 >
                   <span class="board-index">{String(index + 1).padStart(2, '0')}</span>
@@ -460,7 +623,7 @@ export function ArenaView({ run, battles, selected, onSelect, onGoFixtures }: Ar
                     <span class="board-detail">{rowState(item)}</span>
                   </span>
                   <span class="board-score">
-                    {item.score.p1}—{item.score.p2}
+                    {item.score.p1}-{item.score.p2}
                     <small>{item.status === 'done' ? `${item.turns} turns` : item.status}</small>
                   </span>
                 </button>
@@ -468,12 +631,12 @@ export function ArenaView({ run, battles, selected, onSelect, onGoFixtures }: Ar
             )}
           </div>
         </section>
-        <section class="panel battlefield" aria-live="polite">
+        <section class="panel battlefield">
           {!row ? (
             <div class="field-surface">
-              <div class="field-empty">
+              <div class="field-empty" aria-live="polite">
                 <h2>Waiting for assignments</h2>
-                <p>The scheduler is planning the series.</p>
+                <p>The scheduler is building the series list.</p>
               </div>
             </div>
           ) : !entry?.snapshot ? (
@@ -483,8 +646,8 @@ export function ArenaView({ run, battles, selected, onSelect, onGoFixtures }: Ar
                 <span class="turn-badge">{rowState(row)}</span>
               </div>
               <div class="field-surface">
-                <div class="field-empty">
-                  <h2>{row.status === 'queued' ? 'Queued' : 'Waiting for battle output'}</h2>
+                <div class="field-empty" aria-live="polite">
+                  <h2>{row.status === 'queued' ? 'Queued' : 'Loading battle'}</h2>
                   <p>
                     {row.players.p1} vs {row.players.p2}
                   </p>
@@ -493,24 +656,56 @@ export function ArenaView({ run, battles, selected, onSelect, onGoFixtures }: Ar
             </>
           ) : (
             <>
+              <div class="visually-hidden" role="status" aria-live="polite" aria-atomic="true">
+                Game {entry.game}. {entry.snapshot.turn ? `Turn ${entry.snapshot.turn}.` : 'Team preview.'} Score{' '}
+                {row.score.p1} to {row.score.p2}.
+                {entry.snapshot.log.length > 0
+                  ? ` ${entry.snapshot.log[entry.snapshot.log.length - 1]?.text ?? ''}`
+                  : ''}
+              </div>
               <div class="field-meta">
                 <span>Game {entry.game} · Bo3</span>
                 <span class="series-score">
-                  {row.score.p1}–{row.score.p2}
+                  {row.score.p1}-{row.score.p2}
                 </span>
                 <span class="turn-badge">{entry.snapshot.turn ? `Turn ${entry.snapshot.turn}` : 'Team preview'}</span>
-                <span>{entry.snapshot.weather === 'none' ? 'Clear skies' : entry.snapshot.weather}</span>
-                <span>{entry.snapshot.fields.join(' · ') || 'Open field'}</span>
+                <span class={entry.snapshot.weather === 'none' ? '' : 'condition-active'}>
+                  {entry.snapshot.weather === 'none' ? 'Clear skies' : entry.snapshot.weather}
+                </span>
+                <span class={entry.snapshot.fields.length ? 'condition-active' : ''}>
+                  {entry.snapshot.fields.join(' · ') || 'Open field'}
+                </span>
               </div>
               <div class="field-surface">
-                <Side pid="p1" side={entry.snapshot.sides.p1} right={false} timer={entry.snapshot.timers?.p1} />
+                <Side
+                  pid="p1"
+                  side={entry.snapshot.sides.p1}
+                  right={false}
+                  timer={entry.snapshot.timers?.p1}
+                  receivedAt={entry.receivedAt}
+                />
                 <div class="center-mark">VS</div>
-                <Side pid="p2" side={entry.snapshot.sides.p2} right={true} timer={entry.snapshot.timers?.p2} />
+                <Side
+                  pid="p2"
+                  side={entry.snapshot.sides.p2}
+                  right={true}
+                  timer={entry.snapshot.timers?.p2}
+                  receivedAt={entry.receivedAt}
+                />
               </div>
-              <TurnLog log={entry.snapshot.log ?? []} game={entry.game} />
+              <TurnLog
+                log={entry.snapshot.log ?? []}
+                decisions={entry.snapshot.decisions ?? []}
+                players={row.players}
+                game={entry.game}
+              />
             </>
           )}
-          {run.notices.length > 0 && <div class="notice-strip">{run.notices.join('\n')}</div>}
+          {run.notices.length > 0 && (
+            <div class="notice-strip" aria-live="polite">
+              {run.notices.join('\n')}
+            </div>
+          )}
         </section>
       </div>
     </div>

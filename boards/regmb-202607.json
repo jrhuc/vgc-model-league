@@ -112,10 +112,10 @@
     {
       "id": "blastoise-mega",
       "name": "Blastoise-Mega",
-      "species": "Blastoise-Mega",
+      "species": "Blastoise",
       "tier": "B+",
       "cost": 11,
-      "packed": "Blastoise-Mega||Blastoisinite|RainDish|FakeOut,WaterSpout,AuraSphere,DarkPulse|Quiet|32,,,32,2,||||50|"
+      "packed": "Blastoise||Blastoisinite|RainDish|FakeOut,WaterSpout,AuraSphere,DarkPulse|Quiet|32,,,32,2,||||50|"
     },
     {
       "id": "grimmsnarl",
@@ -264,10 +264,10 @@
     {
       "id": "camerupt-mega",
       "name": "Camerupt-Mega",
-      "species": "Camerupt-Mega",
+      "species": "Camerupt",
       "tier": "C-",
       "cost": 3,
-      "packed": "Camerupt-Mega||Cameruptite|SolidRock|HeatWave,EarthPower,Protect,AncientPower|Quiet|32,,,32,2,||||50|"
+      "packed": "Camerupt||Cameruptite|SolidRock|HeatWave,EarthPower,Protect,AncientPower|Quiet|32,,,32,2,||||50|"
     },
     {
       "id": "decidueye-hisui",

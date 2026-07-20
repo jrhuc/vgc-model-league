@@ -66,6 +66,7 @@ test('GitHub OAuth uses state and PKCE, then creates a hashed durable session', 
   assert.equal(auth.canControlExperiment(result.session.user, 'run-1'), true);
   auth.stopExperiment(result.session.user, 'run-1');
   auth.finishExperiment('run-1', 'stopped');
+  auth.finishExperiment('run-1', 'failed');
   auth.recordPool(result.session.user, 'pool-1', 'gen9championsvgc2026regmbbo3');
   auth.logout(result.sessionToken, result.session.csrfToken);
   assert.equal(auth.session(result.sessionToken), undefined);
@@ -201,4 +202,19 @@ test('service restart records interrupted experiments as failed', async (t) => {
     ['experiment.start', 'experiment.failed'],
   );
   inspection.close();
+});
+
+test('pending OAuth flows are bounded', () => {
+  const auth = new AuthService({
+    dbPath: ':memory:',
+    clientId: 'client-id',
+    clientSecret: 'client-secret',
+    publicOrigin: 'https://league.example',
+  });
+  for (let index = 0; index < 1024; index += 1) auth.beginLogin();
+  assert.throws(
+    () => auth.beginLogin(),
+    (error: unknown) => error instanceof AuthError && error.status === 429,
+  );
+  auth.close();
 });

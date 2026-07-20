@@ -15,8 +15,8 @@ import { mapLimit } from './rotation.js';
 import { playRecordedSeries } from './series.js';
 import { showdownCommit } from './showdown.js';
 import type { Team } from './teams.js';
-import { validateTeam } from './teams.js';
-import { higherSeed, type TournamentEvent } from './tournament.js';
+import { normalizePackedTeam, validateTeam } from './teams.js';
+import type { TournamentEvent } from './tournament.js';
 import type { ContributorAttribution, Pid } from './types.js';
 
 export const DRAFT_PROTOCOL_VERSION = 1;
@@ -56,7 +56,7 @@ export async function runDraftLeague(
   fs.mkdirSync(runDir, { recursive: true });
   const recordsPath = options.recordsPath ?? RESULTS_PATH;
   const psDir = options.psDir ?? defaultPsDir();
-  const board = loadBoard(options.board ?? 'regmb-202607', options.boardsDir ?? BOARDS_DIR);
+  const board = loadBoard(options.board ?? 'regmb-202607', options.boardsDir ?? BOARDS_DIR, psDir);
   if (models.length * board.picks + board.picks > board.mons.length) {
     throw new Error(
       `board ${JSON.stringify(board.id)} has ${board.mons.length} sets, too few for ${models.length} rosters of ${board.picks} with slack`,
@@ -67,7 +67,6 @@ export async function runDraftLeague(
   const scaffold = scaffoldRevision();
   const draftScaffold = draftScaffoldRevision();
 
-  // Draft order doubles as entrant identity everywhere downstream.
   const entrants = shuffle(models, random);
   const pairs: Array<[number, number]> = [];
   for (let first = 0; first < entrants.length; first += 1) {
@@ -75,8 +74,8 @@ export async function runDraftLeague(
       pairs.push(random() < 0.5 ? [first, second] : [second, first]);
     }
   }
-  const playoffRounds: number = entrants.length >= 4 ? 2 : 1;
-  const playoffSeriesCount = entrants.length >= 4 ? 3 : 1;
+  const playoffRounds = entrants.length >= 4 ? 2 : 1;
+  const playoffSeriesCount = playoffRounds === 2 ? 3 : 1;
   const plans: SeriesPlanned[] = [];
   for (const pair of pairs) {
     plans.push({ index: plans.length, stage: 'roundrobin', round: 0, entrants: pair, ...seriesEntropy(random) });
@@ -85,7 +84,7 @@ export async function runDraftLeague(
     plans.push({
       index: plans.length,
       stage: 'playoff',
-      round: playoffRounds === 2 && series < 2 ? 1 : 2,
+      round: playoffRounds === 1 || series < 2 ? 1 : 2,
       entrants: null,
       ...seriesEntropy(random),
     });
@@ -144,7 +143,7 @@ export async function runDraftLeague(
   budgets = outcome.budgets;
 
   const teams: Team[] = rosters.map((roster, index) => {
-    const packed = roster.map((mon) => mon.packed).join(']');
+    const packed = normalizePackedTeam(roster.map((mon) => mon.packed).join(']'), psDir);
     const problems = validateTeamProblems(packed, board.format, psDir);
     if (problems) throw new Error(`drafted roster for ${entrants[index]} is not legal: ${problems}`);
     return { id: `roster-${index + 1}`, packed };
@@ -193,6 +192,7 @@ export async function runDraftLeague(
   options.onEvent?.({ type: 'draft', draft: draftView(true) });
 
   const results: SeriesRecord[] = [];
+  let seeding: number[] = [];
   const playSeries = async (plan: SeriesPlanned, signal: AbortSignal): Promise<SeriesRecord> => {
     const [a, b] = plan.entrants!;
     const players: Record<Pid, string> = { p1: entrants[a]!, p2: entrants[b]! };
@@ -207,6 +207,7 @@ export async function runDraftLeague(
       psDir,
       runDir,
       signal,
+      ...(plan.stage === 'playoff' ? { requireWinner: true } : {}),
       ...(options.reasoning === undefined ? {} : { reasoning: options.reasoning }),
       ...(options.apiKeys === undefined ? {} : { apiKeys: options.apiKeys }),
       ...(options.reasoningByModel === undefined ? {} : { reasoningByModel: options.reasoningByModel }),
@@ -214,7 +215,11 @@ export async function runDraftLeague(
         options.onEvent?.({ type: 'game-update', index: plan.index, game, lines, publicLines }),
       onGameEnd: (game, winner, turns, score) =>
         options.onEvent?.({ type: 'game-end', index: plan.index, game, winner, turns, score }),
+      onDecision: (pid, row) => options.onEvent?.({ type: 'decision', index: plan.index, pid, row }),
     });
+    if (plan.stage === 'playoff' && !winnerSide) {
+      throw new Error(`draft playoff series ${plan.index + 1} ended without a winner`);
+    }
     const row: SeriesRecord = {
       schema_version: 1,
       mode: 'draft',
@@ -223,7 +228,12 @@ export async function runDraftLeague(
       draft_scaffold: draftScaffold,
       series_index: plan.index,
       stage: plan.stage,
-      ...(plan.stage === 'playoff' ? { round: plan.round } : {}),
+      ...(plan.stage === 'playoff'
+        ? {
+            round: plan.round,
+            advanced: entrants[winnerSide === 'p1' ? a : b]!,
+          }
+        : {}),
       board: board.id,
       ...(options.contributor === undefined ? {} : { contributor: options.contributor }),
       run_seed: seed,
@@ -255,7 +265,7 @@ export async function runDraftLeague(
   );
   if (options.signal?.aborted) return results;
 
-  const seeding = rankedTable(table).map((row) => row.entrant);
+  seeding = rankedTable(table).map((row) => row.entrant);
   phase = 'playoffs';
   options.onEvent?.({ type: 'draft', draft: draftView(true) });
 
@@ -279,10 +289,9 @@ export async function runDraftLeague(
   };
   options.onEvent?.({ type: 'bracket', bracket });
 
-  const resolve = (matchIndex: number, roundIndex: number, winnerSide: Pid | undefined): number => {
+  const resolve = (matchIndex: number, roundIndex: number, winnerSide: Pid): number => {
     const match = bracket.rounds[roundIndex]![matchIndex]!;
-    const slots = [match.slots[0]!, match.slots[1]!] as const;
-    const winner = winnerSide === 'p1' ? slots[0] : winnerSide === 'p2' ? slots[1] : higherSeed(slots, seeding);
+    const winner = match.slots[winnerSide === 'p1' ? 0 : 1]!;
     match.winner = winner;
     const next = bracket.rounds[roundIndex + 1]?.[matchIndex >> 1];
     if (next) next.slots[matchIndex % 2] = winner;
@@ -300,7 +309,7 @@ export async function runDraftLeague(
         const plan = playoffs[matchIndex]!;
         plan.entrants = bracket.rounds[0]![matchIndex]!.slots as [number, number];
         const row = await playSeries(plan, signal);
-        resolve(matchIndex, 0, (row.winner_side ?? undefined) as Pid | undefined);
+        resolve(matchIndex, 0, row.winner_side as Pid);
         return row;
       },
     );
@@ -313,7 +322,7 @@ export async function runDraftLeague(
   if (finalPlan.entrants[0] === null || finalPlan.entrants[1] === null) return results;
   const finalRow = await mapLimit([finalPlan], 1, options.signal, (plan, signal) => playSeries(plan, signal));
   if (finalRow[0]) {
-    resolve(0, finalRound, (finalRow[0].winner_side ?? undefined) as Pid | undefined);
+    resolve(0, finalRound, finalRow[0].winner_side as Pid);
     results.push(finalRow[0]);
     phase = 'done';
     options.onEvent?.({ type: 'draft', draft: draftView(true) });

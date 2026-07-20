@@ -29,9 +29,7 @@ export interface TournamentOptions extends ModelReasoningConfig {
   psDir?: string;
   apiKeys?: Readonly<Record<string, string>>;
   pool?: string;
-  /** Inline teams paired to models by index; replaces the pool as the team source. */
   teams?: Team[];
-  /** Showdown format for inline teams; ignored when a pool is used. */
   format?: string;
   onEvent?: (event: TournamentEvent) => void;
   onNotice?: (message: string) => void;
@@ -46,17 +44,9 @@ interface Entrant {
 
 export interface BracketMatch {
   round: number;
-  /** Null for byes, which play no series. */
   seriesIndex: number | null;
   slots: [number | null, number | null];
   winner: number | null;
-}
-
-export function higherSeed(slots: readonly [number, number], seeding: readonly number[]): number {
-  const firstRank = seeding.indexOf(slots[0]);
-  const secondRank = seeding.indexOf(slots[1]);
-  if (firstRank < 0 || secondRank < 0) throw new Error('bracket entrant is missing from the seeding');
-  return firstRank < secondRank ? slots[0] : slots[1];
 }
 
 /**
@@ -233,7 +223,6 @@ export async function runTournament(
         ...(options.apiKeys === undefined ? {} : { apiKeys: options.apiKeys }),
         ...(options.reasoningByModel === undefined ? {} : { reasoningByModel: options.reasoningByModel }),
         ...(options.onEvent === undefined ? {} : { onEvent: options.onEvent }),
-        ...(options.onNotice === undefined ? {} : { onNotice: options.onNotice }),
         ...(options.contributor === undefined ? {} : { contributor: options.contributor }),
       });
       appendRow(recordsPath, row);
@@ -273,6 +262,7 @@ export async function runTournament(
   while (active.size) await Promise.race(active);
   options.signal?.removeEventListener('abort', forwardAbort);
   if (failure && !options.signal?.aborted) throw failure.error;
+  results.sort((a, b) => a.series_index! - b.series_index!);
   return results;
 }
 
@@ -289,7 +279,6 @@ async function playMatch(
     seriesSeeds: { gameSeeds: Array<[number, number, number, number]>; engineSeeds: Record<Pid, number> };
     apiKeys?: Readonly<Record<string, string>>;
     onEvent?: (event: TournamentEvent) => void;
-    onNotice?: (message: string) => void;
     signal?: AbortSignal;
     contributor?: ContributorAttribution;
   } & ModelReasoningConfig,
@@ -308,6 +297,7 @@ async function playMatch(
     format: context.format,
     psDir: context.psDir,
     runDir: context.runDir,
+    requireWinner: true,
     ...(context.reasoningByModel === undefined ? {} : { reasoningByModel: context.reasoningByModel }),
     ...(context.reasoning === undefined ? {} : { reasoning: context.reasoning }),
     ...(context.apiKeys === undefined ? {} : { apiKeys: context.apiKeys }),
@@ -316,19 +306,11 @@ async function playMatch(
       context.onEvent?.({ type: 'game-update', index, game, lines, publicLines }),
     onGameEnd: (game, winner, turns, score) =>
       context.onEvent?.({ type: 'game-end', index, game, winner, turns, score }),
+    onDecision: (pid, row) => context.onEvent?.({ type: 'decision', index, pid, row }),
   });
 
-  // A drawn series cannot leave the bracket unresolved: the higher seed advances,
-  // while the record keeps winner null so results stay honest.
-  match.winner = winnerSide
-    ? match.slots[winnerSide === 'p1' ? 0 : 1]!
-    : higherSeed(
-        [match.slots[0]!, match.slots[1]!],
-        entrants.map((_, entrant) => entrant),
-      );
-  if (!winnerSide) {
-    context.onNotice?.(`series ${index + 1} was drawn; ${entrants[match.winner]!.model} advances as the higher seed`);
-  }
+  if (!winnerSide) throw new Error(`single-elimination series ${index + 1} ended without a winner`);
+  match.winner = match.slots[winnerSide === 'p1' ? 0 : 1]!;
 
   return {
     schema_version: 1,

@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import type { Dex } from 'pokemon-showdown';
 import { defaultPsDir } from './paths.js';
 import { loadShowdown, showdownCommit } from './showdown.js';
@@ -42,7 +43,7 @@ export const DEX_TOOLS: ToolDefinition[] = [
   ]),
   tool(
     'lookup_matchup',
-    'Look up type-chart effectiveness for an attacking move or type into a defending species. Returns immunity/SE/NVE multipliers only—not damage.',
+    'Look up type-chart effectiveness for an attacking move or type into a defending species. Returns immunity/SE/NVE multipliers only, not damage.',
     {
       attacker_type: { type: 'string', description: 'Attacking type, or omit when move is provided.' },
       move: { type: 'string', description: 'Move name; its type is used when provided.' },
@@ -73,7 +74,7 @@ export const DEX_TOOLS: ToolDefinition[] = [
       attacker_max_hp: { type: 'number' },
       defender_hp: {
         type: 'number',
-        description: 'Exact current defender HP in raw points—own Pokémon only, whose real HP you know.',
+        description: 'Exact current defender HP in raw points for your own Pokémon only.',
       },
       defender_max_hp: { type: 'number', description: 'Exact defender max HP in raw points (own side only).' },
       defender_hp_percent: {
@@ -124,6 +125,10 @@ export interface MatchupMon {
 
 function id(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, '');
+}
+
+function canonicalWeather(value: string): string {
+  return id(value.replace(/\s*\(\d+\s+turns?\s+left\)\s*$/i, ''));
 }
 
 function uniqueNames(values: Array<string | null | undefined>): string[] {
@@ -187,6 +192,25 @@ function asFinite(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
 }
 
+const WEATHER_BALL_TYPE: Record<string, string> = {
+  sun: 'Fire',
+  sunnyday: 'Fire',
+  desolateland: 'Fire',
+  rain: 'Water',
+  raindance: 'Water',
+  primordialsea: 'Water',
+  sand: 'Rock',
+  sandstorm: 'Rock',
+  snow: 'Ice',
+  snowscape: 'Ice',
+  hail: 'Ice',
+};
+
+function weatherBallOverride(moveId: string, weather: string): { type: string; power: number } | null {
+  const type = WEATHER_BALL_TYPE[weather];
+  return moveId === 'weatherball' && type ? { type, power: 100 } : null;
+}
+
 const TYPE_BOOST_ITEMS: Record<string, string> = {
   charcoal: 'Fire',
   mysticwater: 'Water',
@@ -207,6 +231,21 @@ const TYPE_BOOST_ITEMS: Record<string, string> = {
   fairyfeather: 'Fairy',
 };
 
+const TARGET_TAGS: Record<string, string> = {
+  allAdjacentFoes: 'spread',
+  allAdjacent: 'spread+ally',
+  self: 'self',
+  adjacentAlly: 'ally',
+  adjacentAllyOrSelf: 'ally/self',
+  allySide: 'ally-side',
+  allyTeam: 'ally-side',
+  allies: 'ally-side',
+  foeSide: 'foe-side',
+  all: 'field',
+  any: 'any-range',
+  randomNormal: 'random-foe',
+};
+
 export class ShowdownReference {
   private readonly dex;
 
@@ -219,6 +258,38 @@ export class ShowdownReference {
 
   get revision(): string {
     return showdownCommit(this.psDir).slice(0, 12);
+  }
+
+  static renderRevision(): string {
+    const prototype = ShowdownReference.prototype as unknown as Record<string, unknown>;
+    const surfaces = [
+      Object.getOwnPropertyDescriptor(ShowdownReference.prototype, 'revision')?.get,
+      ShowdownReference.prototype.renderCompact,
+      ShowdownReference.prototype.renderActiveMatchups,
+      ShowdownReference.prototype.render,
+      ShowdownReference.prototype.lookup,
+      prototype.lookupSpecies,
+      prototype.lookupOne,
+      prototype.lookupMatchup,
+      prototype.estimateDamage,
+      id,
+      canonicalWeather,
+      uniqueNames,
+      cleanDescription,
+      baseStats,
+      statRange,
+      hpRange,
+      effectivenessLabel,
+      typeModifier,
+      asFinite,
+      weatherBallOverride,
+      JSON.stringify(WEATHER_BALL_TYPE),
+      JSON.stringify(TYPE_BOOST_ITEMS),
+    ];
+    return createHash('sha256')
+      .update(surfaces.map((surface) => String(surface)).join('\n'))
+      .digest('hex')
+      .slice(0, 12);
   }
 
   /** Compact always-on context: typing, speed band, move type/BP only. */
@@ -239,37 +310,56 @@ export class ShowdownReference {
         .flatMap((moveName) => {
           const move = this.dex.moves.get(moveName);
           if (!move.exists) return [];
-          const power = move.basePower ? String(move.basePower) : '—';
-          return [`${move.name} ${move.type}/${move.category}/${power}`];
+          const power = move.basePower ? String(move.basePower) : 'no power';
+          const tag = move.target === 'normal' ? '' : `/${TARGET_TAGS[move.target] ?? move.target}`;
+          return [`${move.name} ${move.type}/${move.category}/${power}${tag}`];
         })
         .slice(0, 6);
       const active = mon.active ? 'active; ' : '';
+      const megaBits: string[] = [];
+      const item = mon.item ? this.dex.items.get(mon.item) : undefined;
+      if (item?.exists && item.megaStone) {
+        for (const formeName of species.otherFormes ?? []) {
+          const mega = this.dex.species.get(formeName);
+          if (!mega.exists || !/^Mega(?:-|$)/.test(mega.forme)) continue;
+          const target = typeof item.megaStone === 'string' ? item.megaStone : item.megaStone[species.name];
+          if (id(target ?? '') !== id(mega.name)) continue;
+          const [megaLow, megaHigh] = statRange(mega.baseStats.spe, knownNature, 'spe');
+          megaBits.push(
+            `if Mega Evolved -> ${mega.name}: ${mega.types.join('/')}, ability ${uniqueNames(Object.values(mega.abilities)).join('/')}, ${baseStats(mega.baseStats)}, Spe ${megaLow}-${megaHigh}`,
+          );
+        }
+      }
       lines.push(
         `- ${species.name}: ${species.types.join('/')}; ${active}${speed}${mon.item ? `; item ${mon.item}` : ''}${
-          moveBits.length ? `; moves ${moveBits.join(', ')}` : ''
-        }`,
+          megaBits.length ? ` (${megaBits.join('; ')})` : ''
+        }${moveBits.length ? `; moves ${moveBits.join(', ')}` : ''}`,
       );
     }
     return lines.length ? [`Compact Showdown reference (${this.format}, commit ${this.revision}):`, ...lines] : [];
   }
 
-  renderActiveMatchups(attackers: MatchupMon[], defenders: MatchupMon[]): string[] {
+  renderActiveMatchups(attackers: MatchupMon[], defenders: MatchupMon[], weather = ''): string[] {
     const lines: string[] = [];
+    const weatherId = canonicalWeather(weather);
     for (const attacker of attackers) {
       const species = this.dex.species.get(attacker.species);
       if (!species.exists) continue;
       for (const moveName of uniqueNames(attacker.moves)) {
         const move = this.dex.moves.get(moveName);
         if (!move.exists || move.category === 'Status' || !move.type || move.type === '???') continue;
+        const override = weatherBallOverride(move.id, weatherId);
+        const moveType = override?.type ?? move.type;
+        const typeLabel = override ? `currently ${override.type} in ${weather}` : moveType;
         const bits: string[] = [];
         for (const defender of defenders) {
-          if (attacker.ally && defender.ally) continue;
+          if (attacker.ally !== undefined && defender.ally !== undefined && attacker.ally === defender.ally) continue;
           const target = this.dex.species.get(defender.species);
           if (!target.exists) continue;
-          const mod = typeModifier(this.dex, move.type, target.types);
+          const mod = typeModifier(this.dex, moveType, target.types);
           bits.push(`${target.name} ${effectivenessLabel(mod)}`);
         }
-        if (bits.length) lines.push(`- ${species.name} ${move.name} (${move.type}): ${bits.join('; ')}`);
+        if (bits.length) lines.push(`- ${species.name} ${move.name} (${typeLabel}): ${bits.join('; ')}`);
       }
     }
     return lines;
@@ -343,11 +433,16 @@ export class ShowdownReference {
       const details = [
         move.type,
         move.category,
-        move.basePower ? `BP ${move.basePower}` : 'BP —',
+        move.basePower ? `BP ${move.basePower}` : 'BP none',
         move.accuracy === true ? 'always hits' : `acc ${move.accuracy}%`,
         `priority ${move.priority >= 0 ? '+' : ''}${move.priority}`,
         `target ${move.target}`,
       ];
+      if (move.flags.powder)
+        details.push(
+          'powder move: no effect on Grass types, Overcoat, or Safety Goggles holders (including redirection)',
+        );
+      if (move.flags.sound) details.push('sound move: blocked by Soundproof, bypasses Substitute');
       const description = cleanDescription(move.desc || move.shortDesc);
       if (description) details.push(description);
       lines.push(`- Move ${move.name}: ${details.join('; ')}`);
@@ -478,22 +573,12 @@ export class ShowdownReference {
     }
 
     let power = move.basePower;
-    const weather = typeof args.weather === 'string' ? id(args.weather) : '';
+    const weather = typeof args.weather === 'string' ? canonicalWeather(args.weather) : '';
     let moveType = move.type;
-    if (id(move.name) === 'weatherball') {
-      if (weather.includes('sun')) {
-        moveType = 'Fire';
-        power = 100;
-      } else if (weather.includes('rain')) {
-        moveType = 'Water';
-        power = 100;
-      } else if (weather.includes('sand')) {
-        moveType = 'Rock';
-        power = 100;
-      } else if (weather.includes('snow') || weather.includes('hail')) {
-        moveType = 'Ice';
-        power = 100;
-      }
+    const override = weatherBallOverride(id(move.name), weather);
+    if (override) {
+      moveType = override.type;
+      power = override.power;
     }
     if (id(move.name) === 'eruption' || id(move.name) === 'waterspout') {
       const hp = asFinite(args.attacker_hp);
@@ -504,11 +589,17 @@ export class ShowdownReference {
     const typeMod = typeModifier(this.dex, moveType, defender.types);
     if (typeMod === 0) return `${attacker.name} ${move.name} into ${defender.name}: immune (0 damage).`;
 
+    if (weather === 'desolateland' && moveType === 'Water')
+      return `${attacker.name} ${move.name} into ${defender.name}: fails in Desolate Land (0 damage).`;
+    if (weather === 'primordialsea' && moveType === 'Fire')
+      return `${attacker.name} ${move.name} into ${defender.name}: fails in Primordial Sea (0 damage).`;
+    const sun = WEATHER_BALL_TYPE[weather] === 'Fire';
+    const rain = WEATHER_BALL_TYPE[weather] === 'Water';
     let weatherMod = 1;
-    if (weather.includes('sun') && moveType === 'Fire') weatherMod = 1.5;
-    if (weather.includes('sun') && moveType === 'Water') weatherMod = 0.5;
-    if (weather.includes('rain') && moveType === 'Water') weatherMod = 1.5;
-    if (weather.includes('rain') && moveType === 'Fire') weatherMod = 0.5;
+    if (sun && moveType === 'Fire') weatherMod = 1.5;
+    if (sun && moveType === 'Water') weatherMod = 0.5;
+    if (rain && moveType === 'Water') weatherMod = 1.5;
+    if (rain && moveType === 'Fire') weatherMod = 0.5;
 
     const stab = attacker.types.includes(moveType) ? 1.5 : 1;
     const itemName = typeof args.attacker_item === 'string' ? args.attacker_item : '';
@@ -546,7 +637,7 @@ export class ShowdownReference {
     } else {
       hpText = `${pct(minDamage, hpHigh)}-${pct(maxDamage, hpLow)}% of max HP (legal max HP ${hpLow}-${hpHigh})`;
       if (hpPercent !== undefined)
-        hpText += `; defender shown at ${Math.round(hpPercent)}%—KO only when damage % exceeds that`;
+        hpText += `; defender shown at ${Math.round(hpPercent)}%; KO only when damage % exceeds that`;
     }
     const exactNote =
       exactAttack !== undefined ? 'attacker attack stat exact from request; ' : 'attacker attack stat legal range; ';
@@ -556,7 +647,7 @@ export class ShowdownReference {
       `damage ${minDamage}-${maxDamage} (${hpText})`,
       `type ${effectivenessLabel(typeMod)}; STAB ${stab}x; weather ${weatherMod}x; item ${itemMod}x; defender item ${defenderItemMod}x; spread ${spreadMod}x.`,
       `${exactNote}${defNote}`,
-      'Not modeled: abilities, stat boosts, burn, screens, terrain, defensive items other than Assault Vest/Eviolite—adjust the range yourself when these apply.',
+      'Not modeled: abilities, stat boosts, burn, screens, terrain, and defensive items other than Assault Vest/Eviolite. Adjust the range when these apply.',
     ].join(' ');
   }
 

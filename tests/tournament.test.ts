@@ -8,23 +8,11 @@ import type { BracketView } from '../src/gui/api.js';
 import { loadRows } from '../src/records.js';
 import { loadPool } from '../src/teams.js';
 import type { TournamentEvent } from '../src/tournament.js';
-import {
-  buildBracket,
-  higherSeed,
-  runTournament,
-  seedPositions,
-  TOURNAMENT_PROTOCOL_VERSION,
-} from '../src/tournament.js';
+import { buildBracket, runTournament, seedPositions, TOURNAMENT_PROTOCOL_VERSION } from '../src/tournament.js';
 
 test('seed order spreads byes across distinct first-round matches', () => {
   assert.deepEqual(seedPositions(4), [0, 3, 1, 2]);
   assert.deepEqual(seedPositions(8), [0, 7, 3, 4, 1, 6, 2, 5]);
-});
-
-test('draw advancement follows seeding rather than bracket side', () => {
-  assert.equal(higherSeed([7, 2], [0, 1, 2, 3, 4, 5, 6, 7]), 2);
-  assert.equal(higherSeed([3, 1], [2, 3, 1, 0]), 3);
-  assert.throws(() => higherSeed([3, 9], [0, 1, 2, 3]), /missing from the seeding/);
 });
 
 test('every bracket size plays exactly n-1 series and byes auto-advance', () => {
@@ -63,6 +51,10 @@ test('a tournament crowns a champion and records rounds coherently', async (t) =
   });
 
   assert.equal(rows.length, 4);
+  assert.deepEqual(
+    rows.map((row) => row.series_index),
+    [0, 1, 2, 3],
+  );
   const config = JSON.parse(fs.readFileSync(path.join(directory, 'config.json'), 'utf8')) as Record<string, unknown>;
   assert.equal(config.mode, 'tournament');
   assert.equal(config.protocol_version, TOURNAMENT_PROTOCOL_VERSION);

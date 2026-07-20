@@ -40,6 +40,11 @@ export interface GameEnd {
 
 export type DecisionLog = string | JsonObject[] | ((row: JsonObject) => void);
 
+export interface ChoiceSubstitution {
+  requested: number[];
+  reason: string;
+}
+
 export abstract class BaseEngine implements BattleAgent {
   constructor(readonly pid: Pid) {}
 
@@ -57,13 +62,15 @@ export abstract class BaseEngine implements BattleAgent {
     let automatic = menus.every((menu) => menu.length === 1);
     let choices = automatic ? menus.map(() => 0) : await this.decideJoint(menus, request, context);
     let parts: string[];
+    let substitution: ChoiceSubstitution | undefined;
     try {
       parts = BaseEngine.parts(menus, choices);
-    } catch {
+    } catch (caught) {
+      substitution = { requested: choices, reason: caught instanceof Error ? caught.message : String(caught) };
       [choices, parts] = BaseEngine.defaults(menus);
       automatic = false;
     }
-    this.actionCommitted(request, context, menus, choices, parts, automatic);
+    this.actionCommitted(request, context, menus, choices, parts, automatic, substitution);
     return request.teamPreview ? `team ${parts.join('')}` : parts.join(', ');
   }
 
@@ -79,6 +86,7 @@ export abstract class BaseEngine implements BattleAgent {
     _choices: number[],
     _parts: string[],
     _automatic: boolean,
+    _substitution?: ChoiceSubstitution,
   ): void {}
   protected menuHints(_request: BattleRequest): MenuHints | undefined {
     return undefined;
@@ -92,8 +100,13 @@ export abstract class BaseEngine implements BattleAgent {
       if (!Number.isInteger(choice) || choice < 0 || choice >= menu.length)
         throw new Error(`choice for slot ${slot + 1} is outside its menu`);
       const item = menu[choice]!;
-      if (!BaseEngine.remaining(menu, parts).includes(item))
+      if (!BaseEngine.remaining(menu, parts).includes(item)) {
+        if (item.part.endsWith(' mega') && parts.some((part) => part.endsWith(' mega')))
+          throw new Error(`slot ${slot + 1} also chose Mega Evolve; only one Pokémon can Mega Evolve per battle`);
+        if (item.kind === 'switch')
+          throw new Error(`slot ${slot + 1} switches to a Pokémon an earlier slot already switches to`);
         throw new Error(`choice for slot ${slot + 1} conflicts with an earlier slot`);
+      }
       parts.push(item.part);
     });
     const forced = menus.flatMap((menu, index) => (menu.some((item) => item.kind === 'switch') ? [index] : []));
@@ -199,6 +212,10 @@ interface PendingDecision extends JsonObject {
   error?: string;
   latencyMs?: number;
   toolCalls?: ToolTrace[];
+  parseFailures?: number;
+  toolRounds?: number;
+  providerRetries?: number;
+  timer?: { turnSeconds?: number; seconds?: number };
 }
 
 export interface LLMEngineOptions {
@@ -218,7 +235,92 @@ const DECISION_MAX_TOKENS = 8192;
 const DECISION_TEMPERATURE = 0.2;
 const REFLECTION_MAX_TOKENS = 2048;
 
-/** Identity of the fixed scaffold: prompts, tool schemas, and sampling parameters. */
+const GOLDEN_LINES = [
+  '|player|p1|p1-golden||',
+  '|player|p2|p2-golden||',
+  '|teamsize|p1|4',
+  '|teamsize|p2|4',
+  '|start',
+  '|switch|p1a: Politoed|Politoed, L50, F|196/196',
+  '|switch|p1b: Swampert|Swampert, L50, M|187/187',
+  '|switch|p2a: Aerodactyl|Aerodactyl, L50, M|100/100',
+  '|switch|p2b: Charizard|Charizard, L50, M|100/100',
+  '|-weather|RainDance|[from] ability: Drizzle|[of] p1a: Politoed',
+  '|turn|1',
+];
+
+const GOLDEN_REQUEST: BattleRequest = {
+  active: [
+    {
+      moves: [
+        { move: 'Weather Ball', id: 'weatherball', target: 'normal' },
+        { move: 'Protect', id: 'protect', target: 'self' },
+      ],
+    },
+    {
+      moves: [
+        { move: 'Wave Crash', id: 'wavecrash', target: 'normal' },
+        { move: 'Protect', id: 'protect', target: 'self' },
+      ],
+      canMegaEvo: true,
+    },
+  ],
+  side: {
+    pokemon: [
+      {
+        ident: 'p1: Politoed',
+        details: 'Politoed, L50, F',
+        condition: '196/196',
+        active: true,
+        moves: ['weatherball', 'protect'],
+        stats: { atk: 85, def: 132, spa: 110, spd: 129, spe: 91 },
+        item: 'leftovers',
+        ability: 'drizzle',
+      },
+      {
+        ident: 'p1: Swampert',
+        details: 'Swampert, L50, M',
+        condition: '187/187',
+        active: true,
+        moves: ['wavecrash', 'protect'],
+        stats: { atk: 178, def: 130, spa: 103, spd: 130, spe: 112 },
+        item: 'swampertite',
+        ability: 'damp',
+      },
+      {
+        ident: 'p1: Gengar',
+        details: 'Gengar, L50, F',
+        condition: '165/165',
+        active: false,
+        moves: ['shadowball', 'protect'],
+        stats: { atk: 76, def: 101, spa: 150, spd: 105, spe: 148 },
+        item: 'gengarite',
+        ability: 'cursedbody',
+      },
+    ],
+  },
+  timer: { turnSeconds: 55, seconds: 420 },
+};
+
+function goldenDecisionRender(): string {
+  const state = new BattleState('p1');
+  state.feed(GOLDEN_LINES);
+  const menus = buildMenus(GOLDEN_REQUEST, {
+    names: { foe: { 1: 'Aerodactyl', 2: 'Charizard' }, ally: { 1: 'Politoed', 2: 'Swampert' } },
+    protectReduced: { 2: true },
+  });
+  return renderDecision({
+    state: state.render(GOLDEN_REQUEST),
+    slotNames: menus.map((_, slot) => state.slotName(slot, GOLDEN_REQUEST)),
+    menus,
+    transcript: ['Turn 1 begins.'],
+    notebook: 'golden',
+    seriesContext: 'Series golden; game 1; score p1 0, p2 0',
+    mechanics: ['- golden mechanics line'],
+    matchups: ['- golden matchup line'],
+  });
+}
+
 export function scaffoldRevision(): string {
   return createHash('sha256')
     .update(
@@ -229,6 +331,8 @@ export function scaffoldRevision(): string {
         decisionMaxTokens: DECISION_MAX_TOKENS,
         decisionTemperature: DECISION_TEMPERATURE,
         reflectionMaxTokens: REFLECTION_MAX_TOKENS,
+        goldenDecision: goldenDecisionRender(),
+        referenceRender: ShowdownReference.renderRevision(),
       }),
     )
     .digest('hex')
@@ -277,6 +381,13 @@ export class LLMEngine extends BaseEngine {
   private teamPreviews = 0;
   private bringChanges = 0;
   private leadChanges = 0;
+  private substitutedActions = 0;
+  private parseFailureCount = 0;
+  private providerRetryCount = 0;
+  private callRetries = 0;
+  private threatTurns = 0;
+  private threatHits = 0;
+  private pendingThreats: { gameId: string; threats: string[] } | undefined;
   private loggedNotebook = '';
   private previousPreview: { brought: string; leads: string } | undefined;
   private previousTurnAction: { gameId: string; turn: number; action: string } | undefined;
@@ -304,6 +415,7 @@ export class LLMEngine extends BaseEngine {
     this.seriesScore = { ...(context.seriesScore ?? { p1: 0, p2: 0 }) };
     this.state = new BattleState(this.pid);
     this.pending = undefined;
+    this.pendingThreats = undefined;
     this.remember(`[Game ${context.gameNumber} begins; series score ${this.scoreText()}]`);
   }
 
@@ -317,10 +429,10 @@ export class LLMEngine extends BaseEngine {
   }
 
   override observe(lines: string[]): void {
-    const valid = lines.filter((line) => typeof line === 'string');
-    if (!valid.length) return;
-    this.state.feed(valid);
-    this.rememberEvents(valid);
+    if (!lines.length) return;
+    this.scoreThreats(lines);
+    this.state.feed(lines);
+    this.rememberEvents(lines);
   }
 
   override abandonDecision(): void {
@@ -329,13 +441,51 @@ export class LLMEngine extends BaseEngine {
   }
 
   override async act(request: BattleRequest, context: AgentContext): Promise<string> {
-    const events = context.povLines.filter((line) => typeof line === 'string');
+    const events = context.povLines;
     const generation = this.generation;
+    this.scoreThreats(events);
     this.state.feed(events);
     this.rememberEvents(events);
-    this.pending = { rawResponse: '', notebook: this.notebook, generation };
+    this.pending = {
+      rawResponse: '',
+      notebook: this.notebook,
+      generation,
+      ...(request.timer ? { timer: request.timer } : {}),
+    };
     const choice = await super.act(request, context);
     return generation === this.generation ? choice : '';
+  }
+
+  private scoreThreats(lines: string[]): void {
+    const pending = this.pendingThreats;
+    if (!pending) return;
+    if (pending.gameId !== this.gameId) {
+      this.pendingThreats = undefined;
+      return;
+    }
+    const foe = this.pid === 'p1' ? 'p2' : 'p1';
+    const normalize = (value: string) => value.toLowerCase().replace(/[^a-z0-9]+/g, '');
+    let sawFoeAction = false;
+    let hit = false;
+    for (const line of lines) {
+      if (typeof line !== 'string' || !line.startsWith('|')) continue;
+      const [, kind = '', ...args] = line.split('|');
+      if (!args[0]?.startsWith(foe)) continue;
+      if (kind === 'move' && args[1]) {
+        sawFoeAction = true;
+        const move = normalize(args[1]);
+        if (move && pending.threats.some((threat) => threat.includes(move))) hit = true;
+      } else if ((kind === 'switch' || kind === 'drag') && args[1]) {
+        sawFoeAction = true;
+        const species = normalize(args[1].split(',', 1)[0] ?? '');
+        if (species && pending.threats.some((threat) => threat.includes(species) || threat.includes('switch')))
+          hit = true;
+      }
+    }
+    if (!sawFoeAction) return;
+    this.threatTurns += 1;
+    if (hit) this.threatHits += 1;
+    this.pendingThreats = undefined;
   }
 
   protected override async decideJoint(
@@ -352,6 +502,7 @@ export class LLMEngine extends BaseEngine {
     const matchups = this.reference.renderActiveMatchups(
       [...sides.allies, ...sides.foes],
       [...sides.foes, ...sides.allies],
+      this.state.weather?.name ?? '',
     );
     let prompt = renderDecision({
       state: this.state.render(request),
@@ -364,7 +515,7 @@ export class LLMEngine extends BaseEngine {
       matchups,
     });
     if (turnSeconds !== undefined)
-      prompt += `\n\nShowdown timer: ${turnSeconds} seconds for this decision; ${request.timer?.seconds ?? turnSeconds} seconds remain in your clock bank. Use this turn window for hard decisions; lock in when ready. Do not burn the remaining bank needlessly.`;
+      prompt += `\n\nShowdown timer: ${turnSeconds} seconds this turn; ${request.timer?.seconds ?? turnSeconds} seconds remain in the clock bank.`;
     if (context.error) prompt += `\n\nThe simulator rejected the previous joint action: ${context.error}`;
 
     let rawResponse = '';
@@ -372,6 +523,8 @@ export class LLMEngine extends BaseEngine {
     let parsed: ParsedDecision | undefined;
     let error = 'no choices found';
     let parseFailures = 0;
+    let toolRounds = 0;
+    this.callRetries = 0;
     const toolCalls: ToolTrace[] = [];
     const reasoningParts: string[] = [];
     const messages: ProviderMessage[] = [{ role: 'user', content: prompt }];
@@ -402,6 +555,7 @@ export class LLMEngine extends BaseEngine {
         for (const [key, value] of Object.entries(completion.usage)) usage[key] = (usage[key] ?? 0) + Math.trunc(value);
         if (completion.reasoning) reasoningParts.push(completion.reasoning);
         if (completion.toolCalls.length && !finalRound) {
+          toolRounds += 1;
           messages.push(assistantToolMessage(completion));
           for (const call of completion.toolCalls) {
             const result = this.reference.lookup(call.name, call.arguments);
@@ -421,6 +575,7 @@ export class LLMEngine extends BaseEngine {
         parsed = LLMEngine.extractChoices(rawResponse, menus);
         BaseEngine.parts(menus, parsed.choices);
       } catch (caught) {
+        parsed = undefined;
         error = caught instanceof Error ? caught.message : String(caught);
         parseFailures += 1;
       }
@@ -449,6 +604,9 @@ export class LLMEngine extends BaseEngine {
         error: fallback ? error : undefined,
         latencyMs: performance.now() - started,
         toolCalls,
+        parseFailures,
+        toolRounds,
+        providerRetries: this.callRetries,
         generation,
       });
     return decision.choices;
@@ -473,6 +631,7 @@ export class LLMEngine extends BaseEngine {
           !isTransientError(error)
         )
           throw error;
+        this.callRetries += 1;
         if (signal) await delay(RETRY_BASE_MS * 2 ** attempt, undefined, { signal });
         else await delay(RETRY_BASE_MS * 2 ** attempt);
       }
@@ -486,6 +645,7 @@ export class LLMEngine extends BaseEngine {
     choices: number[],
     parts: string[],
     automatic: boolean,
+    substitution?: ChoiceSubstitution,
   ): void {
     const pending = this.pending;
     this.pending = undefined;
@@ -498,12 +658,27 @@ export class LLMEngine extends BaseEngine {
       this.notebook = notebook;
       this.decisions += 1;
       if (pending.fallback) this.fallbacks += 1;
+      this.parseFailureCount += pending.parseFailures ?? 0;
+      this.providerRetryCount += pending.providerRetries ?? 0;
+      if (substitution) this.substitutedActions += 1;
     }
     const action = request.teamPreview ? `team ${parts.join('')}` : parts.join(', ');
     this.remember(`Decision: ${action}.`);
     const phase = request.teamPreview ? 'team_preview' : request.forceSwitch ? 'forced_switch' : 'turn';
     const selection = choices.map((choice, slot) => menus[slot]?.[choice]?.label ?? parts[slot] ?? 'pass');
     if (!automatic) this.recordTendencies(phase, menus, choices, parts, action, pending.toolCalls ?? []);
+    if (!automatic && phase === 'turn' && pending.threats?.length) {
+      this.pendingThreats = {
+        gameId: this.gameId,
+        threats: pending.threats.map((threat) => threat.toLowerCase().replace(/[^a-z0-9]+/g, '')),
+      };
+    }
+    const timer = pending.timer
+      ? { turn_seconds: pending.timer.turnSeconds ?? null, bank_seconds: pending.timer.seconds ?? null }
+      : null;
+    const substituted = substitution
+      ? { requested_choices: substitution.requested, substitution_reason: substitution.reason }
+      : {};
     this.writeLog(this.options.decisionLog, {
       kind: 'decision',
       game_id: this.gameId,
@@ -521,6 +696,9 @@ export class LLMEngine extends BaseEngine {
       automatic,
       fallback: pending.fallback ?? false,
       error: pending.error ?? null,
+      ...substituted,
+      parse_failures: pending.parseFailures ?? 0,
+      timer,
       tool_lookups: (pending.toolCalls ?? []).map((call) => call.name),
     });
     if (automatic) return;
@@ -536,12 +714,17 @@ export class LLMEngine extends BaseEngine {
       menus: menus.map((menu) => menu.map((item) => item.label)),
       choices,
       parts,
+      ...substituted,
       raw_response: pending.rawResponse ?? '',
       reasoning: pending.reasoning ?? null,
       threats: pending.threats ?? [],
       candidates: pending.candidates ?? [],
       usage: pending.usage ?? {},
       latency_ms: pending.latencyMs ?? 0,
+      timer,
+      parse_failures: pending.parseFailures ?? 0,
+      tool_rounds: pending.toolRounds ?? 0,
+      provider_retries: pending.providerRetries ?? 0,
       tool_calls: pending.toolCalls ?? [],
       fallback: pending.fallback ?? false,
       error: pending.error ?? null,
@@ -566,6 +749,11 @@ export class LLMEngine extends BaseEngine {
       team_previews: this.teamPreviews,
       bring_changes: this.bringChanges,
       lead_changes: this.leadChanges,
+      substituted_actions: this.substitutedActions,
+      parse_failures: this.parseFailureCount,
+      provider_retries: this.providerRetryCount,
+      threat_turns: this.threatTurns,
+      threat_hits: this.threatHits,
     };
   }
 

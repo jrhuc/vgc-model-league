@@ -21,7 +21,7 @@ const STATUS_TEXT: Record<string, string> = {
 };
 
 const TIMEOUT_TEXT: Record<string, string> = {
-  autodefault: 'ran out of time — default action used',
+  autodefault: 'ran out of time. Default action used',
   forfeit: 'forfeited on time',
   tie: 'game ended on the timer',
 };
@@ -46,12 +46,17 @@ function hpPercent(hp: string): string {
   return `${Math.max(0, Math.min(100, Math.round((Number(match[1]) * 100) / Number(match[2]))))}%`;
 }
 
+function prettyEffect(value: string): string {
+  const effect = afterColon(value) || value;
+  const match = /^perish(\d)$/i.exec(effect.replace(/[^a-z0-9]/gi, ''));
+  return match ? `Perish ${match[1]}` : effect;
+}
+
 function fromSource(args: string[]): string {
   const from = args.find((arg) => arg.startsWith('[from]'));
   return from ? ` (${afterColon(from.slice(6).trim()) || from.slice(6).trim()})` : '';
 }
 
-/** Turns spectator protocol lines into a compact human-readable event feed for the GUI. */
 export class BattleLog {
   readonly entries: BattleLogEntry[] = [];
   private turn = 0;
@@ -81,7 +86,7 @@ export class BattleLog {
     } else if (kind === 'drag' && args.length >= 2) {
       this.push('switch', `${species(args[1]!)} was dragged in (${sideTag(args[0]!)})`);
     } else if (kind === 'replace' && args.length >= 2) {
-      this.push('switch', `${name(args[0]!)} was revealed as ${species(args[1]!)}`);
+      this.push('switch', `${name(args[0]!)} revealed as ${species(args[1]!)}`);
     } else if (kind === 'faint' && args[0]) {
       this.push('faint', `${name(args[0])} fainted`);
     } else if (kind === 'cant' && args[0]) {
@@ -98,8 +103,11 @@ export class BattleLog {
     } else if ((kind === '-boost' || kind === '-unboost') && args.length >= 3) {
       const amount = Number(args[2]) * (kind === '-boost' ? 1 : -1);
       this.push('detail', `${name(args[0]!)} ${args[1]} ${amount > 0 ? '+' : ''}${amount}`);
-    } else if (kind === '-terastallize' && args.length >= 2) {
-      this.push('status', `${name(args[0]!)} terastallized — ${args[1]}`);
+    } else if ((kind === '-start' || kind === '-end') && args.length >= 2) {
+      const effect = prettyEffect(args[1]!);
+      this.push('detail', `${name(args[0]!)}: ${effect}${kind === '-end' ? ' ended' : ''}`);
+    } else if (kind === '-fieldactivate' && args[0]) {
+      this.push('field', `${afterColon(args[0])} activated`);
     } else if (kind === '-weather' && args[0] !== undefined && !args.includes('[upkeep]')) {
       this.push('field', !args[0] || args[0] === 'none' ? 'Weather cleared' : `Weather: ${afterColon(args[0])}`);
     } else if (kind === '-fieldstart' && args[0]) {

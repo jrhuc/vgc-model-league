@@ -113,6 +113,7 @@ export class SimBattle {
     const errors: Record<Pid, number> = { p1: 0, p2: 0 };
     const fallbacks: Record<Pid, number> = { p1: 0, p2: 0 };
     const lastRequest: Record<Pid, BattleRequest | undefined> = { p1: undefined, p2: undefined };
+    const requestAt: Record<Pid, number> = { p1: 0, p2: 0 };
     const retryCount: Record<Pid, number> = { p1: 0, p2: 0 };
     const pendingError: Record<Pid, string | undefined> = { p1: undefined, p2: undefined };
     const suppressRequest: Record<Pid, boolean> = { p1: false, p2: false };
@@ -150,12 +151,31 @@ export class SimBattle {
 
     const schedule = (pid: Pid, request: BattleRequest, error?: string) => {
       if (pending.has(pid)) throw new Error(`received another request while ${pid} is still deciding`);
+      const elapsed = error && request.timer ? (performance.now() - requestAt[pid]) / 1000 : 0;
+      const currentRequest =
+        request.timer && elapsed > 0
+          ? {
+              ...request,
+              timer: {
+                ...(request.timer.seconds === undefined
+                  ? {}
+                  : { seconds: Math.max(0, request.timer.seconds - elapsed) }),
+                ...(request.timer.turnSeconds === undefined
+                  ? {}
+                  : { turnSeconds: Math.max(0, request.timer.turnSeconds - elapsed) }),
+              },
+            }
+          : request;
+      if (currentRequest.timer) {
+        const line = `|-vgctimer|${pid}|${currentRequest.timer.seconds ?? ''}|${currentRequest.timer.turnSeconds ?? ''}`;
+        onUpdate?.([line], [line]);
+      }
       const lines = state.pov[pid].slice(povCursor[pid]);
       povCursor[pid] = state.pov[pid].length;
       const token = Symbol(pid);
       let action: Promise<string>;
       try {
-        action = Promise.resolve(agents[pid].act(request, { povLines: lines, ...(error ? { error } : {}) }));
+        action = Promise.resolve(agents[pid].act(currentRequest, { povLines: lines, ...(error ? { error } : {}) }));
       } catch (caught) {
         action = Promise.reject(caught);
       }
@@ -176,6 +196,8 @@ export class SimBattle {
           pendingError[pid] = line;
           if (retryCount[pid] >= 3) {
             void Promise.resolve(timer.choose(pid, 'default')).catch(() => {});
+            const stopLine = `|-vgctimerstop|${pid}`;
+            onUpdate?.([stopLine], [stopLine]);
             fallbacks[pid] += 1;
             suppressRequest[pid] = line.includes('[Unavailable choice]');
             pendingError[pid] = undefined;
@@ -188,10 +210,7 @@ export class SimBattle {
           if (!payload) continue;
           const request = JSON.parse(payload) as BattleRequest;
           lastRequest[pid] = request;
-          if (request.timer) {
-            const line = `|-vgctimer|${pid}|${request.timer.seconds ?? ''}|${request.timer.turnSeconds ?? ''}`;
-            onUpdate?.([line], [line]);
-          }
+          requestAt[pid] = performance.now();
           if (suppressRequest[pid]) {
             suppressRequest[pid] = false;
             continue;
@@ -226,6 +245,8 @@ export class SimBattle {
           pending.delete(event.pid);
           if (event.error !== undefined) throw event.error;
           await timer.choose(event.pid, event.choice ?? '');
+          const stopLine = `|-vgctimerstop|${event.pid}`;
+          onUpdate?.([stopLine], [stopLine]);
           continue;
         }
         if (event.message === null) throw new Error('simulator produced no output for 60 seconds');

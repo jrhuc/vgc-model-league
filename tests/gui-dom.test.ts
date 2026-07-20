@@ -1,9 +1,37 @@
 import assert from 'node:assert/strict';
-import test from 'node:test';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import test, { after } from 'node:test';
 
 import { Window } from 'happy-dom';
 
 import { GuiServer } from '../src/gui/server.js';
+
+const RUNS_SCRATCH = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-gui-runs-'));
+after(() => fs.rmSync(RUNS_SCRATCH, { recursive: true, force: true }));
+
+type TestButton = {
+  click(): void;
+  disabled: boolean;
+  textContent: string | null;
+  getAttribute(name: string): string | null;
+};
+
+type TestField = {
+  value: string;
+  getAttribute(name: string): string | null;
+};
+
+function asButton(node: unknown): TestButton {
+  assert.ok(node);
+  return node as TestButton;
+}
+
+function asField(node: unknown): TestField {
+  assert.ok(node);
+  return node as TestField;
+}
 
 async function waitFor(predicate: () => boolean, ms = 5000): Promise<void> {
   const deadline = Date.now() + ms;
@@ -14,7 +42,7 @@ async function waitFor(predicate: () => boolean, ms = 5000): Promise<void> {
 }
 
 test('built client bundle boots and renders the app against the live server', async () => {
-  const gui = new GuiServer();
+  const gui = new GuiServer({ runsDir: RUNS_SCRATCH });
   const base = await gui.listen(0);
   const window = new Window({ url: base });
   try {
@@ -44,16 +72,57 @@ test('built client bundle boots and renders the app against the live server', as
 
     const modeTabs = window.document.querySelectorAll('.mode-tab');
     assert.equal(modeTabs.length, 4, 'match, tournament, draft, and rotation modes are offered');
-    const pasteField = window.document.querySelector('#teamPaste0') as HTMLTextAreaElement | null;
-    assert.ok(pasteField, 'the default match view shows team paste fields');
-    assert.ok(pasteField.value.trim().length > 0, 'sample teams prefill the match form');
-    assert.ok(window.document.querySelector('#teamPaste1'));
+    assert.equal(
+      window.document.querySelector('.mode-tabs')?.tagName,
+      'FIELDSET',
+      'run modes use a semantic toggle group',
+    );
+    assert.equal(modeTabs[0]?.getAttribute('role'), null);
+    assert.equal(modeTabs[0]?.getAttribute('aria-pressed'), 'true');
+    assert.equal(modeTabs[1]?.getAttribute('aria-pressed'), 'false');
+    assert.ok(
+      window.document.querySelector('legend.visually-hidden'),
+      'fieldset legends stay readable to assistive tech',
+    );
     assert.equal(window.document.querySelector('#pool'), null, 'a match needs no team pool');
 
-    (modeTabs[3] as unknown as HTMLButtonElement).click();
+    const addBaseline = asButton(
+      [...window.document.querySelectorAll('button')].find(
+        (button) => button.textContent?.trim() === 'Add random baseline',
+      ),
+    );
+    addBaseline.click();
+    addBaseline.click();
+    await waitFor(() => window.document.querySelectorAll('.contender').length === 2);
+    assert.ok(
+      rendered().includes('Sample ·'),
+      'sample teams prefill match contenders so the run can start immediately',
+    );
+    assert.equal(
+      window.document.querySelector('.add-bay:not(.hidden)'),
+      null,
+      'a full match lineup hides the model selection bay',
+    );
+    const contenderButton = asButton(window.document.querySelector('.contender-main'));
+    assert.equal(contenderButton.getAttribute('aria-expanded'), 'false');
+    contenderButton.click();
+    await waitFor(() => window.document.querySelector('#teamPaste0') !== null);
+    assert.equal(contenderButton.getAttribute('aria-expanded'), 'true');
+    const pasteField = asField(window.document.querySelector('#teamPaste0'));
+    assert.ok(pasteField.value.trim().length > 0, 'the sample team prefills the paste editor');
+    assert.match(
+      window.document.querySelector('.schedule')?.textContent ?? '',
+      /with Sample ·|assign its team from a pool/,
+    );
+    asButton(window.document.querySelector('.icon-button')).click();
+    await waitFor(() => window.document.querySelectorAll('.contender').length === 1);
+    asButton(window.document.querySelector('.icon-button')).click();
+    await waitFor(() => window.document.querySelectorAll('.contender').length === 0);
+
+    asButton(modeTabs[3]).click();
     await waitFor(() => window.document.querySelector('#pool') !== null);
-    const poolDropdown = window.document.querySelector('#pool') as HTMLButtonElement | null;
-    assert.equal(poolDropdown?.getAttribute('role'), 'combobox');
+    const poolDropdown = asButton(window.document.querySelector('#pool'));
+    assert.equal(poolDropdown.getAttribute('role'), 'combobox');
     assert.ok(
       (window.document.querySelector('.pool-facts')?.textContent ?? '').includes('teams'),
       'selected pool should show its team count',
@@ -63,20 +132,39 @@ test('built client bundle boots and renders the app against the live server', as
       'pool creation is collapsed into the run setup page',
     );
 
-    (modeTabs[2] as unknown as HTMLButtonElement).click();
+    asButton(modeTabs[2]).click();
     await waitFor(() => rendered().includes('Draft board'));
     assert.match(rendered(), /Snake draft/);
+    assert.match(rendered(), /top seeds meet in playoffs/);
+    assert.match(
+      window.document.querySelector('.schedule')?.textContent ?? '',
+      /Add at least two models to plan the draft/,
+    );
 
-    (modeTabs[0] as unknown as HTMLButtonElement).click();
-    await waitFor(() => window.document.querySelector('#teamPaste0') !== null);
+    asButton(modeTabs[1]).click();
+    await waitFor(() => window.document.querySelector('#pool') !== null);
+    assert.equal(modeTabs[1]?.getAttribute('aria-pressed'), 'true');
+    for (let count = 0; count < 3; count += 1) addBaseline.click();
+    await waitFor(() => window.document.querySelectorAll('.contender').length === 3);
+    assert.doesNotMatch(rendered(), /even number of models/);
+    const startButton = asButton(
+      [...window.document.querySelectorAll('button')].find((button) =>
+        /Start the 3-model bracket/.test(button.textContent ?? ''),
+      ),
+    );
+    assert.equal(startButton.disabled, false);
+
+    asButton(modeTabs[0]).click();
+    await waitFor(() => rendered().includes('Run card'));
 
     const modelSearch = window.document.querySelector('#modelSearch');
     assert.ok(modelSearch, 'model combobox input should render');
     assert.equal(modelSearch.getAttribute('role'), 'combobox');
 
-    const providerDropdown = window.document.querySelector('#provider') as HTMLButtonElement | null;
-    assert.equal(providerDropdown?.getAttribute('role'), 'combobox');
-    assert.equal(providerDropdown?.textContent?.trim(), 'Anthropic');
+    const providerDropdown = asButton(window.document.querySelector('#provider'));
+    assert.equal(providerDropdown.getAttribute('role'), 'combobox');
+    assert.equal(providerDropdown.getAttribute('aria-haspopup'), 'listbox');
+    assert.equal(providerDropdown.textContent?.trim(), 'Anthropic');
   } finally {
     await window.happyDOM.close();
     gui.close();

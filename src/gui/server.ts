@@ -31,11 +31,13 @@ import type {
   BattleMessage,
   BattleSnapshot,
   BracketView,
+  DecisionView,
   DraftView,
   FormatInfo,
   ModelInfo,
   ModelsResponse,
   MonView,
+  PoolTeamsResponse,
   RecordsResponse,
   RunSnapshot,
   SampleTeam,
@@ -73,6 +75,7 @@ const DEFAULT_MAX_RUN_MS = 4 * 60 * 60 * 1000;
 interface GuiServerOptions {
   teamsDir?: string;
   recordsPath?: string;
+  runsDir?: string;
   runner?: typeof runRotation;
   tournamentRunner?: typeof runTournament;
   draftRunner?: typeof runDraftLeague;
@@ -159,18 +162,25 @@ class ActiveRun {
   timedOut = false;
   interrupted = false;
   userStopped = false;
+  settling = false;
   readonly battles = new Map<number, { game: number; state: BattleState; log: BattleLog }>();
   readonly publicBattles = new Map<number, { game: number; state: BattleState; log: BattleLog }>();
+  readonly decisions = new Map<number, DecisionView[]>();
+  readonly battleRevisions = new Map<number, number>();
   readonly controller = new AbortController();
-  readonly runDir = makeRunDirectory();
-  readonly runId = path.basename(this.runDir);
+  readonly runDir: string;
+  readonly runId: string;
   readonly startTime = Date.now();
 
   constructor(
     readonly config: RunConfig,
     readonly apiKeys: Record<string, string>,
     readonly owner: AuthUser | undefined,
-  ) {}
+    runsDir?: string,
+  ) {
+    this.runDir = makeRunDirectory(runsDir);
+    this.runId = path.basename(this.runDir);
+  }
 
   clearApiKeys(): void {
     for (const model of Object.keys(this.apiKeys)) delete this.apiKeys[model];
@@ -194,6 +204,10 @@ function snapshotMon(battle: BattleState, pid: Pid, mon: MonState): MonView {
     .map(([stat, value]) => `${stat} ${value > 0 ? '+' : ''}${value}`)
     .join(', ');
   const target = mon.lastMove?.target ? ` → ${afterColon(mon.lastMove.target)}` : '';
+  const volatiles = [...mon.volatiles]
+    .map((volatile) => (/^perish(\d)$/i.test(volatile) ? `Perish ${volatile.slice(-1)}` : volatile))
+    .sort()
+    .join(', ');
   return {
     species: mon.species,
     slot: battle.activeSlot(pid, mon)?.toUpperCase() ?? '',
@@ -201,23 +215,37 @@ function snapshotMon(battle: BattleState, pid: Pid, mon: MonState): MonView {
     status: mon.fainted ? '' : (mon.status ?? ''),
     fainted: mon.fainted,
     boosts,
+    volatiles,
     lastMove: mon.lastMove ? `${mon.lastMove.name}${target} · T${mon.lastMove.turn}` : '',
   };
 }
 
-function snapshotBattle(battle: BattleState, players: Record<Pid, string> | undefined, log: BattleLog): BattleSnapshot {
+function snapshotBattle(
+  battle: BattleState,
+  players: Record<Pid, string> | undefined,
+  log: BattleLog,
+  decisions: DecisionView[] = [],
+): BattleSnapshot {
   const side = (pid: Pid) => ({
     player: players?.[pid] ?? pid,
     conditions: battle.conditionLabels(pid),
     mons: battle.visibleMons(pid).map((mon) => snapshotMon(battle, pid, mon)),
   });
+  const timerView = (pid: Pid) => {
+    const timer = battle.timers[pid];
+    if (!timer) return null;
+    const drained = timer.running ? (Date.now() - timer.at) / 1000 : 0;
+    const remaining = (value: number | null) => (value === null ? null : Math.max(0, Math.round(value - drained)));
+    return { seconds: remaining(timer.seconds), turnSeconds: remaining(timer.turnSeconds), running: timer.running };
+  };
   return {
     turn: battle.turn,
     weather: battle.weatherLabel(),
     fields: battle.fieldLabels(),
     sides: { p1: side('p1'), p2: side('p2') },
-    timers: { p1: battle.timers.p1 ?? null, p2: battle.timers.p2 ?? null },
+    timers: { p1: timerView('p1'), p2: timerView('p2') },
     log: log.entries,
+    decisions,
   };
 }
 
@@ -338,8 +366,11 @@ export class GuiServer {
   shutdown(graceMs = 10_000): Promise<void> {
     if (this.shutdownTask) return this.shutdownTask;
     this.shutdownTask = (async () => {
-      if (this.run?.state === 'running') this.run.interrupted = true;
-      this.run?.controller.abort();
+      const run = this.run;
+      if (run?.state === 'running' && !run.settling) {
+        run.interrupted = true;
+        run.controller.abort();
+      }
       clearTimeout(this.flushTimer);
       clearInterval(this.heartbeatTimer);
       for (const client of this.clients.keys()) client.end();
@@ -382,6 +413,7 @@ export class GuiServer {
     const session = this.options.auth?.session(sessionToken);
     if (key === 'GET /auth/github') {
       if (!this.options.auth) throw new HttpError(404, 'GitHub login is not configured');
+      this.consumeRateLimit('oauth', request.socket.remoteAddress ?? 'unknown', 20, 10 * 60_000);
       const login = this.options.auth.beginLogin();
       this.redirect(response, login.location, [
         responseCookie(
@@ -428,8 +460,11 @@ export class GuiServer {
       if ((this.publicOrigin && origin !== expectedOrigin) || (origin !== undefined && origin !== expectedOrigin)) {
         throw new HttpError(403, 'cross-origin requests are not allowed');
       }
-      const contentType = String(request.headers['content-type'] ?? '');
-      if (!contentType.toLowerCase().startsWith('application/json')) {
+      const contentType = String(request.headers['content-type'] ?? '')
+        .split(';', 1)[0]!
+        .trim()
+        .toLowerCase();
+      if (contentType !== 'application/json') {
         throw new HttpError(415, 'content-type must be application/json');
       }
       if (this.options.auth) {
@@ -457,7 +492,9 @@ export class GuiServer {
     if (method === 'GET' && !url.pathname.startsWith('/api/') && this.serveStatic(url.pathname, response)) return;
     if (key === 'GET /api/state') this.json(response, 200, this.stateBody(session));
     else if (key === 'GET /api/records') this.json(response, 200, this.recordsBody(url.searchParams.get('pool')));
-    else if (key === 'GET /api/reasoning') {
+    else if (key === 'GET /api/pool/teams') {
+      this.json(response, 200, this.poolTeamsBody(url.searchParams.get('name') ?? ''));
+    } else if (key === 'GET /api/reasoning') {
       this.json(response, 200, this.reasoningBody(url.searchParams.get('spec') ?? ''));
     } else if (key === 'GET /api/events/public') {
       this.openEvents(response, undefined, true);
@@ -492,7 +529,7 @@ export class GuiServer {
     } else if (key === 'POST /api/run') {
       this.json(response, 200, this.startRun(await this.readJson(request), actor));
     } else if (key === 'POST /api/run/stop') {
-      if (this.run?.state === 'running') {
+      if (this.run?.state === 'running' && !this.run.settling) {
         if (actor && this.options.auth) this.options.auth.stopExperiment(actor, this.run.runId);
         this.run.userStopped = true;
         this.run.controller.abort();
@@ -543,11 +580,17 @@ export class GuiServer {
   }
 
   private requireAuthenticatedViewer(session: AuthSession | undefined): void {
-    if (this.options.auth && !session) throw new HttpError(401, 'authentication required');
+    if (this.options.auth) {
+      if (!session) throw new HttpError(401, 'authentication required');
+      return;
+    }
+    if (this.publicOrigin && this.options.mutationsEnabled !== true) {
+      throw new HttpError(403, 'private run data is unavailable');
+    }
   }
 
   private canViewPrivateRun(user: AuthUser | undefined): boolean {
-    if (!this.options.auth) return true;
+    if (!this.options.auth) return !this.publicOrigin || this.options.mutationsEnabled === true;
     if (!user) return false;
     return !this.run || user.role === 'operator' || this.run.owner?.id === user.id;
   }
@@ -558,7 +601,7 @@ export class GuiServer {
   }
 
   private controlsCurrentRun(user: AuthUser | undefined): boolean {
-    if (!this.options.auth) return true;
+    if (!this.options.auth) return !this.publicOrigin || this.options.mutationsEnabled === true;
     return Boolean(this.run && user && (user.role === 'operator' || this.run.owner?.id === user.id));
   }
 
@@ -576,6 +619,7 @@ export class GuiServer {
       fs.accessSync(this.options.teamsDir ?? TEAMS_DIR, fs.constants.R_OK | fs.constants.W_OK);
       fs.accessSync(path.dirname(this.options.recordsPath ?? RESULTS_PATH), fs.constants.R_OK | fs.constants.W_OK);
       fs.accessSync(DATA_DIR, fs.constants.R_OK | fs.constants.W_OK);
+      if (!listBoards().length) throw new Error('no valid draft boards are installed');
       loadShowdown();
       this.options.auth?.ready();
       this.json(response, 200, { status: 'ready' });
@@ -696,11 +740,28 @@ export class GuiServer {
     };
   }
 
+  private poolTeamsBody(name: string): PoolTeamsResponse {
+    const teamsDir = this.options.teamsDir ?? TEAMS_DIR;
+    if (!listPools(teamsDir).some((entry) => entry.name === name)) {
+      throw new HttpError(400, `unknown team pool ${JSON.stringify(name)}`);
+    }
+    const { Teams } = loadShowdown();
+    const pool = loadPool(name, teamsDir);
+    return {
+      name: pool.id,
+      format: pool.format,
+      teams: pool.teams.map((team) => {
+        const unpacked = Teams.unpack(team.packed);
+        if (!unpacked) throw new Error(`stored team ${JSON.stringify(team.id)} is invalid`);
+        return { name: team.id, paste: Teams.export(unpacked) };
+      }),
+    };
+  }
+
   private recordsBody(poolParam: string | null): RecordsResponse {
     const all = loadRows(this.options.recordsPath ?? RESULTS_PATH);
     const pool = poolParam?.trim() || null;
     const rows = scopeRows(all, pool ?? undefined);
-    // Only rotation rows rate the ladder, even inside an explicitly selected pool.
     const rated = rows.filter((row) => (row.mode ?? 'rotation') === 'rotation');
     const pools = [...new Set(all.map((row) => (typeof row.pool === 'string' ? row.pool : '')))].filter(Boolean).sort();
     return { count: rows.length, pool, pools, standings: standings(rated), h2h: h2h(rated), records: rows };
@@ -723,7 +784,7 @@ export class GuiServer {
       startTime: run.startTime,
       owner: run.owner?.login ?? null,
       endTime: run.endTime ?? null,
-      canControl: !publicView,
+      canControl: !publicView && !run.settling,
       rows: run.rows.map((row, index) => ({ ...row, turn: battles.get(index)?.state.turn ?? 0 })),
       bracket: run.bracket ?? null,
       draft: run.draft ?? null,
@@ -733,11 +794,15 @@ export class GuiServer {
 
   private battleBody(index: number, publicView = false): BattleMessage {
     const entry = (publicView ? this.run?.publicBattles : this.run?.battles)?.get(index);
-    if (!entry) return { index, game: 0, snapshot: null };
+    if (!entry) return { index, game: 0, revision: 0, snapshot: null };
+    const decisions = publicView
+      ? []
+      : (this.run?.decisions.get(index) ?? []).filter((decision) => decision.game === entry.game);
     return {
       index,
       game: entry.game,
-      snapshot: snapshotBattle(entry.state, this.run?.rows[index]?.players, entry.log),
+      revision: this.run?.battleRevisions.get(index) ?? 0,
+      snapshot: snapshotBattle(entry.state, this.run?.rows[index]?.players, entry.log, decisions),
     };
   }
 
@@ -767,7 +832,6 @@ export class GuiServer {
     ) as ExperimentMode | undefined;
     if (!mode) throw new HttpError(400, 'unknown run mode');
     const models = Array.isArray(body.models) ? body.models.map(String).filter(Boolean) : [];
-    // A tournament plays only n-1 series, so hosted mode can afford a fuller bracket.
     const maximumModels = this.publicOrigin && mode === 'rotation' ? 4 : 8;
     if (models.length < 2) throw new HttpError(400, 'a run needs at least two model specs');
     if (models.length > maximumModels) {
@@ -815,22 +879,23 @@ export class GuiServer {
         throw new HttpError(400, error instanceof Error ? error.message : String(error));
       }
     }
-    if (missing.length) throw new HttpError(400, `bring an API key for: ${missing.join(', ')}`);
+    if (missing.length) throw new HttpError(400, `API key required for: ${missing.join(', ')}`);
     const inlinePastes = mode === 'tournament' && Array.isArray(body.teams) ? body.teams.map(String) : undefined;
     let pool = '';
     let teams: Team[] | undefined;
     let format: string | undefined;
     let board: string | undefined;
     if (mode === 'draft') {
-      board = String(body.board ?? '') || listBoards()[0]?.id || '';
-      const info = listBoards().find((entry) => entry.id === board);
+      const boards = listBoards();
+      board = String(body.board ?? '') || boards[0]?.id || '';
+      const info = boards.find((entry) => entry.id === board);
       if (!info) throw new HttpError(400, `unknown draft board ${JSON.stringify(board)}`);
       if (models.length > info.maxEntrants) {
         throw new HttpError(400, `board ${JSON.stringify(board)} supports at most ${info.maxEntrants} models`);
       }
     } else if (inlinePastes) {
       if (inlinePastes.length !== models.length) {
-        throw new HttpError(400, 'bring exactly one team paste per model');
+        throw new HttpError(400, 'provide exactly one team paste per model');
       }
       format = String(body.format ?? '').trim() || this.defaultFormatId();
       if (!championsFormats().some((info) => info.id === format)) {
@@ -883,7 +948,7 @@ export class GuiServer {
       ...(reasoning === undefined ? {} : { reasoning }),
       ...(Object.keys(reasoningByModel).length ? { reasoningByModel } : {}),
     };
-    const run = new ActiveRun(config, apiKeys, owner);
+    const run = new ActiveRun(config, apiKeys, owner, this.options.runsDir);
     if (owner && this.options.auth) {
       try {
         this.options.auth.startExperiment(owner, run.runId, pool, config);
@@ -895,7 +960,7 @@ export class GuiServer {
     }
     this.run = run;
     run.timeoutTimer = setTimeout(() => {
-      if (run !== this.run || run.state !== 'running') return;
+      if (run !== this.run || run.state !== 'running' || run.settling) return;
       run.timedOut = true;
       run.notices.push('run stopped after reaching its maximum duration');
       run.controller.abort();
@@ -1034,13 +1099,44 @@ export class GuiServer {
       settled = true;
       completion.reject(error);
     };
+    const scheduleKill = () => {
+      if (killTimer) return;
+      killTimer = setTimeout(() => child.kill('SIGKILL'), this.workerStopGraceMs);
+      killTimer.unref();
+    };
+    const markTerminal = (message: NonNullable<typeof terminal>) => {
+      if (terminal) return;
+      terminal = message;
+      run.settling = true;
+      this.queueRun();
+      scheduleKill();
+    };
     child.on('message', (value: unknown) => {
-      const message = value as RunWorkerOutput;
-      if (message?.type === 'event') this.onEvent(run, message.event);
-      else if (message?.type === 'notice') run.notices.push(message.message.slice(0, 2000));
-      else if (message?.type === 'done' || message?.type === 'failed') terminal = message;
+      const message = value as Partial<RunWorkerOutput> | null;
+      try {
+        if (message?.type === 'event') {
+          if (!isRecord(message.event) || typeof message.event.type !== 'string') {
+            throw new Error('run worker sent an invalid event');
+          }
+          this.onEvent(run, message.event as DraftLeagueEvent);
+        } else if (message?.type === 'notice') {
+          if (typeof message.message !== 'string') throw new Error('run worker sent an invalid notice');
+          run.notices.push(message.message.slice(0, 2000));
+        } else if (message?.type === 'done') {
+          markTerminal(message as Extract<RunWorkerOutput, { type: 'done' }>);
+        } else if (message?.type === 'failed') {
+          if (typeof message.error !== 'string') throw new Error('run worker sent an invalid failure');
+          markTerminal(message as Extract<RunWorkerOutput, { type: 'failed' }>);
+        }
+      } catch (error) {
+        child.kill();
+        reject(error instanceof Error ? error : new Error(String(error)));
+      }
     });
-    child.once('error', reject);
+    child.once('error', (error) => {
+      child.kill();
+      reject(error);
+    });
     child.once('exit', (code, signal) => {
       if (terminal?.type === 'done' && code === 0) resolve();
       else if (terminal?.type === 'failed') reject(new Error(terminal.error));
@@ -1048,8 +1144,7 @@ export class GuiServer {
     });
     const abort = () => {
       if (child.connected) child.send({ type: 'abort' } satisfies RunWorkerInput);
-      killTimer = setTimeout(() => child.kill('SIGKILL'), this.workerStopGraceMs);
-      killTimer.unref();
+      scheduleKill();
     };
     run.controller.signal.addEventListener('abort', abort, { once: true });
     const message: RunWorkerStart = {
@@ -1117,6 +1212,7 @@ export class GuiServer {
         row.game = 1;
       }
     } else if (event.type === 'game-update') {
+      if (!run.rows[event.index]) return;
       let entry = run.battles.get(event.index);
       if (!entry || entry.game !== event.game) {
         entry = { game: event.game, state: new BattleState('p1'), log: new BattleLog() };
@@ -1133,11 +1229,40 @@ export class GuiServer {
       publicEntry.log.feed(event.publicLines);
       const row = run.rows[event.index];
       if (row && row.status === 'running') row.game = event.game;
+      run.battleRevisions.set(event.index, (run.battleRevisions.get(event.index) ?? 0) + 1);
       this.queue(
         `battle:${event.index}`,
         () => ({ type: 'battle', ...this.battleBody(event.index) }),
         () => ({ type: 'battle', ...this.battleBody(event.index, true) }),
       );
+    } else if (event.type === 'decision') {
+      if (!run.rows[event.index]) return;
+      const row = event.row;
+      if (row.kind === 'decision') {
+        const list = run.decisions.get(event.index) ?? [];
+        list.push({
+          game: Number(row.game_number) || 0,
+          turn: Number(row.turn) || 0,
+          pid: event.pid,
+          phase: typeof row.phase === 'string' ? row.phase.slice(0, 100) : '',
+          selection: Array.isArray(row.selection)
+            ? row.selection.slice(0, 16).map((value) => String(value).slice(0, 500))
+            : [],
+          rationale: typeof row.rationale === 'string' ? row.rationale.slice(0, 20_000) : '',
+          automatic: row.automatic === true,
+          fallback: row.fallback === true,
+          substituted: typeof row.substitution_reason === 'string',
+        });
+        if (list.length > 400) list.splice(0, list.length - 400);
+        run.decisions.set(event.index, list);
+        run.battleRevisions.set(event.index, (run.battleRevisions.get(event.index) ?? 0) + 1);
+        this.queue(
+          `battle:${event.index}`,
+          () => ({ type: 'battle', ...this.battleBody(event.index) }),
+          () => ({ type: 'battle', ...this.battleBody(event.index, true) }),
+        );
+      }
+      return;
     } else if (event.type === 'game-end') {
       const row = run.rows[event.index];
       if (row) {
@@ -1282,11 +1407,19 @@ export class GuiServer {
       if (paste.length > 64_000) throw new HttpError(400, 'a team paste must be at most 64 KB');
       return { id: String(record.id ?? ''), paste };
     });
+    const name = String(body.name ?? '');
+    const teamsDir = this.options.teamsDir ?? TEAMS_DIR;
+    const candidateDir = path.resolve(teamsDir, name);
+    const canCleanCandidate =
+      candidateDir.startsWith(path.resolve(teamsDir) + path.sep) && !fs.existsSync(candidateDir);
     let dir: string;
     try {
-      dir = createPool(String(body.name ?? ''), format, drafts, this.options.teamsDir);
+      dir = createPool(name, format, drafts, teamsDir);
     } catch (error) {
-      if (error instanceof HttpError) throw error;
+      if (isRecord(error) && typeof error.code === 'string') {
+        if (canCleanCandidate) fs.rmSync(candidateDir, { recursive: true, force: true });
+        throw error;
+      }
       throw new HttpError(400, error instanceof Error ? error.message : String(error));
     }
     if (owner && this.options.auth) {
@@ -1317,14 +1450,7 @@ function clampInt(value: unknown, minimum: number, maximum: number, fallback: nu
 
 function workerEnvironment(): NodeJS.ProcessEnv {
   const environment: NodeJS.ProcessEnv = { NODE_ENV: process.env.NODE_ENV ?? 'production' };
-  for (const name of [
-    'LANG',
-    'TZ',
-    'SSL_CERT_FILE',
-    'NODE_EXTRA_CA_CERTS',
-    'VGC_LEAGUE_DATA_DIR',
-    'VGC_LEAGUE_PS_DIR',
-  ]) {
+  for (const name of ['LANG', 'TZ', 'SSL_CERT_FILE', 'NODE_EXTRA_CA_CERTS', 'VGC_LEAGUE_DATA_DIR', 'VGC_LEAGUE_PS']) {
     const value = process.env[name];
     if (value) environment[name] = value;
   }
