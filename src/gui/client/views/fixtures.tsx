@@ -9,6 +9,7 @@ import type {
   ProviderInfo,
   ReasoningLevelsResponse,
   RunSnapshot,
+  ValidateResponse,
 } from '../../api';
 import { Dropdown, resolveOption } from '../components/dropdown';
 import { api } from '../http';
@@ -99,6 +100,8 @@ function TeamEditor({
   onLoadPool,
   onAssign,
   formatLabel,
+  format,
+  onDone,
 }: {
   slot: number;
   spec: string;
@@ -108,11 +111,15 @@ function TeamEditor({
   onLoadPool: (name: string, force?: boolean) => void;
   onAssign: (team: TeamAssignment | null, format?: string) => void;
   formatLabel: string;
+  format: string;
+  onDone: () => void;
 }) {
   const [selPool, setSelPool] = useState(
     () => pools.find((info) => info.name !== 'test')?.name ?? pools[0]?.name ?? '',
   );
   const [selTeam, setSelTeam] = useState('');
+  const [problems, setProblems] = useState<string[]>([]);
+  const [checking, setChecking] = useState(false);
   useEffect(() => {
     if (selPool) onLoadPool(selPool);
   }, [selPool]);
@@ -124,6 +131,24 @@ function TeamEditor({
     const found = teams.teams.find((entry) => entry.name === selTeam);
     if (!found) return;
     onAssign({ paste: found.paste, label: `${selPool} · ${found.name}` }, teams.format);
+    onDone();
+  };
+  const submitPaste = () => {
+    const paste = team?.paste ?? '';
+    if (!paste.trim()) return;
+    setChecking(true);
+    setProblems([]);
+    api<ValidateResponse>('/api/team/validate', { paste, format })
+      .then((data) => {
+        if (data.problems.length) {
+          setProblems(data.problems);
+          return;
+        }
+        onAssign({ paste, label: `Pasted team ✓ (${data.species.length})` });
+        onDone();
+      })
+      .catch((error: Error) => setProblems([error.message]))
+      .finally(() => setChecking(false));
   };
   return (
     <div class="team-editor">
@@ -188,9 +213,20 @@ function TeamEditor({
           value={team?.paste ?? ''}
           onInput={(event) => {
             const value = event.currentTarget.value;
+            setProblems([]);
             onAssign(value.trim() ? { paste: value, label: 'Pasted team' } : null);
           }}
         />
+        <div class="paste-actions">
+          <button type="button" class="button" disabled={checking || !team?.paste.trim()} onClick={submitPaste}>
+            {checking ? 'Validating…' : 'Validate team'}
+          </button>
+        </div>
+        {problems.length > 0 && (
+          <div class="message error" role="alert">
+            {problems.join('\n')}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -698,6 +734,8 @@ export function FixturesView({ app, run, onStarted, onPools }: FixturesProps) {
                         onLoadPool={loadPoolTeams}
                         onAssign={(next, format) => assignTeam(index, next, format)}
                         formatLabel={formatLabel}
+                        format={assignFormat}
+                        onDone={() => setEditingTeam(null)}
                       />
                     )}
                   </div>

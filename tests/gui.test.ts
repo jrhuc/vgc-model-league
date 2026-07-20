@@ -666,6 +666,14 @@ test('gui runs a random-vs-random series and streams live battle state', async (
     const sides = snapshot.sides as Record<string, { player: string; mons: unknown[] }>;
     assert.equal(sides.p1!.player, 'random');
     assert.ok(sides.p1!.mons.length > 0);
+    const games = battle.data.games as number[];
+    assert.ok(games.length >= 2, 'a finished bo3 should retain each game');
+    assert.equal(battle.data.game, games[games.length - 1], 'the default view is the latest game');
+    const first = await apiJson(`${base}api/battle?index=0&game=1`);
+    assert.equal(first.data.game, 1);
+    const firstSnapshot = first.data.snapshot as Record<string, unknown>;
+    assert.ok(firstSnapshot, 'game 1 stays viewable after the series ends');
+    assert.ok(Number(firstSnapshot.turn) >= 1);
 
     const overall = await apiJson(`${base}api/records`);
     assert.equal(overall.status, 200);

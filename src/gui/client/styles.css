@@ -239,6 +239,8 @@ textarea { min-height: 170px; resize: vertical; font: 12px/1.5 var(--mono); }
 .log-line.faint { color: var(--red); font-weight: 800; }
 .log-line.win { color: var(--green); font-weight: 800; }
 .log-line.timer { margin: 3px 0; padding: 3px 8px; color: #9a6d00; background: #fff9df; }
+.game-select { appearance: auto; width: auto; border: 1px solid var(--line-strong); padding: 3px 6px; background: white; color: var(--ink-soft); font: 700 9px/1 var(--mono); letter-spacing: .06em; text-transform: uppercase; cursor: pointer; }
+.game-select:hover { color: var(--ink); }
 .log-tabs { display: flex; gap: 4px; }
 .log-tab { border: 1px solid transparent; padding: 4px 9px; background: none; color: var(--ink-soft); font: 800 10px/1 var(--mono); letter-spacing: .1em; text-transform: uppercase; cursor: pointer; }
 .log-tab:hover { color: var(--ink); }

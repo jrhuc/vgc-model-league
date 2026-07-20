@@ -137,6 +137,9 @@ export function App() {
       .catch(() => {});
   };
 
+  const loadGame = (index: number, game: number) =>
+    api<BattleMessage>(`${contribute ? '/api/battle' : '/api/battle/public'}?index=${index}&game=${game}`);
+
   const onStarted = () => {
     setSelected(null);
     setBattles({});
@@ -237,6 +240,7 @@ export function App() {
             battles={battles}
             selected={selected}
             onSelect={selectBattle}
+            onLoadGame={loadGame}
             onGoFixtures={() => navigate('fixtures')}
           />
         </section>

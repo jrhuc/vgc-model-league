@@ -21,6 +21,7 @@ interface ArenaProps {
   battles: Record<number, StoredBattle>;
   selected: number | null;
   onSelect: (index: number) => void;
+  onLoadGame: (index: number, game: number) => Promise<BattleMessage>;
   onGoFixtures: () => void;
 }
 
@@ -389,11 +390,15 @@ function TurnLog({
   decisions,
   players,
   game,
+  games,
+  onSelectGame,
 }: {
   log: BattleLogEntryView[];
   decisions: DecisionView[];
   players: Record<string, string> | undefined;
   game: number;
+  games: number[];
+  onSelectGame: (game: number) => void;
 }) {
   const [tab, setTab] = useState<'log' | 'decisions'>('log');
   const logTabRef = useRef<HTMLButtonElement>(null);
@@ -456,7 +461,22 @@ function TurnLog({
             Decisions{decisions.length ? ` (${decisions.length})` : ''}
           </button>
         </div>
-        <span>Game {game}</span>
+        {games.length > 1 ? (
+          <select
+            class="game-select"
+            aria-label="Show log for game"
+            value={String(game)}
+            onChange={(event) => onSelectGame(Number(event.currentTarget.value))}
+          >
+            {games.map((option) => (
+              <option key={option} value={String(option)}>
+                Game {option}
+              </option>
+            ))}
+          </select>
+        ) : (
+          <span>Game {game}</span>
+        )}
       </div>
       {tab === 'decisions' ? (
         <div role="tabpanel" id="arena-decisions-panel" aria-labelledby="arena-decisions-tab">
@@ -489,14 +509,19 @@ function TurnLog({
   );
 }
 
-export function ArenaView({ run, battles, selected, onSelect, onGoFixtures }: ArenaProps) {
+export function ArenaView({ run, battles, selected, onSelect, onLoadGame, onGoFixtures }: ArenaProps) {
   const [stopError, setStopError] = useState('');
   const [stopping, setStopping] = useState(false);
+  const [pastGame, setPastGame] = useState<StoredBattle | null>(null);
 
   useEffect(() => {
     setStopError('');
     setStopping(false);
   }, [run?.runId]);
+
+  useEffect(() => {
+    setPastGame(null);
+  }, [selected, run?.runId]);
 
   if (!run) {
     return (
@@ -525,6 +550,19 @@ export function ArenaView({ run, battles, selected, onSelect, onGoFixtures }: Ar
           : null;
   const row = effective === null ? null : (run.rows[effective] ?? null);
   const entry = effective === null ? null : battles[effective];
+  const shown = entry && pastGame?.index === effective && pastGame.game !== entry.game ? pastGame : entry;
+  const viewGame = (game: number) => {
+    if (effective === null || !entry) return;
+    if (game === entry.game) {
+      setPastGame(null);
+      return;
+    }
+    onLoadGame(effective, game)
+      .then((message) => {
+        if (message.snapshot) setPastGame({ ...message, receivedAt: Date.now() });
+      })
+      .catch(() => {});
+  };
   const done = run.rows.filter((item) => item.status === 'done').length;
   const total = run.rows.length;
   const runKind =
@@ -639,7 +677,7 @@ export function ArenaView({ run, battles, selected, onSelect, onGoFixtures }: Ar
                 <p>The scheduler is building the series list.</p>
               </div>
             </div>
-          ) : !entry?.snapshot ? (
+          ) : !shown?.snapshot ? (
             <>
               <div class="field-meta">
                 <span>Series {(effective ?? 0) + 1}</span>
@@ -657,47 +695,49 @@ export function ArenaView({ run, battles, selected, onSelect, onGoFixtures }: Ar
           ) : (
             <>
               <div class="visually-hidden" role="status" aria-live="polite" aria-atomic="true">
-                Game {entry.game}. {entry.snapshot.turn ? `Turn ${entry.snapshot.turn}.` : 'Team preview.'} Score{' '}
+                Game {shown.game}. {shown.snapshot.turn ? `Turn ${shown.snapshot.turn}.` : 'Team preview.'} Score{' '}
                 {row.score.p1} to {row.score.p2}.
-                {entry.snapshot.log.length > 0
-                  ? ` ${entry.snapshot.log[entry.snapshot.log.length - 1]?.text ?? ''}`
+                {shown.snapshot.log.length > 0
+                  ? ` ${shown.snapshot.log[shown.snapshot.log.length - 1]?.text ?? ''}`
                   : ''}
               </div>
               <div class="field-meta">
-                <span>Game {entry.game} · Bo3</span>
+                <span>Game {shown.game} · Bo3</span>
                 <span class="series-score">
                   {row.score.p1}-{row.score.p2}
                 </span>
-                <span class="turn-badge">{entry.snapshot.turn ? `Turn ${entry.snapshot.turn}` : 'Team preview'}</span>
-                <span class={entry.snapshot.weather === 'none' ? '' : 'condition-active'}>
-                  {entry.snapshot.weather === 'none' ? 'Clear skies' : entry.snapshot.weather}
+                <span class="turn-badge">{shown.snapshot.turn ? `Turn ${shown.snapshot.turn}` : 'Team preview'}</span>
+                <span class={shown.snapshot.weather === 'none' ? '' : 'condition-active'}>
+                  {shown.snapshot.weather === 'none' ? 'Clear skies' : shown.snapshot.weather}
                 </span>
-                <span class={entry.snapshot.fields.length ? 'condition-active' : ''}>
-                  {entry.snapshot.fields.join(' · ') || 'Open field'}
+                <span class={shown.snapshot.fields.length ? 'condition-active' : ''}>
+                  {shown.snapshot.fields.join(' · ') || 'Open field'}
                 </span>
               </div>
               <div class="field-surface">
                 <Side
                   pid="p1"
-                  side={entry.snapshot.sides.p1}
+                  side={shown.snapshot.sides.p1}
                   right={false}
-                  timer={entry.snapshot.timers?.p1}
-                  receivedAt={entry.receivedAt}
+                  timer={shown.snapshot.timers?.p1}
+                  receivedAt={shown.receivedAt}
                 />
                 <div class="center-mark">VS</div>
                 <Side
                   pid="p2"
-                  side={entry.snapshot.sides.p2}
+                  side={shown.snapshot.sides.p2}
                   right={true}
-                  timer={entry.snapshot.timers?.p2}
-                  receivedAt={entry.receivedAt}
+                  timer={shown.snapshot.timers?.p2}
+                  receivedAt={shown.receivedAt}
                 />
               </div>
               <TurnLog
-                log={entry.snapshot.log ?? []}
-                decisions={entry.snapshot.decisions ?? []}
+                log={shown.snapshot.log ?? []}
+                decisions={shown.snapshot.decisions ?? []}
                 players={row.players}
-                game={entry.game}
+                game={shown.game}
+                games={entry?.games?.length ? entry.games : shown.games}
+                onSelectGame={viewGame}
               />
             </>
           )}

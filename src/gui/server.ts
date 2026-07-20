@@ -149,6 +149,24 @@ interface RunConfig extends ModelReasoningConfig {
   seed?: number;
 }
 
+interface GameBattle {
+  state: BattleState;
+  log: BattleLog;
+}
+
+function gameParam(url: URL): number | undefined {
+  const raw = url.searchParams.get('game');
+  if (raw === null) return undefined;
+  const value = Number(raw);
+  return Number.isInteger(value) && value > 0 ? value : undefined;
+}
+
+function latestBattle(games: Map<number, GameBattle> | undefined): { game: number; entry: GameBattle } | null {
+  if (!games?.size) return null;
+  const game = Math.max(...games.keys());
+  return { game, entry: games.get(game) as GameBattle };
+}
+
 class ActiveRun {
   rows: SeriesRow[] = [];
   bracket: BracketView | undefined;
@@ -163,8 +181,8 @@ class ActiveRun {
   interrupted = false;
   userStopped = false;
   settling = false;
-  readonly battles = new Map<number, { game: number; state: BattleState; log: BattleLog }>();
-  readonly publicBattles = new Map<number, { game: number; state: BattleState; log: BattleLog }>();
+  readonly battles = new Map<number, Map<number, GameBattle>>();
+  readonly publicBattles = new Map<number, Map<number, GameBattle>>();
   readonly decisions = new Map<number, DecisionView[]>();
   readonly battleRevisions = new Map<number, number>();
   readonly controller = new AbortController();
@@ -502,13 +520,13 @@ export class GuiServer {
       this.requireAuthenticatedViewer(session);
       this.openEvents(response, sessionToken, false);
     } else if (key === 'GET /api/battle/public') {
-      this.json(response, 200, this.battleBody(Number(url.searchParams.get('index')), true));
+      this.json(response, 200, this.battleBody(Number(url.searchParams.get('index')), true, gameParam(url)));
     } else if (key === 'GET /api/battle') {
       this.requireAuthenticatedViewer(session);
       this.json(
         response,
         200,
-        this.battleBody(Number(url.searchParams.get('index')), !this.canViewPrivateRun(session?.user)),
+        this.battleBody(Number(url.searchParams.get('index')), !this.canViewPrivateRun(session?.user), gameParam(url)),
       );
     } else if (key === 'POST /api/logout') {
       this.options.auth?.logout(
@@ -785,22 +803,29 @@ export class GuiServer {
       owner: run.owner?.login ?? null,
       endTime: run.endTime ?? null,
       canControl: !publicView && !run.settling,
-      rows: run.rows.map((row, index) => ({ ...row, turn: battles.get(index)?.state.turn ?? 0 })),
+      rows: run.rows.map((row, index) => ({
+        ...row,
+        turn: latestBattle(battles.get(index))?.entry.state.turn ?? 0,
+      })),
       bracket: run.bracket ?? null,
       draft: run.draft ?? null,
       board: run.config.board ?? null,
     };
   }
 
-  private battleBody(index: number, publicView = false): BattleMessage {
-    const entry = (publicView ? this.run?.publicBattles : this.run?.battles)?.get(index);
-    if (!entry) return { index, game: 0, revision: 0, snapshot: null };
+  private battleBody(index: number, publicView = false, game?: number): BattleMessage {
+    const games = (publicView ? this.run?.publicBattles : this.run?.battles)?.get(index);
+    const latest = latestBattle(games);
+    if (!games || !latest) return { index, game: 0, games: [], revision: 0, snapshot: null };
+    const shown = game !== undefined && games.has(game) ? game : latest.game;
+    const entry = games.get(shown) as GameBattle;
     const decisions = publicView
       ? []
-      : (this.run?.decisions.get(index) ?? []).filter((decision) => decision.game === entry.game);
+      : (this.run?.decisions.get(index) ?? []).filter((decision) => decision.game === shown);
     return {
       index,
-      game: entry.game,
+      game: shown,
+      games: [...games.keys()].sort((a, b) => a - b),
       revision: this.run?.battleRevisions.get(index) ?? 0,
       snapshot: snapshotBattle(entry.state, this.run?.rows[index]?.players, entry.log, decisions),
     };
@@ -1213,20 +1238,23 @@ export class GuiServer {
       }
     } else if (event.type === 'game-update') {
       if (!run.rows[event.index]) return;
-      let entry = run.battles.get(event.index);
-      if (!entry || entry.game !== event.game) {
-        entry = { game: event.game, state: new BattleState('p1'), log: new BattleLog() };
-        run.battles.set(event.index, entry);
+      for (const [store, lines] of [
+        [run.battles, event.lines],
+        [run.publicBattles, event.publicLines],
+      ] as const) {
+        let games = store.get(event.index);
+        if (!games) {
+          games = new Map();
+          store.set(event.index, games);
+        }
+        let entry = games.get(event.game);
+        if (!entry) {
+          entry = { state: new BattleState('p1'), log: new BattleLog() };
+          games.set(event.game, entry);
+        }
+        entry.state.feed(lines);
+        entry.log.feed(lines);
       }
-      entry.state.feed(event.lines);
-      entry.log.feed(event.lines);
-      let publicEntry = run.publicBattles.get(event.index);
-      if (!publicEntry || publicEntry.game !== event.game) {
-        publicEntry = { game: event.game, state: new BattleState('p1'), log: new BattleLog() };
-        run.publicBattles.set(event.index, publicEntry);
-      }
-      publicEntry.state.feed(event.publicLines);
-      publicEntry.log.feed(event.publicLines);
       const row = run.rows[event.index];
       if (row && row.status === 'running') row.game = event.game;
       run.battleRevisions.set(event.index, (run.battleRevisions.get(event.index) ?? 0) + 1);

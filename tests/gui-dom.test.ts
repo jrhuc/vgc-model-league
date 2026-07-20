@@ -114,6 +114,15 @@ test('built client bundle boots and renders the app against the live server', as
       window.document.querySelector('.schedule')?.textContent ?? '',
       /with Sample ·|assign its team from a pool/,
     );
+    const validateButton = asButton(
+      [...window.document.querySelectorAll('button')].find((button) => button.textContent?.trim() === 'Validate team'),
+    );
+    assert.equal(validateButton.disabled, false, 'a non-empty paste enables validation');
+    validateButton.click();
+    await waitFor(() => window.document.querySelector('#teamPaste0') === null, 30_000);
+    assert.equal(window.document.querySelector('#teamPaste0'), null, 'a legal paste collapses the team editor');
+    assert.match(rendered(), /Pasted team ✓/);
+    assert.equal(contenderButton.getAttribute('aria-expanded'), 'false');
     asButton(window.document.querySelector('.icon-button')).click();
     await waitFor(() => window.document.querySelectorAll('.contender').length === 1);
     asButton(window.document.querySelector('.icon-button')).click();

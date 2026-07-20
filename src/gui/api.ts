@@ -219,6 +219,8 @@ export interface BattleSnapshot {
 export interface BattleMessage {
   index: number;
   game: number;
+  /** Game numbers with a retained log, ascending; pass ?game= to fetch one. */
+  games: number[];
   revision: number;
   snapshot: BattleSnapshot | null;
 }
