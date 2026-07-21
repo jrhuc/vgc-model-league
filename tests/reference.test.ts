@@ -23,16 +23,16 @@ test('reference reads exact data from the configured Showdown checkout', () => {
   assert.match(rendered, /commit /);
   assert.match(
     rendered,
-    /Species Gengar: Ghost\/Poison; base stats HP 60, Atk 65, Def 60, SpA 130, SpD 75, Spe 110; abilities Cursed Body/,
+    /Species Gengar: Ghost\/Poison; base stats HP 60, Attack 65, Defense 60, Special Attack 130, Special Defense 75, Speed 110; abilities Cursed Body/,
   );
-  assert.match(rendered, /Speed 126-178 with Timid alignment/);
+  assert.match(rendered, /raw Speed 126-178 with Timid alignment/);
   assert.match(
     rendered,
-    /Gengar-Mega \(Ghost\/Poison, base stats HP 60, Atk 65, Def 80, SpA 170, SpD 95, Spe 130, abilities Shadow Tag; Speed 148-200 with Timid alignment\)/,
+    /Gengar-Mega \(Ghost\/Poison, base stats HP 60, Attack 65, Defense 80, Special Attack 170, Special Defense 95, Speed 130, abilities Shadow Tag; raw Speed 148-200 with Timid alignment\)/,
   );
   assert.match(
     rendered,
-    /Species Garchomp: Dragon\/Ground; base stats HP 108, Atk 130, Def 95, SpA 80, SpD 85, Spe 102/,
+    /Species Garchomp: Dragon\/Ground; base stats HP 108, Attack 130, Defense 95, Special Attack 80, Special Defense 85, Speed 102/,
   );
   assert.match(rendered, /Move Shadow Ball: Ghost; Special; BP 80; acc 100%; priority \+0; target normal/);
   assert.equal(rendered.match(/- Move Shadow Ball:/g)?.length, 1);
@@ -45,7 +45,7 @@ test('Mega formes require the visible matching stone', () => {
   const rendered = new ShowdownReference('gen9championsvgc2026regmb')
     .render({ speciesSets: [['Charizard', 'Choice Specs']], items: ['Choice Specs'] })
     .join('\n');
-  assert.match(rendered, /Species Charizard: Fire\/Flying; base stats .* Spe 100/);
+  assert.match(rendered, /Species Charizard: Fire\/Flying; base stats .* Speed 100/);
   assert.doesNotMatch(rendered, /Charizard-Mega/);
 });
 
@@ -243,9 +243,43 @@ test('compact reference shows the mega outcome for stone holders only', () => {
     .renderCompact([{ species: 'Swampert', item: 'Swampertite', nature: 'Adamant', moves: [], active: false }])
     .join('\n');
   assert.match(holder, /if Mega Evolved -> Swampert-Mega: Water\/Ground, ability Swift Swim/);
-  assert.match(holder, /Atk 150/);
+  assert.match(holder, /Attack 150/);
   const wrongStone = reference
     .renderCompact([{ species: 'Swampert', item: 'Gengarite', nature: 'Adamant', moves: [], active: false }])
     .join('\n');
   assert.doesNotMatch(wrongStone, /Mega Evolved/);
+});
+
+test('speed profiles apply visible battle modifiers without collapsing hidden ranges', () => {
+  const reference = new ShowdownReference('gen9championsvgc2026regmb');
+  assert.deepEqual(
+    reference.speedProfile({
+      species: 'Tauros-Paldea-Aqua',
+      nature: 'Adamant',
+      item: 'Choice Scarf',
+    }),
+    {
+      raw: [105, 152],
+      effective: [157, 228],
+      modifiers: ['Choice Scarf ×1.5'],
+    },
+  );
+  assert.deepEqual(
+    reference.speedProfile({
+      species: 'Venusaur-Mega',
+      nature: 'Modest',
+      tailwind: true,
+    })?.effective,
+    [170, 264],
+  );
+  assert.deepEqual(
+    reference.speedProfile({
+      species: 'Gengar-Mega',
+      exact: 170,
+      status: 'par',
+    })?.effective,
+    [85, 85],
+  );
+  assert.equal(reference.movePriority('Quick Attack'), 1);
+  assert.equal(reference.movePriority('Encore'), 0);
 });

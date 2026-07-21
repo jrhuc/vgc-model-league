@@ -7,7 +7,7 @@ test('system prompt concentrates strategic and tool policy', () => {
   assert.match(SYSTEM, /one intended Mega/);
   assert.match(SYSTEM, /lookup_matchup/);
   assert.match(SYSTEM, /estimate_damage/);
-  assert.match(SYSTEM, /at most two decisive calculations in one tool round/);
+  assert.match(SYSTEM, /two reference calculations plus one action-order comparison/);
   assert.match(SYSTEM, /per-turn timer/);
   assert.match(SYSTEM, /free super-effective hit/);
 });
@@ -27,6 +27,7 @@ test('decision prompt leads with merged state and keeps mechanics compact', () =
   );
   assert.ok(prompt.indexOf('Active type matchups') < prompt.indexOf('Choose for Swampert'));
   assert.match(prompt, /"threats"/);
+  assert.match(prompt, /notebook":"durable series notes, at most 1600 characters"/);
   assert.equal(prompt.match(/"choices"/g)?.length, 1);
 });
 

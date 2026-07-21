@@ -114,6 +114,50 @@ test('LLM choices parse prose, retry, and record fallbacks', async () => {
   }
 });
 
+test('Gemini-like nested candidate objects preserve the complete top-level decision', async () => {
+  const longCandidate = 'candidate '.repeat(40);
+  const provider = new ScriptedProvider([
+    JSON.stringify({
+      choices: [1],
+      rationale: 'use the top-level choice',
+      notebook: 'n'.repeat(1800),
+      threats: ['direct threat', { rationale: 'not a threat' }, 7, 'second threat', 'third threat', 'capped'],
+      candidates: [
+        { choices: [0], rationale: longCandidate, notebook: 'nested notebook' },
+        { choices: [0], rationale: 'second nested line', notebook: 'nested notebook' },
+        { choices: [0], rationale: 7 },
+        { choices: [0], rationale: 'third nested line' },
+        { choices: [0], rationale: 'capped line' },
+      ],
+    }),
+  ]);
+  const decisions: Record<string, unknown>[] = [];
+  const engine = new LLMEngine('p1', 'scripted', { provider, decisionLog: decisions });
+
+  assert.equal(await engine.act(request(), { povLines: ['|turn|1'] }), 'move 2');
+  assert.equal(provider.calls.length, 1);
+  assert.equal(decisions[0]!.fallback, false);
+  assert.equal(decisions[0]!.parse_failures, 0);
+  assert.equal(decisions[0]!.rationale, 'use the top-level choice');
+  assert.equal(String(decisions[0]!.notebook).length, 1600);
+  assert.deepEqual(decisions[0]!.threats, ['direct threat', 'second threat', 'third threat']);
+  assert.deepEqual(decisions[0]!.candidates, [longCandidate.slice(0, 240), 'second nested line', 'third nested line']);
+});
+
+test('missing or malformed optional decision lists default to empty', async () => {
+  const provider = new ScriptedProvider([
+    JSON.stringify({ choices: [1], rationale: 'complete core decision', notebook: '', threats: { unexpected: true } }),
+  ]);
+  const decisions: Record<string, unknown>[] = [];
+  const engine = new LLMEngine('p1', 'scripted', { provider, decisionLog: decisions });
+
+  assert.equal(await engine.act(request(), { povLines: [] }), 'move 2');
+  assert.equal(provider.calls.length, 1);
+  assert.equal(decisions[0]!.fallback, false);
+  assert.deepEqual(decisions[0]!.threats, []);
+  assert.deepEqual(decisions[0]!.candidates, []);
+});
+
 test('timer context bounds the provider request', async () => {
   const provider = new ScriptedProvider([decision([0])]);
   const engine = new LLMEngine('p1', 'scripted', { provider, decisionLog: [] });
@@ -262,7 +306,7 @@ test('transient API errors retry before falling back', async () => {
   assert.equal(persistentProvider.calls.length, 3);
 });
 
-test('one capped tool batch resolves before the final choice', async () => {
+test('two capped tool batches resolve before the final choice', async () => {
   const provider = new ScriptedProvider([
     {
       text: '',
@@ -273,33 +317,89 @@ test('one capped tool batch resolves before the final choice', async () => {
         { id: '3', name: 'lookup_move', arguments: { name: 'Tailwind' } },
       ],
     },
+    {
+      text: '',
+      usage: { input_tokens: 1 },
+      toolCalls: [
+        { id: '4', name: 'lookup_species', arguments: { name: 'Garchomp' } },
+        { id: '5', name: 'lookup_species', arguments: { name: 'Dragonite' } },
+        { id: '6', name: 'lookup_species', arguments: { name: 'Gholdengo' } },
+      ],
+    },
     { text: decision([1], 'spread', 'spread'), usage: { output_tokens: 1 }, toolCalls: [] },
   ]);
   const traces: Record<string, unknown>[] = [];
   const engine = new LLMEngine('p1', 'scripted', { provider, decisionLog: [], traceLog: traces });
   assert.equal(await engine.act(request(), { povLines: [] }), 'move 2');
-  assert.equal(provider.calls.length, 2);
+  assert.equal(provider.calls.length, 3);
   assert.equal(provider.calls[0]!.options.maxTokens, 4096);
   assert.equal(provider.calls[0]!.options.toolChoice, 'auto');
-  assert.equal(provider.calls[1]!.options.toolChoice, 'none');
-  const replayedCalls = provider.calls[1]!.messages.filter((message) => message.role === 'assistant').flatMap(
+  assert.equal(provider.calls[1]!.options.toolChoice, 'auto');
+  assert.equal(provider.calls[2]!.options.toolChoice, 'none');
+  const replayedCalls = provider.calls[2]!.messages.filter((message) => message.role === 'assistant').flatMap(
     (message) => message.toolCalls ?? [],
   );
-  assert.equal(replayedCalls.length, 2);
-  assert.doesNotMatch(JSON.stringify(provider.calls[1]!.messages), /Tailwind/);
-  assert.ok(
-    provider.calls[1]!.messages.some(
-      (message) => message.role === 'assistant' && message.toolCalls?.[0]?.name === 'lookup_move',
-    ),
+  assert.deepEqual(
+    replayedCalls.map((call) => call.name),
+    ['lookup_move', 'lookup_move', 'lookup_species', 'lookup_species'],
   );
-  assert.ok(
-    provider.calls[1]!.messages.some(
-      (message) => message.role === 'tool' && String(message.content).includes('Earthquake'),
-    ),
+  assert.doesNotMatch(JSON.stringify(provider.calls[2]!.messages), /Tailwind|Gholdengo/);
+  const toolTrace = traces[0]!.tool_calls as Array<Record<string, unknown>>;
+  assert.equal(toolTrace.length, 4);
+  assert.match(String(toolTrace[0]!.result), /BP 100/);
+  assert.match(String(toolTrace[2]!.result), /Garchomp/);
+});
+
+test('one action-order call may accompany two standard calls in the single tool round', async () => {
+  const provider = new ScriptedProvider([
+    {
+      text: '',
+      usage: {},
+      toolCalls: [
+        {
+          id: '1',
+          name: 'estimate_damage',
+          arguments: { attacker: 'Gengar-Mega', defender: 'Garchomp', move: 'Shadow Ball' },
+        },
+        { id: '2', name: 'lookup_move', arguments: { name: 'Shadow Ball' } },
+        {
+          id: '3',
+          name: 'compare_action_order',
+          arguments: { first: 'ally 1', first_move: 'Shadow Ball', second: 'foe 1', second_move: 'Earthquake' },
+        },
+      ],
+    },
+    { text: decision([0]), usage: {}, toolCalls: [] },
+  ]);
+  const traces: Record<string, unknown>[] = [];
+  const engine = new LLMEngine('p1', 'scripted', { provider, decisionLog: [], traceLog: traces });
+  const orderedRequest = request();
+  orderedRequest.active![0]!.moves = [
+    { move: 'Shadow Ball', id: 'shadowball', pp: 10, maxpp: 10, target: 'normal', disabled: false },
+    { move: 'Protect', id: 'protect', pp: 10, maxpp: 10, target: 'self', disabled: false },
+  ];
+  orderedRequest.side!.pokemon![0]!.details = 'Gengar-Mega, L50';
+  orderedRequest.side!.pokemon![0]!.stats = { spe: 170 };
+  orderedRequest.side!.pokemon![0]!.moves = ['shadowball', 'protect'];
+  const action = engine.act(orderedRequest, {
+    povLines: [
+      '|showteam|p2|Garchomp||LifeOrb|RoughSkin|Earthquake|Jolly|||||50',
+      '|switch|p1a: Mon1|Gengar-Mega, L50|165/165',
+      '|switch|p2a: Garchomp|Garchomp, L50|100/100',
+    ],
+  });
+  assert.equal(await action, 'move 1');
+  assert.ok(provider.calls[0]!.options.tools?.some((tool) => tool.name === 'compare_action_order'));
+  const replayed = provider.calls[1]!.messages.filter((message) => message.role === 'assistant').flatMap(
+    (message) => message.toolCalls ?? [],
   );
-  assert.deepEqual((traces[0]!.tool_calls as Array<Record<string, unknown>>)[0]!.arguments, { name: 'Earthquake' });
-  assert.match(String((traces[0]!.tool_calls as Array<Record<string, unknown>>)[0]!.result), /BP 100/);
-  assert.equal((traces[0]!.tool_calls as Array<Record<string, unknown>>).length, 2);
+  assert.deepEqual(
+    replayed.map((call) => call.name),
+    ['estimate_damage', 'lookup_move', 'compare_action_order'],
+  );
+  const toolTrace = traces[0]!.tool_calls as Array<Record<string, unknown>>;
+  assert.equal(toolTrace.length, 3);
+  assert.match(String(toolTrace[2]!.result), /Gengar-Mega is guaranteed to act first/);
 });
 
 test('readable decisions, technical traces, and post-game reflections stay separate', async () => {
@@ -338,6 +438,41 @@ test('readable decisions, technical traces, and post-game reflections stay separ
     ...oneMoveStats,
     reflections: 1,
   });
+});
+
+test('game transcripts reset while notebook and score persist, with a 2400-character cap', async () => {
+  const provider = new ScriptedProvider([
+    decision([0], 'game one', 'durable series note'),
+    decision([0], 'game two', 'durable series note'),
+    decision([0], 'after oversized event', 'durable series note'),
+  ]);
+  const engine = new LLMEngine('p1', 'scripted', { provider, decisionLog: [] });
+  engine.beginGame({
+    gameId: 'game-1',
+    gameNumber: 1,
+    seriesId: 'series-1',
+    seriesScore: { p1: 1, p2: 0 },
+  });
+  engine.observe(['|move|p2a: OldMon|Ancient Memory|p1a: Mon1']);
+  await engine.act(request(), { povLines: [] });
+
+  engine.beginGame({ gameId: 'game-2', gameNumber: 2, seriesId: 'series-1' });
+  await engine.act(request(), { povLines: [] });
+  const nextGamePrompt = String(provider.calls[1]!.messages[0]!.content);
+  assert.doesNotMatch(nextGamePrompt, /Ancient Memory|\[Game 1 begins/);
+  assert.match(nextGamePrompt, /\[Game 2 begins; series score p1 1, p2 0\]/);
+  assert.match(nextGamePrompt, /Private notebook: durable series note/);
+  assert.match(nextGamePrompt, /Series series-1; game 2; score p1 1, p2 0/);
+
+  engine.observe([`|move|p2a: NewMon|${'x'.repeat(2600)}LATEST|p1a: Mon1`]);
+  await engine.act(request(), { povLines: [] });
+  const cappedPrompt = String(provider.calls[2]!.messages[0]!.content);
+  const timelineMarker = 'Compact private battle timeline (your POV):\n';
+  const timeline = cappedPrompt
+    .slice(cappedPrompt.indexOf(timelineMarker) + timelineMarker.length)
+    .split('\n\nChoose for ')[0]!;
+  assert.equal(timeline.length, 2400);
+  assert.match(timeline, /LATEST into Mon1\.$/);
 });
 
 test('readable logs suppress unchanged notebooks and tendency counters remain post-hoc', async () => {

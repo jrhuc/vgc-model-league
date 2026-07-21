@@ -20,7 +20,7 @@ function tool(
 export const DEX_TOOLS: ToolDefinition[] = [
   tool(
     'lookup_species',
-    'Look up a species: typing, abilities, base stats, forme, Mega Stone outcomes, and optional nature-based Speed range.',
+    'Look up a species: typing, abilities, base stats, forme, Mega Stone outcomes, and optional nature-based raw Speed range.',
     {
       name: { type: 'string' },
       item: { type: ['string', 'null'] },
@@ -124,6 +124,26 @@ export interface CompactMonReference {
   mega?: string;
 }
 
+export interface SpeedProfileInput {
+  species: string;
+  nature?: string | null;
+  exact?: number;
+  item?: string | null;
+  itemConsumed?: boolean;
+  ability?: string | null;
+  status?: string | null;
+  boost?: number;
+  tailwind?: boolean;
+  weather?: string | null;
+  terrain?: string | null;
+}
+
+export interface SpeedProfile {
+  raw: [number, number];
+  effective: [number, number];
+  modifiers: string[];
+}
+
 export interface MatchupMon {
   species: string;
   moves: string[];
@@ -152,7 +172,7 @@ function cleanDescription(value: unknown): string {
 }
 
 function baseStats(stats: Dex.StatsTable): string {
-  return `base stats HP ${stats.hp}, Atk ${stats.atk}, Def ${stats.def}, SpA ${stats.spa}, SpD ${stats.spd}, Spe ${stats.spe}`;
+  return `base stats HP ${stats.hp}, Attack ${stats.atk}, Defense ${stats.def}, Special Attack ${stats.spa}, Special Defense ${stats.spd}, Speed ${stats.spe}`;
 }
 
 function statRange(
@@ -218,6 +238,24 @@ function weatherBallOverride(moveId: string, weather: string): { type: string; p
   return moveId === 'weatherball' && type ? { type, power: 100 } : null;
 }
 
+const SPEED_HALVING_ITEMS = new Set([
+  'ironball',
+  'machobrace',
+  'poweranklet',
+  'powerband',
+  'powerbelt',
+  'powerbracer',
+  'powerlens',
+  'powerweight',
+]);
+
+function modifyRange(range: [number, number], numerator: number, denominator = 1): [number, number] {
+  return [
+    Math.max(1, Math.floor((range[0] * numerator) / denominator)),
+    Math.max(1, Math.floor((range[1] * numerator) / denominator)),
+  ];
+}
+
 const TYPE_BOOST_ITEMS: Record<string, string> = {
   charcoal: 'Fire',
   mysticwater: 'Water',
@@ -273,6 +311,8 @@ export class ShowdownReference {
       Object.getOwnPropertyDescriptor(ShowdownReference.prototype, 'revision')?.get,
       ShowdownReference.prototype.renderCompact,
       ShowdownReference.prototype.describeCompact,
+      ShowdownReference.prototype.speedProfile,
+      ShowdownReference.prototype.movePriority,
       ShowdownReference.prototype.renderActiveMatchups,
       ShowdownReference.prototype.render,
       ShowdownReference.prototype.lookup,
@@ -292,6 +332,7 @@ export class ShowdownReference {
       asFinite,
       weatherBallOverride,
       JSON.stringify(WEATHER_BALL_TYPE),
+      JSON.stringify(SPEED_HALVING_ITEMS),
       JSON.stringify(TYPE_BOOST_ITEMS),
     ];
     return createHash('sha256')
@@ -318,7 +359,7 @@ export class ShowdownReference {
       });
       const active = mon.active ? 'active; ' : '';
       lines.push(
-        `- ${species.name}: ${reference.types}; ${active}Spe ${reference.speed}${mon.item ? `; item ${mon.item}` : ''}${
+        `- ${species.name}: ${reference.types}; ${active}raw Speed ${reference.speed}${mon.item ? `; item ${mon.item}` : ''}${
           reference.mega ? ` (${reference.mega})` : ''
         }${moves.length ? `; moves ${moves.join(', ')}` : ''}`,
       );
@@ -351,7 +392,7 @@ export class ShowdownReference {
         if (id(target ?? '') !== id(forme.name)) continue;
         const [megaLow, megaHigh] = statRange(forme.baseStats.spe, knownNature, 'spe');
         mega.push(
-          `if Mega Evolved -> ${forme.name}: ${forme.types.join('/')}, ability ${uniqueNames(Object.values(forme.abilities)).join('/')}, ${baseStats(forme.baseStats)}, Spe ${megaLow}-${megaHigh}`,
+          `if Mega Evolved -> ${forme.name}: ${forme.types.join('/')}, ability ${uniqueNames(Object.values(forme.abilities)).join('/')}, ${baseStats(forme.baseStats)}, raw Speed ${megaLow}-${megaHigh}`,
         );
       }
     }
@@ -361,6 +402,57 @@ export class ShowdownReference {
       moves,
       ...(mega.length ? { mega: mega.join('; ') } : {}),
     };
+  }
+
+  speedProfile(input: SpeedProfileInput): SpeedProfile | undefined {
+    const species = this.dex.species.get(input.species);
+    if (!species.exists) return undefined;
+    const nature = input.nature ? this.dex.natures.get(input.nature) : undefined;
+    const exact = Number.isInteger(input.exact) && input.exact! > 0 ? input.exact : undefined;
+    const raw: [number, number] =
+      exact === undefined
+        ? statRange(species.baseStats.spe, nature?.exists ? nature : undefined, 'spe')
+        : [exact, exact];
+    const stage = Math.max(-6, Math.min(6, Math.trunc(input.boost ?? 0)));
+    let effective = stage >= 0 ? modifyRange(raw, 2 + stage, 2) : modifyRange(raw, 2, 2 - stage);
+    const modifiers: string[] = [];
+    if (stage) modifiers.push(`Speed stage ${stage > 0 ? '+' : ''}${stage}`);
+
+    const fallbackAbility = Object.values(species.abilities)[0];
+    const ability = id(input.ability || fallbackAbility || '');
+    const weather = canonicalWeather(input.weather ?? '');
+    const terrain = id(input.terrain ?? '');
+    let numerator = 1;
+    let denominator = 1;
+    const multiply = (label: string, top: number, bottom = 1) => {
+      numerator *= top;
+      denominator *= bottom;
+      modifiers.push(label);
+    };
+    if (
+      (ability === 'chlorophyll' && ['sun', 'sunnyday', 'desolateland'].includes(weather)) ||
+      (ability === 'swiftswim' && ['rain', 'raindance', 'primordialsea'].includes(weather)) ||
+      (ability === 'sandrush' && ['sand', 'sandstorm'].includes(weather)) ||
+      (ability === 'slushrush' && ['hail', 'snow', 'snowscape'].includes(weather))
+    )
+      multiply(`${input.ability || fallbackAbility} ×2`, 2);
+    if (ability === 'surgesurfer' && ['electricterrain', 'electric'].includes(terrain))
+      multiply(`${input.ability || fallbackAbility} ×2`, 2);
+    if (ability === 'quickfeet' && input.status) multiply(`${input.ability || fallbackAbility} ×1.5`, 3, 2);
+    if (ability === 'unburden' && input.itemConsumed) multiply(`${input.ability || fallbackAbility} ×2`, 2);
+
+    const item = input.itemConsumed ? '' : id(input.item ?? '');
+    if (item === 'choicescarf') multiply('Choice Scarf ×1.5', 3, 2);
+    else if (SPEED_HALVING_ITEMS.has(item)) multiply(`${input.item} ×0.5`, 1, 2);
+    if (input.tailwind) multiply('Tailwind ×2', 2);
+    if (id(input.status ?? '') === 'par' && ability !== 'quickfeet') multiply('paralysis ×0.5', 1, 2);
+    effective = modifyRange(effective, numerator, denominator);
+    return { raw, effective, modifiers };
+  }
+
+  movePriority(name: string): number | undefined {
+    const move = this.dex.moves.get(name);
+    return move.exists ? move.priority : undefined;
   }
 
   renderActiveMatchups(attackers: MatchupMon[], defenders: MatchupMon[], weather = ''): string[] {
@@ -421,8 +513,8 @@ export class ShowdownReference {
         const knownNature = nature?.exists ? nature : undefined;
         const [low, high] = statRange(species.baseStats.spe, knownNature, 'spe');
         const detail = knownNature
-          ? `Speed ${low}-${high} with ${knownNature.name} alignment (full legal IV/EV range)`
-          : `Speed ${low}-${high} (full legal IV/EV/nature range)`;
+          ? `raw Speed ${low}-${high} with ${knownNature.name} alignment (full legal IV/EV range)`
+          : `raw Speed ${low}-${high} (full legal IV/EV/nature range)`;
         if (!details.includes(detail)) details.push(detail);
       }
       for (const itemName of uniqueNames(sets.map((set) => set[1]))) {
@@ -438,7 +530,7 @@ export class ShowdownReference {
             const nature = natureName ? this.dex.natures.get(natureName) : undefined;
             const knownNature = nature?.exists ? nature : undefined;
             const [low, high] = statRange(mega.baseStats.spe, knownNature, 'spe');
-            return [`Speed ${low}-${high}${knownNature ? ` with ${knownNature.name} alignment` : ''}`];
+            return [`raw Speed ${low}-${high}${knownNature ? ` with ${knownNature.name} alignment` : ''}`];
           });
           const megaAbilities = uniqueNames(Object.values(mega.abilities));
           for (const ability of megaAbilities)

@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 import { REPO_ROOT } from '../src/paths.js';
+import { ShowdownReference } from '../src/reference.js';
 import { BattleState } from '../src/state.js';
 import type { BattleRequest } from '../src/types.js';
 
@@ -15,7 +16,7 @@ test('own requests render known sets and stats', () => {
   assert.match(rendered, new RegExp(`item ${first.item}`));
   assert.match(rendered, new RegExp(`ability ${first.ability}`));
   assert.match(rendered, new RegExp(String((first.moves as string[])[0])));
-  assert.match(rendered, new RegExp(`stats atk ${(first.stats as Record<string, number>).atk}`));
+  assert.match(rendered, new RegExp(`Attack ${(first.stats as Record<string, number>).atk}`));
   assert.doesNotMatch(rendered, /\bL50\b/);
 });
 
@@ -156,4 +157,109 @@ test('Protect success reduction is tracked for the next menu', () => {
   ]);
   assert.equal(state.protectReducedSlots()[1], true);
   assert.match(state.render({}), /Protect success rate reduced/);
+});
+
+test('effective speed and action order preserve hidden ranges and explain redundant Encore', () => {
+  const reference = new ShowdownReference('gen9championsvgc2026regmb');
+  const state = new BattleState('p1');
+  state.feed([
+    '|showteam|p2|Tauros|Tauros-Paldea-Aqua|ChoiceScarf|Intimidate|CloseCombat,AquaJet|Adamant|||||50',
+    '|switch|p1a: Gengar|Gengar-Mega, L50|165/165',
+    '|switch|p2a: Tauros|Tauros-Paldea-Aqua, L50|100/100',
+    '|turn|5',
+    '|move|p2a: Tauros|Close Combat|p1a: Gengar',
+  ]);
+  const request: BattleRequest = {
+    active: [{ moves: [{ move: 'Encore', id: 'encore', target: 'normal' }] }],
+    side: {
+      pokemon: [
+        {
+          ident: 'p1: Gengar',
+          details: 'Gengar-Mega, L50',
+          condition: '165/165',
+          active: true,
+          stats: { atk: 76, def: 121, spa: 190, spd: 125, spe: 170 },
+          moves: ['encore'],
+        },
+      ],
+    },
+  };
+  const rendered = state.render(request, (mon) => reference.describeCompact(mon));
+  assert.match(rendered, /Special Defense 125, Speed 170/);
+  assert.match(rendered, /raw Speed range 105-152/);
+  assert.match(rendered, /Choice-locked into Close Combat/);
+  assert.match(state.renderEffectiveSpeeds(reference), /foe Tauros-Paldea-Aqua 157–228 \(Choice Scarf ×1\.5\)/);
+  assert.equal(state.moveAnnotation('Encore', 'foe', 1), 'redundant: target is Choice-locked into Close Combat');
+  assert.match(
+    state.compareActionOrder(
+      { first: 'Gengar-Mega', first_move: 'Encore', second: 'Tauros-Paldea-Aqua', second_move: 'Close Combat' },
+      reference,
+    ),
+    /order is uncertain[\s\S]*Encore is redundant/,
+  );
+
+  state.feed(['|-start|p2a: Tauros|Encore']);
+  assert.equal(state.moveAnnotation('Encore', 'foe', 1), 'fails: target already Encored');
+  state.feed(['|switch|p2a: Incineroar|Incineroar, L50|100/100']);
+  assert.doesNotMatch(state.render({}), /Choice-locked/);
+});
+
+test('action order proves one-point and Tailwind speed guarantees', () => {
+  const reference = new ShowdownReference('gen9championsvgc2026regmb');
+  const state = new BattleState('p1');
+  state.feed([
+    '|showteam|p2|Garchomp||LifeOrb|RoughSkin|Earthquake|Jolly|||||50',
+    '|switch|p1a: Gengar|Gengar-Mega, L50|165/165',
+    '|switch|p2a: Garchomp|Garchomp, L50|100/100',
+  ]);
+  state.render({
+    active: [{ moves: [{ move: 'Shadow Ball', target: 'normal' }] }],
+    side: {
+      pokemon: [
+        {
+          ident: 'p1: Gengar',
+          details: 'Gengar-Mega, L50',
+          condition: '165/165',
+          active: true,
+          stats: { spe: 170 },
+        },
+      ],
+    },
+  });
+  assert.match(
+    state.compareActionOrder(
+      { first: 'Gengar-Mega', first_move: 'Shadow Ball', second: 'Garchomp', second_move: 'Earthquake' },
+      reference,
+    ),
+    /Gengar-Mega is guaranteed to act first/,
+  );
+
+  const tailwind = new BattleState('p1');
+  tailwind.feed([
+    '|showteam|p2|Venusaur|Venusaur-Mega|Venusaurite|ThickFat|GigaDrain|Modest|||||50',
+    '|switch|p1a: Tinkaton|Tinkaton, L50|171/171',
+    '|switch|p2a: Venusaur|Venusaur-Mega, L50|100/100',
+    '|-sidestart|p2: foe|Tailwind',
+  ]);
+  tailwind.render({
+    active: [{ moves: [{ move: 'Encore', target: 'normal' }] }],
+    side: {
+      pokemon: [
+        {
+          ident: 'p1: Tinkaton',
+          details: 'Tinkaton, L50',
+          condition: '171/171',
+          active: true,
+          stats: { spe: 155 },
+        },
+      ],
+    },
+  });
+  assert.match(
+    tailwind.compareActionOrder(
+      { first: 'Tinkaton', first_move: 'Encore', second: 'Venusaur-Mega', second_move: 'Giga Drain' },
+      reference,
+    ),
+    /Venusaur-Mega is guaranteed to act first[\s\S]*attempts to lock the move used this turn, Giga Drain/,
+  );
 });

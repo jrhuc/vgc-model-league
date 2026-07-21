@@ -22,6 +22,8 @@ import type {
   Pid,
   Provider,
   ProviderMessage,
+  ToolCall,
+  ToolDefinition,
 } from './types.js';
 import { isRecord, text } from './value.js';
 
@@ -234,8 +236,9 @@ const RETRY_BASE_MS = 400;
 const RETRY_MIN_REMAINING_MS = 15_000;
 const FORCE_COMMIT_MS = 25_000;
 const DECISION_MAX_TOKENS = 4096;
-const DECISION_MAX_TOOL_ROUNDS = 1;
-const DECISION_MAX_TOOL_CALLS = 2;
+const DECISION_MAX_TOOL_ROUNDS = 2;
+const DECISION_MAX_STANDARD_TOOL_CALLS = 2;
+const DECISION_MAX_ORDER_TOOL_CALLS = 1;
 const DECISION_PARSE_ATTEMPTS = 2;
 const DECISION_NOTE_LIMIT = 1600;
 const DECISION_RATIONALE_LIMIT = 500;
@@ -243,7 +246,38 @@ const DECISION_LIST_LIMIT = 3;
 const DECISION_LIST_ITEM_LIMIT = 240;
 const DECISION_TEMPERATURE = 0.2;
 const REFLECTION_MAX_TOKENS = 2048;
-const TRANSCRIPT_LIMIT = 24;
+const TRANSCRIPT_CHARACTER_LIMIT = 2400;
+
+const ACTION_ORDER_TOOL: ToolDefinition = {
+  name: 'compare_action_order',
+  description:
+    'Compare two active Pokémon using live Speed state without revealing hidden EVs. Applies visible items, boosts, status, Tailwind, weather abilities, move priority, and Trick Room; also explains Encore timing and redundant locks.',
+  parameters: {
+    type: 'object',
+    properties: {
+      first: { type: 'string', description: 'Active species name or ally/foe slot, such as ally 1.' },
+      second: { type: 'string', description: 'Active species name or ally/foe slot, such as foe 2.' },
+      first_move: { type: 'string', description: 'Optional move being considered for the first Pokémon.' },
+      second_move: { type: 'string', description: 'Optional move being considered for the second Pokémon.' },
+    },
+    required: ['first', 'second'],
+    additionalProperties: false,
+  },
+};
+
+const DECISION_TOOLS = [...DEX_TOOLS, ACTION_ORDER_TOOL];
+
+function boundedToolCalls(calls: ToolCall[]): ToolCall[] {
+  const order = calls.find((call) => call.name === ACTION_ORDER_TOOL.name);
+  const standard = calls
+    .filter((call) => call.name !== ACTION_ORDER_TOOL.name)
+    .slice(0, DECISION_MAX_STANDARD_TOOL_CALLS);
+  const selected = order
+    ? [...standard, order].slice(0, DECISION_MAX_STANDARD_TOOL_CALLS + DECISION_MAX_ORDER_TOOL_CALLS)
+    : standard;
+  const selectedIds = new Set(selected.map((call) => call.id));
+  return calls.filter((call) => selectedIds.has(call.id));
+}
 
 const GOLDEN_LINES = [
   '|player|p1|p1-golden||',
@@ -337,11 +371,12 @@ export function scaffoldRevision(): string {
       JSON.stringify({
         system: SYSTEM,
         reflection: REFLECTION_SYSTEM,
-        tools: DEX_TOOLS,
+        tools: DECISION_TOOLS,
         decisionPolicy: {
           maxTokens: DECISION_MAX_TOKENS,
           maxToolRounds: DECISION_MAX_TOOL_ROUNDS,
-          maxToolCalls: DECISION_MAX_TOOL_CALLS,
+          maxStandardToolCalls: DECISION_MAX_STANDARD_TOOL_CALLS,
+          maxOrderToolCalls: DECISION_MAX_ORDER_TOOL_CALLS,
           parseAttempts: DECISION_PARSE_ATTEMPTS,
           noteLimit: DECISION_NOTE_LIMIT,
           rationaleLimit: DECISION_RATIONALE_LIMIT,
@@ -437,10 +472,11 @@ export class LLMEngine extends BaseEngine {
     this.gameId = context.gameId;
     this.gameNumber = context.gameNumber;
     this.seriesId = context.seriesId;
-    this.seriesScore = { ...(context.seriesScore ?? { p1: 0, p2: 0 }) };
+    this.seriesScore = { ...(context.seriesScore ?? this.seriesScore) };
     this.state = new BattleState(this.pid);
     this.pending = undefined;
     this.pendingThreats = undefined;
+    this.transcript = [];
     this.remember(`[Game ${context.gameNumber} begins; series score ${this.scoreText()}]`);
   }
 
@@ -534,7 +570,9 @@ export class LLMEngine extends BaseEngine {
     const deadline = turnSeconds === undefined ? undefined : started + 1000 * turnSeconds;
     const generation = this.generation;
     const decisionSignal = this.decisionController?.signal;
-    const state = this.state.render(request, (mon) => this.reference.describeCompact(mon));
+    const renderedState = this.state.render(request, (mon) => this.reference.describeCompact(mon));
+    const speed = request.teamPreview ? '' : this.state.renderEffectiveSpeeds(this.reference);
+    const state = speed ? `${renderedState}\n${speed}` : renderedState;
     const sides = this.state.activeMatchupSides();
     const matchups = this.reference.renderActiveMatchups(
       [...sides.allies, ...sides.foes],
@@ -641,7 +679,7 @@ export class LLMEngine extends BaseEngine {
             {
               maxTokens: DECISION_MAX_TOKENS,
               temperature: DECISION_TEMPERATURE,
-              tools: DEX_TOOLS,
+              tools: DECISION_TOOLS,
               toolChoice: finalRound ? 'none' : 'auto',
             },
             generation,
@@ -658,7 +696,7 @@ export class LLMEngine extends BaseEngine {
         if (completion.reasoning) reasoningParts.push(completion.reasoning);
         if (completion.toolCalls.length && !finalRound) {
           toolRounds += 1;
-          const calls = completion.toolCalls.slice(0, DECISION_MAX_TOOL_CALLS);
+          const calls = boundedToolCalls(completion.toolCalls);
           messages.push(
             assistantToolMessage(
               calls.length === completion.toolCalls.length
@@ -667,7 +705,10 @@ export class LLMEngine extends BaseEngine {
             ),
           );
           for (const call of calls) {
-            const result = this.reference.lookup(call.name, call.arguments);
+            const result =
+              call.name === ACTION_ORDER_TOOL.name
+                ? this.state.compareActionOrder(call.arguments, this.reference)
+                : this.reference.lookup(call.name, call.arguments);
             toolCalls.push({ name: call.name, arguments: call.arguments, result });
             messages.push(toolResultMessage(call.id, result));
           }
@@ -961,11 +1002,16 @@ export class LLMEngine extends BaseEngine {
         names.ally[index + 1] = BattleState.requestName(mon);
       }
     }
-    return { names, protectReduced: this.state.protectReducedSlots() };
+    return {
+      names,
+      protectReduced: this.state.protectReducedSlots(),
+      moveAnnotation: (_slot, move, targetSide, targetNumber) =>
+        this.state.moveAnnotation(move, targetSide, targetNumber),
+    };
   }
 
   static extractChoices(response: string, menus: SlotMenu[]): ParsedDecision {
-    const objects = jsonObjects(response).filter((value) => 'choices' in value || 'choice' in value);
+    const objects = jsonObjects(response, true).filter((value) => 'choices' in value || 'choice' in value);
     if (!objects.length) throw new Error('no JSON object with a choices key');
     let failure: unknown;
     for (const object of objects.reverse()) {
@@ -993,17 +1039,27 @@ export class LLMEngine extends BaseEngine {
     const notebook = typeof object.notebook === 'string' ? object.notebook : undefined;
     if (rationale === undefined || notebook === undefined)
       throw new Error('response must contain string rationale and notebook fields');
-    const asStringArray = (value: unknown, field: string): string[] => {
-      if (!Array.isArray(value) || !value.every((entry) => typeof entry === 'string'))
-        throw new Error(`${field} must be an array of strings`);
-      return value.slice(0, DECISION_LIST_LIMIT).map((entry) => entry.slice(0, DECISION_LIST_ITEM_LIMIT));
+    const asAuxiliaryList = (value: unknown, objectRationale = false): string[] => {
+      if (!Array.isArray(value)) return [];
+      const entries: string[] = [];
+      for (const entry of value) {
+        const normalized =
+          typeof entry === 'string'
+            ? entry
+            : objectRationale && isRecord(entry) && typeof entry.rationale === 'string'
+              ? entry.rationale
+              : undefined;
+        if (normalized !== undefined) entries.push(normalized.slice(0, DECISION_LIST_ITEM_LIMIT));
+        if (entries.length === DECISION_LIST_LIMIT) break;
+      }
+      return entries;
     };
     return {
       choices,
       rationale: rationale.slice(0, DECISION_RATIONALE_LIMIT),
       notebook: notebook.slice(0, DECISION_NOTE_LIMIT),
-      threats: asStringArray(object.threats, 'threats'),
-      candidates: asStringArray(object.candidates, 'candidates'),
+      threats: asAuxiliaryList(object.threats),
+      candidates: asAuxiliaryList(object.candidates, true),
     };
   }
 
@@ -1115,9 +1171,15 @@ export class LLMEngine extends BaseEngine {
   }
 
   private remember(value: string): void {
-    if (!value) return;
-    this.transcript.push(value);
-    if (this.transcript.length > TRANSCRIPT_LIMIT) this.transcript.splice(0, this.transcript.length - TRANSCRIPT_LIMIT);
+    const lines = value.split('\n').filter(Boolean);
+    if (!lines.length) return;
+    this.transcript.push(...lines);
+    let length = this.transcript.reduce((total, line) => total + line.length, this.transcript.length - 1);
+    while (length > TRANSCRIPT_CHARACTER_LIMIT && this.transcript.length > 1) {
+      length -= this.transcript.shift()!.length + 1;
+    }
+    if (length > TRANSCRIPT_CHARACTER_LIMIT)
+      this.transcript[0] = this.transcript[0]!.slice(-TRANSCRIPT_CHARACTER_LIMIT);
   }
 
   private rememberEvents(lines: string[]): void {
@@ -1189,8 +1251,8 @@ function summarizeBattleEvents(lines: string[]): string[] {
   return summary.slice(-60);
 }
 
-function jsonObjects(input: string): JsonObject[] {
-  const values: JsonObject[] = [];
+function jsonObjects(input: string, preferOuterDecision = false): JsonObject[] {
+  const matches: Array<{ value: JsonObject; start: number; end: number }> = [];
   for (let start = input.indexOf('{'); start >= 0; start = input.indexOf('{', start + 1)) {
     let depth = 0;
     let quoted = false;
@@ -1206,11 +1268,24 @@ function jsonObjects(input: string): JsonObject[] {
       else if (character === '}' && --depth === 0) {
         try {
           const value: unknown = JSON.parse(input.slice(start, index + 1));
-          if (isRecord(value)) values.push(value);
+          if (isRecord(value)) matches.push({ value, start, end: index });
         } catch {}
         break;
       }
     }
   }
-  return values;
+  if (!preferOuterDecision) return matches.map(({ value }) => value);
+  return matches
+    .filter(
+      (match) =>
+        !matches.some(
+          (parent) =>
+            parent.start < match.start &&
+            parent.end >= match.end &&
+            ('choices' in parent.value || 'choice' in parent.value) &&
+            typeof parent.value.rationale === 'string' &&
+            typeof parent.value.notebook === 'string',
+        ),
+    )
+    .map(({ value }) => value);
 }

@@ -17,6 +17,7 @@ export interface MenuHints {
   names?: TargetNames;
   /** Per active slot (1/2): Protect success already reduced because it worked last turn. */
   protectReduced?: Record<number, boolean>;
+  moveAnnotation?: (slot: number, move: string, targetSide: 'foe' | 'ally', targetNumber: number) => string | undefined;
 }
 
 const SELECTED_TARGETS = new Set(['normal', 'any', 'adjacentFoe']);
@@ -92,7 +93,12 @@ function moveItems(
   const spread = SPREAD_TARGETS.has(target) ? spreadLabel(target, slot, names) : '';
   return targets.flatMap(([targetPart, label]) => {
     const part = `move ${moveSlot}${targetPart}`;
-    const item: MenuItem = { label: `${name}${spread}${protectHint}${label}`, part, kind: 'move' };
+    const selected = /^ ([+-])([12])$/.exec(targetPart);
+    const annotation = selected
+      ? hints?.moveAnnotation?.(slot, name, selected[1] === '+' ? 'foe' : 'ally', Number(selected[2]))
+      : undefined;
+    const warning = annotation ? ` [${annotation}]` : '';
+    const item: MenuItem = { label: `${name}${spread}${protectHint}${label}${warning}`, part, kind: 'move' };
     return mega ? [item, { label: `${item.label} + Mega Evolve`, part: `${part} mega`, kind: 'move' }] : [item];
   });
 }

@@ -119,6 +119,26 @@ test('target names change labels but not commands', () => {
   assert.match(named.find((item) => item.part === 'move 1 -2')!.label, /Basculegion/);
 });
 
+test('targeted moves surface deterministic state warnings without changing commands', () => {
+  const request = fixture('turn.json');
+  const move = (request.active![0]!.moves as Array<Record<string, unknown>>)[0]!;
+  move.move = 'Encore';
+  move.target = 'normal';
+  const menus = buildMenus(request, {
+    names: {
+      foe: { 1: 'Tauros-Paldea-Aqua', 2: 'Venusaur-Mega' },
+      ally: { 1: 'Whimsicott', 2: 'Basculegion' },
+    },
+    moveAnnotation: (_slot, _move, side, number) =>
+      side === 'foe' && number === 1 ? 'redundant: target is Choice-locked into Close Combat' : undefined,
+  });
+  assert.match(
+    menus[0]!.find((item) => item.part === 'move 1 +1')!.label,
+    /Encore -> foe 1 \(Tauros-Paldea-Aqua\) \[redundant: target is Choice-locked into Close Combat\]/,
+  );
+  assert.doesNotMatch(menus[0]!.find((item) => item.part === 'move 1 +2')!.label, /redundant/);
+});
+
 test('disabled moves offer Struggle and Mega is exclusive', async () => {
   const request = fixture('turn.json');
   for (const active of request.active ?? []) {
