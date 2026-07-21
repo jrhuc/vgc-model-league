@@ -480,6 +480,98 @@ test('gui rejects a second run while one is active and stops on request', async 
   }
 });
 
+test('a run whose task ignores the stop abort is detached so new runs can start', async () => {
+  let launches = 0;
+  const gui = new GuiServer({
+    runsDir: RUNS_SCRATCH,
+    stopFallbackMs: 100,
+    runner: (_models, _seriesPerPair, _runDir, options = {}) => {
+      launches += 1;
+      if (launches > 1) return Promise.resolve([]);
+      options.onEvent?.({
+        mode: 'rotation',
+        protocolVersion: 1,
+        type: 'plans',
+        plans: [{ index: 0, players: { p1: 'random', p2: 'random' } }],
+        pool: 'test',
+        seed: 7,
+      });
+      return new Promise(() => {});
+    },
+  });
+  const base = await gui.listen(0);
+  try {
+    const started = await apiJson(`${base}api/run`, { models: ['random', 'random'], pool: 'test' });
+    assert.equal(started.status, 200, JSON.stringify(started.data));
+    const firstRunId = String(started.data.runId);
+
+    await apiJson(`${base}api/run/stop`, {});
+    let run = (await apiJson(`${base}api/state`)).data.run as Record<string, unknown>;
+    assert.equal(run.state, 'running');
+    for (let attempt = 0; attempt < 40 && run.state === 'running'; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      run = (await apiJson(`${base}api/state`)).data.run as Record<string, unknown>;
+    }
+    assert.equal(run.state, 'stopped');
+    const status = JSON.parse(fs.readFileSync(path.join(RUNS_SCRATCH, firstRunId, 'status.json'), 'utf8')) as Record<
+      string,
+      unknown
+    >;
+    assert.equal(status.state, 'stopped');
+
+    const second = await apiJson(`${base}api/run`, { models: ['random', 'random'], pool: 'test' });
+    assert.equal(second.status, 200, JSON.stringify(second.data));
+    assert.notEqual(second.data.runId, firstRunId);
+  } finally {
+    gui.close();
+  }
+});
+
+test('pokepaste import fetches the raw paste and rejects non-pokepaste links', async () => {
+  const gui = new GuiServer({ runsDir: RUNS_SCRATCH });
+  const base = await gui.listen(0);
+  const realFetch = globalThis.fetch;
+  const requested: string[] = [];
+  globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    const url = String(input instanceof Request ? input.url : input);
+    if (!url.startsWith('https://pokepast.es/')) return realFetch(input, init);
+    requested.push(url);
+    return new Response('Gengar @ Gengarite\nAbility: Cursed Body\n', { status: 200 });
+  }) as typeof fetch;
+  try {
+    const imported = await apiJson(`${base}api/team/pokepaste`, { url: 'https://pokepast.es/af47b5292e00a94d' });
+    assert.equal(imported.status, 200);
+    assert.match(String(imported.data.paste), /Gengar @ Gengarite/);
+    assert.deepEqual(requested, ['https://pokepast.es/af47b5292e00a94d/raw']);
+
+    const bare = await apiJson(`${base}api/team/pokepaste`, { url: 'af47b5292e00a94d' });
+    assert.equal(bare.status, 200);
+
+    const rejected = await apiJson(`${base}api/team/pokepaste`, { url: 'https://evil.example/af47b5292e00a94d' });
+    assert.equal(rejected.status, 400);
+    assert.equal(requested.length, 2);
+  } finally {
+    globalThis.fetch = realFetch;
+    gui.close();
+  }
+});
+
+test('shutdown labels a wedged run before the process exits', async () => {
+  const gui = new GuiServer({
+    runsDir: RUNS_SCRATCH,
+    runner: () => new Promise(() => {}),
+  });
+  const base = await gui.listen(0);
+  const started = await apiJson(`${base}api/run`, { models: ['random', 'random'], pool: 'test' });
+  assert.equal(started.status, 200, JSON.stringify(started.data));
+  await gui.shutdown(50);
+  const status = JSON.parse(
+    fs.readFileSync(path.join(RUNS_SCRATCH, String(started.data.runId), 'status.json'), 'utf8'),
+  ) as Record<string, unknown>;
+  assert.equal(status.state, 'failed');
+  assert.equal(status.error, 'run interrupted by server shutdown');
+});
+
 test('gui aborts runs that exceed the configured duration', async () => {
   const timedOut = Promise.withResolvers<void>();
   const gui = new GuiServer({

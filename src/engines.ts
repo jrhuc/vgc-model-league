@@ -200,6 +200,14 @@ interface ToolTrace extends JsonObject {
   result: string;
 }
 
+/** Thrown when a decision was superseded or yielded to the battle timer; the stale act() must not commit. */
+class DecisionAbandonedError extends Error {
+  constructor() {
+    super('decision abandoned');
+    this.name = 'DecisionAbandonedError';
+  }
+}
+
 interface PendingDecision extends JsonObject {
   prompt?: string;
   rawResponse?: string;
@@ -235,7 +243,15 @@ const RETRY_ATTEMPTS = 3;
 const RETRY_BASE_MS = 400;
 const RETRY_MIN_REMAINING_MS = 15_000;
 const FORCE_COMMIT_MS = 25_000;
+const FORCE_COMMIT_TURN_FRACTION = 0.5;
+const BANK_HEALTHY_SECONDS = 300;
+const BANK_LOW_SECONDS = 120;
 const DECISION_MAX_TOKENS = 4096;
+const DECISION_MAX_TOKENS_DEEP: Partial<Record<ReasoningLevel, number>> = {
+  high: 8192,
+  xhigh: 16_384,
+  max: 16_384,
+};
 const DECISION_MAX_TOOL_ROUNDS = 2;
 const DECISION_MAX_STANDARD_TOOL_CALLS = 2;
 const DECISION_MAX_ORDER_TOOL_CALLS = 1;
@@ -374,6 +390,10 @@ export function scaffoldRevision(): string {
         tools: DECISION_TOOLS,
         decisionPolicy: {
           maxTokens: DECISION_MAX_TOKENS,
+          maxTokensDeep: DECISION_MAX_TOKENS_DEEP,
+          forceCommitTurnFraction: FORCE_COMMIT_TURN_FRACTION,
+          bankHealthySeconds: BANK_HEALTHY_SECONDS,
+          bankLowSeconds: BANK_LOW_SECONDS,
           maxToolRounds: DECISION_MAX_TOOL_ROUNDS,
           maxStandardToolCalls: DECISION_MAX_STANDARD_TOOL_CALLS,
           maxOrderToolCalls: DECISION_MAX_ORDER_TOOL_CALLS,
@@ -450,7 +470,7 @@ export class LLMEngine extends BaseEngine {
   private previousProtect = new Map<string, { gameId: string; turn: number }>();
   private pending: PendingDecision | undefined;
   private generation = 0;
-  private abandonWaiters = new Set<(choices: number[]) => void>();
+  private abandonWaiters = new Set<() => void>();
   private decisionController: AbortController | undefined;
 
   constructor(
@@ -501,7 +521,7 @@ export class LLMEngine extends BaseEngine {
     this.decisionController = undefined;
     this.generation += 1;
     this.pending = undefined;
-    for (const resolve of this.abandonWaiters) resolve([]);
+    for (const abort of this.abandonWaiters) abort();
     this.abandonWaiters.clear();
   }
 
@@ -523,6 +543,9 @@ export class LLMEngine extends BaseEngine {
     try {
       const choice = await super.act(request, context);
       return generation === this.generation ? choice : '';
+    } catch (caught) {
+      if (caught instanceof DecisionAbandonedError) return '';
+      throw caught;
     } finally {
       if (this.decisionController === controller) this.decisionController = undefined;
     }
@@ -568,6 +591,12 @@ export class LLMEngine extends BaseEngine {
     const started = performance.now();
     const turnSeconds = request.timer?.turnSeconds;
     const deadline = turnSeconds === undefined ? undefined : started + 1000 * turnSeconds;
+    const forceCommitMs =
+      turnSeconds === undefined
+        ? FORCE_COMMIT_MS
+        : Math.max(FORCE_COMMIT_MS, turnSeconds * 1000 * FORCE_COMMIT_TURN_FRACTION);
+    const maxTokens =
+      (this.options.reasoning && DECISION_MAX_TOKENS_DEEP[this.options.reasoning]) || DECISION_MAX_TOKENS;
     const generation = this.generation;
     const decisionSignal = this.decisionController?.signal;
     const renderedState = this.state.render(request, (mon) => this.reference.describeCompact(mon));
@@ -588,8 +617,16 @@ export class LLMEngine extends BaseEngine {
       seriesContext: `Series ${this.seriesId ?? '?'}; game ${this.gameNumber}; score ${this.scoreText()}`,
       matchups,
     });
-    if (turnSeconds !== undefined)
-      prompt += `\n\nShowdown timer: ${turnSeconds} seconds this turn; ${request.timer?.seconds ?? turnSeconds} seconds remain in the clock bank.`;
+    if (turnSeconds !== undefined) {
+      const bank = request.timer?.seconds ?? turnSeconds;
+      const pace =
+        bank >= BANK_HEALTHY_SECONDS
+          ? 'The bank is healthy: think as deeply as this decision warrants before committing.'
+          : bank <= BANK_LOW_SECONDS
+            ? 'The bank is low: commit quickly and rebuild time on easy turns.'
+            : 'Spend time only where it changes the choice.';
+      prompt += `\n\nShowdown timer: ${Math.round(turnSeconds)} seconds this turn; ${Math.round(bank)} seconds remain in the clock bank. ${pace}`;
+    }
     if (context.error) prompt += `\n\nThe simulator rejected the previous joint action: ${context.error}`;
 
     let rawResponse = '';
@@ -606,7 +643,7 @@ export class LLMEngine extends BaseEngine {
     const abandonToTimer = (caught: unknown): Promise<number[]> => {
       const message = caught instanceof Error ? caught.message : String(caught);
       this.abandonedDecisions += 1;
-      this.pending = undefined;
+      if (this.pending?.generation === generation) this.pending = undefined;
       this.remember(`[No choice submitted: ${message.slice(0, 200)}. The battle timer acts when time expires.]`);
       const phase = request.teamPreview ? 'team_preview' : request.forceSwitch ? 'forced_switch' : 'turn';
       const timer = request.timer
@@ -656,10 +693,12 @@ export class LLMEngine extends BaseEngine {
         fallback: true,
         error: message,
       });
-      return new Promise<number[]>((resolve) => this.abandonWaiters.add(resolve));
+      return new Promise<number[]>((_resolve, reject) =>
+        this.abandonWaiters.add(() => reject(new DecisionAbandonedError())),
+      );
     };
     while (!parsed && parseFailures < DECISION_PARSE_ATTEMPTS) {
-      if (generation !== this.generation) return menus.map(() => 0);
+      if (generation !== this.generation) throw new DecisionAbandonedError();
       if (parseFailures) {
         messages.push({ role: 'assistant', content: rawResponse });
         messages.push({
@@ -669,15 +708,15 @@ export class LLMEngine extends BaseEngine {
       }
       rawResponse = '';
       for (let round = 0; round <= DECISION_MAX_TOOL_ROUNDS; round += 1) {
-        if (generation !== this.generation) return menus.map(() => 0);
+        if (generation !== this.generation) throw new DecisionAbandonedError();
         if (request.timer && remainingMs() < 2000) return abandonToTimer(new Error('turn time exhausted'));
-        const finalRound = round === DECISION_MAX_TOOL_ROUNDS || remainingMs() < FORCE_COMMIT_MS;
+        const finalRound = round === DECISION_MAX_TOOL_ROUNDS || remainingMs() < forceCommitMs;
         let completion: Completion;
         try {
           completion = await this.completeWithRetry(
             messages,
             {
-              maxTokens: DECISION_MAX_TOKENS,
+              maxTokens,
               temperature: DECISION_TEMPERATURE,
               tools: DECISION_TOOLS,
               toolChoice: finalRound ? 'none' : 'auto',
@@ -688,7 +727,7 @@ export class LLMEngine extends BaseEngine {
             decisionSignal,
           );
         } catch (caught) {
-          if (generation !== this.generation) return menus.map(() => 0);
+          if (generation !== this.generation) throw new DecisionAbandonedError();
           if (request.timer && !this.options.signal?.aborted && isTransientError(caught)) return abandonToTimer(caught);
           throw caught;
         }

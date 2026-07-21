@@ -4,6 +4,7 @@ import type {
   AppState,
   ModelInfo,
   ModelsResponse,
+  PokepasteResponse,
   PoolInfo,
   PoolTeamsResponse,
   ProviderInfo,
@@ -120,6 +121,8 @@ function TeamEditor({
   const [selTeam, setSelTeam] = useState('');
   const [problems, setProblems] = useState<string[]>([]);
   const [checking, setChecking] = useState(false);
+  const [pasteLink, setPasteLink] = useState('');
+  const [importing, setImporting] = useState(false);
   useEffect(() => {
     if (selPool) onLoadPool(selPool);
   }, [selPool]);
@@ -133,8 +136,7 @@ function TeamEditor({
     onAssign({ paste: found.paste, label: `${selPool} · ${found.name}` }, teams.format);
     onDone();
   };
-  const submitPaste = () => {
-    const paste = team?.paste ?? '';
+  const validatePaste = (paste: string) => {
     if (!paste.trim()) return;
     setChecking(true);
     setProblems([]);
@@ -149,6 +151,24 @@ function TeamEditor({
       })
       .catch((error: Error) => setProblems([error.message]))
       .finally(() => setChecking(false));
+  };
+  const importPokepaste = () => {
+    if (!pasteLink.trim() || importing) return;
+    setImporting(true);
+    setProblems([]);
+    api<PokepasteResponse>('/api/team/pokepaste', { url: pasteLink.trim() })
+      .then((data) => {
+        onAssign({ paste: data.paste, label: 'Poképaste import' });
+        setPasteLink('');
+        validatePaste(data.paste);
+      })
+      .catch((error: Error) => setProblems([error.message]))
+      .finally(() => setImporting(false));
+  };
+  const clearTeam = () => {
+    setProblems([]);
+    setPasteLink('');
+    onAssign(null);
   };
   return (
     <div class="team-editor">
@@ -203,6 +223,27 @@ function TeamEditor({
         </div>
       )}
       <div class="field">
+        <label class="field-label" for={`teamLink${slot}`}>
+          Import from a Poképaste link
+        </label>
+        <div class="paste-import">
+          <input
+            id={`teamLink${slot}`}
+            autocomplete="off"
+            spellcheck={false}
+            placeholder="https://pokepast.es/0123456789abcdef"
+            value={pasteLink}
+            onInput={(event) => setPasteLink(event.currentTarget.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') importPokepaste();
+            }}
+          />
+          <button type="button" class="button" disabled={importing || !pasteLink.trim()} onClick={importPokepaste}>
+            {importing ? 'Importing…' : 'Import'}
+          </button>
+        </div>
+      </div>
+      <div class="field">
         <label class="field-label" for={`teamPaste${slot}`}>
           Or paste a team
         </label>
@@ -218,8 +259,16 @@ function TeamEditor({
           }}
         />
         <div class="paste-actions">
-          <button type="button" class="button" disabled={checking || !team?.paste.trim()} onClick={submitPaste}>
+          <button
+            type="button"
+            class="button"
+            disabled={checking || !team?.paste.trim()}
+            onClick={() => validatePaste(team?.paste ?? '')}
+          >
             {checking ? 'Validating…' : 'Validate team'}
+          </button>
+          <button type="button" class="button" disabled={checking || !team} onClick={clearTeam}>
+            Clear team
           </button>
         </div>
         {problems.length > 0 && (

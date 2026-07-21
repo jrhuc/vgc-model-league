@@ -87,6 +87,8 @@ interface GuiServerOptions {
   maxRunMs?: number;
   workerPath?: string;
   workerStopGraceMs?: number;
+  /** How long a stopped run's task may keep running before it is detached so new runs can start. */
+  stopFallbackMs?: number;
 }
 
 function hostnameFromHost(host: string | undefined): string {
@@ -181,6 +183,7 @@ class ActiveRun {
   interrupted = false;
   userStopped = false;
   settling = false;
+  detached = false;
   readonly battles = new Map<number, Map<number, GameBattle>>();
   readonly publicBattles = new Map<number, Map<number, GameBattle>>();
   readonly decisions = new Map<number, DecisionView[]>();
@@ -289,6 +292,7 @@ export class GuiServer {
   private readonly bindHost: string;
   private readonly maxRunMs: number;
   private readonly workerStopGraceMs: number;
+  private readonly stopFallbackMs: number;
   private flushTimer: NodeJS.Timeout | undefined;
   private heartbeatTimer: NodeJS.Timeout | undefined;
   private sampleTeamsCache: { pool: string; teams: SampleTeam[] } | undefined;
@@ -304,6 +308,10 @@ export class GuiServer {
     this.workerStopGraceMs = options.workerStopGraceMs ?? 5_000;
     if (!Number.isSafeInteger(this.workerStopGraceMs) || this.workerStopGraceMs < 1) {
       throw new Error('workerStopGraceMs must be a positive integer');
+    }
+    this.stopFallbackMs = options.stopFallbackMs ?? 15_000;
+    if (!Number.isSafeInteger(this.stopFallbackMs) || this.stopFallbackMs < 1) {
+      throw new Error('stopFallbackMs must be a positive integer');
     }
     const bindHostname = hostnameFromHost(this.bindHost);
     if (!this.publicOrigin && !LOCAL_HOSTNAMES[bindHostname]) {
@@ -402,6 +410,14 @@ export class GuiServer {
       const timer = setTimeout(timeout.resolve, Math.max(0, graceMs));
       await Promise.race([settled, timeout.promise]);
       clearTimeout(timer);
+      if (run && run.state === 'running') {
+        run.detached = true;
+        run.state = 'failed';
+        run.error = 'run interrupted by server shutdown';
+        run.endTime = Date.now();
+        run.clearApiKeys();
+        this.persistStatus(run);
+      }
       this.server.closeAllConnections();
     })();
     return this.shutdownTask;
@@ -503,6 +519,7 @@ export class GuiServer {
       const subject = actor ? `user:${actor.id}` : `network:${request.socket.remoteAddress ?? 'unknown'}`;
       if (key === 'POST /api/models') this.consumeRateLimit('models', subject, 30, 60_000);
       else if (key === 'POST /api/team/validate') this.consumeRateLimit('validation', subject, 60, 60_000);
+      else if (key === 'POST /api/team/pokepaste') this.consumeRateLimit('pokepaste', subject, 30, 60_000);
       else if (key === 'POST /api/pool') this.consumeRateLimit('pool', subject, 10, 60 * 60_000);
       else if (key === 'POST /api/run') this.consumeRateLimit('run', subject, 6, 60 * 60_000);
     }
@@ -547,10 +564,12 @@ export class GuiServer {
     } else if (key === 'POST /api/run') {
       this.json(response, 200, this.startRun(await this.readJson(request), actor));
     } else if (key === 'POST /api/run/stop') {
-      if (this.run?.state === 'running' && !this.run.settling) {
-        if (actor && this.options.auth) this.options.auth.stopExperiment(actor, this.run.runId);
-        this.run.userStopped = true;
-        this.run.controller.abort();
+      const run = this.run;
+      if (run?.state === 'running' && !run.settling) {
+        if (actor && this.options.auth) this.options.auth.stopExperiment(actor, run.runId);
+        run.userStopped = true;
+        run.controller.abort();
+        this.scheduleStopFallback(run);
       }
       this.json(response, 200, { ok: true });
     } else if (key === 'POST /api/pool') {
@@ -560,6 +579,8 @@ export class GuiServer {
       const result = this.validateDraft(body);
       if (actor && this.options.auth) this.options.auth.recordValidation(actor, String(body.format ?? ''));
       this.json(response, 200, result);
+    } else if (key === 'POST /api/team/pokepaste') {
+      this.json(response, 200, await this.importPokepaste(await this.readJson(request)));
     } else this.json(response, 404, { error: `no route for ${key}` });
   }
 
@@ -989,6 +1010,7 @@ export class GuiServer {
       run.timedOut = true;
       run.notices.push('run stopped after reaching its maximum duration');
       run.controller.abort();
+      this.scheduleStopFallback(run);
       this.queueRun();
     }, this.maxRunMs);
     run.timeoutTimer.unref();
@@ -1072,51 +1094,99 @@ export class GuiServer {
       }
     } finally {
       clearTimeout(run.timeoutTimer);
-      const persistedState = run.state === 'running' ? 'failed' : run.state;
+      if (run.detached) {
+        run.clearApiKeys();
+        this.options.logger?.({
+          timestamp: new Date().toISOString(),
+          level: 'info',
+          event: 'detached_run_settled',
+          runId: run.runId,
+        });
+      } else {
+        const persistedState = run.state === 'running' ? 'failed' : run.state;
+        if (this.options.auth && run.owner) {
+          try {
+            this.options.auth.finishExperiment(run.runId, persistedState);
+          } catch (error) {
+            run.state = 'failed';
+            run.error = redactSecrets(
+              error instanceof Error ? error.message : String(error),
+              Object.values(run.apiKeys),
+            );
+            this.options.logger?.({
+              timestamp: new Date().toISOString(),
+              level: 'error',
+              event: 'experiment_persistence_error',
+              runId: run.runId,
+              error: run.error,
+            });
+          }
+        }
+        run.clearApiKeys();
+        run.endTime = Date.now();
+        this.persistStatus(run);
+        this.options.logger?.({
+          timestamp: new Date().toISOString(),
+          level: run.state === 'failed' ? 'error' : 'info',
+          event: 'run_finished',
+          runId: run.runId,
+          state: run.state,
+          durationMs: run.endTime - run.startTime,
+        });
+        this.queueRun();
+      }
+    }
+  }
+
+  private persistStatus(run: ActiveRun): void {
+    try {
+      fs.writeFileSync(
+        path.join(run.runDir, 'status.json'),
+        `${JSON.stringify(
+          {
+            state: run.state,
+            error: run.error || null,
+            notices: run.notices,
+            start_time: new Date(run.startTime).toISOString(),
+            end_time: new Date(run.endTime ?? Date.now()).toISOString(),
+          },
+          null,
+          1,
+        )}\n`,
+        'utf8',
+      );
+    } catch {}
+  }
+
+  /**
+   * A stop or timeout only aborts the run task; if the task ignores the abort
+   * (a wedged provider or simulator), detach it after a grace period so the
+   * server never stays locked in a permanently "running" run.
+   */
+  private scheduleStopFallback(run: ActiveRun): void {
+    const timer = setTimeout(() => {
+      if (run.state !== 'running' || run.settling) return;
+      run.detached = true;
+      run.state = run.timedOut ? 'failed' : 'stopped';
+      run.error = run.timedOut ? 'run exceeded its maximum duration' : '';
+      run.notices.push('the run task did not shut down cleanly and was detached');
+      run.endTime = Date.now();
       if (this.options.auth && run.owner) {
         try {
-          this.options.auth.finishExperiment(run.runId, persistedState);
-        } catch (error) {
-          run.state = 'failed';
-          run.error = redactSecrets(error instanceof Error ? error.message : String(error), Object.values(run.apiKeys));
-          this.options.logger?.({
-            timestamp: new Date().toISOString(),
-            level: 'error',
-            event: 'experiment_persistence_error',
-            runId: run.runId,
-            error: run.error,
-          });
-        }
+          this.options.auth.finishExperiment(run.runId, run.state);
+        } catch {}
       }
-      run.clearApiKeys();
-      run.endTime = Date.now();
-      try {
-        fs.writeFileSync(
-          path.join(run.runDir, 'status.json'),
-          `${JSON.stringify(
-            {
-              state: run.state,
-              error: run.error || null,
-              notices: run.notices,
-              start_time: new Date(run.startTime).toISOString(),
-              end_time: new Date(run.endTime).toISOString(),
-            },
-            null,
-            1,
-          )}\n`,
-          'utf8',
-        );
-      } catch {}
+      this.persistStatus(run);
       this.options.logger?.({
         timestamp: new Date().toISOString(),
-        level: run.state === 'failed' ? 'error' : 'info',
-        event: 'run_finished',
+        level: 'error',
+        event: 'run_detached',
         runId: run.runId,
         state: run.state,
-        durationMs: run.endTime - run.startTime,
       });
       this.queueRun();
-    }
+    }, this.stopFallbackMs);
+    timer.unref();
   }
 
   private launchWorker(run: ActiveRun): Promise<void> {
@@ -1476,6 +1546,32 @@ export class GuiServer {
       }
     }
     return { ok: true, name: path.basename(dir), pools: listPools(this.options.teamsDir ?? TEAMS_DIR) };
+  }
+
+  /** Fetch a paste from pokepast.es by link or bare id. The host is fixed, so this cannot be aimed elsewhere. */
+  private async importPokepaste(body: Record<string, unknown>): Promise<JsonObject> {
+    const raw = String(body.url ?? '').trim();
+    const id = /^(?:https?:\/\/pokepast\.es\/)?([0-9a-f]{8,16})(?:\/(?:raw\/?)?)?$/i.exec(raw)?.[1];
+    if (!id) {
+      throw new HttpError(400, 'provide a pokepast.es link such as https://pokepast.es/0123456789abcdef');
+    }
+    let upstream: Response;
+    try {
+      upstream = await fetch(`https://pokepast.es/${id.toLowerCase()}/raw`, {
+        signal: AbortSignal.timeout(10_000),
+        redirect: 'error',
+      });
+    } catch (error) {
+      throw new HttpError(
+        502,
+        `could not reach pokepast.es: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+    if (!upstream.ok) throw new HttpError(502, `pokepast.es returned ${upstream.status} for paste ${id}`);
+    const paste = await upstream.text();
+    if (paste.length > 64_000) throw new HttpError(400, 'the paste exceeds 64 KB');
+    if (!paste.trim()) throw new HttpError(502, `paste ${id} is empty`);
+    return { paste };
   }
 
   private validateDraft(body: Record<string, unknown>): JsonObject {

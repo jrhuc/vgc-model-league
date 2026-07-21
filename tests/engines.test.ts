@@ -636,6 +636,35 @@ test('abandoned decisions cannot mutate memory or statistics', async () => {
   assert.deepEqual(engine.decisionStats(), emptyStats);
 });
 
+test('a stale abandoned decision cannot commit or clobber the next request', async () => {
+  const started = Promise.withResolvers<void>();
+  let call = 0;
+  const provider: Provider = {
+    complete(_system, _messages, options) {
+      call += 1;
+      if (call > 1)
+        return Promise.resolve({ text: decision([1], 'second decision'), usage: { output_tokens: 5 }, toolCalls: [] });
+      started.resolve();
+      return new Promise<Completion>((_resolve, reject) => {
+        options?.signal?.addEventListener('abort', () => reject(options.signal?.reason), { once: true });
+      });
+    },
+  };
+  const decisions: Record<string, unknown>[] = [];
+  const engine = new LLMEngine('p1', 'scripted', { provider, decisionLog: decisions });
+  const first = engine.act(request(), { povLines: ['|turn|1'] });
+  await started.promise;
+  engine.abandonDecision();
+  const second = engine.act(request(), { povLines: [] });
+  assert.equal(await first, '');
+  assert.equal(await second, 'move 2');
+  assert.equal(decisions.length, 1);
+  assert.equal(decisions[0]!.action, 'move 2');
+  assert.equal(decisions[0]!.rationale, 'second decision');
+  assert.equal(decisions[0]!.fallback, false);
+  assert.deepEqual(engine.decisionStats(), oneMoveStats);
+});
+
 test('abandoning a decision aborts its provider request', async () => {
   const started = Promise.withResolvers<void>();
   const aborted = Promise.withResolvers<void>();

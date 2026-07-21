@@ -270,6 +270,10 @@ export interface ValidateResponse {
   problems: string[];
 }
 
+export interface PokepasteResponse {
+  paste: string;
+}
+
 export interface CreatePoolResponse {
   ok: boolean;
   name: string;
