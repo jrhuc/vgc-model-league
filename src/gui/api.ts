@@ -201,6 +201,7 @@ export interface DecisionView {
   phase: string;
   selection: string[];
   rationale: string;
+  error: string;
   automatic: boolean;
   fallback: boolean;
   substituted: boolean;

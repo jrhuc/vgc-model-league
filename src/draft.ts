@@ -5,7 +5,7 @@ import path from 'node:path';
 import type { BoardInfo, DraftBoardMonView, DraftPickView } from './gui/api.js';
 import { BOARDS_DIR, defaultPsDir } from './paths.js';
 import type { ModelReasoningConfig, ReasoningLevel } from './providers.js';
-import { makeProvider, parseSpec, reasoningForModel } from './providers.js';
+import { classifyProviderFailure, makeProvider, parseSpec, reasoningForModel } from './providers.js';
 import type { Rng } from './random.js';
 import { loadShowdown } from './showdown.js';
 import type { Provider, ProviderMessage } from './types.js';
@@ -527,6 +527,7 @@ export async function runDraft(models: string[], board: DraftBoard, options: Run
         let response = '';
         let usage: Record<string, number> | undefined;
         let error: string | undefined;
+        let terminalError: Error | undefined;
         try {
           const completion = await provider.complete(system, messages, {
             maxTokens: DRAFT_PROMPT_POLICY.maxTokens,
@@ -549,8 +550,12 @@ export async function runDraft(models: string[], board: DraftBoard, options: Run
             reasoning = parsed.reasoning;
           }
         } catch (cause) {
-          error = cause instanceof Error ? cause.message : String(cause);
+          const failure = classifyProviderFailure(cause, models[drafter]);
+          error = failure.summary;
           lastError = error;
+          if (failure.terminal) {
+            terminalError = new Error(`${failure.summary} The run cannot continue.`, { cause });
+          }
         }
         fs.appendFileSync(
           seatLogs[drafter]!,
@@ -565,6 +570,7 @@ export async function runDraft(models: string[], board: DraftBoard, options: Run
           } satisfies DraftSeatLog)}\n`,
           'utf8',
         );
+        if (terminalError) throw terminalError;
       }
       if (!chosen) {
         chosen = legal[Math.floor(options.rng() * legal.length)]!;

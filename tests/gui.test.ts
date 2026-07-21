@@ -822,6 +822,25 @@ test('gui starts tournament runs and mirrors bracket state', async () => {
           champion: 0,
         },
       });
+      options.onEvent?.({ type: 'series-start', index: 0 });
+      options.onEvent?.({ type: 'game-update', index: 0, game: 1, lines: ['|turn|7'], publicLines: ['|turn|7'] });
+      options.onEvent?.({
+        type: 'decision',
+        index: 0,
+        pid: 'p1',
+        row: {
+          kind: 'decision',
+          game_number: 1,
+          turn: 7,
+          phase: 'turn',
+          selection: [],
+          rationale: 'No decision was submitted; the battle timer decides.',
+          automatic: false,
+          fallback: true,
+          error_summary: 'Google API quota is exhausted (429).',
+          error: 'raw upstream response',
+        },
+      });
       return [];
     },
   });
@@ -840,6 +859,12 @@ test('gui starts tournament runs and mirrors bracket state', async () => {
     const bracket = run.bracket as Record<string, unknown>;
     assert.equal(bracket.champion, 0);
     assert.equal((bracket.entrants as unknown[]).length, 2);
+    const battle = await apiJson(`${base}api/battle?index=0`);
+    const snapshot = battle.data.snapshot as Record<string, unknown>;
+    const decisions = snapshot.decisions as Array<Record<string, unknown>>;
+    assert.equal(decisions[0]!.error, 'Google API quota is exhausted (429).');
+    const publicBattle = await apiJson(`${base}api/battle/public?index=0`);
+    assert.deepEqual((publicBattle.data.snapshot as Record<string, unknown>).decisions, []);
   } finally {
     gui.close();
   }

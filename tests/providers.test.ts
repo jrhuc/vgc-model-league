@@ -4,6 +4,7 @@ import test from 'node:test';
 import {
   ApiError,
   assistantToolMessage,
+  classifyProviderFailure,
   makeProvider,
   parseSpec,
   reasoningLevels,
@@ -35,6 +36,29 @@ test('reasoning levels are validated by model family', () => {
   validateReasoning(meta, 'xhigh');
   assert.throws(() => validateReasoning(meta, 'max'), /reasoning=max/);
   assert.deepEqual(reasoningLevels(parseSpec('anthropic:claude-opus-4-10')), ['low', 'medium', 'high', 'xhigh', 'max']);
+});
+
+test('provider failures distinguish terminal capacity from recoverable upstream errors', () => {
+  assert.deepEqual(
+    classifyProviderFailure(
+      new ApiError(429, 'google:gemini-3.6-flash 429: exceeded your current quota; GenerateRequestsPerDay-FreeTier'),
+      'google:gemini-3.6-flash',
+    ),
+    { kind: 'quota', summary: 'Google API quota is exhausted (429).', terminal: true },
+  );
+  assert.deepEqual(classifyProviderFailure(new ApiError(429, 'rate limit; retry in 20s'), 'google:gemini'), {
+    kind: 'rate_limit',
+    summary: 'Google API rate limit was reached (429).',
+    terminal: false,
+  });
+  assert.deepEqual(classifyProviderFailure(new ApiError(0, 'request timed out after 55s'), 'openai:gpt'), {
+    kind: 'timeout',
+    summary: 'OpenAI API request timed out.',
+    terminal: false,
+  });
+  assert.equal(classifyProviderFailure(new ApiError(401, 'invalid key'), 'anthropic:claude').terminal, true);
+  assert.equal(classifyProviderFailure(new ApiError(503, 'overloaded'), 'anthropic:claude').terminal, false);
+  assert.equal(classifyProviderFailure(new ApiError(501, 'not implemented'), 'compat:model').terminal, true);
 });
 
 test('shared tool messages preserve typed calls', () => {

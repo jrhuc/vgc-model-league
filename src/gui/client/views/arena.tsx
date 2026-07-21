@@ -286,19 +286,31 @@ function Side({
   right,
   timer,
   receivedAt,
+  warning,
 }: {
   pid: string;
   side: SideView;
   right: boolean;
   timer: SideTimerView | null | undefined;
   receivedAt: number;
+  warning: string;
 }) {
   const clock = timerInfo(timer, receivedAt);
   const mons = [...side.mons].sort((a, b) => monRank(a) - monRank(b));
   return (
     <div class={`side ${right ? 'right' : ''}`}>
       <div class="side-name">
-        <b>{side.player}</b>
+        <div class="side-model">
+          {warning && (
+            <span
+              class="side-fallback-warning"
+              role="img"
+              aria-label={`Latest model decision used a fallback. ${warning}`}
+              title={warning}
+            />
+          )}
+          <b>{side.player}</b>
+        </div>
         <span>
           {pid.toUpperCase()} · {side.conditions.length ? side.conditions.join(' · ') : 'No side conditions'}
         </span>
@@ -348,6 +360,15 @@ function decisionLabel(decision: DecisionView): string {
   return `T${decision.turn}`;
 }
 
+function latestFallback(decisions: DecisionView[], pid: string): string {
+  for (let index = decisions.length - 1; index >= 0; index -= 1) {
+    const decision = decisions[index]!;
+    if (decision.pid !== pid || decision.automatic) continue;
+    return decision.fallback ? decision.error || 'The latest model decision used a fallback.' : '';
+  }
+  return '';
+}
+
 function DecisionFeed({
   decisions,
   players,
@@ -379,6 +400,7 @@ function DecisionFeed({
           </div>
           <div class="decision-selection">{decision.selection.join(' · ')}</div>
           {!decision.automatic && decision.rationale && <div class="decision-rationale">{decision.rationale}</div>}
+          {decision.fallback && decision.error && <div class="decision-error">{decision.error}</div>}
         </div>
       ))}
     </div>
@@ -721,6 +743,7 @@ export function ArenaView({ run, battles, selected, onSelect, onLoadGame, onGoFi
                   right={false}
                   timer={shown.snapshot.timers?.p1}
                   receivedAt={shown.receivedAt}
+                  warning={latestFallback(shown.snapshot.decisions, 'p1')}
                 />
                 <div class="center-mark">VS</div>
                 <Side
@@ -729,6 +752,7 @@ export function ArenaView({ run, battles, selected, onSelect, onLoadGame, onGoFi
                   right={true}
                   timer={shown.snapshot.timers?.p2}
                   receivedAt={shown.receivedAt}
+                  warning={latestFallback(shown.snapshot.decisions, 'p2')}
                 />
               </div>
               <TurnLog

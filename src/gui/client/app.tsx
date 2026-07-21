@@ -140,7 +140,10 @@ export function App() {
   const loadGame = (index: number, game: number) =>
     api<BattleMessage>(`${contribute ? '/api/battle' : '/api/battle/public'}?index=${index}&game=${game}`);
 
-  const onStarted = () => {
+  const onStarted = (startedRun: RunSnapshot) => {
+    runIdRef.current = startedRun.runId;
+    runWasLive.current = true;
+    setRun(startedRun);
     setSelected(null);
     setBattles({});
     navigate('arena');

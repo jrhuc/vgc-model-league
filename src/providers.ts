@@ -221,6 +221,67 @@ export class ApiError extends Error {
   }
 }
 
+export type ProviderFailureKind = 'quota' | 'rate_limit' | 'timeout' | 'upstream' | 'network' | 'request';
+
+export interface ProviderFailure {
+  kind: ProviderFailureKind;
+  summary: string;
+  terminal: boolean;
+}
+
+const HARD_QUOTA_ERROR =
+  /(?:insufficient[_ -]?quota|exceeded your current quota|free[_ -]?tier[_ -]?requests|requests?[_ -]?per[_ -]?day|generateRequestsPerDay|credit balance|billing quota)/i;
+
+export function classifyProviderFailure(error: unknown, spec = 'provider'): ProviderFailure {
+  const message = error instanceof Error ? error.message : String(error);
+  const status = error instanceof ApiError ? error.status : Number(/\b([45]\d\d)\b/.exec(message)?.[1] ?? 0);
+  const provider = spec.split(':', 1)[0] || 'provider';
+  const label =
+    (
+      {
+        anthropic: 'Anthropic',
+        cerebras: 'Cerebras',
+        deepseek: 'DeepSeek',
+        google: 'Google',
+        kimi: 'Kimi',
+        meta: 'Meta',
+        openai: 'OpenAI',
+        openrouter: 'OpenRouter',
+        xai: 'xAI',
+        zai: 'Z.ai',
+      } as Record<string, string>
+    )[provider] ?? provider.charAt(0).toUpperCase() + provider.slice(1);
+  const suffix = status ? ` (${status})` : '';
+  if (HARD_QUOTA_ERROR.test(message)) {
+    return { kind: 'quota', summary: `${label} API quota is exhausted${suffix}.`, terminal: true };
+  }
+  if ((status === 0 || status === 408) && /(?:timed? ?out|timeout|time exhausted)/i.test(message)) {
+    return { kind: 'timeout', summary: `${label} API request timed out.`, terminal: false };
+  }
+  if (status === 0 && error instanceof ApiError) {
+    return { kind: 'network', summary: `${label} API could not be reached.`, terminal: false };
+  }
+  if (status === 409 || status === 425) {
+    return { kind: 'upstream', summary: `${label} API request was temporarily blocked (${status}).`, terminal: false };
+  }
+  if (status === 429) {
+    return { kind: 'rate_limit', summary: `${label} API rate limit was reached (429).`, terminal: false };
+  }
+  if (error instanceof TypeError) {
+    return { kind: 'network', summary: `${label} API could not be reached.`, terminal: false };
+  }
+  if (status >= 500 && status !== 501 && status !== 505) {
+    return { kind: 'upstream', summary: `${label} API is temporarily unavailable (${status}).`, terminal: false };
+  }
+  if (status === 401 || status === 403) {
+    return { kind: 'request', summary: `${label} API rejected the credentials${suffix}.`, terminal: true };
+  }
+  if (status === 404) {
+    return { kind: 'request', summary: `${label} model or endpoint was not found (404).`, terminal: true };
+  }
+  return { kind: 'request', summary: `${label} API request failed${suffix}.`, terminal: true };
+}
+
 function openRouterErrorStatus(responseBody: string | undefined): number | undefined {
   if (!responseBody) return undefined;
   try {

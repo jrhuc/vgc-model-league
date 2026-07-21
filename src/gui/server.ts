@@ -14,7 +14,13 @@ import { DRAFT_PROTOCOL_VERSION, runDraftLeague } from '../draftleague.js';
 import { discoverModels, PROVIDER_OPTIONS, providerOption } from '../model-catalog.js';
 import { DATA_DIR, prepareDataDirectories, RESULTS_PATH, TEAMS_DIR } from '../paths.js';
 import type { ModelReasoningConfig, ReasoningLevel } from '../providers.js';
-import { parseSpec, REASONING_LEVELS, reasoningLevels, validateReasoning } from '../providers.js';
+import {
+  classifyProviderFailure,
+  parseSpec,
+  REASONING_LEVELS,
+  reasoningLevels,
+  validateReasoning,
+} from '../providers.js';
 import { h2h, loadRows, scopeRows, standings } from '../records.js';
 import { makeRunDirectory, ROTATION_PROTOCOL_VERSION, runRotation } from '../rotation.js';
 import { redactSecrets } from '../sanitize.js';
@@ -1365,6 +1371,14 @@ export class GuiServer {
     } else if (event.type === 'decision') {
       if (!run.rows[event.index]) return;
       const row = event.row;
+      const rawError = typeof row.error === 'string' ? row.error : '';
+      let error = typeof row.error_summary === 'string' ? row.error_summary.slice(0, 500) : '';
+      if (!error && rawError) {
+        error =
+          row.fallback === true && row.action !== 'abandoned'
+            ? 'The model returned no usable decision; a legal fallback was selected.'
+            : classifyProviderFailure(rawError, run.rows[event.index]!.players[event.pid]).summary;
+      }
       if (row.kind === 'decision') {
         const list = run.decisions.get(event.index) ?? [];
         list.push({
@@ -1376,6 +1390,7 @@ export class GuiServer {
             ? row.selection.slice(0, 16).map((value) => String(value).slice(0, 500))
             : [],
           rationale: typeof row.rationale === 'string' ? row.rationale.slice(0, 20_000) : '',
+          error,
           automatic: row.automatic === true,
           fallback: row.fallback === true,
           substituted: typeof row.substitution_reason === 'string',

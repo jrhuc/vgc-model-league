@@ -19,7 +19,7 @@ import { PoolsView } from './pools';
 interface FixturesProps {
   app: AppState;
   run: RunSnapshot | null;
-  onStarted: () => void;
+  onStarted: (run: RunSnapshot) => void;
   onPools: (pools: PoolInfo[]) => void;
 }
 
@@ -563,12 +563,14 @@ export function FixturesView({ app, run, onStarted, onPools }: FixturesProps) {
             : { pool, seriesPerPair: Number(series), concurrency: Number(concurrency) }),
     };
     api('/api/run', request)
-      .then(() => {
+      .then(() => api<AppState>('/api/state'))
+      .then((state) => {
+        if (!state.run) throw new Error('The run started, but its live state is unavailable.');
         catalogKeyRef.current = '';
         setApiKeyText('');
         setKeyHeld(false);
         setManualKey('');
-        onStarted();
+        onStarted(state.run);
       })
       .catch((error: Error) => setLaunchMsg(error.message))
       .finally(() => setStarting(false));

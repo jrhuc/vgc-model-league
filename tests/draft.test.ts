@@ -9,6 +9,7 @@ import { boardInfo, draftScaffoldRevision, legalPicks, loadBoard, runDraft, snak
 import type { DraftLeagueEvent } from '../src/draftleague.js';
 import { DRAFT_PROTOCOL_VERSION, runDraftLeague } from '../src/draftleague.js';
 import { scaffoldRevision } from '../src/engines.js';
+import { ApiError } from '../src/providers.js';
 import { seededRng } from '../src/random.js';
 import { loadRows } from '../src/records.js';
 import { loadShowdown } from '../src/showdown.js';
@@ -293,6 +294,34 @@ test('a drafter that never answers falls back to a random legal pick', async (t)
   const llmPicks = outcome.picks.filter((pick) => pick.entrant === 0);
   assert.ok(llmPicks.every((pick) => pick.fallback));
   assert.match(llmPicks[0]!.rationale, /fallback pick/);
+});
+
+test('a hard quota failure stops the draft instead of making random picks', async (t) => {
+  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-draft-quota-'));
+  t.after(() => fs.rmSync(logDir, { recursive: true, force: true }));
+  await assert.rejects(
+    runDraft(
+      ['google:gemini-test', 'random'],
+      { ...BOARD, picks: 4 },
+      {
+        logDir,
+        rng: seededRng(3),
+        makeDraftProvider: () => ({
+          async complete() {
+            throw new ApiError(429, 'google:gemini-test 429: exceeded your current quota; requests per day');
+          },
+        }),
+      },
+    ),
+    /Google API quota is exhausted.*cannot continue/,
+  );
+  const rows = fs
+    .readFileSync(path.join(logDir, 'drafter-0-google-gemini-test.jsonl'), 'utf8')
+    .trim()
+    .split('\n')
+    .map((line) => JSON.parse(line) as Record<string, unknown>);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0]!.error, 'Google API quota is exhausted (429).');
 });
 
 test('a full draft league drafts, plays a round robin, and crowns a playoff champion', async (t) => {

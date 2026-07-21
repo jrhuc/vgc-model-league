@@ -7,7 +7,14 @@ import type { MenuHints, SlotMenu, TargetNames } from './choices.js';
 import { buildMenus } from './choices.js';
 import { REFLECTION_SYSTEM, renderDecision, SYSTEM } from './prompts.js';
 import type { ReasoningLevel } from './providers.js';
-import { ApiError, assistantToolMessage, makeProvider, parseSpec, toolResultMessage } from './providers.js';
+import {
+  ApiError,
+  assistantToolMessage,
+  classifyProviderFailure,
+  makeProvider,
+  parseSpec,
+  toolResultMessage,
+} from './providers.js';
 import type { Rng } from './random.js';
 import { seededRng } from './random.js';
 import { DEX_TOOLS, ShowdownReference } from './reference.js';
@@ -242,6 +249,7 @@ export interface LLMEngineOptions {
 const RETRY_ATTEMPTS = 3;
 const RETRY_BASE_MS = 400;
 const RETRY_MIN_REMAINING_MS = 15_000;
+const CONSECUTIVE_DECISION_FAILURE_LIMIT = 3;
 const FORCE_COMMIT_MS = 25_000;
 const FORCE_COMMIT_TURN_FRACTION = 0.5;
 const BANK_HEALTHY_SECONDS = 300;
@@ -407,6 +415,7 @@ export function scaffoldRevision(): string {
           retries: RETRY_ATTEMPTS,
           retryBaseMs: RETRY_BASE_MS,
           retryMinRemainingMs: RETRY_MIN_REMAINING_MS,
+          consecutiveDecisionFailureLimit: CONSECUTIVE_DECISION_FAILURE_LIMIT,
         },
         reflectionMaxTokens: REFLECTION_MAX_TOKENS,
         goldenDecision: goldenDecisionRender(),
@@ -418,16 +427,7 @@ export function scaffoldRevision(): string {
 }
 
 function isTransientError(error: unknown): boolean {
-  if (error instanceof ApiError)
-    return (
-      error.status === 0 ||
-      error.status === 408 ||
-      error.status === 409 ||
-      error.status === 425 ||
-      error.status === 429 ||
-      error.status >= 500
-    );
-  return error instanceof TypeError;
+  return !classifyProviderFailure(error).terminal;
 }
 
 export class LLMEngine extends BaseEngine {
@@ -471,6 +471,7 @@ export class LLMEngine extends BaseEngine {
   private pending: PendingDecision | undefined;
   private generation = 0;
   private decisionController: AbortController | undefined;
+  private consecutiveDecisionFailures = 0;
 
   constructor(
     pid: Pid,
@@ -637,11 +638,17 @@ export class LLMEngine extends BaseEngine {
     const reasoningParts: string[] = [];
     const messages: ProviderMessage[] = [{ role: 'user', content: prompt }];
     const remainingMs = () => (deadline === undefined ? Number.POSITIVE_INFINITY : deadline - performance.now());
-    const abandonToTimer = (caught: unknown): Promise<number[]> => {
+    const failDecision = (caught: unknown): Promise<number[]> => {
       const message = caught instanceof Error ? caught.message : String(caught);
+      const failure = classifyProviderFailure(caught, this.spec);
       this.abandonedDecisions += 1;
+      this.consecutiveDecisionFailures += 1;
+      const repeated = this.consecutiveDecisionFailures >= CONSECUTIVE_DECISION_FAILURE_LIMIT;
+      const stop = failure.terminal || repeated;
       if (this.pending?.generation === generation) this.pending = undefined;
-      this.remember(`[No choice submitted: ${message.slice(0, 200)}. The battle timer acts when time expires.]`);
+      this.remember(
+        `[No choice submitted: ${failure.summary} ${stop ? 'The run cannot continue.' : 'The battle timer acts when time expires.'}]`,
+      );
       const phase = request.teamPreview ? 'team_preview' : request.forceSwitch ? 'forced_switch' : 'turn';
       const timer = request.timer
         ? { turn_seconds: request.timer.turnSeconds ?? null, bank_seconds: request.timer.seconds ?? null }
@@ -654,16 +661,21 @@ export class LLMEngine extends BaseEngine {
         pid: this.pid,
         phase,
       };
+      const rationale = stop
+        ? `${failure.summary} The run cannot continue.`
+        : `${failure.summary} No decision was submitted; the battle timer decides.`;
       this.writeLog(this.options.decisionLog, {
         kind: 'decision',
         ...base,
         selection: [],
         action: 'abandoned',
-        rationale: 'No decision was submitted; the battle timer decides.',
+        rationale,
         threats: [],
         candidates: [],
         automatic: false,
         fallback: true,
+        failure_kind: failure.kind,
+        error_summary: failure.summary,
         error: message,
         parse_failures: parseFailures,
         timer,
@@ -688,8 +700,16 @@ export class LLMEngine extends BaseEngine {
         provider_retries: this.callRetries,
         tool_calls: toolCalls,
         fallback: true,
+        failure_kind: failure.kind,
+        error_summary: failure.summary,
         error: message,
       });
+      if (stop) {
+        const reason = repeated
+          ? `${this.spec} failed to submit ${this.consecutiveDecisionFailures} consecutive decisions. ${failure.summary}`
+          : `${failure.summary} The run cannot continue.`;
+        throw new Error(reason, { cause: caught });
+      }
       return new Promise<number[]>((_resolve, reject) => {
         const abort = () => reject(new DecisionAbandonedError());
         if (decisionSignal?.aborted) abort();
@@ -708,7 +728,7 @@ export class LLMEngine extends BaseEngine {
       rawResponse = '';
       for (let round = 0; round <= DECISION_MAX_TOOL_ROUNDS; round += 1) {
         if (generation !== this.generation) throw new DecisionAbandonedError();
-        if (request.timer && remainingMs() < 2000) return abandonToTimer(new Error('turn time exhausted'));
+        if (request.timer && remainingMs() < 2000) return failDecision(new Error('turn time exhausted'));
         const finalRound = round === DECISION_MAX_TOOL_ROUNDS || remainingMs() < forceCommitMs;
         let completion: Completion;
         try {
@@ -727,7 +747,7 @@ export class LLMEngine extends BaseEngine {
           );
         } catch (caught) {
           if (generation !== this.generation) throw new DecisionAbandonedError();
-          if (request.timer && !this.options.signal?.aborted && isTransientError(caught)) return abandonToTimer(caught);
+          if (request.timer && !this.options.signal?.aborted) return failDecision(caught);
           throw caught;
         }
         for (const [key, value] of Object.entries(completion.usage)) usage[key] = (usage[key] ?? 0) + Math.trunc(value);
@@ -857,6 +877,7 @@ export class LLMEngine extends BaseEngine {
       ? 'Automatic: only one legal joint action.'
       : pending.rationale || 'No rationale supplied.';
     if (!automatic) {
+      if (!pending.fallback) this.consecutiveDecisionFailures = 0;
       this.notebook = notebook;
       this.decisions += 1;
       if (pending.fallback) this.fallbacks += 1;
@@ -1122,6 +1143,9 @@ export class LLMEngine extends BaseEngine {
     let rawResponse = '';
     let parsed: { summary: string; adjustment: string; notebook: string } | undefined;
     let error: string | undefined;
+    let failureSummary: string | undefined;
+    let failureKind: string | undefined;
+    let terminalError: Error | undefined;
     try {
       for (let attempt = 0; attempt < 2 && !parsed; attempt += 1) {
         const completion = await this.completeWithRetry(
@@ -1148,6 +1172,12 @@ export class LLMEngine extends BaseEngine {
       }
     } catch (caught) {
       error = caught instanceof Error ? caught.message : String(caught);
+      const failure = classifyProviderFailure(caught, this.spec);
+      failureSummary = failure.summary;
+      failureKind = failure.kind;
+      if (failure.terminal && caught instanceof ApiError) {
+        terminalError = new Error(`${failure.summary} The run cannot continue.`, { cause: caught });
+      }
     }
     const fallback = !parsed;
     const review =
@@ -1174,6 +1204,7 @@ export class LLMEngine extends BaseEngine {
       ...this.notebookUpdate(),
       fallback,
       error: error ?? null,
+      ...(failureSummary ? { error_summary: failureSummary, failure_kind: failureKind } : {}),
     });
     this.writeLog(this.options.traceLog, {
       kind: 'reflection_trace',
@@ -1187,7 +1218,9 @@ export class LLMEngine extends BaseEngine {
       usage,
       fallback,
       error: error ?? null,
+      ...(failureSummary ? { error_summary: failureSummary, failure_kind: failureKind } : {}),
     });
+    if (terminalError) throw terminalError;
   }
 
   private static extractReflection(response: string): { summary: string; adjustment: string; notebook: string } {

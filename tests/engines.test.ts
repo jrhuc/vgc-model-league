@@ -252,9 +252,27 @@ test('non-transient provider failures with a live timer fail the run', async () 
   });
   const timed = request();
   timed.timer = { turnSeconds: 55, seconds: 420 };
-  await assert.rejects(engine.act(timed, { povLines: [] }), /invalid key/);
-  assert.deepEqual(decisions, []);
-  assert.deepEqual(engine.decisionStats(), emptyStats);
+  await assert.rejects(engine.act(timed, { povLines: [] }), /rejected the credentials.*cannot continue/);
+  assert.equal(decisions.length, 1);
+  assert.equal(decisions[0]!.error_summary, 'Dead API rejected the credentials (401).');
+  assert.deepEqual(engine.decisionStats(), { ...emptyStats, abandoned_decisions: 1 });
+});
+
+test('hard quota failures stop immediately without provider retries', async () => {
+  const decisions: Record<string, unknown>[] = [];
+  const provider = new ScriptedProvider([
+    new ApiError(429, 'google:gemini-3.6-flash 429: exceeded your current quota; GenerateRequestsPerDay-FreeTier'),
+  ]);
+  const engine = new LLMEngine('p1', 'google:gemini-3.6-flash', { provider, decisionLog: decisions });
+  const timed = request();
+  timed.timer = { turnSeconds: 55, seconds: 240 };
+
+  await assert.rejects(engine.act(timed, { povLines: [] }), /Google API quota is exhausted.*cannot continue/);
+  assert.equal(provider.calls.length, 1);
+  assert.equal(decisions.length, 1);
+  assert.equal(decisions[0]!.failure_kind, 'quota');
+  assert.equal(decisions[0]!.error_summary, 'Google API quota is exhausted (429).');
+  assert.match(String(decisions[0]!.rationale), /run cannot continue/i);
 });
 
 test('transient provider failures with a live timer leave the choice to the battle timer', async () => {
@@ -278,10 +296,53 @@ test('transient provider failures with a live timer leave the choice to the batt
   assert.equal(resolved, false, 'the engine waits for the battle timer instead of throwing');
   assert.equal(decisions[0]!.action, 'abandoned');
   assert.equal(decisions[0]!.fallback, true);
-  assert.match(String(decisions[0]!.error), /overloaded/);
+  assert.equal(decisions[0]!.error_summary, 'Dead API is temporarily unavailable (503).');
   assert.deepEqual(engine.decisionStats(), { ...emptyStats, abandoned_decisions: 1 });
   engine.abandonDecision();
   assert.equal(await pending, '');
+});
+
+test('three consecutive timed decision failures stop the run while success resets the streak', async () => {
+  const timeout = () => new ApiError(0, 'request timed out after 10s');
+  const provider = new ScriptedProvider([timeout(), decision([1]), timeout(), timeout(), timeout()]);
+  const decisions: Record<string, unknown>[] = [];
+  let logged = Promise.withResolvers<void>();
+  const engine = new LLMEngine('p1', 'google:gemini-test', {
+    provider,
+    decisionLog: (row) => {
+      decisions.push(row);
+      logged.resolve();
+    },
+  });
+  const timed = request();
+  timed.timer = { turnSeconds: 10, seconds: 240 };
+  const abandonTimedDecision = async () => {
+    const seen = logged.promise;
+    const pending = engine.act(timed, { povLines: [] });
+    await seen;
+    engine.abandonDecision();
+    assert.equal(await pending, '');
+    logged = Promise.withResolvers<void>();
+  };
+
+  await abandonTimedDecision();
+  assert.equal(await engine.act(timed, { povLines: [] }), 'move 2');
+  logged = Promise.withResolvers<void>();
+  await abandonTimedDecision();
+
+  const automatic = request();
+  automatic.active = [
+    {
+      moves: [{ move: 'First', id: 'first', pp: 10, maxpp: 10, target: 'self', disabled: false }],
+    },
+  ];
+  assert.equal(await engine.act(automatic, { povLines: [] }), 'move 1');
+  logged = Promise.withResolvers<void>();
+
+  await abandonTimedDecision();
+  await assert.rejects(engine.act(timed, { povLines: [] }), /failed to submit 3 consecutive decisions/);
+  assert.equal(decisions.at(-1)!.failure_kind, 'timeout');
+  assert.match(String(decisions.at(-1)!.rationale), /run cannot continue/i);
 });
 
 test('transient API errors retry before falling back', async () => {
@@ -438,6 +499,28 @@ test('readable decisions, technical traces, and post-game reflections stay separ
     ...oneMoveStats,
     reflections: 1,
   });
+});
+
+test('hard quota failures during reflection stop the series', async () => {
+  const decisions: Record<string, unknown>[] = [];
+  const engine = new LLMEngine('p1', 'google:gemini-test', {
+    provider: new ScriptedProvider([
+      new ApiError(429, 'google:gemini-test 429: exceeded your current quota; requests per day'),
+    ]),
+    decisionLog: decisions,
+  });
+
+  await assert.rejects(
+    engine.endGame({
+      gameNumber: 1,
+      outcome: { winner: 'opponent', won: false, turns: 8 },
+      seriesScore: { p1: 0, p2: 1 },
+    }),
+    /Google API quota is exhausted.*cannot continue/,
+  );
+  assert.equal(decisions[0]!.kind, 'game_reflection');
+  assert.equal(decisions[0]!.failure_kind, 'quota');
+  assert.equal(decisions[0]!.error_summary, 'Google API quota is exhausted (429).');
 });
 
 test('game transcripts reset while notebook and score persist, with a 2400-character cap', async () => {
