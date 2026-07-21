@@ -126,6 +126,7 @@ export async function playBo3(context: Bo3Context): Promise<Bo3Result> {
       : await new SimBattle(context.format, players, gameSeed, context.psDir, context.timer ?? true).run(
           engines,
           onUpdate,
+          context.signal,
         );
     context.signal?.throwIfAborted();
     const winnerSide = (['p1', 'p2'] as const).find((pid) => names[pid] === outcome.winner);

@@ -57,6 +57,36 @@ test('Showdown timer defaults a slow decision', { timeout: 25_000 }, async () =>
   assert.ok(outcome.pov.p1.includes('|timer|autodefault'));
 });
 
+test('aborting a battle interrupts timer waits and abandons pending decisions', { timeout: 2_000 }, async () => {
+  const pool = loadPool();
+  const started = Promise.withResolvers<void>();
+  const never = Promise.withResolvers<string>().promise;
+  let abandoned = false;
+  class HangingEngine extends RandomEngine {
+    override act(): Promise<string> {
+      started.resolve();
+      return never;
+    }
+
+    override abandonDecision(): void {
+      abandoned = true;
+    }
+  }
+  const controller = new AbortController();
+  const pending = new SimBattle(
+    pool.format,
+    {
+      p1: { name: 'A-hanging', team: pool.teams[0]!.packed },
+      p2: { name: 'B-random', team: pool.teams[1]!.packed },
+    },
+    [13, 14, 15, 16],
+  ).run({ p1: new HangingEngine('p1', 1), p2: new RandomEngine('p2', 2) }, undefined, controller.signal);
+  await started.promise;
+  controller.abort(new Error('stop requested'));
+  await assert.rejects(pending, /stop requested/);
+  assert.equal(abandoned, true);
+});
+
 test('players can decide concurrently', async () => {
   const pool = loadPool();
   const bothStarted = Promise.withResolvers<void>();

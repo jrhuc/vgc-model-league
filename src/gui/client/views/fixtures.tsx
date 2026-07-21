@@ -394,6 +394,9 @@ export function FixturesView({ app, run, onStarted, onPools }: FixturesProps) {
         setCatalog(data.models);
         setCatalogProvider(selectedProvider);
         catalogKeyRef.current = apiKey;
+        for (const spec of lineupRef.current.models) {
+          if (spec.startsWith(`${selectedProvider}:`)) apiKeysRef.current[spec] = apiKey;
+        }
         setModelText('');
         setApiKeyText('');
         setKeyHeld(true);

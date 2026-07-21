@@ -161,6 +161,47 @@ test('OpenRouter permits unauthenticated catalogs and uses architecture output m
   ]);
 });
 
+test('OpenRouter validates a supplied key before loading its public catalog', async () => {
+  const urls: string[] = [];
+  const mockFetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    urls.push(String(input));
+    assert.equal(new Headers(init?.headers).get('authorization'), 'Bearer openrouter-secret');
+    if (String(input).endsWith('/key')) return jsonResponse({ data: { label: 'sk-or-v1-test' } });
+    return jsonResponse({ data: [{ id: 'vendor/text-model', architecture: { output_modalities: ['text'] } }] });
+  }) as typeof fetch;
+
+  assert.deepEqual(await discoverModels(providerOption('openrouter')!, 'openrouter-secret', { fetch: mockFetch }), [
+    { id: 'vendor/text-model' },
+  ]);
+  assert.deepEqual(urls, ['https://openrouter.ai/api/v1/key', 'https://openrouter.ai/api/v1/models']);
+});
+
+test('OpenRouter rejects an invalid key before loading its public catalog', async () => {
+  const secret = 'not-an-openrouter-key';
+  let calls = 0;
+  const mockFetch = (async () => {
+    calls += 1;
+    return jsonResponse(
+      { error: { message: `Missing Authentication header ${secret}` } },
+      { status: 401, statusText: 'Unauthorized' },
+    );
+  }) as typeof fetch;
+
+  await assert.rejects(
+    discoverModels(providerOption('openrouter')!, secret, { fetch: mockFetch }),
+    (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.match(
+        error.message,
+        /OpenRouter API key validation failed \(401 Unauthorized\): Missing Authentication header/,
+      );
+      assert.doesNotMatch(error.message, new RegExp(secret));
+      return true;
+    },
+  );
+  assert.equal(calls, 1);
+});
+
 test('discovery deduplicates, sorts, and forwards abort signals', async () => {
   const controller = new AbortController();
   const mockFetch = (async (_input: string | URL | Request, init?: RequestInit) => {

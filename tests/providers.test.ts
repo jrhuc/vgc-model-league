@@ -259,6 +259,29 @@ test('API call errors map to ApiError without leaking credentials', async () => 
   );
 });
 
+test('OpenRouter preserves in-band error status after generation starts', async () => {
+  const fetch = (async () =>
+    jsonResponse({
+      error: {
+        code: 502,
+        message: 'ResourceExhausted: Worker local total request limit reached (33/32)',
+      },
+    })) as typeof globalThis.fetch;
+  const provider = makeProvider(parseSpec('openrouter:nvidia/nemotron-3-super-120b-a12b:free'), {
+    apiKey: 'openrouter-key',
+    fetch,
+  });
+
+  await assert.rejects(
+    provider.complete('system', [{ role: 'user', content: 'hello' }]),
+    (error: unknown) =>
+      error instanceof ApiError &&
+      error.status === 502 &&
+      error.message.startsWith('openrouter:nvidia/nemotron-3-super-120b-a12b:free 502:') &&
+      error.message.includes('ResourceExhausted'),
+  );
+});
+
 test('Anthropic maps adaptive reasoning without temperature', async () => {
   let url = '';
   let body: Record<string, unknown> = {};

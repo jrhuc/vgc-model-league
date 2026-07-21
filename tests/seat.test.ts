@@ -158,7 +158,7 @@ test('an exhibition series against random plays to completion through the bridge
   assert.match(String(row.scaffold), /^[0-9a-f]{12}$/);
   const score = row.score as Record<string, number>;
   assert.equal(Math.max(score.p1!, score.p2!), 2);
-  assert.ok(prompts.some((prompt) => prompt.includes('Slot 1')));
+  assert.ok(prompts.some((prompt) => prompt.includes('Ordered team menu')));
   assert.ok(!prompts.some((prompt) => prompt.includes('Showdown timer:')));
 
   const recorded = loadRows(recordsPath);

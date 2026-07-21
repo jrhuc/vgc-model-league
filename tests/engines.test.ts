@@ -180,6 +180,9 @@ test('doubles use one call and retain compact private context', async () => {
   assert.match(prompt, /Rock Slide/);
   assert.doesNotMatch(prompt, /\|move\|p2a/);
   assert.doesNotMatch(prompt, /\bL50\b/);
+  assert.match(prompt, /Garchomp; types Dragon\/Ground/);
+  assert.match(prompt, /Rock Slide \[Rock\/Physical\/75\/spread\]/);
+  assert.doesNotMatch(prompt, /Compact Showdown reference/);
 });
 
 test('provider failures abort and empty responses use a legal fallback', async () => {
@@ -197,7 +200,7 @@ test('provider failures abort and empty responses use a legal fallback', async (
   assert.deepEqual(empty.decisionStats(), { ...oneMoveStats, fallbacks: 1 });
 });
 
-test('provider failures with a live timer leave the choice to the battle timer', async () => {
+test('non-transient provider failures with a live timer fail the run', async () => {
   const decisions: Record<string, unknown>[] = [];
   const engine = new LLMEngine('p1', 'dead', {
     provider: new ScriptedProvider([new ApiError(401, 'invalid key')]),
@@ -205,16 +208,33 @@ test('provider failures with a live timer leave the choice to the battle timer',
   });
   const timed = request();
   timed.timer = { turnSeconds: 55, seconds: 420 };
+  await assert.rejects(engine.act(timed, { povLines: [] }), /invalid key/);
+  assert.deepEqual(decisions, []);
+  assert.deepEqual(engine.decisionStats(), emptyStats);
+});
+
+test('transient provider failures with a live timer leave the choice to the battle timer', async () => {
+  const decisions: Record<string, unknown>[] = [];
+  const logged = Promise.withResolvers<void>();
+  const engine = new LLMEngine('p1', 'dead', {
+    provider: new ScriptedProvider([new ApiError(503, 'overloaded')]),
+    decisionLog: (row) => {
+      decisions.push(row);
+      logged.resolve();
+    },
+  });
+  const timed = request();
+  timed.timer = { turnSeconds: 10, seconds: 420 };
   let resolved = false;
   const pending = engine.act(timed, { povLines: [] }).then((choice) => {
     resolved = true;
     return choice;
   });
-  await new Promise((resolve) => setTimeout(resolve, 50));
+  await logged.promise;
   assert.equal(resolved, false, 'the engine waits for the battle timer instead of throwing');
   assert.equal(decisions[0]!.action, 'abandoned');
   assert.equal(decisions[0]!.fallback, true);
-  assert.match(String(decisions[0]!.error), /invalid key/);
+  assert.match(String(decisions[0]!.error), /overloaded/);
   assert.deepEqual(engine.decisionStats(), { ...emptyStats, abandoned_decisions: 1 });
   engine.abandonDecision();
   assert.equal(await pending, '');
@@ -242,12 +262,16 @@ test('transient API errors retry before falling back', async () => {
   assert.equal(persistentProvider.calls.length, 3);
 });
 
-test('tool calls resolve before the final choice', async () => {
+test('one capped tool batch resolves before the final choice', async () => {
   const provider = new ScriptedProvider([
     {
       text: '',
       usage: { input_tokens: 1 },
-      toolCalls: [{ id: '1', name: 'lookup_move', arguments: { name: 'Earthquake' } }],
+      toolCalls: [
+        { id: '1', name: 'lookup_move', arguments: { name: 'Earthquake' } },
+        { id: '2', name: 'lookup_move', arguments: { name: 'Protect' } },
+        { id: '3', name: 'lookup_move', arguments: { name: 'Tailwind' } },
+      ],
     },
     { text: decision([1], 'spread', 'spread'), usage: { output_tokens: 1 }, toolCalls: [] },
   ]);
@@ -255,6 +279,14 @@ test('tool calls resolve before the final choice', async () => {
   const engine = new LLMEngine('p1', 'scripted', { provider, decisionLog: [], traceLog: traces });
   assert.equal(await engine.act(request(), { povLines: [] }), 'move 2');
   assert.equal(provider.calls.length, 2);
+  assert.equal(provider.calls[0]!.options.maxTokens, 4096);
+  assert.equal(provider.calls[0]!.options.toolChoice, 'auto');
+  assert.equal(provider.calls[1]!.options.toolChoice, 'none');
+  const replayedCalls = provider.calls[1]!.messages.filter((message) => message.role === 'assistant').flatMap(
+    (message) => message.toolCalls ?? [],
+  );
+  assert.equal(replayedCalls.length, 2);
+  assert.doesNotMatch(JSON.stringify(provider.calls[1]!.messages), /Tailwind/);
   assert.ok(
     provider.calls[1]!.messages.some(
       (message) => message.role === 'assistant' && message.toolCalls?.[0]?.name === 'lookup_move',
@@ -267,6 +299,7 @@ test('tool calls resolve before the final choice', async () => {
   );
   assert.deepEqual((traces[0]!.tool_calls as Array<Record<string, unknown>>)[0]!.arguments, { name: 'Earthquake' });
   assert.match(String((traces[0]!.tool_calls as Array<Record<string, unknown>>)[0]!.result), /BP 100/);
+  assert.equal((traces[0]!.tool_calls as Array<Record<string, unknown>>).length, 2);
 });
 
 test('readable decisions, technical traces, and post-game reflections stay separate', async () => {
@@ -464,6 +497,35 @@ test('abandoned decisions cannot mutate memory or statistics', async () => {
   await started.promise;
   engine.abandonDecision();
   release.resolve();
+  assert.equal(await action, '');
+  assert.deepEqual(engine.decisionStats(), emptyStats);
+});
+
+test('abandoning a decision aborts its provider request', async () => {
+  const started = Promise.withResolvers<void>();
+  const aborted = Promise.withResolvers<void>();
+  const provider: Provider = {
+    complete(_system, _messages, options) {
+      started.resolve();
+      return new Promise<Completion>((_resolve, reject) => {
+        const signal = options?.signal;
+        assert.ok(signal);
+        const onAbort = () => {
+          aborted.resolve();
+          reject(signal.reason);
+        };
+        if (signal.aborted) onAbort();
+        else signal.addEventListener('abort', onAbort, { once: true });
+      });
+    },
+  };
+  const engine = new LLMEngine('p1', 'scripted', { provider, decisionLog: [] });
+  const action = engine.act(request(), { povLines: ['|turn|1'] });
+  await started.promise;
+
+  engine.abandonDecision();
+
+  await aborted.promise;
   assert.equal(await action, '');
   assert.deepEqual(engine.decisionStats(), emptyStats);
 });

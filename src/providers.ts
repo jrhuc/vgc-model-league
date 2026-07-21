@@ -221,6 +221,18 @@ export class ApiError extends Error {
   }
 }
 
+function openRouterErrorStatus(responseBody: string | undefined): number | undefined {
+  if (!responseBody) return undefined;
+  try {
+    const body: unknown = JSON.parse(responseBody);
+    if (!isRecord(body) || !isRecord(body.error)) return undefined;
+    const code = typeof body.error.code === 'string' ? Number(body.error.code) : body.error.code;
+    return Number.isInteger(code) && Number(code) >= 400 && Number(code) <= 599 ? Number(code) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 const DEFAULT_TIMEOUT = 120;
 
 function googleThinkingBudgetMax(model: string): number {
@@ -427,7 +439,9 @@ export class SdkProvider implements Provider {
             continue;
           }
           const detail = redactSecrets(error.responseBody ?? error.message, [apiKey]);
-          const status = error.statusCode ?? 0;
+          const inBandStatus =
+            this.spec.provider === 'openrouter' ? openRouterErrorStatus(error.responseBody) : undefined;
+          const status = inBandStatus ?? error.statusCode ?? 0;
           throw new ApiError(status, `${this.spec.provider}:${this.model} ${status}: ${detail}`);
         }
         throw error;

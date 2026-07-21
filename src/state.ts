@@ -1,4 +1,4 @@
-import type { CompactMon, MatchupMon } from './reference.js';
+import type { CompactMon, CompactMonReference, MatchupMon } from './reference.js';
 import type { BattleRequest, JsonObject, Pid } from './types.js';
 
 import { afterColon, asRecord, asRecords, asStrings, text } from './value.js';
@@ -263,15 +263,15 @@ export class BattleState {
     }
   }
 
-  render(request: BattleRequest): string {
+  render(request: BattleRequest, referenceFor?: (mon: CompactMon) => CompactMonReference | undefined): string {
     this.updateOwnRequest(request);
     const foe: Pid = this.pid === 'p1' ? 'p2' : 'p1';
     return [
       `Turn: ${this.turn}`,
       `Weather: ${this.weatherLabel()}`,
       `Field: ${this.fieldLabels().join(', ') || 'none'}`,
-      ...this.renderSide(this.pid, true),
-      ...this.renderSide(foe, false),
+      ...this.renderSide(this.pid, true, referenceFor),
+      ...this.renderSide(foe, false, referenceFor),
     ].join('\n');
   }
 
@@ -426,7 +426,11 @@ export class BattleState {
     return undefined;
   }
 
-  private renderSide(pid: Pid, own: boolean): string[] {
+  private renderSide(
+    pid: Pid,
+    own: boolean,
+    referenceFor?: (mon: CompactMon) => CompactMonReference | undefined,
+  ): string[] {
     const side = this.sides[pid];
     const title = own ? 'Your side' : 'Opponent side';
     const conditions = this.conditionLabels(pid);
@@ -455,10 +459,18 @@ export class BattleState {
         !mon.ability
       )
         continue;
-      const attrs = [mon.species];
       const activeSlots = Object.entries(side.active).flatMap(([slot, key]) =>
         key === this.monKey(mon.ident) ? [slot] : [],
       );
+      const reference = referenceFor?.({
+        species: mon.species,
+        item: mon.item ?? null,
+        nature: mon.nature ?? null,
+        moves: [...mon.moves.values()].map((move) => move.name),
+        active: activeSlots.length > 0,
+      });
+      const attrs = [mon.species];
+      if (reference?.types) attrs.push(`types ${reference.types}`);
       if (activeSlots.length) attrs.push(`active slot ${activeSlots.join('/')}`);
       attrs.push(`HP ${mon.hp ?? '?'}`);
       if (mon.status) attrs.push(mon.status);
@@ -477,7 +489,10 @@ export class BattleState {
                 ...(entry.pp !== undefined ? [`PP ${entry.pp}/${entry.maxpp ?? '?'}`] : []),
                 ...(entry.used ? [`used ${entry.used}`] : []),
               ];
-              return `${entry.name}${details.length ? ` (${details.join('; ')})` : ''}`;
+              const referenceDetail = reference?.moves[this.speciesKey(entry.name)];
+              return `${entry.name}${referenceDetail ? ` [${referenceDetail}]` : ''}${
+                details.length ? ` (${details.join('; ')})` : ''
+              }`;
             })
             .join(', ')}`,
         );
@@ -497,10 +512,12 @@ export class BattleState {
             .map(([stat, value]) => `${stat} ${value}`)
             .join(', ')}`,
         );
+      else if (reference?.speed) attrs.push(`Speed range ${reference.speed}`);
       if (mon.item) attrs.push(`item ${mon.item}${mon.itemConsumed ? ' (consumed)' : ''}`);
       if (mon.ability) attrs.push(`ability ${mon.ability}`);
       if (mon.nature) attrs.push(`stat alignment ${mon.nature}`);
       if (mon.mega) attrs.push('Mega Evolved');
+      if (!mon.mega && reference?.mega) attrs.push(reference.mega);
       lines.push(`- ${attrs.join('; ')}`);
     }
     if (lines.length === 1) lines.push('- no Pokémon revealed');

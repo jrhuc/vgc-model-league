@@ -233,9 +233,17 @@ const RETRY_ATTEMPTS = 3;
 const RETRY_BASE_MS = 400;
 const RETRY_MIN_REMAINING_MS = 15_000;
 const FORCE_COMMIT_MS = 25_000;
-const DECISION_MAX_TOKENS = 8192;
+const DECISION_MAX_TOKENS = 4096;
+const DECISION_MAX_TOOL_ROUNDS = 1;
+const DECISION_MAX_TOOL_CALLS = 2;
+const DECISION_PARSE_ATTEMPTS = 2;
+const DECISION_NOTE_LIMIT = 1600;
+const DECISION_RATIONALE_LIMIT = 500;
+const DECISION_LIST_LIMIT = 3;
+const DECISION_LIST_ITEM_LIMIT = 240;
 const DECISION_TEMPERATURE = 0.2;
 const REFLECTION_MAX_TOKENS = 2048;
+const TRANSCRIPT_LIMIT = 24;
 
 const GOLDEN_LINES = [
   '|player|p1|p1-golden||',
@@ -307,18 +315,18 @@ const GOLDEN_REQUEST: BattleRequest = {
 function goldenDecisionRender(): string {
   const state = new BattleState('p1');
   state.feed(GOLDEN_LINES);
+  const reference = new ShowdownReference('gen9championsvgc2026regmbbo3');
   const menus = buildMenus(GOLDEN_REQUEST, {
     names: { foe: { 1: 'Aerodactyl', 2: 'Charizard' }, ally: { 1: 'Politoed', 2: 'Swampert' } },
     protectReduced: { 2: true },
   });
   return renderDecision({
-    state: state.render(GOLDEN_REQUEST),
+    state: state.render(GOLDEN_REQUEST, (mon) => reference.describeCompact(mon)),
     slotNames: menus.map((_, slot) => state.slotName(slot, GOLDEN_REQUEST)),
     menus,
     transcript: ['Turn 1 begins.'],
     notebook: 'golden',
     seriesContext: 'Series golden; game 1; score p1 0, p2 0',
-    mechanics: ['- golden mechanics line'],
     matchups: ['- golden matchup line'],
   });
 }
@@ -330,8 +338,21 @@ export function scaffoldRevision(): string {
         system: SYSTEM,
         reflection: REFLECTION_SYSTEM,
         tools: DEX_TOOLS,
-        decisionMaxTokens: DECISION_MAX_TOKENS,
-        decisionTemperature: DECISION_TEMPERATURE,
+        decisionPolicy: {
+          maxTokens: DECISION_MAX_TOKENS,
+          maxToolRounds: DECISION_MAX_TOOL_ROUNDS,
+          maxToolCalls: DECISION_MAX_TOOL_CALLS,
+          parseAttempts: DECISION_PARSE_ATTEMPTS,
+          noteLimit: DECISION_NOTE_LIMIT,
+          rationaleLimit: DECISION_RATIONALE_LIMIT,
+          listLimit: DECISION_LIST_LIMIT,
+          listItemLimit: DECISION_LIST_ITEM_LIMIT,
+          temperature: DECISION_TEMPERATURE,
+          forceCommitMs: FORCE_COMMIT_MS,
+          retries: RETRY_ATTEMPTS,
+          retryBaseMs: RETRY_BASE_MS,
+          retryMinRemainingMs: RETRY_MIN_REMAINING_MS,
+        },
         reflectionMaxTokens: REFLECTION_MAX_TOKENS,
         goldenDecision: goldenDecisionRender(),
         referenceRender: ShowdownReference.renderRevision(),
@@ -355,9 +376,6 @@ function isTransientError(error: unknown): boolean {
 }
 
 export class LLMEngine extends BaseEngine {
-  private static readonly NOTE_LIMIT = 2400;
-  private static readonly RATIONALE_LIMIT = 800;
-  private static readonly TRANSCRIPT_LIMIT = 24;
   readonly provider: Provider;
   readonly reference: ShowdownReference;
   private state: BattleState;
@@ -398,6 +416,7 @@ export class LLMEngine extends BaseEngine {
   private pending: PendingDecision | undefined;
   private generation = 0;
   private abandonWaiters = new Set<(choices: number[]) => void>();
+  private decisionController: AbortController | undefined;
 
   constructor(
     pid: Pid,
@@ -413,6 +432,8 @@ export class LLMEngine extends BaseEngine {
   }
 
   override beginGame(context: GameStart): void {
+    this.decisionController?.abort(new Error('game changed'));
+    this.decisionController = undefined;
     this.gameId = context.gameId;
     this.gameNumber = context.gameNumber;
     this.seriesId = context.seriesId;
@@ -440,6 +461,8 @@ export class LLMEngine extends BaseEngine {
   }
 
   override abandonDecision(): void {
+    this.decisionController?.abort(new Error('decision abandoned'));
+    this.decisionController = undefined;
     this.generation += 1;
     this.pending = undefined;
     for (const resolve of this.abandonWaiters) resolve([]);
@@ -449,6 +472,9 @@ export class LLMEngine extends BaseEngine {
   override async act(request: BattleRequest, context: AgentContext): Promise<string> {
     const events = context.povLines;
     const generation = this.generation;
+    const controller = new AbortController();
+    this.decisionController?.abort(new Error('new decision started'));
+    this.decisionController = controller;
     this.scoreThreats(events);
     this.state.feed(events);
     this.rememberEvents(events);
@@ -458,8 +484,12 @@ export class LLMEngine extends BaseEngine {
       generation,
       ...(request.timer ? { timer: request.timer } : {}),
     };
-    const choice = await super.act(request, context);
-    return generation === this.generation ? choice : '';
+    try {
+      const choice = await super.act(request, context);
+      return generation === this.generation ? choice : '';
+    } finally {
+      if (this.decisionController === controller) this.decisionController = undefined;
+    }
   }
 
   private scoreThreats(lines: string[]): void {
@@ -503,21 +533,21 @@ export class LLMEngine extends BaseEngine {
     const turnSeconds = request.timer?.turnSeconds;
     const deadline = turnSeconds === undefined ? undefined : started + 1000 * turnSeconds;
     const generation = this.generation;
+    const decisionSignal = this.decisionController?.signal;
+    const state = this.state.render(request, (mon) => this.reference.describeCompact(mon));
     const sides = this.state.activeMatchupSides();
-    const mechanics = this.reference.renderCompact(this.state.compactMons());
     const matchups = this.reference.renderActiveMatchups(
       [...sides.allies, ...sides.foes],
       [...sides.foes, ...sides.allies],
       this.state.weather?.name ?? '',
     );
     let prompt = renderDecision({
-      state: this.state.render(request),
+      state,
       slotNames: menus.map((_, slot) => this.state.slotName(slot, request)),
       menus,
       transcript: this.transcript,
       notebook: this.notebook,
       seriesContext: `Series ${this.seriesId ?? '?'}; game ${this.gameNumber}; score ${this.scoreText()}`,
-      mechanics,
       matchups,
     });
     if (turnSeconds !== undefined)
@@ -590,7 +620,7 @@ export class LLMEngine extends BaseEngine {
       });
       return new Promise<number[]>((resolve) => this.abandonWaiters.add(resolve));
     };
-    while (!parsed && parseFailures < 2) {
+    while (!parsed && parseFailures < DECISION_PARSE_ATTEMPTS) {
       if (generation !== this.generation) return menus.map(() => 0);
       if (parseFailures) {
         messages.push({ role: 'assistant', content: rawResponse });
@@ -600,10 +630,10 @@ export class LLMEngine extends BaseEngine {
         });
       }
       rawResponse = '';
-      for (let round = 0; round < 6; round += 1) {
+      for (let round = 0; round <= DECISION_MAX_TOOL_ROUNDS; round += 1) {
         if (generation !== this.generation) return menus.map(() => 0);
         if (request.timer && remainingMs() < 2000) return abandonToTimer(new Error('turn time exhausted'));
-        const finalRound = round === 5 || remainingMs() < FORCE_COMMIT_MS;
+        const finalRound = round === DECISION_MAX_TOOL_ROUNDS || remainingMs() < FORCE_COMMIT_MS;
         let completion: Completion;
         try {
           completion = await this.completeWithRetry(
@@ -617,23 +647,26 @@ export class LLMEngine extends BaseEngine {
             generation,
             SYSTEM,
             deadline,
+            decisionSignal,
           );
         } catch (caught) {
           if (generation !== this.generation) return menus.map(() => 0);
-          if (
-            request.timer &&
-            !this.options.signal?.aborted &&
-            (caught instanceof ApiError || caught instanceof TypeError)
-          )
-            return abandonToTimer(caught);
+          if (request.timer && !this.options.signal?.aborted && isTransientError(caught)) return abandonToTimer(caught);
           throw caught;
         }
         for (const [key, value] of Object.entries(completion.usage)) usage[key] = (usage[key] ?? 0) + Math.trunc(value);
         if (completion.reasoning) reasoningParts.push(completion.reasoning);
         if (completion.toolCalls.length && !finalRound) {
           toolRounds += 1;
-          messages.push(assistantToolMessage(completion));
-          for (const call of completion.toolCalls) {
+          const calls = completion.toolCalls.slice(0, DECISION_MAX_TOOL_CALLS);
+          messages.push(
+            assistantToolMessage(
+              calls.length === completion.toolCalls.length
+                ? completion
+                : { ...completion, toolCalls: calls, responseMessages: [] },
+            ),
+          );
+          for (const call of calls) {
             const result = this.reference.lookup(call.name, call.arguments);
             toolCalls.push({ name: call.name, arguments: call.arguments, result });
             messages.push(toolResultMessage(call.id, result));
@@ -699,8 +732,11 @@ export class LLMEngine extends BaseEngine {
     generation: number,
     system = SYSTEM,
     deadline?: number,
+    operationSignal?: AbortSignal,
   ): Promise<Completion> {
-    const signal = this.options.signal;
+    const runSignal = this.options.signal;
+    const signal =
+      runSignal && operationSignal ? AbortSignal.any([runSignal, operationSignal]) : (runSignal ?? operationSignal);
     const withSignal: CompleteOptions = signal ? { ...options, signal } : options;
     for (let attempt = 0; ; attempt += 1) {
       try {
@@ -960,12 +996,12 @@ export class LLMEngine extends BaseEngine {
     const asStringArray = (value: unknown, field: string): string[] => {
       if (!Array.isArray(value) || !value.every((entry) => typeof entry === 'string'))
         throw new Error(`${field} must be an array of strings`);
-      return value.map((entry) => entry.slice(0, 240));
+      return value.slice(0, DECISION_LIST_LIMIT).map((entry) => entry.slice(0, DECISION_LIST_ITEM_LIMIT));
     };
     return {
       choices,
-      rationale: rationale.slice(0, LLMEngine.RATIONALE_LIMIT),
-      notebook: notebook.slice(0, LLMEngine.NOTE_LIMIT),
+      rationale: rationale.slice(0, DECISION_RATIONALE_LIMIT),
+      notebook: notebook.slice(0, DECISION_NOTE_LIMIT),
       threats: asStringArray(object.threats, 'threats'),
       candidates: asStringArray(object.candidates, 'candidates'),
     };
@@ -1072,17 +1108,16 @@ export class LLMEngine extends BaseEngine {
     )
       throw new Error('review must contain string summary, adjustment, and notebook fields');
     return {
-      summary: object.summary.slice(0, LLMEngine.RATIONALE_LIMIT),
-      adjustment: object.adjustment.slice(0, LLMEngine.RATIONALE_LIMIT),
-      notebook: object.notebook.slice(0, LLMEngine.NOTE_LIMIT),
+      summary: object.summary.slice(0, DECISION_RATIONALE_LIMIT),
+      adjustment: object.adjustment.slice(0, DECISION_RATIONALE_LIMIT),
+      notebook: object.notebook.slice(0, DECISION_NOTE_LIMIT),
     };
   }
 
   private remember(value: string): void {
     if (!value) return;
     this.transcript.push(value);
-    if (this.transcript.length > LLMEngine.TRANSCRIPT_LIMIT)
-      this.transcript.splice(0, this.transcript.length - LLMEngine.TRANSCRIPT_LIMIT);
+    if (this.transcript.length > TRANSCRIPT_LIMIT) this.transcript.splice(0, this.transcript.length - TRANSCRIPT_LIMIT);
   }
 
   private rememberEvents(lines: string[]): void {

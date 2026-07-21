@@ -117,6 +117,13 @@ export interface CompactMon {
   active?: boolean;
 }
 
+export interface CompactMonReference {
+  types: string;
+  speed: string;
+  moves: Readonly<Record<string, string>>;
+  mega?: string;
+}
+
 export interface MatchupMon {
   species: string;
   moves: string[];
@@ -265,6 +272,7 @@ export class ShowdownReference {
     const surfaces = [
       Object.getOwnPropertyDescriptor(ShowdownReference.prototype, 'revision')?.get,
       ShowdownReference.prototype.renderCompact,
+      ShowdownReference.prototype.describeCompact,
       ShowdownReference.prototype.renderActiveMatchups,
       ShowdownReference.prototype.render,
       ShowdownReference.prototype.lookup,
@@ -302,41 +310,57 @@ export class ShowdownReference {
       const key = `${species.id}|${id(mon.nature ?? '')}|${id(mon.item ?? '')}`;
       if (seen.has(key)) continue;
       seen.add(key);
-      const nature = mon.nature ? this.dex.natures.get(mon.nature) : undefined;
-      const knownNature = nature?.exists ? nature : undefined;
-      const [low, high] = statRange(species.baseStats.spe, knownNature, 'spe');
-      const speed = knownNature ? `Spe ${low}-${high} ${knownNature.name}` : `Spe ${low}-${high}`;
-      const moveBits = uniqueNames(mon.moves ?? [])
-        .flatMap((moveName) => {
-          const move = this.dex.moves.get(moveName);
-          if (!move.exists) return [];
-          const power = move.basePower ? String(move.basePower) : 'no power';
-          const tag = move.target === 'normal' ? '' : `/${TARGET_TAGS[move.target] ?? move.target}`;
-          return [`${move.name} ${move.type}/${move.category}/${power}${tag}`];
-        })
-        .slice(0, 6);
+      const reference = this.describeCompact(mon);
+      if (!reference) continue;
+      const moves = uniqueNames(mon.moves ?? []).flatMap((moveName) => {
+        const detail = reference.moves[id(moveName)];
+        return detail ? [`${moveName} ${detail}`] : [];
+      });
       const active = mon.active ? 'active; ' : '';
-      const megaBits: string[] = [];
-      const item = mon.item ? this.dex.items.get(mon.item) : undefined;
-      if (item?.exists && item.megaStone) {
-        for (const formeName of species.otherFormes ?? []) {
-          const mega = this.dex.species.get(formeName);
-          if (!mega.exists || !/^Mega(?:-|$)/.test(mega.forme)) continue;
-          const target = typeof item.megaStone === 'string' ? item.megaStone : item.megaStone[species.name];
-          if (id(target ?? '') !== id(mega.name)) continue;
-          const [megaLow, megaHigh] = statRange(mega.baseStats.spe, knownNature, 'spe');
-          megaBits.push(
-            `if Mega Evolved -> ${mega.name}: ${mega.types.join('/')}, ability ${uniqueNames(Object.values(mega.abilities)).join('/')}, ${baseStats(mega.baseStats)}, Spe ${megaLow}-${megaHigh}`,
-          );
-        }
-      }
       lines.push(
-        `- ${species.name}: ${species.types.join('/')}; ${active}${speed}${mon.item ? `; item ${mon.item}` : ''}${
-          megaBits.length ? ` (${megaBits.join('; ')})` : ''
-        }${moveBits.length ? `; moves ${moveBits.join(', ')}` : ''}`,
+        `- ${species.name}: ${reference.types}; ${active}Spe ${reference.speed}${mon.item ? `; item ${mon.item}` : ''}${
+          reference.mega ? ` (${reference.mega})` : ''
+        }${moves.length ? `; moves ${moves.join(', ')}` : ''}`,
       );
     }
     return lines.length ? [`Compact Showdown reference (${this.format}, commit ${this.revision}):`, ...lines] : [];
+  }
+
+  describeCompact(mon: CompactMon): CompactMonReference | undefined {
+    const species = this.dex.species.get(mon.species);
+    if (!species.exists) return undefined;
+    const nature = mon.nature ? this.dex.natures.get(mon.nature) : undefined;
+    const knownNature = nature?.exists ? nature : undefined;
+    const [low, high] = statRange(species.baseStats.spe, knownNature, 'spe');
+    const moves = Object.fromEntries(
+      uniqueNames(mon.moves ?? []).flatMap((moveName) => {
+        const move = this.dex.moves.get(moveName);
+        if (!move.exists) return [];
+        const power = move.basePower ? String(move.basePower) : 'no power';
+        const tag = move.target === 'normal' ? '' : `/${TARGET_TAGS[move.target] ?? move.target}`;
+        return [[move.id, `${move.type}/${move.category}/${power}${tag}`]];
+      }),
+    );
+    const mega: string[] = [];
+    const item = mon.item ? this.dex.items.get(mon.item) : undefined;
+    if (item?.exists && item.megaStone) {
+      for (const formeName of species.otherFormes ?? []) {
+        const forme = this.dex.species.get(formeName);
+        if (!forme.exists || !/^Mega(?:-|$)/.test(forme.forme)) continue;
+        const target = typeof item.megaStone === 'string' ? item.megaStone : item.megaStone[species.name];
+        if (id(target ?? '') !== id(forme.name)) continue;
+        const [megaLow, megaHigh] = statRange(forme.baseStats.spe, knownNature, 'spe');
+        mega.push(
+          `if Mega Evolved -> ${forme.name}: ${forme.types.join('/')}, ability ${uniqueNames(Object.values(forme.abilities)).join('/')}, ${baseStats(forme.baseStats)}, Spe ${megaLow}-${megaHigh}`,
+        );
+      }
+    }
+    return {
+      types: species.types.join('/'),
+      speed: `${low}-${high}`,
+      moves,
+      ...(mega.length ? { mega: mega.join('; ') } : {}),
+    };
   }
 
   renderActiveMatchups(attackers: MatchupMon[], defenders: MatchupMon[], weather = ''): string[] {
@@ -635,20 +659,12 @@ export class ShowdownReference {
       const basis = defenderHp ?? defenderMaxHp!;
       hpText = `${pct(minDamage, basis)}-${pct(maxDamage, basis)}% of ${defenderHp !== undefined ? 'current' : 'max'} HP ${basis}`;
     } else {
-      hpText = `${pct(minDamage, hpHigh)}-${pct(maxDamage, hpLow)}% of max HP (legal max HP ${hpLow}-${hpHigh})`;
+      hpText = `${pct(minDamage, hpHigh)}-${pct(maxDamage, hpLow)}% vs legal max HP ${hpLow}-${hpHigh}`;
       if (hpPercent !== undefined)
         hpText += `; defender shown at ${Math.round(hpPercent)}%; KO only when damage % exceeds that`;
     }
-    const exactNote =
-      exactAttack !== undefined ? 'attacker attack stat exact from request; ' : 'attacker attack stat legal range; ';
-    const defNote = 'defender defense/HP use open-sheet legal EV/IV ranges only (no private foe values).';
-    return [
-      `${attacker.name} ${move.name} (${moveType} ${move.category} BP ${power}) into ${defender.name}:`,
-      `damage ${minDamage}-${maxDamage} (${hpText})`,
-      `type ${effectivenessLabel(typeMod)}; STAB ${stab}x; weather ${weatherMod}x; item ${itemMod}x; defender item ${defenderItemMod}x; spread ${spreadMod}x.`,
-      `${exactNote}${defNote}`,
-      'Not modeled: abilities, stat boosts, burn, screens, terrain, and defensive items other than Assault Vest/Eviolite. Adjust the range when these apply.',
-    ].join(' ');
+    const attackBasis = exactAttack !== undefined ? 'attack exact from request' : 'legal attack range';
+    return `${attacker.name} ${move.name} (${moveType} ${move.category} BP ${power}) into ${defender.name}: damage ${minDamage}-${maxDamage} (${hpText}); ${effectivenessLabel(typeMod)}; modifiers STAB ${stab}x, weather ${weatherMod}x, item ${itemMod}x, defender item ${defenderItemMod}x, spread ${spreadMod}x; ${attackBasis}, open-sheet defense/HP range. Omits abilities, boosts, burn, screens, terrain, and defensive items other than Assault Vest/Eviolite.`;
   }
 
   private lookupOne(kind: string, name: string, query: ReferenceQuery, prefix = `- ${kind} `): string {

@@ -98,6 +98,7 @@ export class SimBattle {
   async run(
     agents: Record<Pid, BattleAgent>,
     onUpdate?: (lines: string[], publicLines: string[]) => void,
+    signal?: AbortSignal,
   ): Promise<BattleOutcome> {
     const { BattleStream } = loadShowdown(this.psDir);
     const stream = new BattleStream({ noCatch: true }) as BattleStream;
@@ -118,6 +119,15 @@ export class SimBattle {
     const pendingError: Record<Pid, string | undefined> = { p1: undefined, p2: undefined };
     const suppressRequest: Record<Pid, boolean> = { p1: false, p2: false };
     const pending = new Map<Pid, PendingAction>();
+    signal?.throwIfAborted();
+    let abortPromise: Promise<never> | undefined;
+    let onAbort: (() => void) | undefined;
+    if (signal) {
+      const aborted = Promise.withResolvers<never>();
+      abortPromise = aborted.promise;
+      onAbort = () => aborted.reject(signal.reason);
+      signal.addEventListener('abort', onAbort, { once: true });
+    }
 
     const route = (lines: string[]) => {
       const before = state.log.length;
@@ -231,6 +241,7 @@ export class SimBattle {
           nextStream,
           ...[...pending.values()].map((item) => item.promise),
         ];
+        if (abortPromise) candidates.push(abortPromise);
         let idleTimer: NodeJS.Timeout | undefined;
         if (!pending.size) {
           const { promise, resolve } = Promise.withResolvers<StreamEvent | ActionEvent>();
@@ -266,6 +277,8 @@ export class SimBattle {
       }
     } finally {
       timer.end();
+      if (signal && onAbort) signal.removeEventListener('abort', onAbort);
+      await stream.writeEnd();
       for (const pid of pending.keys()) agents[pid].abandonDecision?.();
       pending.clear();
     }
