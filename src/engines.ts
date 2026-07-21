@@ -231,6 +231,8 @@ export interface LLMEngineOptions {
 
 const RETRY_ATTEMPTS = 3;
 const RETRY_BASE_MS = 400;
+const RETRY_MIN_REMAINING_MS = 15_000;
+const FORCE_COMMIT_MS = 25_000;
 const DECISION_MAX_TOKENS = 8192;
 const DECISION_TEMPERATURE = 0.2;
 const REFLECTION_MAX_TOKENS = 2048;
@@ -382,6 +384,7 @@ export class LLMEngine extends BaseEngine {
   private bringChanges = 0;
   private leadChanges = 0;
   private substitutedActions = 0;
+  private abandonedDecisions = 0;
   private parseFailureCount = 0;
   private providerRetryCount = 0;
   private callRetries = 0;
@@ -394,6 +397,7 @@ export class LLMEngine extends BaseEngine {
   private previousProtect = new Map<string, { gameId: string; turn: number }>();
   private pending: PendingDecision | undefined;
   private generation = 0;
+  private abandonWaiters = new Set<(choices: number[]) => void>();
 
   constructor(
     pid: Pid,
@@ -438,6 +442,8 @@ export class LLMEngine extends BaseEngine {
   override abandonDecision(): void {
     this.generation += 1;
     this.pending = undefined;
+    for (const resolve of this.abandonWaiters) resolve([]);
+    this.abandonWaiters.clear();
   }
 
   override async act(request: BattleRequest, context: AgentContext): Promise<string> {
@@ -528,6 +534,62 @@ export class LLMEngine extends BaseEngine {
     const toolCalls: ToolTrace[] = [];
     const reasoningParts: string[] = [];
     const messages: ProviderMessage[] = [{ role: 'user', content: prompt }];
+    const remainingMs = () => (deadline === undefined ? Number.POSITIVE_INFINITY : deadline - performance.now());
+    const abandonToTimer = (caught: unknown): Promise<number[]> => {
+      const message = caught instanceof Error ? caught.message : String(caught);
+      this.abandonedDecisions += 1;
+      this.pending = undefined;
+      this.remember(`[No choice submitted: ${message.slice(0, 200)}. The battle timer acts when time expires.]`);
+      const phase = request.teamPreview ? 'team_preview' : request.forceSwitch ? 'forced_switch' : 'turn';
+      const timer = request.timer
+        ? { turn_seconds: request.timer.turnSeconds ?? null, bank_seconds: request.timer.seconds ?? null }
+        : null;
+      const base = {
+        game_id: this.gameId,
+        series_id: this.seriesId ?? null,
+        game_number: this.gameNumber,
+        turn: this.state.turn,
+        pid: this.pid,
+        phase,
+      };
+      this.writeLog(this.options.decisionLog, {
+        kind: 'decision',
+        ...base,
+        selection: [],
+        action: 'abandoned',
+        rationale: 'No decision was submitted; the battle timer decides.',
+        threats: [],
+        candidates: [],
+        automatic: false,
+        fallback: true,
+        error: message,
+        parse_failures: parseFailures,
+        timer,
+        tool_lookups: toolCalls.map((call) => call.name),
+      });
+      this.writeLog(this.options.traceLog, {
+        kind: 'decision_trace',
+        ...base,
+        prompt,
+        menus: menus.map((menu) => menu.map((item) => item.label)),
+        choices: [],
+        parts: [],
+        raw_response: rawResponse,
+        reasoning: reasoningParts.join('\n\n').trim() || null,
+        threats: [],
+        candidates: [],
+        usage,
+        latency_ms: performance.now() - started,
+        timer,
+        parse_failures: parseFailures,
+        tool_rounds: toolRounds,
+        provider_retries: this.callRetries,
+        tool_calls: toolCalls,
+        fallback: true,
+        error: message,
+      });
+      return new Promise<number[]>((resolve) => this.abandonWaiters.add(resolve));
+    };
     while (!parsed && parseFailures < 2) {
       if (generation !== this.generation) return menus.map(() => 0);
       if (parseFailures) {
@@ -540,18 +602,32 @@ export class LLMEngine extends BaseEngine {
       rawResponse = '';
       for (let round = 0; round < 6; round += 1) {
         if (generation !== this.generation) return menus.map(() => 0);
-        const finalRound = round === 5;
-        const completion = await this.completeWithRetry(
-          messages,
-          {
-            maxTokens: DECISION_MAX_TOKENS,
-            temperature: DECISION_TEMPERATURE,
-            tools: DEX_TOOLS,
-            toolChoice: finalRound ? 'none' : 'auto',
-            ...(deadline === undefined ? {} : { timeout: Math.max(0.1, (deadline - performance.now()) / 1000 + 1) }),
-          },
-          generation,
-        );
+        if (request.timer && remainingMs() < 2000) return abandonToTimer(new Error('turn time exhausted'));
+        const finalRound = round === 5 || remainingMs() < FORCE_COMMIT_MS;
+        let completion: Completion;
+        try {
+          completion = await this.completeWithRetry(
+            messages,
+            {
+              maxTokens: DECISION_MAX_TOKENS,
+              temperature: DECISION_TEMPERATURE,
+              tools: DEX_TOOLS,
+              toolChoice: finalRound ? 'none' : 'auto',
+            },
+            generation,
+            SYSTEM,
+            deadline,
+          );
+        } catch (caught) {
+          if (generation !== this.generation) return menus.map(() => 0);
+          if (
+            request.timer &&
+            !this.options.signal?.aborted &&
+            (caught instanceof ApiError || caught instanceof TypeError)
+          )
+            return abandonToTimer(caught);
+          throw caught;
+        }
         for (const [key, value] of Object.entries(completion.usage)) usage[key] = (usage[key] ?? 0) + Math.trunc(value);
         if (completion.reasoning) reasoningParts.push(completion.reasoning);
         if (completion.toolCalls.length && !finalRound) {
@@ -561,6 +637,11 @@ export class LLMEngine extends BaseEngine {
             const result = this.reference.lookup(call.name, call.arguments);
             toolCalls.push({ name: call.name, arguments: call.arguments, result });
             messages.push(toolResultMessage(call.id, result));
+          }
+          if (deadline !== undefined) {
+            const seconds = Math.max(0, Math.round(remainingMs() / 1000));
+            const last = messages[messages.length - 1];
+            if (last) last.content = `${last.content}\n[Timer: ${seconds}s left this turn]`;
           }
           continue;
         }
@@ -617,18 +698,24 @@ export class LLMEngine extends BaseEngine {
     options: CompleteOptions,
     generation: number,
     system = SYSTEM,
+    deadline?: number,
   ): Promise<Completion> {
     const signal = this.options.signal;
     const withSignal: CompleteOptions = signal ? { ...options, signal } : options;
     for (let attempt = 0; ; attempt += 1) {
       try {
-        return await this.provider.complete(system, messages, withSignal);
+        const attemptOptions =
+          deadline === undefined
+            ? withSignal
+            : { ...withSignal, timeout: Math.max(1, (deadline - performance.now()) / 1000 + 1) };
+        return await this.provider.complete(system, messages, attemptOptions);
       } catch (error) {
         if (
           attempt >= RETRY_ATTEMPTS - 1 ||
           generation !== this.generation ||
           signal?.aborted ||
-          !isTransientError(error)
+          !isTransientError(error) ||
+          (deadline !== undefined && deadline - performance.now() < RETRY_MIN_REMAINING_MS)
         )
           throw error;
         this.callRetries += 1;
@@ -750,6 +837,7 @@ export class LLMEngine extends BaseEngine {
       bring_changes: this.bringChanges,
       lead_changes: this.leadChanges,
       substituted_actions: this.substitutedActions,
+      abandoned_decisions: this.abandonedDecisions,
       parse_failures: this.parseFailureCount,
       provider_retries: this.providerRetryCount,
       threat_turns: this.threatTurns,
@@ -1054,6 +1142,14 @@ function summarizeBattleEvents(lines: string[]): string[] {
       summary.push(`${args[0]} ${kind === '-sidestart' ? 'gained' : 'lost'} ${args[1]}.`);
     else if (kind === 'win' && args[0]) summary.push(`${args[0]} won the game.`);
     else if (kind === 'tie') summary.push('The game tied.');
+    else if (kind === 'timer' && args[0])
+      summary.push(
+        args[0] === 'autodefault'
+          ? 'Move time expired; the simulator chose default actions.'
+          : args[0] === 'forfeit'
+            ? 'The time bank ran out; the game was lost on time.'
+            : 'The game was declared a tie on time.',
+      );
   }
   return summary.slice(-60);
 }

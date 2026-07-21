@@ -21,6 +21,20 @@ import type { CompleteOptions, Completion, JsonObject, Provider, ProviderMessage
 
 import { isRecord } from './value.js';
 
+// Gemini signs only the first of parallel function calls; the SDK's documented sentinel handles the rest,
+// so its per-part warning is noise. All other AI SDK warnings still log.
+(globalThis as { AI_SDK_LOG_WARNINGS?: unknown }).AI_SDK_LOG_WARNINGS = (options: {
+  warnings: Array<{ message?: string }>;
+  provider: string;
+  model: string;
+}) => {
+  for (const warning of options.warnings) {
+    const message = warning.message ?? JSON.stringify(warning);
+    if (message.includes('skip_thought_signature_validator')) continue;
+    console.warn(`AI SDK Warning (${options.provider} / ${options.model}): ${message}`);
+  }
+};
+
 export const REASONING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const;
 export type ReasoningLevel = (typeof REASONING_LEVELS)[number];
 
@@ -189,6 +203,7 @@ export function assistantToolMessage(completion: Completion): ProviderMessage {
     role: 'assistant',
     content: completion.text || null,
     toolCalls: completion.toolCalls.map((call, index) => ({ ...call, id: call.id || `call_${index}` })),
+    ...(completion.responseMessages?.length ? { raw: completion.responseMessages } : {}),
   };
 }
 
@@ -230,6 +245,10 @@ function convertMessages(messages: ProviderMessage[]): ModelMessage[] {
       });
     } else if (message.role === 'assistant' && message.toolCalls?.length) {
       for (const call of message.toolCalls) callNames.set(call.id, call.name);
+      if (message.raw?.length) {
+        converted.push(...(message.raw as unknown as ModelMessage[]));
+        continue;
+      }
       converted.push({
         role: 'assistant',
         content: [
@@ -392,6 +411,9 @@ export class SdkProvider implements Provider {
             ...(call.providerMetadata ? { providerMetadata: call.providerMetadata as JsonObject } : {}),
           })),
           ...(reasoningText ? { reasoning: reasoningText } : {}),
+          ...(result.response.messages.length
+            ? { responseMessages: result.response.messages as unknown as JsonObject[] }
+            : {}),
         };
       } catch (error) {
         if (options.signal?.aborted) throw error;

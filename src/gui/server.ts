@@ -1090,6 +1090,23 @@ export class GuiServer {
       }
       run.clearApiKeys();
       run.endTime = Date.now();
+      try {
+        fs.writeFileSync(
+          path.join(run.runDir, 'status.json'),
+          `${JSON.stringify(
+            {
+              state: run.state,
+              error: run.error || null,
+              notices: run.notices,
+              start_time: new Date(run.startTime).toISOString(),
+              end_time: new Date(run.endTime).toISOString(),
+            },
+            null,
+            1,
+          )}\n`,
+          'utf8',
+        );
+      } catch {}
       this.options.logger?.({
         timestamp: new Date().toISOString(),
         level: run.state === 'failed' ? 'error' : 'info',

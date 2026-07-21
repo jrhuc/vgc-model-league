@@ -68,6 +68,8 @@ export interface Completion {
   toolCalls: ToolCall[];
   /** Provider reasoning / thinking summary when exposed by the AI SDK. */
   reasoning?: string;
+  /** AI SDK response messages, replayed verbatim so provider metadata (e.g. Gemini thought signatures) survives. */
+  responseMessages?: JsonObject[];
 }
 
 export interface ProviderMessage extends JsonObject {
@@ -76,6 +78,8 @@ export interface ProviderMessage extends JsonObject {
   toolCallId?: string;
   name?: string;
   toolCalls?: ToolCall[];
+  /** Raw AI SDK messages sent in place of this message when present. */
+  raw?: JsonObject[];
 }
 
 export interface CompleteOptions {

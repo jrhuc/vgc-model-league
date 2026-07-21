@@ -118,7 +118,8 @@ test('OpenAI uses Responses API with reasoning and tools', async () => {
   assert.match(JSON.stringify(body), /lookup_move/);
   const reasoning = body.reasoning as Record<string, unknown> | undefined;
   assert.equal(reasoning?.effort ?? body.reasoning_effort, 'medium');
-  assert.deepEqual(completion, {
+  const { responseMessages, ...rest } = completion;
+  assert.deepEqual(rest, {
     text: 'hello',
     usage: { input_tokens: 10, output_tokens: 5 },
     toolCalls: [
@@ -130,6 +131,7 @@ test('OpenAI uses Responses API with reasoning and tools', async () => {
       },
     ],
   });
+  assert.match(JSON.stringify(responseMessages), /msg_1/, 'raw response messages keep provider item ids');
 });
 
 test('Gemini thought signatures round-trip through replayed tool calls', async () => {
@@ -211,11 +213,13 @@ test('compat provider uses chat completions', async () => {
   assert.equal(url, 'https://api.moonshot.ai/v1/chat/completions');
   assert.equal(body.temperature, 0.2);
   assert.equal('reasoning_effort' in body, false);
-  assert.deepEqual(completion, {
+  const { responseMessages, ...rest } = completion;
+  assert.deepEqual(rest, {
     text: 'ok',
     usage: { input_tokens: 4, output_tokens: 2 },
     toolCalls: [],
   });
+  assert.equal(responseMessages?.length, 1);
 });
 
 test('temperature is dropped after a 400 response', async () => {

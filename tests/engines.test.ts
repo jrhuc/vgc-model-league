@@ -63,6 +63,7 @@ const emptyStats = {
   bring_changes: 0,
   lead_changes: 0,
   substituted_actions: 0,
+  abandoned_decisions: 0,
   parse_failures: 0,
   provider_retries: 0,
   threat_turns: 0,
@@ -194,6 +195,29 @@ test('provider failures abort and empty responses use a legal fallback', async (
   assert.equal(await empty.act(request(), { povLines: [] }), 'move 1');
   assert.equal(decisions[0]!.error, 'empty response');
   assert.deepEqual(empty.decisionStats(), { ...oneMoveStats, fallbacks: 1 });
+});
+
+test('provider failures with a live timer leave the choice to the battle timer', async () => {
+  const decisions: Record<string, unknown>[] = [];
+  const engine = new LLMEngine('p1', 'dead', {
+    provider: new ScriptedProvider([new ApiError(401, 'invalid key')]),
+    decisionLog: decisions,
+  });
+  const timed = request();
+  timed.timer = { turnSeconds: 55, seconds: 420 };
+  let resolved = false;
+  const pending = engine.act(timed, { povLines: [] }).then((choice) => {
+    resolved = true;
+    return choice;
+  });
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.equal(resolved, false, 'the engine waits for the battle timer instead of throwing');
+  assert.equal(decisions[0]!.action, 'abandoned');
+  assert.equal(decisions[0]!.fallback, true);
+  assert.match(String(decisions[0]!.error), /invalid key/);
+  assert.deepEqual(engine.decisionStats(), { ...emptyStats, abandoned_decisions: 1 });
+  engine.abandonDecision();
+  assert.equal(await pending, '');
 });
 
 test('transient API errors retry before falling back', async () => {

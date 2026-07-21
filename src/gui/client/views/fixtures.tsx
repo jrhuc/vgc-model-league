@@ -512,7 +512,6 @@ export function FixturesView({ app, run, onStarted, onPools }: FixturesProps) {
     };
     api('/api/run', request)
       .then(() => {
-        apiKeysRef.current = {};
         catalogKeyRef.current = '';
         setApiKeyText('');
         setKeyHeld(false);
@@ -747,8 +746,8 @@ export function FixturesView({ app, run, onStarted, onPools }: FixturesProps) {
             <div class="privacy-note">
               <b>Bring your own key</b>
               <span>
-                Your key stays in this tab. It is sent only for catalog lookup and the run, and is never written to
-                results or exposed to other users.
+                Your key stays in this tab until you remove its model or close the page. It is sent only for catalog
+                lookup and runs, and is never written to results or exposed to other users.
               </span>
             </div>
             <div class="provider-flow">
