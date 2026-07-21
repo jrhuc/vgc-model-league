@@ -71,6 +71,8 @@ const MAX_SSE_CLIENTS_PER_SESSION = 2;
 const SSE_HEARTBEAT_MS = 25_000;
 const MAX_RATE_BUCKETS = 4096;
 const DEFAULT_MAX_RUN_MS = 4 * 60 * 60 * 1000;
+const SHUTDOWN_ERROR = 'run interrupted by server shutdown';
+const TIMEOUT_ERROR = 'run exceeded its maximum duration';
 
 interface GuiServerOptions {
   teamsDir?: string;
@@ -179,6 +181,7 @@ class ActiveRun {
   seed: number | undefined;
   endTime: number | undefined;
   timeoutTimer: NodeJS.Timeout | undefined;
+  stopFallbackTimer: NodeJS.Timeout | undefined;
   timedOut = false;
   interrupted = false;
   userStopped = false;
@@ -410,14 +413,7 @@ export class GuiServer {
       const timer = setTimeout(timeout.resolve, Math.max(0, graceMs));
       await Promise.race([settled, timeout.promise]);
       clearTimeout(timer);
-      if (run && run.state === 'running') {
-        run.detached = true;
-        run.state = 'failed';
-        run.error = 'run interrupted by server shutdown';
-        run.endTime = Date.now();
-        run.clearApiKeys();
-        this.persistStatus(run);
-      }
+      if (run && run.state === 'running') this.detachRun(run, 'failed', SHUTDOWN_ERROR);
       this.server.closeAllConnections();
     })();
     return this.shutdownTask;
@@ -1070,10 +1066,10 @@ export class GuiServer {
       }
       if (run.timedOut) {
         run.state = 'failed';
-        run.error = 'run exceeded its maximum duration';
+        run.error = TIMEOUT_ERROR;
       } else if (run.interrupted) {
         run.state = 'failed';
-        run.error = 'run interrupted by server shutdown';
+        run.error = SHUTDOWN_ERROR;
       } else if (run.userStopped) {
         run.state = 'stopped';
       } else {
@@ -1082,10 +1078,10 @@ export class GuiServer {
     } catch (error) {
       if (run.timedOut) {
         run.state = 'failed';
-        run.error = 'run exceeded its maximum duration';
+        run.error = TIMEOUT_ERROR;
       } else if (run.interrupted) {
         run.state = 'failed';
-        run.error = 'run interrupted by server shutdown';
+        run.error = SHUTDOWN_ERROR;
       } else if (run.userStopped) {
         run.state = 'stopped';
       } else {
@@ -1094,6 +1090,7 @@ export class GuiServer {
       }
     } finally {
       clearTimeout(run.timeoutTimer);
+      clearTimeout(run.stopFallbackTimer);
       if (run.detached) {
         run.clearApiKeys();
         this.options.logger?.({
@@ -1138,7 +1135,38 @@ export class GuiServer {
     }
   }
 
+  /** Mark a run that outlived its abort as settled so it cannot hold the server or its run dir open. */
+  private detachRun(run: ActiveRun, state: 'stopped' | 'failed', error: string): void {
+    run.detached = true;
+    run.state = state;
+    run.error = error;
+    run.clearApiKeys();
+    if (this.options.auth && run.owner) {
+      try {
+        this.options.auth.finishExperiment(run.runId, state);
+      } catch (caught) {
+        this.options.logger?.({
+          timestamp: new Date().toISOString(),
+          level: 'error',
+          event: 'experiment_persistence_error',
+          runId: run.runId,
+          error: caught instanceof Error ? caught.message : String(caught),
+        });
+      }
+    }
+    this.persistStatus(run);
+    this.options.logger?.({
+      timestamp: new Date().toISOString(),
+      level: 'error',
+      event: 'run_detached',
+      runId: run.runId,
+      state,
+    });
+    this.queueRun();
+  }
+
   private persistStatus(run: ActiveRun): void {
+    run.endTime ??= Date.now();
     try {
       fs.writeFileSync(
         path.join(run.runDir, 'status.json'),
@@ -1164,29 +1192,13 @@ export class GuiServer {
    * server never stays locked in a permanently "running" run.
    */
   private scheduleStopFallback(run: ActiveRun): void {
-    const timer = setTimeout(() => {
+    if (run.stopFallbackTimer) return;
+    run.stopFallbackTimer = setTimeout(() => {
       if (run.state !== 'running' || run.settling) return;
-      run.detached = true;
-      run.state = run.timedOut ? 'failed' : 'stopped';
-      run.error = run.timedOut ? 'run exceeded its maximum duration' : '';
       run.notices.push('the run task did not shut down cleanly and was detached');
-      run.endTime = Date.now();
-      if (this.options.auth && run.owner) {
-        try {
-          this.options.auth.finishExperiment(run.runId, run.state);
-        } catch {}
-      }
-      this.persistStatus(run);
-      this.options.logger?.({
-        timestamp: new Date().toISOString(),
-        level: 'error',
-        event: 'run_detached',
-        runId: run.runId,
-        state: run.state,
-      });
-      this.queueRun();
+      this.detachRun(run, run.timedOut ? 'failed' : 'stopped', run.timedOut ? TIMEOUT_ERROR : '');
     }, this.stopFallbackMs);
-    timer.unref();
+    run.stopFallbackTimer.unref();
   }
 
   private launchWorker(run: ActiveRun): Promise<void> {
@@ -1568,6 +1580,7 @@ export class GuiServer {
       );
     }
     if (!upstream.ok) throw new HttpError(502, `pokepast.es returned ${upstream.status} for paste ${id}`);
+    if (Number(upstream.headers.get('content-length')) > 64_000) throw new HttpError(400, 'the paste exceeds 64 KB');
     const paste = await upstream.text();
     if (paste.length > 64_000) throw new HttpError(400, 'the paste exceeds 64 KB');
     if (!paste.trim()) throw new HttpError(502, `paste ${id} is empty`);

@@ -1,30 +1,31 @@
 # VGC Model League
 
-VGC Model League evaluates general-purpose language models in full VGC
-best-of-three games on Pokémon Showdown. Each model receives open team sheets,
+VGC Model League measures general-purpose language models in full VGC
+best-of-three matches on Pokémon Showdown. Each model gets open team sheets,
 legal action menus, reference and damage tools, a private series notebook, and
-a review step between games. Showdown determines legality, timers, and
-outcomes. The project adds no fine-tuning or search policy; its scaffold is
-domain-aware, but it does not specialize the model.
+a review step between games. Showdown decides legality, timers, and outcomes.
+The project adds no fine-tuning and no search policy. The scaffold knows the
+domain, but it does not specialize the model.
 
-The league asks:
+The league asks these questions:
 
 - How strong are current frontier models without task-specific policy training?
-- Do models adapt between games in a best-of-three, or replay the same plan?
-- How do reliability, latency, token use, and provider configuration trade off
-  against competitive strength?
-- Which tendencies in leads, brings, switching, Protect use, targeting, and
-  recovery after a loss distinguish model families and generations?
+- Do models adapt between games in a best-of-three, or do they replay the same
+  plan?
+- What is the balance between reliability, latency, token use, provider
+  configuration, and competitive strength?
+- Which tendencies identify model families and generations? Tendencies include
+  leads, brings, switches, Protect use, targeting, and recovery after a loss.
 
 ## Modes
 
-| Mode | What happens | Rates the ladder? |
+| Mode | What occurs | Rates the ladder? |
 | --- | --- | --- |
-| **Match** | Two models, two teams (pasted or sampled), one best-of-three. The GUI's default flow. | No |
-| **Tournament** | Single-elimination best-of-three bracket. Each model keeps one assigned team through the bracket; byes fill incomplete brackets. | No |
-| **Draft League** | Models snake-draft rosters from a fixed board, then play a round robin and playoffs. Draft rationale is logged. | No |
-| **Rotation** | Models rotate through immutable team pools with mirrored assignments to cancel side and team bias. Produces the controlled league Elo. | Yes |
-| **Exhibition** | One best-of-three where a seat is played by an external terminal agent over a local bridge instead of a provider API. | No |
+| **Match** | Two models and two teams (pasted or sampled) play one best-of-three. This is the default flow in the GUI. | No |
+| **Tournament** | Models play a single-elimination best-of-three bracket. Each model keeps one assigned team through the bracket. Byes fill incomplete brackets. | No |
+| **Draft League** | Models snake-draft rosters from a fixed board. They then play a round robin and playoffs. The league logs each draft rationale. | No |
+| **Rotation** | Models rotate through immutable team pools with mirrored assignments. This cancels side bias and team bias, and produces the controlled league Elo. | Yes |
+| **Exhibition** | One best-of-three where an external terminal agent plays one seat through a local bridge in place of a provider API. | No |
 
 Every result records `mode` and `protocol_version`. Only rotation rows enter
 the rating.
@@ -38,22 +39,23 @@ npm run build
 ```
 
 `setup:showdown` clones the simulator at the exact commit in
-`showdown.lock.json` and builds it; every project build verifies the pin. To
-adopt a new upstream revision:
+`showdown.lock.json` and builds it. Each project build makes sure that the pin
+is correct. To adopt a new upstream revision:
 
 ```sh
 npm run check:showdown-update   # report whether upstream HEAD moved
-npm run update:showdown         # build candidate, run full suite, advance the lock
+npm run update:showdown         # build the candidate, run the full suite, advance the lock
 ```
 
-`update:showdown` restores the previous pin if the candidate fails.
+If the candidate fails, `update:showdown` restores the previous pin.
 
 ## Run
 
-Model specs are `<provider>:<model-id>` (for example `anthropic:...`,
-`openai:...`), or `random` for a legal-move baseline. Provider API keys come
-from environment variables for CLI runs; GUI runs use only keys pasted into
-the browser, held in memory and never written to disk.
+A model spec has the format `<provider>:<model-id>` (for example
+`anthropic:...` or `openai:...`). Use `random` for a legal-move baseline. CLI
+runs read provider API keys from environment variables. GUI runs use only the
+keys that you paste into the browser. The server holds these keys in memory
+and does not write them to disk.
 
 ```sh
 npm run vgcleague -- gui                # browser control room on 127.0.0.1
@@ -68,55 +70,55 @@ npm run vgcleague -- standings --pool regmb-202607
 npm run vgcleague -- report    --pool regmb-202607
 ```
 
-All experiment commands accept `--seed` for reproducibility and
-`--reasoning <level>` for provider reasoning effort. Rotation, tournament, and
-draft also accept `--concurrency` for parallel series. Unsupported reasoning
-levels are rejected before the run starts.
+All experiment commands accept `--seed` for reproducible runs. They accept
+`--reasoning <level>` to set the provider reasoning effort. Rotation,
+tournament, and draft also accept `--concurrency` for parallel series. The CLI
+rejects an unsupported reasoning level before the run starts.
 
-A failed series aborts the whole run: queued series never start, in-flight
-series are cancelled, and completed series are already persisted. A run
-reported as failed is not still spending provider credits in the background.
+A failed series stops the full run. Queued series do not start. In-flight
+series stop. Completed series stay on disk. A run that the league reports as
+failed does not use provider credits in the background.
 
-Without `--pool`, standings and reports cover every pool except the disposable
-`test` pool and keep only rotation rows. The GUI record book has the same
-scoping.
+If you do not give `--pool`, standings and reports include every pool except
+the disposable `test` pool, and they keep only rotation rows. The GUI record
+book uses the same scope.
 
 ### Exhibition seats
 
 The host process runs the battle, the opponent engine, and its API key. It
-serves a token-authenticated bridge on `127.0.0.1` and writes an agent workspace
-(default `runs/<run>/agent/`) with a thin client (`seat.mjs`), instructions
-(`SEAT.md`), and the connection token. Start the terminal agent in that
-directory. The agent seat uses the same `LLMEngine` scaffold as an API model.
-The move timer is disabled because agent turns take minutes. The bridge logs
-every tool lookup for later auditing.
+serves a token-authenticated bridge on `127.0.0.1`. It writes an agent
+workspace (default `runs/<run>/agent/`) that contains a thin client
+(`seat.mjs`), instructions (`SEAT.md`), and the connection token. Start the
+terminal agent in that directory. The agent seat uses the same `LLMEngine`
+scaffold as an API model. The move timer is off because agent turns take
+minutes. The bridge logs every tool lookup for later audits.
 
 ## Teams and draft boards
 
-Team pools live at `teams/<pool>/pool.json`. Pools are immutable snapshots: a
-metagame refresh is a new directory, never an edit, so old records stay
+Team pools are at `teams/<pool>/pool.json`. Pools are immutable snapshots. A
+metagame refresh is a new directory, never an edit. Thus old records stay
 reproducible. `teams/regmb-202607` is the current Reg M-B snapshot
-(archetype-deduplicated tournament teams); `test` is disposable local data.
+(archetype-deduplicated tournament teams). `test` is disposable local data.
 
-Two ways to build a pool, both validated by the pinned simulator and rejected
-on duplicate species sets:
+There are two ways to build a pool. The pinned simulator validates both, and
+rejects duplicate species sets:
 
 - From Pokepaste sources: `npm run build-pool -- teams/<pool>/sources.json`.
-- In the GUI pool manager, paste Showdown teambuilder exports.
+- In the GUI pool manager: paste Showdown teambuilder exports.
 
-Draft boards live at `boards/<board>.json`. Each board contains fixed
-competitive sets derived from a tournament-team pool. Regenerate a board with
-`npm run build-board -- <pool>`. Boards are immutable snapshots like team
-pools.
+Draft boards are at `boards/<board>.json`. Each board contains fixed
+competitive sets that come from a tournament-team pool. To regenerate a board,
+run `npm run build-board -- <pool>`. Boards are immutable snapshots, the same
+as team pools.
 
 ## Model interface
 
-At each decision the model receives the field state and timers, exact stats
-for its own Pokémon, both open team sheets, a private timeline and notebook,
-numbered legal menus for the complete joint action, and active-matchup
-references. Optional tools cover species, moves, items, abilities, natures,
-type matchups, and level-50 damage ranges, using only legally available
-information. The model returns one JSON object:
+At each decision, the model receives the field state and timers, the exact
+stats of its own Pokémon, the two open team sheets, a private timeline and
+notebook, numbered legal menus for the complete joint action, and
+active-matchup references. Optional tools cover species, moves, items,
+abilities, natures, type matchups, and level-50 damage ranges. The tools use
+only legally available information. The model returns one JSON object:
 
 ```json
 {
@@ -128,43 +130,45 @@ information. The model returns one JSON object:
 }
 ```
 
-Malformed decisions get one retry, then a recorded legal fallback. Provider,
-simulator, reference, and team-validation failures stop the run.
+A malformed decision gets one retry, then a recorded legal fallback. If a
+provider fails during a timed decision, the engine records an abandoned
+decision, and the Showdown timer acts. Simulator, reference, and
+team-validation failures stop the run.
 
-After every game both players write a short review, next-game adjustment, and
-updated notebook, outside the battle clock. The closing review of a decided
-series is kept as post-mortem evidence and marked `series_over` in the
-decision log.
+After every game, the two players write a short review, a next-game
+adjustment, and an updated notebook. This occurs outside the battle clock. The
+closing review of a decided series stays as post-mortem evidence. The decision
+log marks it `series_over`.
 
 ## Evidence
 
-`runs/` holds run configuration, series logs, decision timelines, technical
-traces (prompts, menus, raw responses, usage, and tool calls), and per-model
-draft logs when applicable.
+`runs/` holds the run configuration, series logs, decision timelines,
+technical traces (prompts, menus, raw responses, usage, and tool calls), and
+per-model draft logs when applicable.
 
-`records/results.jsonl` holds one row per completed best-of-three: nested
-games, protocol identity, assignments, seeds, model specs, Showdown commit,
-and per-player decision statistics. Each row also records `scaffold`, a hash
-of the system prompts, tool schemas, and sampling parameters, so longitudinal
-comparisons can detect scaffold drift.
+`records/results.jsonl` holds one row for each completed best-of-three. A row
+contains the nested games, protocol identity, assignments, seeds, model specs,
+Showdown commit, and per-player decision statistics. Each row also records
+`scaffold`, a hash of the system prompts, tool schemas, and sampling
+parameters. Thus longitudinal comparisons can find scaffold drift.
 
-Both directories are local and gitignored.
+The two directories are local, and git ignores them.
 
 ## Deployment
 
 The repository includes a multi-stage `Dockerfile` and `railway.toml` for
-hosted deployment with GitHub OAuth, public read-only spectating, one isolated
-run at a time, and SQLite and volume backups. See
-[docs/deployment.md](docs/deployment.md) for deployment instructions and
+hosted deployment. Hosted mode has GitHub OAuth, public read-only spectating,
+one isolated run at a time, and SQLite and volume backups. See
+[docs/deployment.md](docs/deployment.md) for the deployment instructions. See
 [docs/architecture.md](docs/architecture.md) for the client/server contract
-and trust model.
+and the trust model.
 
 ## Related work
 
-[VGC-Bench](https://arxiv.org/abs/2506.10326) provides a VGC training
+[VGC-Bench](https://arxiv.org/abs/2506.10326) supplies a VGC training
 environment, behavior-cloned and reinforcement-learned agents, and
-team-generalization protocols. Its specialized policies could serve as
-reference opponents through the `BattleAgent` interface.
+team-generalization protocols. Its specialized policies could become reference
+opponents through the `BattleAgent` interface.
 [PokéLLMon](https://arxiv.org/abs/2402.01118) and
-[PokéChamp](https://arxiv.org/abs/2503.04094) are language-model Pokémon agents
-that add learned or search components not used here.
+[PokéChamp](https://arxiv.org/abs/2503.04094) are language-model Pokémon
+agents. They add learned or search components that this project does not use.

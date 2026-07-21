@@ -470,7 +470,6 @@ export class LLMEngine extends BaseEngine {
   private previousProtect = new Map<string, { gameId: string; turn: number }>();
   private pending: PendingDecision | undefined;
   private generation = 0;
-  private abandonWaiters = new Set<() => void>();
   private decisionController: AbortController | undefined;
 
   constructor(
@@ -521,8 +520,6 @@ export class LLMEngine extends BaseEngine {
     this.decisionController = undefined;
     this.generation += 1;
     this.pending = undefined;
-    for (const abort of this.abandonWaiters) abort();
-    this.abandonWaiters.clear();
   }
 
   override async act(request: BattleRequest, context: AgentContext): Promise<string> {
@@ -693,9 +690,11 @@ export class LLMEngine extends BaseEngine {
         fallback: true,
         error: message,
       });
-      return new Promise<number[]>((_resolve, reject) =>
-        this.abandonWaiters.add(() => reject(new DecisionAbandonedError())),
-      );
+      return new Promise<number[]>((_resolve, reject) => {
+        const abort = () => reject(new DecisionAbandonedError());
+        if (decisionSignal?.aborted) abort();
+        else decisionSignal?.addEventListener('abort', abort, { once: true });
+      });
     };
     while (!parsed && parseFailures < DECISION_PARSE_ATTEMPTS) {
       if (generation !== this.generation) throw new DecisionAbandonedError();
