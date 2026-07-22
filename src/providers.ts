@@ -60,7 +60,7 @@ export function validateModelExecution(
 }
 
 export const USAGE =
-  'Usage: anthropic:<model>, openai:<model>, google:<model>, xai:<model>, deepseek:<model>, meta:<model>, kimi:<model>, zai:<model>, openrouter:<model>, cerebras:<model>, compat:<base_url>:<model>, or random';
+  'Usage: anthropic:<model>, openai:<model>, google:<model>, xai:<model>, deepseek:<model>, meta:<model>, kimi:<model>, zai:<model>, openrouter:<model>, opencode-go:<model>, opencode-zen:<model>, vercel:<model>, cerebras:<model>, compat:<base_url>:<model>, or random';
 
 const COMPAT_BASE_URLS: Record<string, string> = {
   xai: 'https://api.x.ai/v1',
@@ -69,15 +69,24 @@ const COMPAT_BASE_URLS: Record<string, string> = {
   kimi: 'https://api.moonshot.ai/v1',
   zai: 'https://api.z.ai/api/paas/v4',
   openrouter: 'https://openrouter.ai/api/v1',
+  'opencode-go': 'https://opencode.ai/zen/go/v1',
+  'opencode-zen': 'https://opencode.ai/zen/v1',
+  vercel: 'https://ai-gateway.vercel.sh/v1',
   cerebras: 'https://api.cerebras.ai/v1',
 };
 
-const COMPAT_ENV_KEYS: Record<string, string> = Object.fromEntries(
-  Object.keys(COMPAT_BASE_URLS).map((provider) => [provider, `${provider.toUpperCase()}_API_KEY`]),
-);
-COMPAT_ENV_KEYS.meta = 'META_MODEL_API_KEY';
-COMPAT_ENV_KEYS.kimi = 'MOONSHOT_API_KEY';
-
+const COMPAT_ENV_KEYS: Record<string, string> = {
+  xai: 'XAI_API_KEY',
+  deepseek: 'DEEPSEEK_API_KEY',
+  meta: 'META_MODEL_API_KEY',
+  kimi: 'MOONSHOT_API_KEY',
+  zai: 'ZAI_API_KEY',
+  openrouter: 'OPENROUTER_API_KEY',
+  'opencode-go': 'OPENCODE_API_KEY',
+  'opencode-zen': 'OPENCODE_API_KEY',
+  vercel: 'AI_GATEWAY_API_KEY',
+  cerebras: 'CEREBRAS_API_KEY',
+};
 export interface ProviderSpec {
   provider: string;
   model: string;
@@ -221,12 +230,21 @@ export class ApiError extends Error {
   }
 }
 
-export type ProviderFailureKind = 'quota' | 'rate_limit' | 'timeout' | 'upstream' | 'network' | 'request';
+export type ProviderFailureKind =
+  | 'quota'
+  | 'rate_limit'
+  | 'timeout'
+  | 'truncation'
+  | 'upstream'
+  | 'network'
+  | 'request';
 
 export interface ProviderFailure {
   kind: ProviderFailureKind;
   summary: string;
   terminal: boolean;
+  /** Whether retrying the call may help before giving up; defaults to !terminal. */
+  retryable?: boolean;
 }
 
 const HARD_QUOTA_ERROR =
@@ -247,6 +265,7 @@ export function classifyProviderFailure(error: unknown, spec = 'provider'): Prov
         meta: 'Meta',
         openai: 'OpenAI',
         openrouter: 'OpenRouter',
+        'opencode-go': 'OpenCode Go',
         xai: 'xAI',
         zai: 'Z.ai',
       } as Record<string, string>
@@ -257,6 +276,21 @@ export function classifyProviderFailure(error: unknown, spec = 'provider'): Prov
   }
   if ((status === 0 || status === 408) && /(?:timed? ?out|timeout|time exhausted)/i.test(message)) {
     return { kind: 'timeout', summary: `${label} API request timed out.`, terminal: false };
+  }
+  if (status === 0 && /^reasoning exhausted the \d+-token response budget$/i.test(message.trim())) {
+    return {
+      kind: 'truncation',
+      summary: `${label} API spent the whole response budget on reasoning and returned no answer.`,
+      terminal: false,
+    };
+  }
+  if (status === 0 && /^empty response$/i.test(message.trim())) {
+    return {
+      kind: 'upstream',
+      summary: `${label} API returned no usable response.`,
+      terminal: true,
+      retryable: true,
+    };
   }
   if (status === 0 && error instanceof ApiError) {
     return { kind: 'network', summary: `${label} API could not be reached.`, terminal: false };
@@ -472,6 +506,7 @@ export class SdkProvider implements Provider {
         const reasoningTokens = result.usage.outputTokenDetails?.reasoningTokens ?? 0;
         return {
           text: result.text,
+          finishReason: result.finishReason,
           usage: {
             input_tokens: result.usage.inputTokens ?? 0,
             output_tokens: result.usage.outputTokens ?? 0,

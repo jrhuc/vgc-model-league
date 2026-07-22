@@ -66,6 +66,8 @@ export interface Completion {
   text: string;
   usage: Record<string, number>;
   toolCalls: ToolCall[];
+  /** Unified AI SDK finish reason ('stop', 'length', 'tool-calls', …) when the provider reports one. */
+  finishReason?: string;
   /** Provider reasoning / thinking summary when exposed by the AI SDK. */
   reasoning?: string;
   /** AI SDK response messages, replayed verbatim so provider metadata (e.g. Gemini thought signatures) survives. */

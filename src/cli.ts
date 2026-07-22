@@ -10,12 +10,16 @@ import { REASONING_LEVELS } from './providers.js';
 import type { SeriesRecord } from './records.js';
 import { h2h, loadRows, scopeRows, standings, TEST_POOL } from './records.js';
 import { writeReport } from './report.js';
+import { restartGui, stopGui } from './restart.js';
 import { makeRunDirectory, runRotation } from './rotation.js';
 
 const HELP = `Usage: vgcleague <command>
 
 Commands:
   gui [--port <n>] [--host <address>] [--origin <url>]  serve the browser GUI
+  restart [--port <n>] [--host <address>] [--force] [--skip-build]
+      rebuild, stop any GUI on the port, and start a fresh detached one (refuses while a run is active)
+  stop [--port <n>] [--force]         stop the GUI on the port (refuses while a run is active)
   selfcheck                           run one random-vs-random series through the simulator
   rotation --models <spec> <spec>...  run the controlled team-rotation protocol
       [--series-per-pair <n>] [--pool <name>] [--seed <n>] [--concurrency <n>] [--reasoning <level>]
@@ -69,6 +73,20 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
   prepareDataDirectories();
   const [command, ...rest] = argv;
   if (command === 'selfcheck') return selfcheck();
+  if (command === 'restart' || command === 'stop') {
+    const { values } = parseArgs({
+      args: rest,
+      options: {
+        port: { type: 'string', default: process.env.PORT ?? '8484' },
+        host: { type: 'string' },
+        force: { type: 'boolean', default: false },
+        'skip-build': { type: 'boolean', default: false },
+      },
+    });
+    const port = positiveInteger('port', values.port);
+    if (command === 'stop') return stopGui({ port, force: values.force });
+    return restartGui({ port, host: values.host, force: values.force, build: !values['skip-build'] });
+  }
   if (command === 'gui') {
     const { values } = parseArgs({
       args: rest,

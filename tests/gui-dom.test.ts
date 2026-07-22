@@ -21,6 +21,8 @@ type TestButton = {
 type TestField = {
   value: string;
   getAttribute(name: string): string | null;
+  focus(): void;
+  dispatchEvent(event: unknown): boolean;
 };
 
 function asButton(node: unknown): TestButton {
@@ -170,10 +172,15 @@ test('built client bundle boots and renders the app against the live server', as
     assert.ok(modelSearch, 'model combobox input should render');
     assert.equal(modelSearch.getAttribute('role'), 'combobox');
 
-    const providerDropdown = asButton(window.document.querySelector('#provider'));
-    assert.equal(providerDropdown.getAttribute('role'), 'combobox');
-    assert.equal(providerDropdown.getAttribute('aria-haspopup'), 'listbox');
-    assert.equal(providerDropdown.textContent?.trim(), 'Anthropic');
+    const providerSearch = asField(window.document.querySelector('#provider'));
+    assert.equal(providerSearch.getAttribute('role'), 'combobox');
+    assert.equal(providerSearch.getAttribute('aria-haspopup'), 'listbox');
+    assert.equal(providerSearch.value, 'Anthropic');
+    providerSearch.focus();
+    providerSearch.value = 'vercel';
+    providerSearch.dispatchEvent(new window.Event('input', { bubbles: true }));
+    await waitFor(() => window.document.querySelectorAll('.dropdown-option').length === 1);
+    assert.equal(window.document.querySelector('.dropdown-option')?.textContent?.trim(), 'Vercel AI Gateway');
   } finally {
     await window.happyDOM.close();
     gui.close();

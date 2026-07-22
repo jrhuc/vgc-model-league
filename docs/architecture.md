@@ -10,8 +10,11 @@ code in the same change. Deletion is as important as addition.
 
 ## Surfaces
 
-- **CLI** (`src/cli.ts`): headless commands for `gui`, `selfcheck`,
-  `rotation`, `tournament`, `draft`, `exhibition`, `standings`, and `report`.
+- **CLI** (`src/cli.ts`): headless commands for `gui`, `restart`, `stop`,
+  `selfcheck`, `rotation`, `tournament`, `draft`, `exhibition`, `standings`,
+  and `report`. `restart` rebuilds and swaps the detached GUI process in one
+  step; both it and `stop` refuse to interrupt an active run without
+  `--force`.
 - **GUI** (`src/gui/`): a `node:http` server (`server.ts`) exposes a JSON API,
   serves a Preact single-page client, and streams live run state over SSE.
 

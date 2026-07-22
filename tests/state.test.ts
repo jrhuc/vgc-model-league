@@ -18,6 +18,54 @@ test('own requests render known sets and stats', () => {
   assert.match(rendered, new RegExp(String((first.moves as string[])[0])));
   assert.match(rendered, new RegExp(`Attack ${(first.stats as Record<string, number>).atk}`));
   assert.doesNotMatch(rendered, /\bL50\b/);
+  assert.match(rendered, /HP \d+%/);
+  assert.doesNotMatch(rendered, /HP \d+\/\d+/);
+});
+
+test('post-preview prompts show percentage HP and compact bench sets', () => {
+  const reference = new ShowdownReference('gen9championsvgc2026regmb');
+  const state = new BattleState('p1');
+  const rendered = state.render(
+    {
+      active: [
+        {
+          moves: [{ move: 'Raging Bull', id: 'ragingbull', pp: 10, maxpp: 10, target: 'normal', disabled: false }],
+        },
+      ],
+      side: {
+        pokemon: [
+          {
+            ident: 'p1: Tauros',
+            details: 'Tauros-Paldea-Aqua, L50',
+            condition: '76/152',
+            active: true,
+            stats: { atk: 178, def: 125, spa: 45, spd: 90, spe: 152 },
+            moves: ['ragingbull'],
+            item: 'choicescarf',
+            ability: 'intimidate',
+          },
+          {
+            ident: 'p1: Venusaur',
+            details: 'Venusaur, L50',
+            condition: '187/187',
+            active: false,
+            stats: { atk: 91, def: 108, spa: 143, spd: 120, spe: 119 },
+            moves: ['protect', 'gigadrain', 'earthpower', 'sludgebomb'],
+            item: 'venusaurite',
+            ability: 'chlorophyll',
+          },
+        ],
+      },
+    },
+    (mon) => reference.describeCompact(mon),
+  );
+  const active = rendered.split('\n').find((line) => line.startsWith('- Tauros-Paldea-Aqua;')) ?? '';
+  const bench = rendered.split('\n').find((line) => line.startsWith('- Venusaur;')) ?? '';
+  assert.match(active, /HP 50%/);
+  assert.match(active, /Raging Bull \[Water\/Physical\/90\]/);
+  assert.match(bench, /HP 100%; moves protect, gigadrain, earthpower, sludgebomb; Speed 119/);
+  assert.doesNotMatch(bench, /\[/);
+  assert.doesNotMatch(rendered, /76\/152|187\/187/);
 });
 
 test('open team sheets follow active nicknames', () => {

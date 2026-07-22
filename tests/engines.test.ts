@@ -225,11 +225,11 @@ test('doubles use one call and retain compact private context', async () => {
   assert.doesNotMatch(prompt, /\|move\|p2a/);
   assert.doesNotMatch(prompt, /\bL50\b/);
   assert.match(prompt, /Garchomp; types Dragon\/Ground/);
-  assert.match(prompt, /Rock Slide \[Rock\/Physical\/75\/spread\]/);
+  assert.match(prompt, /Rock Slide \[Rock\/Physical\/75\/spread\/accuracy 90%\]/);
   assert.doesNotMatch(prompt, /Compact Showdown reference/);
 });
 
-test('provider failures abort and empty responses use a legal fallback', async () => {
+test('provider failures abort and persistent empty responses fail after retries', async () => {
   const broken = new LLMEngine('p1', 'broken', {
     provider: new ScriptedProvider([new Error('bad credentials')]),
     decisionLog: [],
@@ -237,11 +237,10 @@ test('provider failures abort and empty responses use a legal fallback', async (
   await assert.rejects(broken.act(request(), { povLines: [] }), /bad credentials/);
   assert.deepEqual(broken.decisionStats(), emptyStats);
 
-  const decisions: Record<string, unknown>[] = [];
-  const empty = new LLMEngine('p1', 'empty', { provider: new ScriptedProvider(['']), decisionLog: decisions });
-  assert.equal(await empty.act(request(), { povLines: [] }), 'move 1');
-  assert.equal(decisions[0]!.error, 'empty response');
-  assert.deepEqual(empty.decisionStats(), { ...oneMoveStats, fallbacks: 1 });
+  const provider = new ScriptedProvider(['', '', '']);
+  const empty = new LLMEngine('p1', 'empty', { provider, decisionLog: [] });
+  await assert.rejects(empty.act(request(), { povLines: [] }), /empty response/);
+  assert.equal(provider.calls.length, 3, 'empty responses are retried before failing');
 });
 
 test('non-transient provider failures with a live timer fail the run', async () => {
@@ -300,6 +299,131 @@ test('transient provider failures with a live timer leave the choice to the batt
   assert.deepEqual(engine.decisionStats(), { ...emptyStats, abandoned_decisions: 1 });
   engine.abandonDecision();
   assert.equal(await pending, '');
+});
+
+test('empty responses with a live timer fail the run with a clear summary', async () => {
+  const decisions: Record<string, unknown>[] = [];
+  const engine = new LLMEngine('p1', 'opencode-go:deepseek-v4-flash', {
+    provider: new ScriptedProvider(['']),
+    decisionLog: decisions,
+  });
+  const timed = request();
+  timed.timer = { turnSeconds: 10, seconds: 420 };
+  await assert.rejects(engine.act(timed, { povLines: [] }), /returned no usable response.*cannot continue/);
+  assert.equal(decisions[0]!.action, 'abandoned');
+  assert.equal(decisions[0]!.failure_kind, 'upstream');
+  assert.equal(decisions[0]!.error_summary, 'OpenCode Go API returned no usable response.');
+});
+
+test('empty responses retry within a healthy timer before failing the run', async () => {
+  const provider = new ScriptedProvider(['', '', '']);
+  const engine = new LLMEngine('p1', 'opencode-go:deepseek-v4-flash', { provider, decisionLog: [] });
+  const timed = request();
+  timed.timer = { turnSeconds: 55, seconds: 420 };
+  await assert.rejects(engine.act(timed, { povLines: [] }), /returned no usable response.*cannot continue/);
+  assert.equal(provider.calls.length, 3);
+});
+
+test('empty reflections fail the run after retries', async () => {
+  const provider = new ScriptedProvider(['', '', '']);
+  const decisions: Record<string, unknown>[] = [];
+  const engine = new LLMEngine('p1', 'opencode-go:deepseek-v4-flash', { provider, decisionLog: decisions });
+  await assert.rejects(
+    engine.endGame({
+      gameNumber: 1,
+      outcome: { winner: 'opponent', won: false, turns: 8 },
+      seriesScore: { p1: 0, p2: 1 },
+    }),
+    /returned no usable response.*cannot continue/,
+  );
+  assert.equal(provider.calls.length, 3);
+  assert.equal(decisions[0]!.kind, 'game_reflection');
+  assert.equal(decisions[0]!.failure_kind, 'upstream');
+});
+
+const lengthTruncated = (): Completion => ({
+  text: '',
+  usage: { input_tokens: 10, output_tokens: 4096 },
+  toolCalls: [],
+  finishReason: 'length',
+});
+
+test('decision token budgets scale with the remaining turn time', async () => {
+  const provider = new ScriptedProvider([decision([1]), decision([1]), decision([1]), decision([1])]);
+  const engine = new LLMEngine('p1', 'scripted', { provider, decisionLog: [] });
+  const timedFor = (turnSeconds: number) => {
+    const timed = request();
+    timed.timer = { turnSeconds, seconds: 400 };
+    return timed;
+  };
+  assert.equal(await engine.act(timedFor(90), { povLines: [] }), 'move 2');
+  assert.equal(await engine.act(timedFor(40), { povLines: [] }), 'move 2');
+  assert.equal(await engine.act(timedFor(10), { povLines: [] }), 'move 2');
+  assert.equal(await engine.act(request(), { povLines: [] }), 'move 2');
+  assert.deepEqual(
+    provider.calls.map((call) => call.options.maxTokens),
+    [16_384, 8192, 4096, 16_384],
+  );
+
+  const deepProvider = new ScriptedProvider([decision([1])]);
+  const deep = new LLMEngine('p1', 'scripted', { provider: deepProvider, decisionLog: [], reasoning: 'max' });
+  assert.equal(await deep.act(timedFor(10), { povLines: [] }), 'move 2');
+  assert.equal(deepProvider.calls[0]!.options.maxTokens, 16_384, 'deep reasoning keeps its configured floor');
+});
+
+test('reasoning truncation without time to retry yields to the battle timer with a clear summary', async () => {
+  const decisions: Record<string, unknown>[] = [];
+  const logged = Promise.withResolvers<void>();
+  const engine = new LLMEngine('p1', 'opencode-go:glm-5.2', {
+    provider: new ScriptedProvider([lengthTruncated()]),
+    decisionLog: (row) => {
+      decisions.push(row);
+      logged.resolve();
+    },
+  });
+  const timed = request();
+  timed.timer = { turnSeconds: 10, seconds: 420 };
+  const pending = engine.act(timed, { povLines: [] });
+  await logged.promise;
+  assert.equal(decisions[0]!.action, 'abandoned');
+  assert.equal(decisions[0]!.failure_kind, 'truncation');
+  assert.equal(decisions[0]!.error, 'reasoning exhausted the 4096-token response budget');
+  assert.equal(
+    decisions[0]!.error_summary,
+    'OpenCode Go API spent the whole response budget on reasoning and returned no answer.',
+  );
+  engine.abandonDecision();
+  assert.equal(await pending, '');
+});
+
+test('untimed truncation records a legal fallback with the truncation summary', async () => {
+  const provider = new ScriptedProvider([lengthTruncated()]);
+  const decisions: Record<string, unknown>[] = [];
+  const engine = new LLMEngine('p1', 'opencode-go:deepseek-v4-flash', { provider, decisionLog: decisions });
+  assert.equal(await engine.act(request(), { povLines: [] }), 'move 1');
+  assert.equal(provider.calls[0]!.options.maxTokens, 16_384);
+  assert.equal(decisions[0]!.fallback, true);
+  assert.equal(decisions[0]!.error, 'reasoning exhausted the 16384-token response budget');
+  assert.equal(
+    decisions[0]!.error_summary,
+    'OpenCode Go API spent the whole response budget on reasoning and returned no answer.',
+  );
+});
+
+test('reflections use a reasoning-safe token budget', async () => {
+  const provider = new ScriptedProvider([
+    JSON.stringify({ summary: 'Lost the rain matchup.', adjustment: 'Lead differently.', notebook: 'notes' }),
+  ]);
+  const decisions: Record<string, unknown>[] = [];
+  const engine = new LLMEngine('p1', 'opencode-go:deepseek-v4-flash', { provider, decisionLog: decisions });
+  await engine.endGame({
+    gameNumber: 1,
+    outcome: { winner: 'opponent', won: false, turns: 8 },
+    seriesScore: { p1: 0, p2: 1 },
+  });
+  assert.equal(provider.calls[0]!.options.maxTokens, 8192);
+  assert.equal(decisions[0]!.kind, 'game_reflection');
+  assert.equal(decisions[0]!.fallback, false);
 });
 
 test('three consecutive timed decision failures stop the run while success resets the streak', async () => {
@@ -393,7 +517,7 @@ test('two capped tool batches resolve before the final choice', async () => {
   const engine = new LLMEngine('p1', 'scripted', { provider, decisionLog: [], traceLog: traces });
   assert.equal(await engine.act(request(), { povLines: [] }), 'move 2');
   assert.equal(provider.calls.length, 3);
-  assert.equal(provider.calls[0]!.options.maxTokens, 4096);
+  assert.equal(provider.calls[0]!.options.maxTokens, 16_384);
   assert.equal(provider.calls[0]!.options.toolChoice, 'auto');
   assert.equal(provider.calls[1]!.options.toolChoice, 'auto');
   assert.equal(provider.calls[2]!.options.toolChoice, 'none');
@@ -556,6 +680,26 @@ test('game transcripts reset while notebook and score persist, with a 2400-chara
     .split('\n\nChoose for ')[0]!;
   assert.equal(timeline.length, 2400);
   assert.match(timeline, /LATEST into Mon1\.$/);
+});
+
+test('turn timeline uses one percentage-only line per turn', async () => {
+  const provider = new ScriptedProvider([decision([0], 'first'), decision([0], 'second')]);
+  const engine = new LLMEngine('p1', 'scripted', { provider, decisionLog: [] });
+  engine.beginGame({ gameId: 'game-1', gameNumber: 1, seriesId: 'series-1' });
+
+  await engine.act(request(), { povLines: ['|turn|1'] });
+  engine.observe(['|move|p2a: Foe|Tackle|p1a: Mon1', '|-damage|p1a: Mon1|50/100', '|-heal|p2a: Foe|75/100', '|turn|2']);
+  await engine.act(request(), { povLines: [] });
+
+  const prompt = String(provider.calls[1]!.messages[0]!.content);
+  const timeline = prompt.split('Compact private battle timeline (your POV):\n')[1]!.split('\n\nChoose for ')[0]!;
+  assert.match(
+    timeline,
+    /Turn 1: Decision: move 1; Foe used Tackle into Mon1; Mon1 HP became 50%; Foe HP became 75% after healing\./,
+  );
+  assert.match(timeline, /Turn 2:$/m);
+  assert.equal(timeline.split('\n').filter((line) => line.startsWith('Turn 1:')).length, 1);
+  assert.doesNotMatch(prompt, /50\/100|75\/100/);
 });
 
 test('readable logs suppress unchanged notebooks and tendency counters remain post-hoc', async () => {

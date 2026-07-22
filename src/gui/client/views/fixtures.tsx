@@ -289,6 +289,7 @@ export function FixturesView({ app, run, onStarted, onPools }: FixturesProps) {
   const [reasoningLevelsByModel, setReasoningLevelsByModel] = useState<Record<string, string[]>>({});
   const apiKeysRef = useRef<Record<string, string>>({});
   const catalogKeyRef = useRef('');
+  const providerSessionsRef = useRef<Record<string, { key: string; catalog: ModelInfo[] }>>({});
   const catalogGenerationRef = useRef(0);
   const [providerId, setProviderId] = useState(providers[0]?.id ?? '');
   const [apiKeyText, setApiKeyText] = useState('');
@@ -342,9 +343,15 @@ export function FixturesView({ app, run, onStarted, onPools }: FixturesProps) {
     setModelText('');
     catalogKeyRef.current = '';
     const next = providers.find((item) => item.id === providerId);
+    const session = providerSessionsRef.current[providerId];
     if (next && next.models.length > 0) {
       setCatalog(next.models);
       setCatalogProvider(next.id);
+    } else if (session) {
+      setCatalog(session.catalog);
+      setCatalogProvider(providerId);
+      catalogKeyRef.current = session.key;
+      setKeyHeld(true);
     } else {
       setCatalog([]);
       setCatalogProvider('');
@@ -388,6 +395,14 @@ export function FixturesView({ app, run, onStarted, onPools }: FixturesProps) {
       const [removed] = next.splice(index, 1);
       if (removed !== undefined && !next.includes(removed)) {
         delete apiKeysRef.current[removed];
+        const removedProvider = removed.split(':')[0]!;
+        if (!next.some((spec) => spec.startsWith(`${removedProvider}:`))) {
+          delete providerSessionsRef.current[removedProvider];
+          if (catalogProvider === removedProvider && !curated) {
+            catalogKeyRef.current = '';
+            setKeyHeld(false);
+          }
+        }
         setReasoningLevelsByModel((levels) => {
           const updated = { ...levels };
           delete updated[removed];
@@ -443,6 +458,7 @@ export function FixturesView({ app, run, onStarted, onPools }: FixturesProps) {
         setCatalog(data.models);
         setCatalogProvider(selectedProvider);
         catalogKeyRef.current = apiKey;
+        providerSessionsRef.current[selectedProvider] = { key: apiKey, catalog: data.models };
         for (const spec of lineupRef.current.models) {
           if (spec.startsWith(`${selectedProvider}:`)) apiKeysRef.current[spec] = apiKey;
         }
@@ -811,6 +827,7 @@ export function FixturesView({ app, run, onStarted, onPools }: FixturesProps) {
                 options={providerOptions}
                 value={providerId}
                 onChange={setProviderId}
+                filterable
               />
               <div class="field">
                 <label class="field-label" for="apiKey">

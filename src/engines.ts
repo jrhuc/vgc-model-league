@@ -232,6 +232,8 @@ interface PendingDecision extends JsonObject {
   parseFailures?: number;
   toolRounds?: number;
   providerRetries?: number;
+  errorSummary?: string;
+  maxTokens?: number;
   timer?: { turnSeconds?: number; seconds?: number };
 }
 
@@ -260,6 +262,12 @@ const DECISION_MAX_TOKENS_DEEP: Partial<Record<ReasoningLevel, number>> = {
   xhigh: 16_384,
   max: 16_384,
 };
+// The turn deadline is the real gate on each call; budgets scale with remaining time because some
+// gateways (e.g. OpenCode) ignore reasoning-effort hints, and a starved budget truncates mid-reasoning.
+const DECISION_MAX_TOKENS_MID = 8192;
+const DECISION_MAX_TOKENS_CEILING = 16_384;
+const DECISION_BUDGET_MID_MS = 25_000;
+const DECISION_BUDGET_FULL_MS = 60_000;
 const DECISION_MAX_TOOL_ROUNDS = 2;
 const DECISION_MAX_STANDARD_TOOL_CALLS = 2;
 const DECISION_MAX_ORDER_TOOL_CALLS = 1;
@@ -269,7 +277,7 @@ const DECISION_RATIONALE_LIMIT = 500;
 const DECISION_LIST_LIMIT = 3;
 const DECISION_LIST_ITEM_LIMIT = 240;
 const DECISION_TEMPERATURE = 0.2;
-const REFLECTION_MAX_TOKENS = 2048;
+const REFLECTION_MAX_TOKENS = 8192;
 const TRANSCRIPT_CHARACTER_LIMIT = 2400;
 
 const ACTION_ORDER_TOOL: ToolDefinition = {
@@ -290,6 +298,12 @@ const ACTION_ORDER_TOOL: ToolDefinition = {
 };
 
 const DECISION_TOOLS = [...DEX_TOOLS, ACTION_ORDER_TOOL];
+
+function decisionTokenBudget(remainingMs: number): number {
+  if (remainingMs >= DECISION_BUDGET_FULL_MS) return DECISION_MAX_TOKENS_CEILING;
+  if (remainingMs >= DECISION_BUDGET_MID_MS) return DECISION_MAX_TOKENS_MID;
+  return DECISION_MAX_TOKENS;
+}
 
 function boundedToolCalls(calls: ToolCall[]): ToolCall[] {
   const order = calls.find((call) => call.name === ACTION_ORDER_TOOL.name);
@@ -399,6 +413,10 @@ export function scaffoldRevision(): string {
         decisionPolicy: {
           maxTokens: DECISION_MAX_TOKENS,
           maxTokensDeep: DECISION_MAX_TOKENS_DEEP,
+          maxTokensMid: DECISION_MAX_TOKENS_MID,
+          maxTokensCeiling: DECISION_MAX_TOKENS_CEILING,
+          budgetMidMs: DECISION_BUDGET_MID_MS,
+          budgetFullMs: DECISION_BUDGET_FULL_MS,
           forceCommitTurnFraction: FORCE_COMMIT_TURN_FRACTION,
           bankHealthySeconds: BANK_HEALTHY_SECONDS,
           bankLowSeconds: BANK_LOW_SECONDS,
@@ -426,8 +444,9 @@ export function scaffoldRevision(): string {
     .slice(0, 12);
 }
 
-function isTransientError(error: unknown): boolean {
-  return !classifyProviderFailure(error).terminal;
+function isRetryableError(error: unknown): boolean {
+  const failure = classifyProviderFailure(error);
+  return failure.retryable ?? !failure.terminal;
 }
 
 export class LLMEngine extends BaseEngine {
@@ -593,8 +612,10 @@ export class LLMEngine extends BaseEngine {
       turnSeconds === undefined
         ? FORCE_COMMIT_MS
         : Math.max(FORCE_COMMIT_MS, turnSeconds * 1000 * FORCE_COMMIT_TURN_FRACTION);
-    const maxTokens =
+    const tokenFloor =
       (this.options.reasoning && DECISION_MAX_TOKENS_DEEP[this.options.reasoning]) || DECISION_MAX_TOKENS;
+    let maxTokens = tokenFloor;
+    let truncatedBudget = 0;
     const generation = this.generation;
     const decisionSignal = this.decisionController?.signal;
     const renderedState = this.state.render(request, (mon) => this.reference.describeCompact(mon));
@@ -646,8 +667,8 @@ export class LLMEngine extends BaseEngine {
       const repeated = this.consecutiveDecisionFailures >= CONSECUTIVE_DECISION_FAILURE_LIMIT;
       const stop = failure.terminal || repeated;
       if (this.pending?.generation === generation) this.pending = undefined;
-      this.remember(
-        `[No choice submitted: ${failure.summary} ${stop ? 'The run cannot continue.' : 'The battle timer acts when time expires.'}]`,
+      this.rememberTurnDetail(
+        `No choice submitted: ${failure.summary} ${stop ? 'The run cannot continue.' : 'The battle timer acts when time expires.'}`,
       );
       const phase = request.teamPreview ? 'team_preview' : request.forceSwitch ? 'forced_switch' : 'turn';
       const timer = request.timer
@@ -698,6 +719,7 @@ export class LLMEngine extends BaseEngine {
         parse_failures: parseFailures,
         tool_rounds: toolRounds,
         provider_retries: this.callRetries,
+        max_tokens: maxTokens,
         tool_calls: toolCalls,
         fallback: true,
         failure_kind: failure.kind,
@@ -730,6 +752,7 @@ export class LLMEngine extends BaseEngine {
         if (generation !== this.generation) throw new DecisionAbandonedError();
         if (request.timer && remainingMs() < 2000) return failDecision(new Error('turn time exhausted'));
         const finalRound = round === DECISION_MAX_TOOL_ROUNDS || remainingMs() < forceCommitMs;
+        maxTokens = Math.max(tokenFloor, decisionTokenBudget(remainingMs()));
         let completion: Completion;
         try {
           completion = await this.completeWithRetry(
@@ -777,11 +800,18 @@ export class LLMEngine extends BaseEngine {
           }
           continue;
         }
+        if (!completion.text && !completion.toolCalls.length && completion.finishReason === 'length') {
+          truncatedBudget = maxTokens;
+          break;
+        }
         rawResponse = completion.text;
         break;
       }
       if (!rawResponse) {
-        error = 'empty response';
+        error = truncatedBudget
+          ? `reasoning exhausted the ${truncatedBudget}-token response budget`
+          : 'empty response';
+        if (request.timer) return failDecision(new Error(error));
         break;
       }
       try {
@@ -815,11 +845,14 @@ export class LLMEngine extends BaseEngine {
         usage,
         fallback,
         error: fallback ? error : undefined,
+        errorSummary:
+          fallback && truncatedBudget ? classifyProviderFailure(new Error(error), this.spec).summary : undefined,
         latencyMs: performance.now() - started,
         toolCalls,
         parseFailures,
         toolRounds,
         providerRetries: this.callRetries,
+        maxTokens,
         generation,
       });
     return decision.choices;
@@ -843,13 +876,16 @@ export class LLMEngine extends BaseEngine {
           deadline === undefined
             ? withSignal
             : { ...withSignal, timeout: Math.max(1, (deadline - performance.now()) / 1000 + 1) };
-        return await this.provider.complete(system, messages, attemptOptions);
+        const completion = await this.provider.complete(system, messages, attemptOptions);
+        if (!completion.text && !completion.toolCalls.length && completion.finishReason !== 'length')
+          throw new ApiError(0, 'empty response');
+        return completion;
       } catch (error) {
         if (
           attempt >= RETRY_ATTEMPTS - 1 ||
           generation !== this.generation ||
           signal?.aborted ||
-          !isTransientError(error) ||
+          !isRetryableError(error) ||
           (deadline !== undefined && deadline - performance.now() < RETRY_MIN_REMAINING_MS)
         )
           throw error;
@@ -886,7 +922,7 @@ export class LLMEngine extends BaseEngine {
       if (substitution) this.substitutedActions += 1;
     }
     const action = request.teamPreview ? `team ${parts.join('')}` : parts.join(', ');
-    this.remember(`Decision: ${action}.`);
+    this.rememberTurnDetail(`Decision: ${action}`);
     const phase = request.teamPreview ? 'team_preview' : request.forceSwitch ? 'forced_switch' : 'turn';
     const selection = choices.map((choice, slot) => menus[slot]?.[choice]?.label ?? parts[slot] ?? 'pass');
     if (!automatic) this.recordTendencies(phase, menus, choices, parts, action, pending.toolCalls ?? []);
@@ -919,6 +955,7 @@ export class LLMEngine extends BaseEngine {
       automatic,
       fallback: pending.fallback ?? false,
       error: pending.error ?? null,
+      ...(pending.errorSummary ? { error_summary: pending.errorSummary } : {}),
       ...substituted,
       parse_failures: pending.parseFailures ?? 0,
       timer,
@@ -948,9 +985,11 @@ export class LLMEngine extends BaseEngine {
       parse_failures: pending.parseFailures ?? 0,
       tool_rounds: pending.toolRounds ?? 0,
       provider_retries: pending.providerRetries ?? 0,
+      max_tokens: pending.maxTokens ?? null,
       tool_calls: pending.toolCalls ?? [],
       fallback: pending.fallback ?? false,
       error: pending.error ?? null,
+      ...(pending.errorSummary ? { error_summary: pending.errorSummary } : {}),
     });
   }
 
@@ -1245,17 +1284,42 @@ export class LLMEngine extends BaseEngine {
     const lines = value.split('\n').filter(Boolean);
     if (!lines.length) return;
     this.transcript.push(...lines);
+    this.trimTranscript();
+  }
+
+  private rememberTurnDetail(value: string): void {
+    const detail = value.trim().replace(/\.$/, '');
+    if (!detail) return;
+    let index = this.transcript.findLastIndex((line) => /^Turn \d+:/.test(line));
+    if (index < 0) index = this.transcript.findLastIndex((line) => line.startsWith('Setup:'));
+    if (index < 0) {
+      this.remember(`Setup: ${detail}.`);
+      return;
+    }
+    const current = this.transcript[index]!;
+    const base = current.endsWith('.') ? current.slice(0, -1) : current;
+    this.transcript[index] = `${base}${base.endsWith(':') ? ' ' : '; '}${detail}.`;
+    this.trimTranscript();
+  }
+
+  private trimTranscript(): void {
     let length = this.transcript.reduce((total, line) => total + line.length, this.transcript.length - 1);
     while (length > TRANSCRIPT_CHARACTER_LIMIT && this.transcript.length > 1) {
       length -= this.transcript.shift()!.length + 1;
     }
-    if (length > TRANSCRIPT_CHARACTER_LIMIT)
-      this.transcript[0] = this.transcript[0]!.slice(-TRANSCRIPT_CHARACTER_LIMIT);
+    if (length <= TRANSCRIPT_CHARACTER_LIMIT) return;
+    const line = this.transcript[0]!;
+    const prefix = /^(?:Turn \d+|Setup):/.exec(line)?.[0] ?? '';
+    const retained = Math.max(0, TRANSCRIPT_CHARACTER_LIMIT - prefix.length - 2);
+    this.transcript[0] = `${prefix} …${line.slice(-retained)}`;
   }
 
   private rememberEvents(lines: string[]): void {
-    const summary = summarizeBattleEvents(lines);
-    if (summary.length) this.remember(summary.join('\n'));
+    for (const event of summarizeBattleEvents(lines)) {
+      const turn = /^Turn (\d+) begins\.$/.exec(event);
+      if (turn) this.remember(`Turn ${turn[1]}:`);
+      else this.rememberTurnDetail(event);
+    }
   }
 
   private scoreText(): string {
@@ -1273,6 +1337,15 @@ export class LLMEngine extends BaseEngine {
   }
 }
 
+function battleHpPercent(value = ''): string {
+  const [raw = '', status] = value.trim().split(/\s+/);
+  const match = /^(\d+)\/(\d+)[a-z]*$/i.exec(raw);
+  if (match && Number(match[2]))
+    return `${Math.round((100 * Number(match[1])) / Number(match[2]))}%${status ? ` ${status}` : ''}`;
+  if (raw === '0') return `0%${status ? ` ${status}` : ''}`;
+  return value;
+}
+
 function summarizeBattleEvents(lines: string[]): string[] {
   const summary: string[] = [];
   const ident = (value = '') => value.replace(/^p[12][a-z]?:\s*/, '');
@@ -1281,11 +1354,13 @@ function summarizeBattleEvents(lines: string[]): string[] {
     const [, kind = '', ...args] = line.split('|');
     if (kind === 'turn') summary.push(`Turn ${args[0]} begins.`);
     else if ((kind === 'switch' || kind === 'drag' || kind === 'replace') && args.length >= 3)
-      summary.push(`${ident(args[0])} entered as ${args[1]!.split(',', 1)[0]} at ${args[2]}.`);
+      summary.push(`${ident(args[0])} entered as ${args[1]!.split(',', 1)[0]} at ${battleHpPercent(args[2])}.`);
     else if (kind === 'move' && args.length >= 2)
       summary.push(`${ident(args[0])} used ${args[1]}${args[2] ? ` into ${ident(args[2])}` : ''}.`);
     else if ((kind === '-damage' || kind === '-heal') && args.length >= 2)
-      summary.push(`${ident(args[0])} HP became ${args[1]}${kind === '-heal' ? ' after healing' : ''}.`);
+      summary.push(
+        `${ident(args[0])} HP became ${battleHpPercent(args[1])}${kind === '-heal' ? ' after healing' : ''}.`,
+      );
     else if (kind === 'faint' && args[0]) summary.push(`${ident(args[0])} fainted.`);
     else if (kind === 'cant' && args.length >= 2) summary.push(`${ident(args[0])} could not act (${args[1]}).`);
     else if (kind === '-status' && args.length >= 2) summary.push(`${ident(args[0])} became ${args[1]}.`);

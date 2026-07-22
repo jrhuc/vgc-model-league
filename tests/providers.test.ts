@@ -18,6 +18,15 @@ test('provider specs route aliases and custom endpoints', () => {
   assert.equal(meta.baseUrl, 'https://api.meta.ai/v1');
   assert.deepEqual(reasoningLevels(meta), ['off', 'minimal', 'low', 'medium', 'high', 'xhigh']);
   assert.ok(makeProvider(meta, { apiKey: 'test', reasoning: 'medium' }) instanceof SdkProvider);
+  for (const [provider, baseUrl] of Object.entries({
+    'opencode-go': 'https://opencode.ai/zen/go/v1',
+    'opencode-zen': 'https://opencode.ai/zen/v1',
+    vercel: 'https://ai-gateway.vercel.sh/v1',
+  })) {
+    const spec = parseSpec(`${provider}:vendor/model`);
+    assert.deepEqual(spec, { provider, model: 'vendor/model', baseUrl });
+    assert.ok(makeProvider(spec, { apiKey: 'test' }) instanceof SdkProvider);
+  }
   assert.deepEqual(parseSpec('compat:https://example.test/v1:model'), {
     provider: 'compat',
     baseUrl: 'https://example.test/v1',
@@ -29,6 +38,27 @@ test('provider specs route aliases and custom endpoints', () => {
     model: 'qwen2.5:7b',
   });
   assert.throws(() => parseSpec('human'), /Usage/);
+});
+
+test('OpenAI-compatible routers use explicit environment key names', async () => {
+  const openCodeKey = process.env.OPENCODE_API_KEY;
+  const vercelKey = process.env.AI_GATEWAY_API_KEY;
+  delete process.env.OPENCODE_API_KEY;
+  delete process.env.AI_GATEWAY_API_KEY;
+  try {
+    for (const provider of ['opencode-go', 'opencode-zen']) {
+      await assert.rejects(
+        makeProvider(parseSpec(`${provider}:model`)).complete('system', []),
+        /Missing OPENCODE_API_KEY/,
+      );
+    }
+    await assert.rejects(makeProvider(parseSpec('vercel:model')).complete('system', []), /Missing AI_GATEWAY_API_KEY/);
+  } finally {
+    if (openCodeKey === undefined) delete process.env.OPENCODE_API_KEY;
+    else process.env.OPENCODE_API_KEY = openCodeKey;
+    if (vercelKey === undefined) delete process.env.AI_GATEWAY_API_KEY;
+    else process.env.AI_GATEWAY_API_KEY = vercelKey;
+  }
 });
 
 test('reasoning levels are validated by model family', () => {
@@ -56,9 +86,32 @@ test('provider failures distinguish terminal capacity from recoverable upstream 
     summary: 'OpenAI API request timed out.',
     terminal: false,
   });
+  assert.deepEqual(classifyProviderFailure(new Error('empty response'), 'opencode-go:deepseek-v4-flash'), {
+    kind: 'upstream',
+    summary: 'OpenCode Go API returned no usable response.',
+    terminal: true,
+    retryable: true,
+  });
+  assert.deepEqual(
+    classifyProviderFailure(new Error('reasoning exhausted the 16384-token response budget'), 'opencode-go:glm-5.2'),
+    {
+      kind: 'truncation',
+      summary: 'OpenCode Go API spent the whole response budget on reasoning and returned no answer.',
+      terminal: false,
+    },
+  );
   assert.equal(classifyProviderFailure(new ApiError(401, 'invalid key'), 'anthropic:claude').terminal, true);
   assert.equal(classifyProviderFailure(new ApiError(503, 'overloaded'), 'anthropic:claude').terminal, false);
   assert.equal(classifyProviderFailure(new ApiError(501, 'not implemented'), 'compat:model').terminal, true);
+});
+
+test('restart only recognizes vgcleague GUI processes', async () => {
+  const { looksLikeGuiCommand } = await import('../src/restart.js');
+  assert.equal(looksLikeGuiCommand('node dist/src/cli.js gui --port 8484'), true);
+  assert.equal(looksLikeGuiCommand('node /srv/vgcleague gui'), true);
+  assert.equal(looksLikeGuiCommand('node server.js --port 8484'), false);
+  assert.equal(looksLikeGuiCommand('postgres -D /usr/local/var'), false);
+  assert.equal(looksLikeGuiCommand('node dist/src/cli.js rotation --models a b'), false);
 });
 
 test('shared tool messages preserve typed calls', () => {
@@ -145,6 +198,7 @@ test('OpenAI uses Responses API with reasoning and tools', async () => {
   const { responseMessages, ...rest } = completion;
   assert.deepEqual(rest, {
     text: 'hello',
+    finishReason: 'tool-calls',
     usage: { input_tokens: 10, output_tokens: 5 },
     toolCalls: [
       {
@@ -240,6 +294,7 @@ test('compat provider uses chat completions', async () => {
   const { responseMessages, ...rest } = completion;
   assert.deepEqual(rest, {
     text: 'ok',
+    finishReason: 'stop',
     usage: { input_tokens: 4, output_tokens: 2 },
     toolCalls: [],
   });

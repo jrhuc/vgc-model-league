@@ -37,6 +37,7 @@ interface DropdownProps {
   onChange: (value: string) => void;
   placeholder?: string;
   searchable?: boolean;
+  filterable?: boolean;
   onSubmit?: () => void;
   emptyText?: string;
   disabled?: boolean;
@@ -50,16 +51,19 @@ export function Dropdown({
   onChange,
   placeholder = 'Select an option',
   searchable = false,
+  filterable = false,
   onSubmit,
   emptyText = 'No matching options.',
   disabled = false,
 }: DropdownProps) {
   const [open, setOpen] = useState(false);
   const [highlight, setHighlight] = useState(0);
+  const [query, setQuery] = useState('');
   const rootRef = useRef<HTMLDivElement>(null);
   const typeaheadRef = useRef({ text: '', time: 0 });
   const unavailable = disabled || options.length === 0;
-  const matches = searchable ? filterOptions(options, value) : options;
+  const interactiveSearch = searchable || filterable;
+  const matches = searchable ? filterOptions(options, value) : filterable ? filterOptions(options, query) : options;
   const shown = matches.slice(0, LIMIT);
   const clamped = Math.min(highlight, Math.max(0, shown.length - 1));
   const selected = options.find((option) => option.value === value);
@@ -79,6 +83,7 @@ export function Dropdown({
 
   const pick = (option: DropdownOption) => {
     onChange(option.value);
+    if (filterable) setQuery('');
     setOpen(false);
   };
 
@@ -106,14 +111,14 @@ export function Dropdown({
     } else if (event.key === 'End' && open && shown.length) {
       event.preventDefault();
       setHighlight(shown.length - 1);
-    } else if (event.key === 'Enter' || (!searchable && event.key === ' ')) {
+    } else if (event.key === 'Enter' || (!interactiveSearch && event.key === ' ')) {
       event.preventDefault();
       if (open && shown.length) pick(shown[clamped]!);
       else if (searchable) onSubmit?.();
       else openAtSelection();
     } else if (event.key === 'Escape') {
       setOpen(false);
-    } else if (!searchable && event.key.length === 1 && /\S/.test(event.key)) {
+    } else if (!interactiveSearch && event.key.length === 1 && /\S/.test(event.key)) {
       const now = Date.now();
       const previous = typeaheadRef.current;
       const query = `${now - previous.time < 500 ? previous.text : ''}${event.key}`.toLowerCase();
@@ -132,7 +137,7 @@ export function Dropdown({
       <label class="field-label" for={id}>
         {label}
       </label>
-      {searchable ? (
+      {interactiveSearch ? (
         <input
           id={id}
           role="combobox"
@@ -145,14 +150,22 @@ export function Dropdown({
           spellcheck={false}
           disabled={unavailable}
           placeholder={placeholder}
-          value={value}
+          value={filterable ? (open ? query : (selected?.label ?? '')) : value}
           onInput={(event) => {
             setHighlight(0);
             setOpen(true);
-            onChange(event.currentTarget.value);
+            if (filterable) setQuery(event.currentTarget.value);
+            else onChange(event.currentTarget.value);
           }}
           onFocus={() => {
+            if (filterable) setQuery('');
             if (!unavailable) setOpen(true);
+          }}
+          onClick={() => {
+            if (!open && !unavailable) {
+              if (filterable) setQuery('');
+              setOpen(true);
+            }
           }}
           onKeyDown={onKeyDown}
           onBlur={onBlur}

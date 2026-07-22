@@ -287,8 +287,8 @@ export class BattleState {
       `Turn: ${this.turn}`,
       `Weather: ${this.weatherLabel()}`,
       `Field: ${this.fieldLabels().join(', ') || 'none'}`,
-      ...this.renderSide(this.pid, true, referenceFor),
-      ...this.renderSide(foe, false, referenceFor),
+      ...this.renderSide(this.pid, true, request.teamPreview === true, referenceFor),
+      ...this.renderSide(foe, false, request.teamPreview === true, referenceFor),
     ].join('\n');
   }
 
@@ -632,6 +632,7 @@ export class BattleState {
   private renderSide(
     pid: Pid,
     own: boolean,
+    expandedRoster: boolean,
     referenceFor?: (mon: CompactMon) => CompactMonReference | undefined,
   ): string[] {
     const side = this.sides[pid];
@@ -675,9 +676,22 @@ export class BattleState {
       const attrs = [mon.species];
       if (reference?.types) attrs.push(`types ${reference.types}`);
       if (activeSlots.length) attrs.push(`active slot ${activeSlots.join('/')}`);
-      attrs.push(`HP ${mon.hp ?? '?'}`);
+      attrs.push(`HP ${mon.hpPercent === undefined ? '?' : `${Math.round(mon.hpPercent)}%`}`);
       if (mon.status) attrs.push(mon.status);
       if (mon.fainted) attrs.push('fainted');
+      if (!expandedRoster && !activeSlots.length) {
+        if (mon.moves.size) attrs.push(`moves ${[...mon.moves.values()].map((entry) => entry.name).join(', ')}`);
+        const speed = own ? mon.stats.spe : undefined;
+        if (speed !== undefined) attrs.push(`Speed ${speed}`);
+        else if (reference?.speed) attrs.push(`raw Speed range ${reference.speed}`);
+        if (mon.item) attrs.push(`item ${mon.item}${mon.itemConsumed ? ' (consumed)' : ''}`);
+        if (mon.ability) attrs.push(`ability ${mon.ability}`);
+        if (mon.nature) attrs.push(`stat alignment ${mon.nature}`);
+        if (mon.mega) attrs.push('Mega Evolved');
+        if (!mon.mega && reference?.mega) attrs.push(reference.mega);
+        lines.push(`- ${attrs.join('; ')}`);
+        continue;
+      }
       const boosts = Object.entries(mon.boosts)
         .filter(([, value]) => value)
         .sort(([a], [b]) => a.localeCompare(b));

@@ -10,6 +10,7 @@ test('system prompt concentrates strategic and tool policy', () => {
   assert.match(SYSTEM, /two reference calculations plus one action-order comparison/);
   assert.match(SYSTEM, /per-turn timer/);
   assert.match(SYSTEM, /free super-effective hit/);
+  assert.match(SYSTEM, /Omit current HP, active positions, turn recaps/);
 });
 
 test('decision prompt leads with merged state and keeps mechanics compact', () => {
@@ -27,7 +28,10 @@ test('decision prompt leads with merged state and keeps mechanics compact', () =
   );
   assert.ok(prompt.indexOf('Active type matchups') < prompt.indexOf('Choose for Swampert'));
   assert.match(prompt, /"threats"/);
-  assert.match(prompt, /notebook":"durable series notes, at most 1600 characters"/);
+  assert.match(
+    prompt,
+    /notebook":"durable cross-game facts and future plans only; no current HP, active board, or turn recap/,
+  );
   assert.equal(prompt.match(/"choices"/g)?.length, 1);
 });
 

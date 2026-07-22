@@ -20,21 +20,78 @@ test('provider options preserve ordering and discovery capabilities', () => {
       'xai',
       'deepseek',
       'kimi',
-      'openrouter',
       'cerebras',
       'meta',
       'zai',
+      'openrouter',
+      'opencode-go',
+      'opencode-zen',
+      'vercel',
       'compat',
       'random',
     ],
   );
   assert.deepEqual(
     PROVIDER_OPTIONS.map((provider) => provider.discovery),
-    ['list', 'list', 'list', 'list', 'list', 'list', 'list', 'list', 'manual', 'manual', 'manual', 'none'],
+    [
+      'list',
+      'list',
+      'list',
+      'list',
+      'list',
+      'list',
+      'list',
+      'manual',
+      'manual',
+      'list',
+      'list',
+      'list',
+      'list',
+      'manual',
+      'none',
+    ],
+  );
+  assert.deepEqual(
+    PROVIDER_OPTIONS.slice(9, 13).map(({ id, baseUrl, envKey, discovery, requiresKey }) => ({
+      id,
+      baseUrl,
+      envKey,
+      discovery,
+      requiresKey,
+    })),
+    [
+      {
+        id: 'openrouter',
+        baseUrl: 'https://openrouter.ai/api/v1',
+        envKey: 'OPENROUTER_API_KEY',
+        discovery: 'list',
+        requiresKey: true,
+      },
+      {
+        id: 'opencode-go',
+        baseUrl: 'https://opencode.ai/zen/go/v1',
+        envKey: 'OPENCODE_API_KEY',
+        discovery: 'list',
+        requiresKey: true,
+      },
+      {
+        id: 'opencode-zen',
+        baseUrl: 'https://opencode.ai/zen/v1',
+        envKey: 'OPENCODE_API_KEY',
+        discovery: 'list',
+        requiresKey: true,
+      },
+      {
+        id: 'vercel',
+        baseUrl: 'https://ai-gateway.vercel.sh/v1',
+        envKey: 'AI_GATEWAY_API_KEY',
+        discovery: 'list',
+        requiresKey: true,
+      },
+    ],
   );
   assert.equal(providerOption('kimi')?.envKey, 'MOONSHOT_API_KEY');
   assert.equal(providerOption('meta')?.envKey, 'META_MODEL_API_KEY');
-  assert.equal(providerOption('openrouter')?.requiresKey, true);
   assert.equal(providerOption('compat')?.requiresKey, false);
   assert.equal(providerOption('random')?.envKey, undefined);
   assert.equal(providerOption('missing'), undefined);
@@ -138,6 +195,25 @@ test('Google discovery normalizes names and keeps generateContent models across 
     { id: 'gemini-a', displayName: 'Gemini A' },
     { id: 'gemini-z', displayName: 'Gemini Z', description: 'General purpose' },
   ]);
+});
+
+test('multi-model routers discover models with bearer auth', async () => {
+  const providers = [
+    ['opencode-go', 'https://opencode.ai/zen/go/v1/models', 'opencode-key'],
+    ['opencode-zen', 'https://opencode.ai/zen/v1/models', 'opencode-key'],
+    ['vercel', 'https://ai-gateway.vercel.sh/v1/models', 'vercel-key'],
+  ] as const;
+  for (const [id, expectedUrl, apiKey] of providers) {
+    const mockFetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      assert.equal(String(input), expectedUrl);
+      assert.equal(new Headers(init?.headers).get('authorization'), `Bearer ${apiKey}`);
+      return jsonResponse({ data: [{ id: 'vendor/text-model' }] });
+    }) as typeof fetch;
+
+    assert.deepEqual(await discoverModels(providerOption(id)!, apiKey, { fetch: mockFetch }), [
+      { id: 'vendor/text-model' },
+    ]);
+  }
 });
 
 test('OpenRouter permits unauthenticated catalogs and uses architecture output metadata', async () => {

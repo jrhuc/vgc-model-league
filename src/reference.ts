@@ -45,41 +45,46 @@ export const DEX_TOOLS: ToolDefinition[] = [
     'lookup_matchup',
     'Look up type-chart effectiveness for an attacking move or type into a defending species. Returns immunity/SE/NVE multipliers only, not damage.',
     {
+      attacker: {
+        type: 'string',
+        description: 'Attacking species, required for form-dependent moves such as Raging Bull.',
+      },
       attacker_type: { type: 'string', description: 'Attacking type, or omit when move is provided.' },
-      move: { type: 'string', description: 'Move name; its type is used when provided.' },
+      move: { type: 'string', description: 'Move name; its contextual type is used when provided.' },
       defender: { type: 'string', description: 'Defending species name.' },
     },
     ['defender'],
   ),
   tool(
     'estimate_damage',
-    'Estimate Gen 9 level-50 damage in doubles from base stats, STAB, type chart, weather, common items, and spread reduction. Ignores abilities, boosts, burn, screens, and terrain. Own exact stats may be supplied; opposing stats use legal IV/EV ranges from the open team sheet nature only. Never invent hidden IVs/EVs.',
+    'Estimate Gen 9 level-50 damage in doubles as a percentage range from base stats, STAB, type chart, weather, common items, and spread reduction. Ignores abilities, boosts, burn, screens, and terrain. Own exact battle stats may be supplied; opposing stats use legal IV/EV ranges from the open team sheet nature only. Never invent hidden IVs/EVs or raw HP.',
     {
       attacker: { type: 'string' },
       defender: { type: 'string' },
       move: { type: 'string' },
       attacker_stats: {
         type: 'object',
-        description: 'Optional exact attacker stats from your request (atk/def/spa/spd/spe).',
+        description: 'Optional exact positive attacker stats from your request (atk/def/spa/spd/spe).',
         properties: {
-          atk: { type: 'number' },
-          def: { type: 'number' },
-          spa: { type: 'number' },
-          spd: { type: 'number' },
-          spe: { type: 'number' },
+          atk: { type: 'number', exclusiveMinimum: 0 },
+          def: { type: 'number', exclusiveMinimum: 0 },
+          spa: { type: 'number', exclusiveMinimum: 0 },
+          spd: { type: 'number', exclusiveMinimum: 0 },
+          spe: { type: 'number', exclusiveMinimum: 0 },
         },
         additionalProperties: false,
       },
-      attacker_hp: { type: 'number', description: 'Optional current attacker HP for HP-scaling moves.' },
-      attacker_max_hp: { type: 'number' },
-      defender_hp: {
+      attacker_hp_percent: {
         type: 'number',
-        description: 'Exact current defender HP in raw points for your own Pokémon only.',
+        minimum: 0,
+        maximum: 100,
+        description: 'Current attacker HP percentage for HP-scaling moves.',
       },
-      defender_max_hp: { type: 'number', description: 'Exact defender max HP in raw points (own side only).' },
       defender_hp_percent: {
         type: 'number',
-        description: 'Foe HP as the percent shown in battle (0-100). Use this for opponents; never guess raw foe HP.',
+        minimum: 0,
+        maximum: 100,
+        description: 'Current defender HP percentage shown in battle.',
       },
       attacker_item: { type: 'string' },
       defender_item: {
@@ -238,6 +243,16 @@ function weatherBallOverride(moveId: string, weather: string): { type: string; p
   return moveId === 'weatherball' && type ? { type, power: 100 } : null;
 }
 
+const RAGING_BULL_TYPE: Record<string, string> = {
+  taurospaldeacombat: 'Fighting',
+  taurospaldeablaze: 'Fire',
+  taurospaldeaaqua: 'Water',
+};
+
+function speciesMoveType(moveId: string, defaultType: string, speciesName: string): string {
+  return moveId === 'ragingbull' ? (RAGING_BULL_TYPE[id(speciesName)] ?? defaultType) : defaultType;
+}
+
 const SPEED_HALVING_ITEMS = new Set([
   'ironball',
   'machobrace',
@@ -331,6 +346,8 @@ export class ShowdownReference {
       typeModifier,
       asFinite,
       weatherBallOverride,
+      speciesMoveType,
+      JSON.stringify(RAGING_BULL_TYPE),
       JSON.stringify(WEATHER_BALL_TYPE),
       JSON.stringify(SPEED_HALVING_ITEMS),
       JSON.stringify(TYPE_BOOST_ITEMS),
@@ -341,7 +358,7 @@ export class ShowdownReference {
       .slice(0, 12);
   }
 
-  /** Compact always-on context: typing, speed band, move type/BP only. */
+  /** Compact always-on context: typing, speed band, and decision-relevant move mechanics. */
   renderCompact(mons: CompactMon[]): string[] {
     const lines: string[] = [];
     const seen = new Set<string>();
@@ -378,8 +395,14 @@ export class ShowdownReference {
         const move = this.dex.moves.get(moveName);
         if (!move.exists) return [];
         const power = move.basePower ? String(move.basePower) : 'no power';
-        const tag = move.target === 'normal' ? '' : `/${TARGET_TAGS[move.target] ?? move.target}`;
-        return [[move.id, `${move.type}/${move.category}/${power}${tag}`]];
+        const moveType = speciesMoveType(move.id, move.type, species.name);
+        const details = [`${moveType}/${move.category}/${power}`];
+        if (move.target !== 'normal') details.push(TARGET_TAGS[move.target] ?? move.target);
+        if (move.priority) details.push(`priority ${move.priority > 0 ? '+' : ''}${move.priority}`);
+        if (move.accuracy !== true && move.accuracy < 100) details.push(`accuracy ${move.accuracy}%`);
+        if (move.flags.powder)
+          details.push('powder: fails on Grass types, Overcoat, and Safety Goggles (including redirection)');
+        return [[move.id, details.join('/')]];
       }),
     );
     const mega: string[] = [];
@@ -465,15 +488,20 @@ export class ShowdownReference {
         const move = this.dex.moves.get(moveName);
         if (!move.exists || move.category === 'Status' || !move.type || move.type === '???') continue;
         const override = weatherBallOverride(move.id, weatherId);
-        const moveType = override?.type ?? move.type;
-        const typeLabel = override ? `currently ${override.type} in ${weather}` : moveType;
+        const moveType = override?.type ?? speciesMoveType(move.id, move.type, species.name);
+        const contextualType = moveType !== move.type;
+        const typeLabel = override
+          ? `currently ${override.type} in ${weather}`
+          : contextualType
+            ? `currently ${moveType} for ${species.name}`
+            : moveType;
         const bits: string[] = [];
         for (const defender of defenders) {
           if (attacker.ally !== undefined && defender.ally !== undefined && attacker.ally === defender.ally) continue;
           const target = this.dex.species.get(defender.species);
           if (!target.exists) continue;
           const mod = typeModifier(this.dex, moveType, target.types);
-          bits.push(`${target.name} ${effectivenessLabel(mod)}`);
+          if (mod !== 1) bits.push(`${target.name} ${effectivenessLabel(mod)}`);
         }
         if (bits.length) lines.push(`- ${species.name} ${move.name} (${typeLabel}): ${bits.join('; ')}`);
       }
@@ -619,12 +647,15 @@ export class ShowdownReference {
     if (!defenderName.trim()) return 'defender is required.';
     const defender = this.dex.species.get(defenderName);
     if (!defender.exists) return `No species data for ${JSON.stringify(defenderName)} in ${this.format}.`;
+    const attackerName = typeof args.attacker === 'string' ? args.attacker : '';
+    const attacker = attackerName ? this.dex.species.get(attackerName) : undefined;
     let attackType = typeof args.attacker_type === 'string' ? args.attacker_type : '';
     let moveName = typeof args.move === 'string' ? args.move : '';
     if (moveName.trim()) {
       const move = this.dex.moves.get(moveName);
       if (!move.exists) return `No move data for ${JSON.stringify(moveName)} in ${this.format}.`;
-      attackType = move.type;
+      if (move.id === 'ragingbull' && !attacker?.exists) return 'attacker is required to resolve Raging Bull typing.';
+      attackType = speciesMoveType(move.id, move.type, attacker?.name ?? '');
       moveName = move.name;
     }
     if (!attackType.trim()) return 'Provide move or attacker_type.';
@@ -657,7 +688,8 @@ export class ShowdownReference {
     const attackStat = move.category === 'Special' ? 'spa' : 'atk';
     const defenseStat = move.category === 'Special' ? 'spd' : 'def';
     const exact = args.attacker_stats && typeof args.attacker_stats === 'object' ? args.attacker_stats : undefined;
-    const exactAttack = exact && asFinite((exact as Record<string, unknown>)[attackStat]);
+    const suppliedAttack = exact && asFinite((exact as Record<string, unknown>)[attackStat]);
+    const exactAttack = suppliedAttack !== undefined && suppliedAttack > 0 ? suppliedAttack : undefined;
     const [atkLow, atkHigh] =
       exactAttack !== undefined
         ? [exactAttack, exactAttack]
@@ -677,38 +709,30 @@ export class ShowdownReference {
     defLow = Math.floor(defLow * defenderItemMod);
     defHigh = Math.floor(defHigh * defenderItemMod);
     const [hpLow, hpHigh] = hpRange(defender.baseStats.hp);
-    let defenderHp = asFinite(args.defender_hp);
-    let defenderMaxHp = asFinite(args.defender_max_hp);
-    let hpPercent = asFinite(args.defender_hp_percent);
-    // Showdown shows foe HP as x/100; a "max HP" below the species' legal floor is that percent scale.
-    if (defenderMaxHp !== undefined && defenderMaxHp < hpLow) {
-      if (hpPercent === undefined && defenderHp !== undefined && defenderMaxHp > 0)
-        hpPercent = (100 * defenderHp) / defenderMaxHp;
-      defenderHp = undefined;
-      defenderMaxHp = undefined;
-    }
+    const suppliedHpPercent = asFinite(args.defender_hp_percent);
+    const hpPercent = suppliedHpPercent === undefined ? undefined : Math.max(0, Math.min(100, suppliedHpPercent));
 
     let power = move.basePower;
     const weather = typeof args.weather === 'string' ? canonicalWeather(args.weather) : '';
-    let moveType = move.type;
-    const override = weatherBallOverride(id(move.name), weather);
+    let moveType = speciesMoveType(move.id, move.type, attacker.name);
+    const override = weatherBallOverride(move.id, weather);
     if (override) {
       moveType = override.type;
       power = override.power;
     }
-    if (id(move.name) === 'eruption' || id(move.name) === 'waterspout') {
-      const hp = asFinite(args.attacker_hp);
-      const maxHp = asFinite(args.attacker_max_hp);
-      if (hp !== undefined && maxHp && maxHp > 0) power = Math.max(1, Math.floor((power * hp) / maxHp));
+    if (move.id === 'eruption' || move.id === 'waterspout') {
+      const attackerHpPercent = asFinite(args.attacker_hp_percent);
+      if (attackerHpPercent !== undefined)
+        power = Math.max(1, Math.floor((power * Math.max(0, Math.min(100, attackerHpPercent))) / 100));
     }
 
     const typeMod = typeModifier(this.dex, moveType, defender.types);
-    if (typeMod === 0) return `${attacker.name} ${move.name} into ${defender.name}: immune (0 damage).`;
+    if (typeMod === 0) return `${attacker.name} ${move.name} into ${defender.name}: immune; 0% damage. Cannot KO.`;
 
     if (weather === 'desolateland' && moveType === 'Water')
-      return `${attacker.name} ${move.name} into ${defender.name}: fails in Desolate Land (0 damage).`;
+      return `${attacker.name} ${move.name} into ${defender.name}: fails in Desolate Land; 0% damage. Cannot KO.`;
     if (weather === 'primordialsea' && moveType === 'Fire')
-      return `${attacker.name} ${move.name} into ${defender.name}: fails in Primordial Sea (0 damage).`;
+      return `${attacker.name} ${move.name} into ${defender.name}: fails in Primordial Sea; 0% damage. Cannot KO.`;
     const sun = WEATHER_BALL_TYPE[weather] === 'Fire';
     const rain = WEATHER_BALL_TYPE[weather] === 'Water';
     let weatherMod = 1;
@@ -746,17 +770,23 @@ export class ShowdownReference {
     const minDamage = roll(atkLow, defHigh, 0.85);
     const maxDamage = roll(atkHigh, defLow, 1);
     const pct = (damage: number, hp: number) => Math.round((damage / hp) * 1000) / 10;
-    let hpText: string;
-    if (defenderHp !== undefined || defenderMaxHp !== undefined) {
-      const basis = defenderHp ?? defenderMaxHp!;
-      hpText = `${pct(minDamage, basis)}-${pct(maxDamage, basis)}% of ${defenderHp !== undefined ? 'current' : 'max'} HP ${basis}`;
-    } else {
-      hpText = `${pct(minDamage, hpHigh)}-${pct(maxDamage, hpLow)}% vs legal max HP ${hpLow}-${hpHigh}`;
-      if (hpPercent !== undefined)
-        hpText += `; defender shown at ${Math.round(hpPercent)}%; KO only when damage % exceeds that`;
-    }
+    const minimumPercent = pct(minDamage, hpHigh);
+    const maximumPercent = pct(maxDamage, hpLow);
+    const targetPercent = hpPercent ?? 100;
+    const fullHealth = targetPercent === 100;
+    const guaranteed = 100 * minDamage >= targetPercent * hpHigh;
+    const possible = 100 * maxDamage >= targetPercent * hpLow;
+    const outcome =
+      targetPercent <= 0
+        ? 'Target is already at 0%.'
+        : guaranteed
+          ? `Guaranteed ${fullHealth ? 'OHKO' : `KO from the shown ${Math.round(targetPercent)}%`} across the full legal range.`
+          : possible
+            ? `Possible ${fullHealth ? 'OHKO' : `KO from the shown ${Math.round(targetPercent)}%`}, not guaranteed across the legal range.`
+            : `Cannot ${fullHealth ? 'OHKO' : `KO from the shown ${Math.round(targetPercent)}%`} in this estimate.`;
+    const shownHp = hpPercent === undefined ? '' : ` Target HP shown: ${Math.round(hpPercent)}%.`;
     const attackBasis = exactAttack !== undefined ? 'attack exact from request' : 'legal attack range';
-    return `${attacker.name} ${move.name} (${moveType} ${move.category} BP ${power}) into ${defender.name}: damage ${minDamage}-${maxDamage} (${hpText}); ${effectivenessLabel(typeMod)}; modifiers STAB ${stab}x, weather ${weatherMod}x, item ${itemMod}x, defender item ${defenderItemMod}x, spread ${spreadMod}x; ${attackBasis}, open-sheet defense/HP range. Omits abilities, boosts, burn, screens, terrain, and defensive items other than Assault Vest/Eviolite.`;
+    return `${attacker.name} ${move.name} (${moveType} ${move.category} BP ${power}) into ${defender.name}: ${minimumPercent}-${maximumPercent}% of maximum HP.${shownHp} ${outcome} ${effectivenessLabel(typeMod)}; modifiers STAB ${stab}x, weather ${weatherMod}x, item ${itemMod}x, defender item ${defenderItemMod}x, spread ${spreadMod}x; ${attackBasis}, open-sheet defense/HP range. Omits abilities, boosts, burn, screens, terrain, and defensive items other than Assault Vest/Eviolite.`;
   }
 
   private lookupOne(kind: string, name: string, query: ReferenceQuery, prefix = `- ${kind} `): string {

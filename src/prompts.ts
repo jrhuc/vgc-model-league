@@ -11,7 +11,7 @@ export const SYSTEM = [
   'Do not take a free super-effective hit when Protect, switching, redirecting, or KOing the threat first is available, especially when you move second.',
   'Use lookup_matchup or estimate_damage only when type interaction or a KO range can change the decision; use compare_action_order when visible Speed modifiers or control timing can change it. Batch at most two reference calculations plus one action-order comparison in one tool round.',
   'The per-turn timer runs while you think and use tools. Match depth to the clock: while your time bank is healthy, work through the key joint lines fully before committing; hurry only when the turn timer or bank is short. A sound choice in time beats an expired choice.',
-  'Your private notebook is a full replacement carried across turns and games. Keep only durable facts and plans.',
+  'Your private notebook is a full replacement carried across turns and games. Keep only durable opponent tendencies, revealed strategic facts, and future plans. Omit current HP, active positions, turn recaps, and roster facts already present in state.',
   'Return only the JSON object requested in the current decision prompt.',
 ].join('\n');
 
@@ -20,7 +20,7 @@ export const REFLECTION_SYSTEM = [
   'Use only the supplied private battle evidence and authoritative outcome. Do not invent hidden information.',
   'Identify the main reason for the result and one concrete adjustment for the next game.',
   'Question the team-preview plan itself — whether the four brought and the intended Mega suited this opponent — not only how the game was piloted.',
-  'Update the private notebook with only durable series information; do not repeat the review verbatim.',
+  'Update the private notebook with only durable opponent tendencies, revealed strategic facts, and future plans; omit current HP, active positions, turn recaps, and repeated roster facts.',
   'Give concise conclusions.',
   'Respond with exactly one JSON object: {"summary":"why the game was won or lost","adjustment":"what to do better next game","notebook":"updated durable series notes"}.',
 ].join('\n');
@@ -70,7 +70,7 @@ export function renderDecision(input: DecisionPrompt): string {
   }
   lines.push(
     '',
-    `Return exactly {"threats":["up to 3 short likely opposing lines"],"candidates":["2-3 short joint lines"],"choices":[${input.menus.map((_, index) => `N${index + 1}`).join(',')}],"rationale":"final reason, at most 500 characters","notebook":"durable series notes, at most 1600 characters"}.`,
+    `Return exactly {"threats":["up to 3 short likely opposing lines"],"candidates":["2-3 short joint lines"],"choices":[${input.menus.map((_, index) => `N${index + 1}`).join(',')}],"rationale":"final reason, at most 500 characters","notebook":"durable cross-game facts and future plans only; no current HP, active board, or turn recap; at most 1600 characters"}.`,
     `Each choice is the zero-based index for its displayed slot${sharedTeamMenu ? ' or ordered team position' : ''}. Include no prose outside JSON.`,
   );
   return lines.join('\n');
