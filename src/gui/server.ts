@@ -25,12 +25,13 @@ import { h2h, loadRows, scopeRows, standings } from '../records.js';
 import { makeRunDirectory, ROTATION_PROTOCOL_VERSION, runRotation } from '../rotation.js';
 import { redactSecrets } from '../sanitize.js';
 import { loadShowdown } from '../showdown.js';
+import { parseTimerScale } from '../timer.js';
 import type { MonState } from '../state.js';
 import { BattleState } from '../state.js';
 import type { Team, TeamDraft } from '../teams.js';
 import { createPool, inspectTeam, listPools, loadPool, packTeam, validateTeam } from '../teams.js';
 import { runTournament, TOURNAMENT_PROTOCOL_VERSION } from '../tournament.js';
-import type { ExperimentMode, JsonObject, Pid } from '../types.js';
+import type { ExperimentMode, JsonObject, Pid, TimerScale } from '../types.js';
 import { afterColon, isRecord } from '../value.js';
 import type {
   AppState,
@@ -157,6 +158,7 @@ interface RunConfig extends ModelReasoningConfig {
   format?: string;
   board?: string;
   seed?: number;
+  timerScale?: TimerScale;
 }
 
 interface GameBattle {
@@ -975,6 +977,15 @@ export class GuiServer {
     }
     const seed = body.seed === undefined || body.seed === null || body.seed === '' ? undefined : Number(body.seed);
     if (seed !== undefined && !Number.isSafeInteger(seed)) throw new HttpError(400, 'seed must be an integer');
+    let timerScale: TimerScale | undefined;
+    try {
+      timerScale = parseTimerScale(body.timerScale);
+    } catch (error) {
+      throw new HttpError(400, error instanceof Error ? error.message : String(error));
+    }
+    if (this.publicOrigin && timerScale === 'off') {
+      throw new HttpError(400, 'untimed runs are disabled in hosted mode');
+    }
     const maximumSeriesPerPair = this.publicOrigin ? 4 : 20;
     const maximumConcurrency = this.publicOrigin ? 2 : 8;
     const config: RunConfig = {
@@ -995,6 +1006,7 @@ export class GuiServer {
       ...(seed === undefined ? {} : { seed }),
       ...(reasoning === undefined ? {} : { reasoning }),
       ...(Object.keys(reasoningByModel).length ? { reasoningByModel } : {}),
+      ...(timerScale === undefined ? {} : { timerScale }),
     };
     const run = new ActiveRun(config, apiKeys, owner, this.options.runsDir);
     if (owner && this.options.auth) {
@@ -1036,6 +1048,7 @@ export class GuiServer {
       ...(run.config.seed === undefined ? {} : { seed: run.config.seed }),
       ...(run.config.reasoning === undefined ? {} : { reasoning: run.config.reasoning }),
       ...(run.config.reasoningByModel === undefined ? {} : { reasoningByModel: run.config.reasoningByModel }),
+      ...(run.config.timerScale === undefined ? {} : { timerScale: run.config.timerScale }),
       ...(run.owner
         ? {
             contributor: {
@@ -1293,6 +1306,7 @@ export class GuiServer {
       ...(run.config.seed === undefined ? {} : { seed: run.config.seed }),
       ...(run.config.reasoning === undefined ? {} : { reasoning: run.config.reasoning }),
       ...(run.config.reasoningByModel === undefined ? {} : { reasoningByModel: run.config.reasoningByModel }),
+      ...(run.config.timerScale === undefined ? {} : { timerScale: run.config.timerScale }),
       ...(run.owner
         ? {
             contributor: {

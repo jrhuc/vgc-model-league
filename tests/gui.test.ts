@@ -438,6 +438,38 @@ test('gui validates shared and per-model reasoning before launching', async () =
   }
 });
 
+test('gui validates the timer scale and forwards it to the runner', async () => {
+  let received: unknown = 'unset';
+  const gui = new GuiServer({
+    runsDir: RUNS_SCRATCH,
+    runner: async (_models, _seriesPerPair, _runDir, options = {}) => {
+      received = options.timerScale;
+      return [];
+    },
+  });
+  const base = await gui.listen(0);
+  try {
+    const invalid = await apiJson(`${base}api/run`, { models: ['random', 'random'], pool: 'test', timerScale: 9 });
+    assert.equal(invalid.status, 400);
+    assert.match(String(invalid.data.error), /timer scale must be/);
+
+    const scaled = await apiJson(`${base}api/run`, { models: ['random', 'random'], pool: 'test', timerScale: 1.5 });
+    assert.equal(scaled.status, 200, JSON.stringify(scaled.data));
+    assert.equal(received, 1.5);
+    let run = (await apiJson(`${base}api/state`)).data.run as Record<string, unknown>;
+    for (let attempt = 0; attempt < 40 && run.state === 'running'; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      run = (await apiJson(`${base}api/state`)).data.run as Record<string, unknown>;
+    }
+
+    const untimed = await apiJson(`${base}api/run`, { models: ['random', 'random'], pool: 'test', timerScale: 'off' });
+    assert.equal(untimed.status, 200, JSON.stringify(untimed.data));
+    assert.equal(received, 'off');
+  } finally {
+    gui.close();
+  }
+});
+
 test('gui rejects a second run while one is active and stops on request', async () => {
   const gui = new GuiServer({
     runsDir: RUNS_SCRATCH,

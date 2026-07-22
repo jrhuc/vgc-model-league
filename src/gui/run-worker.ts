@@ -40,6 +40,7 @@ async function execute(message: RunWorkerStart): Promise<void> {
     ...(message.seed === undefined ? {} : { seed: message.seed }),
     ...(message.reasoning === undefined ? {} : { reasoning: message.reasoning }),
     ...(message.reasoningByModel === undefined ? {} : { reasoningByModel: message.reasoningByModel }),
+    ...(message.timerScale === undefined ? {} : { timerScale: message.timerScale }),
     ...(message.contributor === undefined ? {} : { contributor: message.contributor }),
     onEvent: (event: DraftLeagueEvent) => send({ type: 'event', event }),
   };

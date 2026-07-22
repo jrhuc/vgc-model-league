@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { ChoiceSubstitution } from '../src/engines.js';
-import { BaseEngine, LLMEngine, RandomEngine } from '../src/engines.js';
+import { BaseEngine, LLMEngine, RandomEngine, decisionTokenBudget, updatedPace } from '../src/engines.js';
 import { ApiError } from '../src/providers.js';
 import { SimBattle } from '../src/sim.js';
 import { loadPool } from '../src/teams.js';
@@ -348,7 +348,7 @@ const lengthTruncated = (): Completion => ({
   finishReason: 'length',
 });
 
-test('decision token budgets scale with the remaining turn time', async () => {
+test('decision token budgets track generation pace against the remaining turn time', async () => {
   const provider = new ScriptedProvider([decision([1]), decision([1]), decision([1]), decision([1])]);
   const engine = new LLMEngine('p1', 'scripted', { provider, decisionLog: [] });
   const timedFor = (turnSeconds: number) => {
@@ -362,13 +362,37 @@ test('decision token budgets scale with the remaining turn time', async () => {
   assert.equal(await engine.act(request(), { povLines: [] }), 'move 2');
   assert.deepEqual(
     provider.calls.map((call) => call.options.maxTokens),
-    [16_384, 8192, 4096, 16_384],
+    [5376, 2304, 1024, 16_384],
+  );
+  assert.match(
+    String(provider.calls[0]!.messages[0]!.content),
+    /capped at 5376 tokens — what your generation speed fits into the turn/,
   );
 
   const deepProvider = new ScriptedProvider([decision([1])]);
   const deep = new LLMEngine('p1', 'scripted', { provider: deepProvider, decisionLog: [], reasoning: 'max' });
   assert.equal(await deep.act(timedFor(10), { povLines: [] }), 'move 2');
   assert.equal(deepProvider.calls[0]!.options.maxTokens, 16_384, 'deep reasoning keeps its configured floor');
+  assert.match(
+    String(deepProvider.calls[0]!.messages[0]!.content),
+    /capped at 16384 tokens\. A reply cut off/,
+    'floor-governed caps do not claim to track pace',
+  );
+});
+
+test('decisionTokenBudget clamps pace-feasible tokens between the minimum and ceiling', () => {
+  assert.equal(decisionTokenBudget(Number.POSITIVE_INFINITY, 75), 16_384);
+  assert.equal(decisionTokenBudget(90_000, 75), 5376);
+  assert.equal(decisionTokenBudget(90_000, 140), 9984);
+  assert.equal(decisionTokenBudget(5000, 75), 1024);
+  assert.equal(decisionTokenBudget(600_000, 100), 16_384);
+});
+
+test('updatedPace averages qualifying samples and ignores noise', () => {
+  assert.equal(updatedPace(undefined, 100, 5000), undefined, 'tiny responses are not samples');
+  assert.equal(updatedPace(undefined, 4000, 1000), undefined, 'sub-second calls are not samples');
+  assert.equal(updatedPace(undefined, 4000, 40_000), 100);
+  assert.equal(updatedPace(100, 3000, 60_000), 75);
 });
 
 test('reasoning truncation without time to retry yields to the battle timer with a clear summary', async () => {
@@ -387,7 +411,7 @@ test('reasoning truncation without time to retry yields to the battle timer with
   await logged.promise;
   assert.equal(decisions[0]!.action, 'abandoned');
   assert.equal(decisions[0]!.failure_kind, 'truncation');
-  assert.equal(decisions[0]!.error, 'reasoning exhausted the 4096-token response budget');
+  assert.equal(decisions[0]!.error, 'reasoning exhausted the 1024-token response budget');
   assert.equal(
     decisions[0]!.error_summary,
     'OpenCode Go API spent the whole response budget on reasoning and returned no answer.',

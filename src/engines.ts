@@ -256,18 +256,20 @@ const FORCE_COMMIT_MS = 25_000;
 const FORCE_COMMIT_TURN_FRACTION = 0.5;
 const BANK_HEALTHY_SECONDS = 300;
 const BANK_LOW_SECONDS = 120;
-const DECISION_MAX_TOKENS = 4096;
+const DECISION_MIN_TOKENS = 1024;
 const DECISION_MAX_TOKENS_DEEP: Partial<Record<ReasoningLevel, number>> = {
   high: 8192,
   xhigh: 16_384,
   max: 16_384,
 };
-// The turn deadline is the real gate on each call; budgets scale with remaining time because some
-// gateways (e.g. OpenCode) ignore reasoning-effort hints, and a starved budget truncates mid-reasoning.
-const DECISION_MAX_TOKENS_MID = 8192;
+// Generation speed bounds what can arrive before the turn deadline, so max_tokens is sized to the
+// measured pace × remaining time and the prompt states that cap; a bigger budget would only let a
+// slow reasoning model burn the whole window and submit nothing.
 const DECISION_MAX_TOKENS_CEILING = 16_384;
-const DECISION_BUDGET_MID_MS = 25_000;
-const DECISION_BUDGET_FULL_MS = 60_000;
+const ASSUMED_TOKENS_PER_SECOND = 75;
+const PACE_SAFETY = 0.8;
+const PACE_SAMPLE_MIN_TOKENS = 256;
+const PACE_SAMPLE_MIN_MS = 2000;
 const DECISION_MAX_TOOL_ROUNDS = 2;
 const DECISION_MAX_STANDARD_TOOL_CALLS = 2;
 const DECISION_MAX_ORDER_TOOL_CALLS = 1;
@@ -299,10 +301,16 @@ const ACTION_ORDER_TOOL: ToolDefinition = {
 
 const DECISION_TOOLS = [...DEX_TOOLS, ACTION_ORDER_TOOL];
 
-function decisionTokenBudget(remainingMs: number): number {
-  if (remainingMs >= DECISION_BUDGET_FULL_MS) return DECISION_MAX_TOKENS_CEILING;
-  if (remainingMs >= DECISION_BUDGET_MID_MS) return DECISION_MAX_TOKENS_MID;
-  return DECISION_MAX_TOKENS;
+export function decisionTokenBudget(remainingMs: number, tokensPerSecond: number): number {
+  if (!Number.isFinite(remainingMs)) return DECISION_MAX_TOKENS_CEILING;
+  const feasible = Math.floor(((remainingMs / 1000) * tokensPerSecond * PACE_SAFETY) / 256) * 256;
+  return Math.min(DECISION_MAX_TOKENS_CEILING, Math.max(DECISION_MIN_TOKENS, feasible));
+}
+
+export function updatedPace(previous: number | undefined, outputTokens: number, elapsedMs: number): number | undefined {
+  if (outputTokens < PACE_SAMPLE_MIN_TOKENS || elapsedMs < PACE_SAMPLE_MIN_MS) return previous;
+  const rate = (1000 * outputTokens) / elapsedMs;
+  return previous === undefined ? rate : (previous + rate) / 2;
 }
 
 function boundedToolCalls(calls: ToolCall[]): ToolCall[] {
@@ -411,12 +419,11 @@ export function scaffoldRevision(): string {
         reflection: REFLECTION_SYSTEM,
         tools: DECISION_TOOLS,
         decisionPolicy: {
-          maxTokens: DECISION_MAX_TOKENS,
+          minTokens: DECISION_MIN_TOKENS,
           maxTokensDeep: DECISION_MAX_TOKENS_DEEP,
-          maxTokensMid: DECISION_MAX_TOKENS_MID,
           maxTokensCeiling: DECISION_MAX_TOKENS_CEILING,
-          budgetMidMs: DECISION_BUDGET_MID_MS,
-          budgetFullMs: DECISION_BUDGET_FULL_MS,
+          assumedTokensPerSecond: ASSUMED_TOKENS_PER_SECOND,
+          paceSafety: PACE_SAFETY,
           forceCommitTurnFraction: FORCE_COMMIT_TURN_FRACTION,
           bankHealthySeconds: BANK_HEALTHY_SECONDS,
           bankLowSeconds: BANK_LOW_SECONDS,
@@ -480,6 +487,7 @@ export class LLMEngine extends BaseEngine {
   private parseFailureCount = 0;
   private providerRetryCount = 0;
   private callRetries = 0;
+  private observedTokensPerSecond: number | undefined;
   private threatTurns = 0;
   private threatHits = 0;
   private pendingThreats: { gameId: string; threats: string[] } | undefined;
@@ -612,9 +620,10 @@ export class LLMEngine extends BaseEngine {
       turnSeconds === undefined
         ? FORCE_COMMIT_MS
         : Math.max(FORCE_COMMIT_MS, turnSeconds * 1000 * FORCE_COMMIT_TURN_FRACTION);
-    const tokenFloor =
-      (this.options.reasoning && DECISION_MAX_TOKENS_DEEP[this.options.reasoning]) || DECISION_MAX_TOKENS;
-    let maxTokens = tokenFloor;
+    const remainingMs = () => (deadline === undefined ? Number.POSITIVE_INFINITY : deadline - performance.now());
+    const tokenFloor = (this.options.reasoning && DECISION_MAX_TOKENS_DEEP[this.options.reasoning]) || 0;
+    const pace = () => this.observedTokensPerSecond ?? ASSUMED_TOKENS_PER_SECOND;
+    let maxTokens = Math.max(tokenFloor, decisionTokenBudget(remainingMs(), pace()));
     let truncatedBudget = 0;
     const generation = this.generation;
     const decisionSignal = this.decisionController?.signal;
@@ -638,13 +647,15 @@ export class LLMEngine extends BaseEngine {
     });
     if (turnSeconds !== undefined) {
       const bank = request.timer?.seconds ?? turnSeconds;
-      const pace =
-        bank >= BANK_HEALTHY_SECONDS
-          ? 'The bank is healthy: think as deeply as this decision warrants before committing.'
-          : bank <= BANK_LOW_SECONDS
-            ? 'The bank is low: commit quickly and rebuild time on easy turns.'
+      const bankAdvice =
+        bank <= BANK_LOW_SECONDS
+          ? 'The bank is low: commit quickly and rebuild time on easy turns.'
+          : bank >= BANK_HEALTHY_SECONDS && maxTokens >= 8192
+            ? 'The bank is healthy: think as deeply as this decision warrants before committing.'
             : 'Spend time only where it changes the choice.';
-      prompt += `\n\nShowdown timer: ${Math.round(turnSeconds)} seconds this turn; ${Math.round(bank)} seconds remain in the clock bank. ${pace}`;
+      const paceNote =
+        tokenFloor > decisionTokenBudget(remainingMs(), pace()) ? '' : ' — what your generation speed fits into the turn';
+      prompt += `\n\nShowdown timer: ${Math.round(turnSeconds)} seconds of wall clock this turn; ${Math.round(bank)} seconds remain in the clock bank. Your whole reply, reasoning included, is capped at ${maxTokens} tokens${paceNote}. A reply cut off at the cap submits nothing, so settle on a choice early and answer well inside it. ${bankAdvice}`;
     }
     if (context.error) prompt += `\n\nThe simulator rejected the previous joint action: ${context.error}`;
 
@@ -658,7 +669,6 @@ export class LLMEngine extends BaseEngine {
     const toolCalls: ToolTrace[] = [];
     const reasoningParts: string[] = [];
     const messages: ProviderMessage[] = [{ role: 'user', content: prompt }];
-    const remainingMs = () => (deadline === undefined ? Number.POSITIVE_INFINITY : deadline - performance.now());
     const failDecision = (caught: unknown): Promise<number[]> => {
       const message = caught instanceof Error ? caught.message : String(caught);
       const failure = classifyProviderFailure(caught, this.spec);
@@ -720,6 +730,7 @@ export class LLMEngine extends BaseEngine {
         tool_rounds: toolRounds,
         provider_retries: this.callRetries,
         max_tokens: maxTokens,
+        tokens_per_second: this.observedTokensPerSecond ? Math.round(this.observedTokensPerSecond) : null,
         tool_calls: toolCalls,
         fallback: true,
         failure_kind: failure.kind,
@@ -752,7 +763,7 @@ export class LLMEngine extends BaseEngine {
         if (generation !== this.generation) throw new DecisionAbandonedError();
         if (request.timer && remainingMs() < 2000) return failDecision(new Error('turn time exhausted'));
         const finalRound = round === DECISION_MAX_TOOL_ROUNDS || remainingMs() < forceCommitMs;
-        maxTokens = Math.max(tokenFloor, decisionTokenBudget(remainingMs()));
+        maxTokens = Math.max(tokenFloor, decisionTokenBudget(remainingMs(), pace()));
         let completion: Completion;
         try {
           completion = await this.completeWithRetry(
@@ -876,9 +887,15 @@ export class LLMEngine extends BaseEngine {
           deadline === undefined
             ? withSignal
             : { ...withSignal, timeout: Math.max(1, (deadline - performance.now()) / 1000 + 1) };
+        const startedAt = performance.now();
         const completion = await this.provider.complete(system, messages, attemptOptions);
         if (!completion.text && !completion.toolCalls.length && completion.finishReason !== 'length')
           throw new ApiError(0, 'empty response');
+        this.observedTokensPerSecond = updatedPace(
+          this.observedTokensPerSecond,
+          completion.usage.output_tokens ?? 0,
+          performance.now() - startedAt,
+        );
         return completion;
       } catch (error) {
         if (
@@ -986,6 +1003,7 @@ export class LLMEngine extends BaseEngine {
       tool_rounds: pending.toolRounds ?? 0,
       provider_retries: pending.providerRetries ?? 0,
       max_tokens: pending.maxTokens ?? null,
+      tokens_per_second: this.observedTokensPerSecond ? Math.round(this.observedTokensPerSecond) : null,
       tool_calls: pending.toolCalls ?? [],
       fallback: pending.fallback ?? false,
       error: pending.error ?? null,

@@ -318,6 +318,7 @@ export function FixturesView({ app, run, onStarted, onPools }: FixturesProps) {
   const [reasoning, setReasoning] = useState('');
   const [sharedReasoning, setSharedReasoning] = useState(true);
   const [reasoningByModel, setReasoningByModel] = useState<Record<string, string>>({});
+  const [timerScale, setTimerScale] = useState('1');
   const [seed, setSeed] = useState('');
   const [starting, setStarting] = useState(false);
 
@@ -558,6 +559,7 @@ export function FixturesView({ app, run, onStarted, onPools }: FixturesProps) {
       apiKeys,
       seed: seed.trim(),
       ...reasoningRequest,
+      ...(timerScale === '1' ? {} : { timerScale: timerScale === 'off' ? 'off' : Number(timerScale) }),
       ...(mode === 'match'
         ? {
             mode: 'tournament',
@@ -606,6 +608,13 @@ export function FixturesView({ app, run, onStarted, onPools }: FixturesProps) {
   const reasoningOptions = [
     { value: '', label: 'Provider default' },
     ...sharedReasoningLevels.map((level) => ({ value: level, label: level })),
+  ];
+  const timerScaleOptions = [
+    { value: '1', label: '1x (standard VGC)' },
+    { value: '1.25', label: '1.25x' },
+    { value: '1.5', label: '1.5x' },
+    { value: '2', label: '2x' },
+    { value: 'off', label: 'Untimed' },
   ];
   const pairs = pairings(models);
   const seriesPerPair = Math.max(1, Number(series) || 1);
@@ -1182,6 +1191,13 @@ export function FixturesView({ app, run, onStarted, onPools }: FixturesProps) {
                   <p class="reasoning-help">Random baselines do not use reasoning controls.</p>
                 )}
               </div>
+              <Dropdown
+                id="timer-scale"
+                label="Battle timer"
+                options={timerScaleOptions}
+                value={timerScale}
+                onChange={setTimerScale}
+              />
               <div class="field wide">
                 <label class="field-label" for="seed">
                   Seed

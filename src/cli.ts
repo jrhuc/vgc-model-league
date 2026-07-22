@@ -12,6 +12,8 @@ import { h2h, loadRows, scopeRows, standings, TEST_POOL } from './records.js';
 import { writeReport } from './report.js';
 import { restartGui, stopGui } from './restart.js';
 import { makeRunDirectory, runRotation } from './rotation.js';
+import { parseTimerScale } from './timer.js';
+import type { TimerScale } from './types.js';
 
 const HELP = `Usage: vgcleague <command>
 
@@ -23,10 +25,11 @@ Commands:
   selfcheck                           run one random-vs-random series through the simulator
   rotation --models <spec> <spec>...  run the controlled team-rotation protocol
       [--series-per-pair <n>] [--pool <name>] [--seed <n>] [--concurrency <n>] [--reasoning <level>]
+      [--timer-scale <n|off>]
   tournament --models <spec> <spec>...  play a single-elimination BO3 bracket; each model keeps one team
-      [--pool <name>] [--seed <n>] [--concurrency <n>] [--reasoning <level>]
+      [--pool <name>] [--seed <n>] [--concurrency <n>] [--reasoning <level>] [--timer-scale <n|off>]
   draft --models <spec> <spec>...     snake-draft rosters from a board, then round robin and playoffs
-      [--board <name>] [--seed <n>] [--concurrency <n>] [--reasoning <level>]
+      [--board <name>] [--seed <n>] [--concurrency <n>] [--reasoning <level>] [--timer-scale <n|off>]
   exhibition --opponent <spec>        host one bo3 where a terminal agent plays a seat over a local bridge
       [--seat p1|p2] [--name <label>] [--pool <name>] [--seed <n>] [--port <n>] [--reasoning <level>]
       [--agent-dir <path>]
@@ -57,6 +60,15 @@ function reasoningLevel(value: string | undefined): ReasoningLevel | undefined {
     throw new Error(`--reasoning must be one of: ${REASONING_LEVELS.join(', ')}`);
   }
   return level;
+}
+
+function timerScaleOption(value: string | undefined): TimerScale | undefined {
+  if (value === undefined) return undefined;
+  try {
+    return parseTimerScale(value);
+  } catch (error) {
+    throw new Error(`--timer-scale ${error instanceof Error ? error.message : String(error)}`);
+  }
 }
 
 function environmentInteger(name: string, fallback: number, minimum: number, maximum: number): number {
@@ -168,11 +180,13 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
         seed: { type: 'string' },
         concurrency: { type: 'string', default: '2' },
         reasoning: { type: 'string' },
+        'timer-scale': { type: 'string' },
       },
     });
     const models = [...(values.models ?? []), ...positionals];
     if (models.length < 2) throw new Error('rotation requires at least two --models');
     const reasoning = reasoningLevel(values.reasoning);
+    const timerScale = timerScaleOption(values['timer-scale']);
     const seed = optionalInteger('seed', values.seed);
     const rows = await runRotation(
       models,
@@ -184,6 +198,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
         recordsPath: RESULTS_PATH,
         ...(seed === undefined ? {} : { seed }),
         ...(reasoning === undefined ? {} : { reasoning }),
+        ...(timerScale === undefined ? {} : { timerScale }),
       },
     );
     printResults(rows);
@@ -199,11 +214,13 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
         seed: { type: 'string' },
         concurrency: { type: 'string', default: '2' },
         reasoning: { type: 'string' },
+        'timer-scale': { type: 'string' },
       },
     });
     const models = [...(values.models ?? []), ...positionals];
     if (models.length < 2) throw new Error('tournament requires at least two --models');
     const reasoning = reasoningLevel(values.reasoning);
+    const timerScale = timerScaleOption(values['timer-scale']);
     const seed = optionalInteger('seed', values.seed);
     const { runTournament } = await import('./tournament.js');
     const rows = await runTournament(models, makeRunDirectory(), {
@@ -212,6 +229,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
       recordsPath: RESULTS_PATH,
       ...(seed === undefined ? {} : { seed }),
       ...(reasoning === undefined ? {} : { reasoning }),
+      ...(timerScale === undefined ? {} : { timerScale }),
       onNotice: (line) => console.log(line),
     });
     printResults(rows);
@@ -229,11 +247,13 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
         seed: { type: 'string' },
         concurrency: { type: 'string', default: '2' },
         reasoning: { type: 'string' },
+        'timer-scale': { type: 'string' },
       },
     });
     const models = [...(values.models ?? []), ...positionals];
     if (models.length < 2) throw new Error('draft requires at least two --models');
     const reasoning = reasoningLevel(values.reasoning);
+    const timerScale = timerScaleOption(values['timer-scale']);
     const seed = optionalInteger('seed', values.seed);
     const { runDraftLeague } = await import('./draftleague.js');
     const runDir = makeRunDirectory();
@@ -243,6 +263,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
       recordsPath: RESULTS_PATH,
       ...(seed === undefined ? {} : { seed }),
       ...(reasoning === undefined ? {} : { reasoning }),
+      ...(timerScale === undefined ? {} : { timerScale }),
       onEvent: (event) => {
         if (event.type === 'draft' && event.draft.phase === 'draft' && event.draft.picks.length > 0) {
           const pick = event.draft.picks[event.draft.picks.length - 1]!;

@@ -13,7 +13,7 @@ import { playRecordedSeries } from './series.js';
 import { showdownCommit } from './showdown.js';
 import type { Team } from './teams.js';
 import { loadPool, validatePool, validateTeam } from './teams.js';
-import type { ContributorAttribution, Pid } from './types.js';
+import type { ContributorAttribution, Pid, TimerScale } from './types.js';
 
 export const TOURNAMENT_PROTOCOL_VERSION = 1;
 
@@ -25,6 +25,7 @@ export type TournamentEvent =
 export interface TournamentOptions extends ModelReasoningConfig {
   seed?: number;
   concurrency?: number;
+  timerScale?: TimerScale;
   recordsPath?: string;
   psDir?: string;
   apiKeys?: Readonly<Record<string, string>>;
@@ -163,6 +164,7 @@ export async function runTournament(
         reasoning: options.reasoning ?? null,
         pool: poolId,
         reasoning_by_model: options.reasoningByModel ?? null,
+        timer_scale: options.timerScale ?? 1,
         format,
         entrants: entrants.map((entrant) => ({ model: entrant.model, team: entrant.team.id })),
         contributor: options.contributor ?? null,
@@ -222,6 +224,7 @@ export async function runTournament(
         ...(options.reasoning === undefined ? {} : { reasoning: options.reasoning }),
         ...(options.apiKeys === undefined ? {} : { apiKeys: options.apiKeys }),
         ...(options.reasoningByModel === undefined ? {} : { reasoningByModel: options.reasoningByModel }),
+        ...(options.timerScale === undefined ? {} : { timerScale: options.timerScale }),
         ...(options.onEvent === undefined ? {} : { onEvent: options.onEvent }),
         ...(options.contributor === undefined ? {} : { contributor: options.contributor }),
       });
@@ -281,6 +284,7 @@ async function playMatch(
     onEvent?: (event: TournamentEvent) => void;
     signal?: AbortSignal;
     contributor?: ContributorAttribution;
+    timerScale?: TimerScale;
   } & ModelReasoningConfig,
 ): Promise<SeriesRecord> {
   context.signal?.throwIfAborted();
@@ -300,6 +304,7 @@ async function playMatch(
     requireWinner: true,
     ...(context.reasoningByModel === undefined ? {} : { reasoningByModel: context.reasoningByModel }),
     ...(context.reasoning === undefined ? {} : { reasoning: context.reasoning }),
+    ...(context.timerScale === undefined ? {} : { timerScale: context.timerScale }),
     ...(context.apiKeys === undefined ? {} : { apiKeys: context.apiKeys }),
     ...(context.signal === undefined ? {} : { signal: context.signal }),
     onGameUpdate: (game, lines, publicLines) =>

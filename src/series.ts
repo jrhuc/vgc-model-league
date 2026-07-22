@@ -10,7 +10,7 @@ import { seededRng } from './random.js';
 import { ShowdownReference } from './reference.js';
 import { SimBattle } from './sim.js';
 import type { Team } from './teams.js';
-import type { BattleOutcome, JsonObject, Pid, PlayerOptions } from './types.js';
+import type { BattleOutcome, JsonObject, Pid, PlayerOptions, TimerScale } from './types.js';
 
 export function makeEngine(
   pid: Pid,
@@ -78,7 +78,7 @@ export interface Bo3Context {
   seriesDir: string;
   format: string;
   psDir: string;
-  timer?: boolean;
+  timerScale?: TimerScale;
   signal?: AbortSignal;
   onGameStart?: (game: number) => void;
   onGameUpdate?: (game: number, lines: string[], publicLines: string[]) => void;
@@ -123,7 +123,7 @@ export async function playBo3(context: Bo3Context): Promise<Bo3Result> {
     const onUpdate = (lines: string[], publicLines: string[]) => context.onGameUpdate?.(gameNumber, lines, publicLines);
     const outcome = context.runBattle
       ? await context.runBattle(gameSeed, onUpdate)
-      : await new SimBattle(context.format, players, gameSeed, context.psDir, context.timer ?? true).run(
+      : await new SimBattle(context.format, players, gameSeed, context.psDir, context.timerScale ?? 1).run(
           engines,
           onUpdate,
           context.signal,
@@ -191,6 +191,7 @@ export interface RecordedSeriesContext extends ModelReasoningConfig {
   onGameEnd?: (game: number, winner: string | null, turns: number, score: Record<Pid, number>) => void;
   onDecision?: (pid: Pid, row: JsonObject) => void;
   requireWinner?: boolean;
+  timerScale?: TimerScale;
 }
 
 export interface RecordedSeriesFields extends JsonObject {
@@ -206,6 +207,7 @@ export interface RecordedSeriesFields extends JsonObject {
   turns: number;
   games: JsonObject[];
   engine_seeds: Record<Pid, number>;
+  timer_scale: number | 'off';
   reasoning: ReasoningLevel | null;
   reasoning_by_player?: Record<Pid, ReasoningLevel | null>;
   decision_stats: JsonObject;
@@ -267,6 +269,7 @@ export async function playRecordedSeries(context: RecordedSeriesContext): Promis
     format: context.format,
     psDir: context.psDir,
     ...(context.requireWinner === undefined ? {} : { requireWinner: context.requireWinner }),
+    ...(context.timerScale === undefined ? {} : { timerScale: context.timerScale }),
     ...(context.signal === undefined ? {} : { signal: context.signal }),
     ...(context.onGameUpdate === undefined ? {} : { onGameUpdate: context.onGameUpdate }),
     ...(context.onGameEnd === undefined ? {} : { onGameEnd: context.onGameEnd }),
@@ -290,6 +293,7 @@ export async function playRecordedSeries(context: RecordedSeriesContext): Promis
       turns: games.reduce((sum, game) => sum + Number(game.turns), 0),
       games,
       engine_seeds: context.engineSeeds,
+      timer_scale: context.timerScale ?? 1,
       reasoning: context.reasoning ?? null,
       ...(context.reasoningByModel === undefined
         ? {}

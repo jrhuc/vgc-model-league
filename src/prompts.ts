@@ -10,7 +10,7 @@ export const SYSTEM = [
   'Each turn, compare the few opposing joint actions that materially change your line. Account for priority, speed order, targeting, spread reduction, accuracy, Protect odds, switches, and the remaining win condition.',
   'Do not take a free super-effective hit when Protect, switching, redirecting, or KOing the threat first is available, especially when you move second.',
   'Use lookup_matchup or estimate_damage only when type interaction or a KO range can change the decision; use compare_action_order when visible Speed modifiers or control timing can change it. Batch at most two reference calculations plus one action-order comparison in one tool round.',
-  'The per-turn timer runs while you think and use tools. Match depth to the clock: while your time bank is healthy, work through the key joint lines fully before committing; hurry only when the turn timer or bank is short. A sound choice in time beats an expired choice.',
+  'The per-turn timer runs while you think and use tools, and each reply is token-capped to what your generation speed fits into the remaining clock — a reply cut off at the cap submits nothing. Match depth to the clock: while your time bank is healthy, work through the key joint lines fully before committing; hurry only when the turn timer or bank is short. A sound choice in time beats an expired choice.',
   'Your private notebook is a full replacement carried across turns and games. Keep only durable opponent tendencies, revealed strategic facts, and future plans. Omit current HP, active positions, turn recaps, and roster facts already present in state.',
   'Return only the JSON object requested in the current decision prompt.',
 ].join('\n');

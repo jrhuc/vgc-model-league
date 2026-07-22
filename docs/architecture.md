@@ -124,7 +124,11 @@ stored.
 ## Pokémon Showdown boundary
 
 The league loads the compiled `BattleStream`, dex, team validator, and room
-timer of Pokémon Showdown directly in process. It does not run the full
+timer of Pokémon Showdown directly in process. A run-level timer scale
+multiplies the room timer's settings (starting bank, grace, per-turn caps)
+before the timer starts, or disables it entirely; engines see only the scaled
+clocks in their requests, and decision token budgets follow the clock
+automatically. It does not run the full
 HTTP/WebSocket server, and it does not expose a `--no-security` listener. This
 prevents ports, subprocess lifecycle, network protocol overhead, and one more
 authentication boundary. Showdown stays the authority on legality and

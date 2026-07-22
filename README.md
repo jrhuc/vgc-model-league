@@ -72,8 +72,12 @@ npm run vgcleague -- report    --pool regmb-202607
 
 All experiment commands accept `--seed` for reproducible runs. They accept
 `--reasoning <level>` to set the provider reasoning effort. Rotation,
-tournament, and draft also accept `--concurrency` for parallel series. The CLI
-rejects an unsupported reasoning level before the run starts.
+tournament, and draft also accept `--concurrency` for parallel series and
+`--timer-scale <n|off>` to multiply the Showdown battle timer (0.5–4, e.g.
+`1.5` gives every clock 1.5x the standard VGC time; `off` disables the timer).
+The scale is recorded in the run config and every series row, so runs at
+different scales can be compared. The CLI rejects an unsupported reasoning
+level before the run starts.
 
 A failed series stops the full run. Queued series do not start. In-flight
 series stop. Completed series stay on disk. A run that the league reports as

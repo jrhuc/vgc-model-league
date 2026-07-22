@@ -17,7 +17,7 @@ import { showdownCommit } from './showdown.js';
 import type { Team } from './teams.js';
 import { normalizePackedTeam, validateTeam } from './teams.js';
 import type { TournamentEvent } from './tournament.js';
-import type { ContributorAttribution, Pid } from './types.js';
+import type { ContributorAttribution, Pid, TimerScale } from './types.js';
 
 export const DRAFT_PROTOCOL_VERSION = 1;
 
@@ -26,6 +26,7 @@ export type DraftLeagueEvent = TournamentEvent | { type: 'draft'; draft: DraftVi
 export interface DraftLeagueOptions extends ModelReasoningConfig {
   seed?: number;
   concurrency?: number;
+  timerScale?: TimerScale;
   recordsPath?: string;
   psDir?: string;
   boardsDir?: string;
@@ -176,6 +177,7 @@ export async function runDraftLeague(
         concurrency: options.concurrency ?? 2,
         reasoning: options.reasoning ?? null,
         reasoning_by_model: options.reasoningByModel ?? null,
+        timer_scale: options.timerScale ?? 1,
         board: board.id,
         format: board.format,
         entrants,
@@ -211,6 +213,7 @@ export async function runDraftLeague(
       ...(options.reasoning === undefined ? {} : { reasoning: options.reasoning }),
       ...(options.apiKeys === undefined ? {} : { apiKeys: options.apiKeys }),
       ...(options.reasoningByModel === undefined ? {} : { reasoningByModel: options.reasoningByModel }),
+      ...(options.timerScale === undefined ? {} : { timerScale: options.timerScale }),
       onGameUpdate: (game, lines, publicLines) =>
         options.onEvent?.({ type: 'game-update', index: plan.index, game, lines, publicLines }),
       onGameEnd: (game, winner, turns, score) =>

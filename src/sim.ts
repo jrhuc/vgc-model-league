@@ -3,7 +3,7 @@ import { defaultPsDir } from './paths.js';
 import { loadShowdown } from './showdown.js';
 import type { TimerEvent } from './timer.js';
 import { TimerAdapter } from './timer.js';
-import type { BattleAgent, BattleOutcome, BattleRequest, Pid, PlayerOptions } from './types.js';
+import type { BattleAgent, BattleOutcome, BattleRequest, Pid, PlayerOptions, TimerScale } from './types.js';
 
 interface RouteState {
   pov: Record<Pid, string[]>;
@@ -80,7 +80,7 @@ export class SimBattle {
     readonly players: Record<Pid, PlayerOptions>,
     seed?: number | [number, number, number, number],
     psDir = defaultPsDir(),
-    private readonly timerEnabled = true,
+    private readonly timerScale: TimerScale = 1,
   ) {
     this.psDir = psDir;
     if (Array.isArray(seed)) {
@@ -156,7 +156,7 @@ export class SimBattle {
     if (this.seed) start.seed = this.seed;
     stream.write(`>start ${JSON.stringify(start)}`);
     for (const pid of ['p1', 'p2'] as const) stream.write(`>player ${pid} ${JSON.stringify(this.players[pid])}`);
-    const timer = new TimerAdapter(this.format, stream, timerEvent, this.psDir, this.timerEnabled);
+    const timer = new TimerAdapter(this.format, stream, timerEvent, this.psDir, this.timerScale);
     for (const pid of ['p1', 'p2'] as const) timer.setPlayer(pid, this.players[pid].name);
 
     const schedule = (pid: Pid, request: BattleRequest, error?: string) => {

@@ -152,7 +152,7 @@ export async function runExhibition(runDir: string, options: ExhibitionOptions):
       seriesDir,
       format: pool.format,
       psDir,
-      timer: false,
+      timerScale: 'off',
       onGameStart: (game) => {
         bridge.status = { ...bridge.status, game };
         notice(`game ${game} started`);

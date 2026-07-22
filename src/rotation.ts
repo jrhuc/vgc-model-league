@@ -14,7 +14,7 @@ import { playRecordedSeries } from './series.js';
 import { showdownCommit } from './showdown.js';
 import type { Team } from './teams.js';
 import { loadPool, validatePool } from './teams.js';
-import type { ContributorAttribution, ExperimentMode, JsonObject, Pid } from './types.js';
+import type { ContributorAttribution, ExperimentMode, JsonObject, Pid, TimerScale } from './types.js';
 export const ROTATION_PROTOCOL_VERSION = 1;
 
 interface SeriesPlan {
@@ -43,6 +43,7 @@ export type RotationEvent =
 export interface RotationOptions extends ModelReasoningConfig {
   seed?: number;
   concurrency?: number;
+  timerScale?: TimerScale;
   recordsPath?: string;
   psDir?: string;
   apiKeys?: Readonly<Record<string, string>>;
@@ -103,6 +104,7 @@ export async function runRotation(
         concurrency: options.concurrency ?? 2,
         reasoning: options.reasoning ?? null,
         reasoning_by_model: options.reasoningByModel ?? null,
+        timer_scale: options.timerScale ?? 1,
         pool: pool.id,
         format: pool.format,
         contributor: options.contributor ?? null,
@@ -126,6 +128,7 @@ export async function runRotation(
       signal,
       ...(options.reasoning === undefined ? {} : { reasoning: options.reasoning }),
       ...(options.reasoningByModel === undefined ? {} : { reasoningByModel: options.reasoningByModel }),
+      ...(options.timerScale === undefined ? {} : { timerScale: options.timerScale }),
       ...(options.apiKeys === undefined ? {} : { apiKeys: options.apiKeys }),
       onGameUpdate: (game, lines, publicLines) =>
         options.onEvent?.({ type: 'game-update', index: plan.index, game, lines, publicLines }),

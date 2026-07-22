@@ -28,6 +28,9 @@ export interface BattleRequest extends JsonObject {
   };
 }
 
+/** Multiplier applied to the Showdown battle timer; 'off' disables it entirely. */
+export type TimerScale = number | 'off';
+
 export interface AgentContext {
   povLines: string[];
   error?: string;
