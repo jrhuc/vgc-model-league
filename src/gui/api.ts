@@ -95,7 +95,6 @@ export interface DraftView {
   picks: DraftPickView[];
   /** Mon ids per entrant, in pick order. */
   rosters: string[][];
-  /** Remaining points per entrant. */
   budgets: number[];
   /** Round-robin table, present once battles begin; sorted by rank. */
   table: DraftTableRow[] | null;
@@ -146,13 +145,18 @@ export interface SampleTeam {
   paste: string;
 }
 
+export interface PoolTeamsResponse {
+  name: string;
+  format: string;
+  teams: SampleTeam[];
+}
+
 export interface AppState {
   pools: PoolInfo[];
   reasoningLevels: string[];
   defaultFormat: string;
   formats: FormatInfo[];
   providers: ProviderInfo[];
-  /** Ready-to-play pastes from the default pool that prefill the exhibition match form. */
   sampleTeams: SampleTeam[];
   boards: BoardInfo[];
   auth: AuthView;
@@ -166,6 +170,7 @@ export interface MonView {
   status: string;
   fainted: boolean;
   boosts: string;
+  volatiles: string;
   lastMove: string;
 }
 
@@ -175,16 +180,49 @@ export interface SideView {
   mons: MonView[];
 }
 
+export interface BattleLogEntryView {
+  turn: number;
+  kind: string;
+  text: string;
+}
+
+export interface SideTimerView {
+  /** Remaining time bank in seconds as of snapshot generation; null when the simulator did not report one. */
+  seconds: number | null;
+  turnSeconds: number | null;
+  /** True while the player is deciding; clients may count down from the snapshot time. */
+  running: boolean;
+}
+
+export interface DecisionView {
+  game: number;
+  turn: number;
+  pid: Pid;
+  phase: string;
+  selection: string[];
+  rationale: string;
+  error: string;
+  automatic: boolean;
+  fallback: boolean;
+  substituted: boolean;
+}
+
 export interface BattleSnapshot {
   turn: number;
   weather: string;
   fields: string[];
   sides: Record<Pid, SideView>;
+  timers: Record<Pid, SideTimerView | null>;
+  log: BattleLogEntryView[];
+  decisions: DecisionView[];
 }
 
 export interface BattleMessage {
   index: number;
   game: number;
+  /** Game numbers with a retained log, ascending; pass ?game= to fetch one. */
+  games: number[];
+  revision: number;
   snapshot: BattleSnapshot | null;
 }
 
@@ -231,6 +269,10 @@ export interface ValidateResponse {
   species: string[];
   members: TeamMemberView[];
   problems: string[];
+}
+
+export interface PokepasteResponse {
+  paste: string;
 }
 
 export interface CreatePoolResponse {

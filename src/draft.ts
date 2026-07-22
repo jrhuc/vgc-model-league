@@ -5,10 +5,10 @@ import path from 'node:path';
 import type { BoardInfo, DraftBoardMonView, DraftPickView } from './gui/api.js';
 import { BOARDS_DIR, defaultPsDir } from './paths.js';
 import type { ModelReasoningConfig, ReasoningLevel } from './providers.js';
-import { makeProvider, parseSpec, reasoningForModel } from './providers.js';
+import { classifyProviderFailure, makeProvider, parseSpec, reasoningForModel } from './providers.js';
 import type { Rng } from './random.js';
 import { loadShowdown } from './showdown.js';
-import type { Provider } from './types.js';
+import type { Provider, ProviderMessage } from './types.js';
 import { text } from './value.js';
 
 const BOARD_SLUG = /^[a-z0-9][a-z0-9-]{0,63}$/;
@@ -85,7 +85,7 @@ export function listBoards(boardsDir = BOARDS_DIR): BoardInfo[] {
   return infos;
 }
 
-export function loadBoard(name: string, boardsDir = BOARDS_DIR): DraftBoard {
+export function loadBoard(name: string, boardsDir = BOARDS_DIR, psDir = defaultPsDir()): DraftBoard {
   if (!BOARD_SLUG.test(name)) throw new Error('board name must be lowercase letters, digits, and dashes');
   const file = path.join(boardsDir, `${name}.json`);
   const data: unknown = JSON.parse(fs.readFileSync(file, 'utf8'));
@@ -96,11 +96,13 @@ export function loadBoard(name: string, boardsDir = BOARDS_DIR): DraftBoard {
   const budget = Number(manifest.budget);
   const picks = Number(manifest.picks);
   if (!id || !format.endsWith('bo3')) throw new Error(`${file} needs an id and a BO3 format`);
+  if (id !== name) throw new Error(`${file} id must match its filename`);
   if (!Number.isInteger(budget) || budget < 1 || !Number.isInteger(picks) || picks < 4) {
     throw new Error(`${file} needs an integer budget and at least 4 picks per entrant`);
   }
   const entries = Array.isArray(manifest.mons) ? manifest.mons : [];
   const seen = new Set<string>();
+  const { Teams } = loadShowdown(psDir);
   const mons = entries.map((entry) => {
     const record = entry as Record<string, unknown>;
     const mon: DraftBoardMon = {
@@ -120,6 +122,9 @@ export function loadBoard(name: string, boardsDir = BOARDS_DIR): DraftBoard {
       mon.cost < 1
     ) {
       throw new Error(`invalid board entry ${JSON.stringify(record.id)} in ${file}`);
+    }
+    if ((Teams.unpack(mon.packed) ?? []).length !== 1) {
+      throw new Error(`board entry ${JSON.stringify(mon.id)} in ${file} must contain exactly one packed set`);
     }
     if (seen.has(mon.id)) throw new Error(`duplicate board entry ${JSON.stringify(mon.id)} in ${file}`);
     seen.add(mon.id);
@@ -152,8 +157,16 @@ export function describeBoardMon(mon: DraftBoardMon, psDir = defaultPsDir()): Dr
   };
 }
 
-/** Pokémon-Showdown set objects are format-defined; keep them opaque. */
 type ShowdownSet = NonNullable<ReturnType<ReturnType<typeof loadShowdown>['Teams']['unpack']>>[number];
+type ShowdownValidator = { validateTeam(team: ShowdownSet[]): string[] | null };
+
+interface DraftCandidate {
+  index: number;
+  mon: DraftBoardMon;
+  set: ShowdownSet;
+  species: string;
+  item: string;
+}
 
 export interface DraftState {
   board: DraftBoard;
@@ -169,32 +182,151 @@ function unpackMon(mon: DraftBoardMon, psDir: string): ShowdownSet {
   return set;
 }
 
-/**
- * A pick is legal when the mon is undrafted, leaves enough budget to finish the
- * roster at minimum cost, and keeps the partial team valid under the real
- * format validator — which enforces species and item clauses exactly. Only the
- * team-size complaint is ignored while the roster is short.
- */
-export function legalPicks(state: DraftState, drafter: number, psDir = defaultPsDir()): DraftBoardMon[] {
-  const { TeamValidator } = loadShowdown(psDir);
-  const validator = new TeamValidator(state.board.format);
-  const roster = state.rosters[drafter]!;
-  const picksLeft = state.board.picks - roster.length;
-  const budget = state.budgets[drafter]!;
-  const rosterSets = roster.map((mon) => unpackMon(mon, psDir));
-  const available = state.board.mons.filter((mon) => !state.taken.has(mon.id));
-  const cheapest = [...available].sort((a, b) => a.cost - b.cost);
-  return available.filter((mon) => {
-    const remaining = cheapest.filter((candidate) => candidate !== mon).slice(0, picksLeft - 1);
-    if (
-      remaining.length < picksLeft - 1 ||
-      mon.cost + remaining.reduce((sum, candidate) => sum + candidate.cost, 0) > budget
-    ) {
-      return false;
+function canCompleteDraft(
+  validator: ShowdownValidator,
+  rosters: DraftCandidate[][],
+  candidates: DraftCandidate[],
+  slots: number[],
+  budgets: number[],
+): boolean {
+  let availableMask = 0n;
+  for (const candidate of candidates) availableMask |= 1n << BigInt(candidate.index);
+  const failed = new Set<string>();
+  const formatLegality = new Map<bigint, boolean>();
+
+  const rosterIsLegal = (roster: DraftCandidate[]): boolean => {
+    let mask = 0n;
+    for (const candidate of roster) mask |= 1n << BigInt(candidate.index);
+    const cached = formatLegality.get(mask);
+    if (cached !== undefined) return cached;
+    const legal = (validator.validateTeam(roster.map((candidate) => candidate.set)) ?? []).every((problem) =>
+      /must bring at least/i.test(problem),
+    );
+    formatLegality.set(mask, legal);
+    return legal;
+  };
+
+  const search = (mask: bigint, remainingSlots: number[]): boolean => {
+    const key = `${mask}:${remainingSlots.join(',')}`;
+    if (failed.has(key)) return false;
+
+    let entrant = -1;
+    let eligible: DraftCandidate[] = [];
+    let tightness = Number.POSITIVE_INFINITY;
+    for (const [index, needed] of remainingSlots.entries()) {
+      if (needed === 0) continue;
+      const species = new Set(rosters[index]!.map((candidate) => candidate.species));
+      const items = new Set(rosters[index]!.map((candidate) => candidate.item).filter(Boolean));
+      const choices = candidates.filter(
+        (candidate) =>
+          (mask & (1n << BigInt(candidate.index))) !== 0n &&
+          !species.has(candidate.species) &&
+          !(candidate.item && items.has(candidate.item)),
+      );
+      if (choices.length < needed) {
+        failed.add(key);
+        return false;
+      }
+      let minimumCost = 0;
+      for (let offset = 0; offset < needed; offset += 1) minimumCost += choices[offset]!.mon.cost;
+      if (minimumCost > budgets[index]!) {
+        failed.add(key);
+        return false;
+      }
+      if (choices.length - needed < tightness) {
+        entrant = index;
+        eligible = choices;
+        tightness = choices.length - needed;
+      }
     }
-    const problems: string[] = validator.validateTeam([...rosterSets, unpackMon(mon, psDir)]) ?? [];
-    return problems.every((problem) => /must bring at least/i.test(problem));
+    if (entrant < 0) return true;
+
+    const selected: DraftCandidate[] = [];
+    const species = new Set(rosters[entrant]!.map((candidate) => candidate.species));
+    const items = new Set(rosters[entrant]!.map((candidate) => candidate.item).filter(Boolean));
+    const assign = (start: number, needed: number, points: number, selectedMask: bigint): boolean => {
+      if (needed === 0) {
+        if (!rosterIsLegal([...rosters[entrant]!, ...selected])) return false;
+        const nextSlots = [...remainingSlots];
+        nextSlots[entrant] = 0;
+        return search(mask & ~selectedMask, nextSlots);
+      }
+      if (eligible.length - start < needed) return false;
+
+      let minimumCost = 0;
+      for (let offset = 0; offset < needed; offset += 1) minimumCost += eligible[start + offset]!.mon.cost;
+      if (minimumCost > points) return false;
+
+      for (let index = start; index <= eligible.length - needed; index += 1) {
+        const candidate = eligible[index]!;
+        if (candidate.mon.cost > points) break;
+        if (species.has(candidate.species) || (candidate.item && items.has(candidate.item))) continue;
+        const bit = 1n << BigInt(candidate.index);
+        selected.push(candidate);
+        species.add(candidate.species);
+        if (candidate.item) items.add(candidate.item);
+        const complete = assign(index + 1, needed - 1, points - candidate.mon.cost, selectedMask | bit);
+        selected.pop();
+        species.delete(candidate.species);
+        if (candidate.item) items.delete(candidate.item);
+        if (complete) return true;
+      }
+      return false;
+    };
+
+    const complete = assign(0, remainingSlots[entrant]!, budgets[entrant]!, 0n);
+    if (!complete) failed.add(key);
+    return complete;
+  };
+
+  return search(availableMask, slots);
+}
+
+export function legalPicks(state: DraftState, drafter: number, psDir = defaultPsDir()): DraftBoardMon[] {
+  const roster = state.rosters[drafter]!;
+  if (roster.length >= state.board.picks) return [];
+
+  const { Dex, TeamValidator } = loadShowdown(psDir);
+  const validator = new TeamValidator(state.board.format);
+  const candidates = state.board.mons.map((mon, index): DraftCandidate => {
+    const set = unpackMon(mon, psDir);
+    return {
+      index,
+      mon,
+      set,
+      species: Dex.species.get(set.species || set.name).baseSpecies,
+      item: Dex.items.get(set.item).id,
+    };
   });
+  const candidateById = new Map(candidates.map((candidate) => [candidate.mon.id, candidate]));
+  const rosters = state.rosters.map((mons) => mons.map((mon) => candidateById.get(mon.id)!));
+  const rosterSets = rosters.map((candidates) => candidates.map((candidate) => candidate.set));
+  const available = candidates.filter((candidate) => !state.taken.has(candidate.mon.id));
+  const cheapest = [...available].sort((a, b) => a.mon.cost - b.mon.cost);
+
+  return available
+    .filter((candidate) => {
+      const selectedSets = rosterSets[drafter]!;
+      selectedSets.push(candidate.set);
+      const valid = (validator.validateTeam(selectedSets) ?? []).every((problem) =>
+        /must bring at least/i.test(problem),
+      );
+      selectedSets.pop();
+      if (!valid) return false;
+
+      const future = cheapest.filter((other) => other !== candidate);
+      const projectedRosters = rosters.map((otherRoster, entrant) =>
+        entrant === drafter ? [...otherRoster, candidate] : otherRoster,
+      );
+      const slots = state.rosters.map(
+        (otherRoster, entrant) => state.board.picks - otherRoster.length - (entrant === drafter ? 1 : 0),
+      );
+      const budgets = state.budgets.map((budget, entrant) => budget - (entrant === drafter ? candidate.mon.cost : 0));
+      return (
+        budgets.every((budget) => budget >= 0) && canCompleteDraft(validator, projectedRosters, future, slots, budgets)
+      );
+    })
+    .map((candidate) => candidate.mon);
 }
 
 export interface DraftSeatLog {
@@ -210,12 +342,10 @@ export interface DraftSeatLog {
 export interface RunDraftOptions extends ModelReasoningConfig {
   psDir?: string;
   apiKeys?: Readonly<Record<string, string>>;
-  /** Per-drafter prompt/response logs and the shared draft transcript land here. */
   logDir: string;
   rng: Rng;
   signal?: AbortSignal;
   onPick?: (view: DraftPickView, state: DraftState) => void;
-  /** Test seam; defaults to real provider construction. */
   makeDraftProvider?: (spec: string, apiKey: string | undefined, reasoning: ReasoningLevel | undefined) => Provider;
 }
 
@@ -387,16 +517,17 @@ export async function runDraft(models: string[], board: DraftBoard, options: Run
     const provider = providers[drafter];
     if (provider) {
       const system = systemPrompts[drafter]!;
-      const messages: Array<{ role: 'user'; content: string }> = [
+      const messages: ProviderMessage[] = [
         { role: 'user', content: draftUserPrompt(state, drafter, models, pickNumber, legal, psDir) },
       ];
       let lastError = '';
       for (let attempt = 1; attempt <= DRAFT_PROMPT_POLICY.attempts && !chosen; attempt += 1) {
         options.signal?.throwIfAborted();
-        const promptForAttempt = messages[messages.length - 1]!.content;
+        const promptForAttempt = messages[messages.length - 1]!.content ?? '';
         let response = '';
         let usage: Record<string, number> | undefined;
         let error: string | undefined;
+        let terminalError: Error | undefined;
         try {
           const completion = await provider.complete(system, messages, {
             maxTokens: DRAFT_PROMPT_POLICY.maxTokens,
@@ -409,6 +540,7 @@ export async function runDraft(models: string[], board: DraftBoard, options: Run
           if (typeof parsed === 'string') {
             error = parsed;
             lastError = parsed;
+            messages.push({ role: 'assistant', content: response });
             messages.push({
               role: 'user',
               content: DRAFT_PROMPT_POLICY.rejectionTemplate.replace('{{error}}', parsed),
@@ -418,8 +550,12 @@ export async function runDraft(models: string[], board: DraftBoard, options: Run
             reasoning = parsed.reasoning;
           }
         } catch (cause) {
-          error = cause instanceof Error ? cause.message : String(cause);
+          const failure = classifyProviderFailure(cause, models[drafter]);
+          error = failure.summary;
           lastError = error;
+          if (failure.terminal) {
+            terminalError = new Error(`${failure.summary} The run cannot continue.`, { cause });
+          }
         }
         fs.appendFileSync(
           seatLogs[drafter]!,
@@ -434,6 +570,7 @@ export async function runDraft(models: string[], board: DraftBoard, options: Run
           } satisfies DraftSeatLog)}\n`,
           'utf8',
         );
+        if (terminalError) throw terminalError;
       }
       if (!chosen) {
         chosen = legal[Math.floor(options.rng() * legal.length)]!;

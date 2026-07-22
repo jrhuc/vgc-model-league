@@ -11,6 +11,7 @@ import {
   jsonSchema,
   type LanguageModel,
   type ModelMessage,
+  type ToolCallPart,
   type ToolSet,
   tool,
 } from 'ai';
@@ -19,6 +20,20 @@ import { redactSecrets } from './sanitize.js';
 import type { CompleteOptions, Completion, JsonObject, Provider, ProviderMessage } from './types.js';
 
 import { isRecord } from './value.js';
+
+// Gemini signs only the first of parallel function calls; the SDK's documented sentinel handles the rest,
+// so its per-part warning is noise. All other AI SDK warnings still log.
+(globalThis as { AI_SDK_LOG_WARNINGS?: unknown }).AI_SDK_LOG_WARNINGS = (options: {
+  warnings: Array<{ message?: string }>;
+  provider: string;
+  model: string;
+}) => {
+  for (const warning of options.warnings) {
+    const message = warning.message ?? JSON.stringify(warning);
+    if (message.includes('skip_thought_signature_validator')) continue;
+    console.warn(`AI SDK Warning (${options.provider} / ${options.model}): ${message}`);
+  }
+};
 
 export const REASONING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const;
 export type ReasoningLevel = (typeof REASONING_LEVELS)[number];
@@ -40,14 +55,12 @@ export function validateModelExecution(
   if (!config.apiKeys) return;
   for (const model of models) {
     if (model !== 'random' && config.apiKeys[model] === undefined)
-      throw new Error(
-        `no API key was supplied for ${model}; key-carrying runs never fall back to server environment keys`,
-      );
+      throw new Error(`API key missing for ${model}; this run cannot use environment keys`);
   }
 }
 
 export const USAGE =
-  'Usage: anthropic:<model>, openai:<model>, google:<model>, xai:<model>, deepseek:<model>, meta:<model>, kimi:<model>, zai:<model>, openrouter:<model>, cerebras:<model>, compat:<base_url>:<model>, or random';
+  'Usage: anthropic:<model>, openai:<model>, google:<model>, xai:<model>, deepseek:<model>, meta:<model>, kimi:<model>, zai:<model>, openrouter:<model>, opencode-go:<model>, opencode-zen:<model>, vercel:<model>, cerebras:<model>, compat:<base_url>:<model>, or random';
 
 const COMPAT_BASE_URLS: Record<string, string> = {
   xai: 'https://api.x.ai/v1',
@@ -56,15 +69,24 @@ const COMPAT_BASE_URLS: Record<string, string> = {
   kimi: 'https://api.moonshot.ai/v1',
   zai: 'https://api.z.ai/api/paas/v4',
   openrouter: 'https://openrouter.ai/api/v1',
+  'opencode-go': 'https://opencode.ai/zen/go/v1',
+  'opencode-zen': 'https://opencode.ai/zen/v1',
+  vercel: 'https://ai-gateway.vercel.sh/v1',
   cerebras: 'https://api.cerebras.ai/v1',
 };
 
-const COMPAT_ENV_KEYS: Record<string, string> = Object.fromEntries(
-  Object.keys(COMPAT_BASE_URLS).map((provider) => [provider, `${provider.toUpperCase()}_API_KEY`]),
-);
-COMPAT_ENV_KEYS.meta = 'META_MODEL_API_KEY';
-COMPAT_ENV_KEYS.kimi = 'MOONSHOT_API_KEY';
-
+const COMPAT_ENV_KEYS: Record<string, string> = {
+  xai: 'XAI_API_KEY',
+  deepseek: 'DEEPSEEK_API_KEY',
+  meta: 'META_MODEL_API_KEY',
+  kimi: 'MOONSHOT_API_KEY',
+  zai: 'ZAI_API_KEY',
+  openrouter: 'OPENROUTER_API_KEY',
+  'opencode-go': 'OPENCODE_API_KEY',
+  'opencode-zen': 'OPENCODE_API_KEY',
+  vercel: 'AI_GATEWAY_API_KEY',
+  cerebras: 'CEREBRAS_API_KEY',
+};
 export interface ProviderSpec {
   provider: string;
   model: string;
@@ -190,6 +212,7 @@ export function assistantToolMessage(completion: Completion): ProviderMessage {
     role: 'assistant',
     content: completion.text || null,
     toolCalls: completion.toolCalls.map((call, index) => ({ ...call, id: call.id || `call_${index}` })),
+    ...(completion.responseMessages?.length ? { raw: completion.responseMessages } : {}),
   };
 }
 
@@ -204,6 +227,104 @@ export class ApiError extends Error {
   ) {
     super(message);
     this.name = 'ApiError';
+  }
+}
+
+export type ProviderFailureKind =
+  | 'quota'
+  | 'rate_limit'
+  | 'timeout'
+  | 'truncation'
+  | 'upstream'
+  | 'network'
+  | 'request';
+
+export interface ProviderFailure {
+  kind: ProviderFailureKind;
+  summary: string;
+  terminal: boolean;
+  /** Whether retrying the call may help before giving up; defaults to !terminal. */
+  retryable?: boolean;
+}
+
+const HARD_QUOTA_ERROR =
+  /(?:insufficient[_ -]?quota|exceeded your current quota|free[_ -]?tier[_ -]?requests|requests?[_ -]?per[_ -]?day|generateRequestsPerDay|credit balance|billing quota)/i;
+
+export function classifyProviderFailure(error: unknown, spec = 'provider'): ProviderFailure {
+  const message = error instanceof Error ? error.message : String(error);
+  const status = error instanceof ApiError ? error.status : Number(/\b([45]\d\d)\b/.exec(message)?.[1] ?? 0);
+  const provider = spec.split(':', 1)[0] || 'provider';
+  const label =
+    (
+      {
+        anthropic: 'Anthropic',
+        cerebras: 'Cerebras',
+        deepseek: 'DeepSeek',
+        google: 'Google',
+        kimi: 'Kimi',
+        meta: 'Meta',
+        openai: 'OpenAI',
+        openrouter: 'OpenRouter',
+        'opencode-go': 'OpenCode Go',
+        xai: 'xAI',
+        zai: 'Z.ai',
+      } as Record<string, string>
+    )[provider] ?? provider.charAt(0).toUpperCase() + provider.slice(1);
+  const suffix = status ? ` (${status})` : '';
+  if (HARD_QUOTA_ERROR.test(message)) {
+    return { kind: 'quota', summary: `${label} API quota is exhausted${suffix}.`, terminal: true };
+  }
+  if ((status === 0 || status === 408) && /(?:timed? ?out|timeout|time exhausted)/i.test(message)) {
+    return { kind: 'timeout', summary: `${label} API request timed out.`, terminal: false };
+  }
+  if (status === 0 && /^reasoning exhausted the \d+-token response budget$/i.test(message.trim())) {
+    return {
+      kind: 'truncation',
+      summary: `${label} API spent the whole response budget on reasoning and returned no answer.`,
+      terminal: false,
+    };
+  }
+  if (status === 0 && /^empty response$/i.test(message.trim())) {
+    return {
+      kind: 'upstream',
+      summary: `${label} API returned no usable response.`,
+      terminal: true,
+      retryable: true,
+    };
+  }
+  if (status === 0 && error instanceof ApiError) {
+    return { kind: 'network', summary: `${label} API could not be reached.`, terminal: false };
+  }
+  if (status === 409 || status === 425) {
+    return { kind: 'upstream', summary: `${label} API request was temporarily blocked (${status}).`, terminal: false };
+  }
+  if (status === 429) {
+    return { kind: 'rate_limit', summary: `${label} API rate limit was reached (429).`, terminal: false };
+  }
+  if (error instanceof TypeError) {
+    return { kind: 'network', summary: `${label} API could not be reached.`, terminal: false };
+  }
+  if (status >= 500 && status !== 501 && status !== 505) {
+    return { kind: 'upstream', summary: `${label} API is temporarily unavailable (${status}).`, terminal: false };
+  }
+  if (status === 401 || status === 403) {
+    return { kind: 'request', summary: `${label} API rejected the credentials${suffix}.`, terminal: true };
+  }
+  if (status === 404) {
+    return { kind: 'request', summary: `${label} model or endpoint was not found (404).`, terminal: true };
+  }
+  return { kind: 'request', summary: `${label} API request failed${suffix}.`, terminal: true };
+}
+
+function openRouterErrorStatus(responseBody: string | undefined): number | undefined {
+  if (!responseBody) return undefined;
+  try {
+    const body: unknown = JSON.parse(responseBody);
+    if (!isRecord(body) || !isRecord(body.error)) return undefined;
+    const code = typeof body.error.code === 'string' ? Number(body.error.code) : body.error.code;
+    return Number.isInteger(code) && Number(code) >= 400 && Number(code) <= 599 ? Number(code) : undefined;
+  } catch {
+    return undefined;
   }
 }
 
@@ -231,6 +352,10 @@ function convertMessages(messages: ProviderMessage[]): ModelMessage[] {
       });
     } else if (message.role === 'assistant' && message.toolCalls?.length) {
       for (const call of message.toolCalls) callNames.set(call.id, call.name);
+      if (message.raw?.length) {
+        converted.push(...(message.raw as unknown as ModelMessage[]));
+        continue;
+      }
       converted.push({
         role: 'assistant',
         content: [
@@ -240,6 +365,9 @@ function convertMessages(messages: ProviderMessage[]): ModelMessage[] {
             toolCallId: call.id,
             toolName: call.name,
             input: call.arguments,
+            ...(call.providerMetadata
+              ? { providerOptions: call.providerMetadata as NonNullable<ToolCallPart['providerOptions']> }
+              : {}),
           })),
         ],
       });
@@ -378,6 +506,7 @@ export class SdkProvider implements Provider {
         const reasoningTokens = result.usage.outputTokenDetails?.reasoningTokens ?? 0;
         return {
           text: result.text,
+          finishReason: result.finishReason,
           usage: {
             input_tokens: result.usage.inputTokens ?? 0,
             output_tokens: result.usage.outputTokens ?? 0,
@@ -387,8 +516,12 @@ export class SdkProvider implements Provider {
             id: call.toolCallId,
             name: call.toolName,
             arguments: parseToolArguments(call.input),
+            ...(call.providerMetadata ? { providerMetadata: call.providerMetadata as JsonObject } : {}),
           })),
           ...(reasoningText ? { reasoning: reasoningText } : {}),
+          ...(result.response.messages.length
+            ? { responseMessages: result.response.messages as unknown as JsonObject[] }
+            : {}),
         };
       } catch (error) {
         if (options.signal?.aborted) throw error;
@@ -402,7 +535,9 @@ export class SdkProvider implements Provider {
             continue;
           }
           const detail = redactSecrets(error.responseBody ?? error.message, [apiKey]);
-          const status = error.statusCode ?? 0;
+          const inBandStatus =
+            this.spec.provider === 'openrouter' ? openRouterErrorStatus(error.responseBody) : undefined;
+          const status = inBandStatus ?? error.statusCode ?? 0;
           throw new ApiError(status, `${this.spec.provider}:${this.model} ${status}: ${detail}`);
         }
         throw error;

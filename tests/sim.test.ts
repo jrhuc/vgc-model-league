@@ -4,12 +4,16 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
+import type { BattleStream } from 'pokemon-showdown';
 import { RandomEngine } from '../src/engines.js';
+import { defaultPsDir } from '../src/paths.js';
 import { runRotation } from '../src/rotation.js';
+import type { RoomBattleTimerSettings } from '../src/showdown.js';
 import { routeUpdateLines, SimBattle } from '../src/sim.js';
 import { BattleState } from '../src/state.js';
 import { loadPool } from '../src/teams.js';
-import type { BattleRequest } from '../src/types.js';
+import { parseTimerScale, TimerAdapter } from '../src/timer.js';
+import type { BattleRequest, TimerScale } from '../src/types.js';
 
 test('seeded random VGC battle completes without protocol errors', async () => {
   const pool = loadPool();
@@ -55,6 +59,72 @@ test('Showdown timer defaults a slow decision', { timeout: 25_000 }, async () =>
   const outcome = await battle.run({ p1: new SlowEngine('p1', 1), p2: new RandomEngine('p2', 2) });
   assert.ok(outcome.fallbacks.p1 >= 1);
   assert.ok(outcome.pov.p1.includes('|timer|autodefault'));
+});
+
+test('timer scale multiplies Showdown timer settings and reseeds the banks', () => {
+  const pool = loadPool();
+  const stream = { write: () => {} } as unknown as BattleStream;
+  const events = () => {};
+  const adapter = (scale: TimerScale) =>
+    new TimerAdapter(pool.format, stream, events, defaultPsDir(), scale) as unknown as {
+      timer: { settings: RoomBattleTimerSettings };
+      players: Array<{ secondsLeft?: number; turnSecondsLeft?: number }>;
+    };
+  const base = adapter(1);
+  const scaled = adapter(1.5);
+  for (const key of ['starting', 'grace', 'maxPerTurn', 'maxFirstTurn'] as const) {
+    assert.equal(
+      scaled.timer.settings[key],
+      Math.max(5, Math.round((base.timer.settings[key] * 1.5) / 5) * 5),
+      `${key} scales`,
+    );
+  }
+  assert.equal(scaled.timer.settings.addPerTurn, base.timer.settings.addPerTurn, 'zero addPerTurn stays zero');
+  const bank = scaled.timer.settings.starting + scaled.timer.settings.grace;
+  for (const player of scaled.players) assert.equal(player.secondsLeft, bank);
+  assert.ok(scaled.timer.settings.starting > base.timer.settings.starting);
+});
+
+test('parseTimerScale accepts multipliers and off, rejects everything else', () => {
+  assert.equal(parseTimerScale(undefined), undefined);
+  assert.equal(parseTimerScale(''), undefined);
+  assert.equal(parseTimerScale(1.5), 1.5);
+  assert.equal(parseTimerScale('2'), 2);
+  assert.equal(parseTimerScale('off'), 'off');
+  assert.equal(parseTimerScale('untimed'), 'off');
+  assert.throws(() => parseTimerScale(0.1), /timer scale must be/);
+  assert.throws(() => parseTimerScale(9), /timer scale must be/);
+  assert.throws(() => parseTimerScale('fast'), /timer scale must be/);
+});
+
+test('aborting a battle interrupts timer waits and abandons pending decisions', { timeout: 2_000 }, async () => {
+  const pool = loadPool();
+  const started = Promise.withResolvers<void>();
+  const never = Promise.withResolvers<string>().promise;
+  let abandoned = false;
+  class HangingEngine extends RandomEngine {
+    override act(): Promise<string> {
+      started.resolve();
+      return never;
+    }
+
+    override abandonDecision(): void {
+      abandoned = true;
+    }
+  }
+  const controller = new AbortController();
+  const pending = new SimBattle(
+    pool.format,
+    {
+      p1: { name: 'A-hanging', team: pool.teams[0]!.packed },
+      p2: { name: 'B-random', team: pool.teams[1]!.packed },
+    },
+    [13, 14, 15, 16],
+  ).run({ p1: new HangingEngine('p1', 1), p2: new RandomEngine('p2', 2) }, undefined, controller.signal);
+  await started.promise;
+  controller.abort(new Error('stop requested'));
+  await assert.rejects(pending, /stop requested/);
+  assert.equal(abandoned, true);
 });
 
 test('players can decide concurrently', async () => {

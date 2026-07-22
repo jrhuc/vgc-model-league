@@ -4,25 +4,32 @@ import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { AuthService } from './auth.js';
 import { GuiServer } from './gui/server.js';
-import { AUTH_DB_PATH, prepareDataDirectories, REPO_ROOT, RESULTS_PATH } from './paths.js';
+import { AUTH_DB_PATH, prepareDataDirectories, RESULTS_PATH } from './paths.js';
 import type { ReasoningLevel } from './providers.js';
 import { REASONING_LEVELS } from './providers.js';
 import type { SeriesRecord } from './records.js';
 import { h2h, loadRows, scopeRows, standings, TEST_POOL } from './records.js';
 import { writeReport } from './report.js';
+import { restartGui, stopGui } from './restart.js';
 import { makeRunDirectory, runRotation } from './rotation.js';
+import { parseTimerScale } from './timer.js';
+import type { TimerScale } from './types.js';
 
 const HELP = `Usage: vgcleague <command>
 
 Commands:
   gui [--port <n>] [--host <address>] [--origin <url>]  serve the browser GUI
+  restart [--port <n>] [--host <address>] [--force] [--skip-build]
+      rebuild, stop any GUI on the port, and start a fresh detached one (refuses while a run is active)
+  stop [--port <n>] [--force]         stop the GUI on the port (refuses while a run is active)
   selfcheck                           run one random-vs-random series through the simulator
   rotation --models <spec> <spec>...  run the controlled team-rotation protocol
       [--series-per-pair <n>] [--pool <name>] [--seed <n>] [--concurrency <n>] [--reasoning <level>]
-  tournament --models <spec> <spec>...  play a single-elimination bo3 bracket; each model keeps one team
-      [--pool <name>] [--seed <n>] [--concurrency <n>] [--reasoning <level>]
+      [--timer-scale <n|off>]
+  tournament --models <spec> <spec>...  play a single-elimination BO3 bracket; each model keeps one team
+      [--pool <name>] [--seed <n>] [--concurrency <n>] [--reasoning <level>] [--timer-scale <n|off>]
   draft --models <spec> <spec>...     snake-draft rosters from a board, then round robin and playoffs
-      [--board <name>] [--seed <n>] [--concurrency <n>] [--reasoning <level>]
+      [--board <name>] [--seed <n>] [--concurrency <n>] [--reasoning <level>] [--timer-scale <n|off>]
   exhibition --opponent <spec>        host one bo3 where a terminal agent plays a seat over a local bridge
       [--seat p1|p2] [--name <label>] [--pool <name>] [--seed <n>] [--port <n>] [--reasoning <level>]
       [--agent-dir <path>]
@@ -31,12 +38,37 @@ Commands:
 
 Without --pool, standings and report cover every pool except the disposable "test" pool
 and keep only rotation rows; pass --pool <name> to inspect everything in one pool.
-Exhibition and tournament rows record their mode and never rate the rotation ladder.`;
+Draft, exhibition, and tournament rows record their mode and never rate the rotation ladder.`;
 
 function positiveInteger(name: string, value: string): number {
   const parsed = Number(value);
-  if (!Number.isInteger(parsed) || parsed < 1) throw new Error(`--${name} must be an integer of at least 1`);
+  if (!Number.isSafeInteger(parsed) || parsed < 1) throw new Error(`--${name} must be an integer of at least 1`);
   return parsed;
+}
+
+function optionalInteger(name: string, value: string | undefined): number | undefined {
+  if (value === undefined) return undefined;
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed)) throw new Error(`--${name} must be an integer`);
+  return parsed;
+}
+
+function reasoningLevel(value: string | undefined): ReasoningLevel | undefined {
+  if (value === undefined) return undefined;
+  const level = value as ReasoningLevel;
+  if (!REASONING_LEVELS.includes(level)) {
+    throw new Error(`--reasoning must be one of: ${REASONING_LEVELS.join(', ')}`);
+  }
+  return level;
+}
+
+function timerScaleOption(value: string | undefined): TimerScale | undefined {
+  if (value === undefined) return undefined;
+  try {
+    return parseTimerScale(value);
+  } catch (error) {
+    throw new Error(`--timer-scale ${error instanceof Error ? error.message : String(error)}`);
+  }
 }
 
 function environmentInteger(name: string, fallback: number, minimum: number, maximum: number): number {
@@ -53,6 +85,20 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
   prepareDataDirectories();
   const [command, ...rest] = argv;
   if (command === 'selfcheck') return selfcheck();
+  if (command === 'restart' || command === 'stop') {
+    const { values } = parseArgs({
+      args: rest,
+      options: {
+        port: { type: 'string', default: process.env.PORT ?? '8484' },
+        host: { type: 'string' },
+        force: { type: 'boolean', default: false },
+        'skip-build': { type: 'boolean', default: false },
+      },
+    });
+    const port = positiveInteger('port', values.port);
+    if (command === 'stop') return stopGui({ port, force: values.force });
+    return restartGui({ port, host: values.host, force: values.force, build: !values['skip-build'] });
+  }
   if (command === 'gui') {
     const { values } = parseArgs({
       args: rest,
@@ -95,7 +141,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
     });
     const url = await gui.listen(positiveInteger('port', values.port));
     if (logger) logger({ timestamp: new Date().toISOString(), level: 'info', event: 'server_started', url });
-    else console.log(`VGC Model League GUI at ${url} (ctrl-c to stop)`);
+    else console.log(`VGC Model League GUI at ${url} (Ctrl-C to stop)`);
     let stopping = false;
     const shutdown = (signal: string) => {
       if (stopping) return;
@@ -114,6 +160,8 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
           process.exitCode = 1;
         } finally {
           auth?.close();
+          // A wedged run task must not outlive the server: exit instead of draining the event loop.
+          process.exit(process.exitCode ?? 0);
         }
       })();
     };
@@ -132,15 +180,14 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
         seed: { type: 'string' },
         concurrency: { type: 'string', default: '2' },
         reasoning: { type: 'string' },
+        'timer-scale': { type: 'string' },
       },
     });
     const models = [...(values.models ?? []), ...positionals];
     if (models.length < 2) throw new Error('rotation requires at least two --models');
-    const reasoning = values.reasoning as ReasoningLevel | undefined;
-    if (reasoning && !REASONING_LEVELS.includes(reasoning))
-      throw new Error(`--reasoning must be one of: ${REASONING_LEVELS.join(', ')}`);
-    const seed = values.seed === undefined ? undefined : Number(values.seed);
-    if (seed !== undefined && !Number.isSafeInteger(seed)) throw new Error('--seed must be an integer');
+    const reasoning = reasoningLevel(values.reasoning);
+    const timerScale = timerScaleOption(values['timer-scale']);
+    const seed = optionalInteger('seed', values.seed);
     const rows = await runRotation(
       models,
       positiveInteger('series-per-pair', values['series-per-pair']),
@@ -151,6 +198,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
         recordsPath: RESULTS_PATH,
         ...(seed === undefined ? {} : { seed }),
         ...(reasoning === undefined ? {} : { reasoning }),
+        ...(timerScale === undefined ? {} : { timerScale }),
       },
     );
     printResults(rows);
@@ -166,15 +214,14 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
         seed: { type: 'string' },
         concurrency: { type: 'string', default: '2' },
         reasoning: { type: 'string' },
+        'timer-scale': { type: 'string' },
       },
     });
     const models = [...(values.models ?? []), ...positionals];
     if (models.length < 2) throw new Error('tournament requires at least two --models');
-    const reasoning = values.reasoning as ReasoningLevel | undefined;
-    if (reasoning && !REASONING_LEVELS.includes(reasoning))
-      throw new Error(`--reasoning must be one of: ${REASONING_LEVELS.join(', ')}`);
-    const seed = values.seed === undefined ? undefined : Number(values.seed);
-    if (seed !== undefined && !Number.isSafeInteger(seed)) throw new Error('--seed must be an integer');
+    const reasoning = reasoningLevel(values.reasoning);
+    const timerScale = timerScaleOption(values['timer-scale']);
+    const seed = optionalInteger('seed', values.seed);
     const { runTournament } = await import('./tournament.js');
     const rows = await runTournament(models, makeRunDirectory(), {
       pool: values.pool,
@@ -182,6 +229,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
       recordsPath: RESULTS_PATH,
       ...(seed === undefined ? {} : { seed }),
       ...(reasoning === undefined ? {} : { reasoning }),
+      ...(timerScale === undefined ? {} : { timerScale }),
       onNotice: (line) => console.log(line),
     });
     printResults(rows);
@@ -199,15 +247,14 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
         seed: { type: 'string' },
         concurrency: { type: 'string', default: '2' },
         reasoning: { type: 'string' },
+        'timer-scale': { type: 'string' },
       },
     });
     const models = [...(values.models ?? []), ...positionals];
     if (models.length < 2) throw new Error('draft requires at least two --models');
-    const reasoning = values.reasoning as ReasoningLevel | undefined;
-    if (reasoning && !REASONING_LEVELS.includes(reasoning))
-      throw new Error(`--reasoning must be one of: ${REASONING_LEVELS.join(', ')}`);
-    const seed = values.seed === undefined ? undefined : Number(values.seed);
-    if (seed !== undefined && !Number.isSafeInteger(seed)) throw new Error('--seed must be an integer');
+    const reasoning = reasoningLevel(values.reasoning);
+    const timerScale = timerScaleOption(values['timer-scale']);
+    const seed = optionalInteger('seed', values.seed);
     const { runDraftLeague } = await import('./draftleague.js');
     const runDir = makeRunDirectory();
     const rows = await runDraftLeague(models, runDir, {
@@ -216,6 +263,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
       recordsPath: RESULTS_PATH,
       ...(seed === undefined ? {} : { seed }),
       ...(reasoning === undefined ? {} : { reasoning }),
+      ...(timerScale === undefined ? {} : { timerScale }),
       onEvent: (event) => {
         if (event.type === 'draft' && event.draft.phase === 'draft' && event.draft.picks.length > 0) {
           const pick = event.draft.picks[event.draft.picks.length - 1]!;
@@ -226,8 +274,9 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
       },
     });
     printResults(rows);
-    const finalRow = rows[rows.length - 1];
-    if (finalRow) console.log(`Champion: ${finalRow.winner ?? String(finalRow.players.p1)}`);
+    const champion = rows[rows.length - 1]?.advanced;
+    if (typeof champion !== 'string' || !champion) throw new Error('draft final did not identify a champion');
+    console.log(`Champion: ${champion}`);
     console.log(`Draft logs: ${path.join(runDir, 'draft')}`);
     return 0;
   }
@@ -247,11 +296,8 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
     });
     if (!values.opponent) throw new Error('exhibition requires --opponent <spec|random>');
     if (values.seat !== 'p1' && values.seat !== 'p2') throw new Error('--seat must be p1 or p2');
-    const reasoning = values.reasoning as ReasoningLevel | undefined;
-    if (reasoning && !REASONING_LEVELS.includes(reasoning))
-      throw new Error(`--reasoning must be one of: ${REASONING_LEVELS.join(', ')}`);
-    const seed = values.seed === undefined ? undefined : Number(values.seed);
-    if (seed !== undefined && !Number.isSafeInteger(seed)) throw new Error('--seed must be an integer');
+    const reasoning = reasoningLevel(values.reasoning);
+    const seed = optionalInteger('seed', values.seed);
     const { runExhibition } = await import('./exhibition.js');
     const row = await runExhibition(makeRunDirectory(), {
       opponent: values.opponent,
@@ -278,7 +324,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
       args: rest,
       options: {
         pool: { type: 'string' },
-        out: { type: 'string', default: path.join(REPO_ROOT, 'records', 'report.html') },
+        out: { type: 'string', default: path.join(path.dirname(RESULTS_PATH), 'report.html') },
       },
     });
     if (command === 'report') {
@@ -357,5 +403,10 @@ function printStandings(rows: SeriesRecord[]): void {
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  process.exitCode = await main();
+  try {
+    process.exitCode = await main();
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exitCode = 1;
+  }
 }

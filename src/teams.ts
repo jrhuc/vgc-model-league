@@ -8,6 +8,10 @@ import { asRecords, text } from './value.js';
 
 const POOL_SLUG = /^[a-z0-9][a-z0-9-]{0,63}$/;
 
+function id(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
 export interface Team {
   id: string;
   packed: string;
@@ -83,18 +87,71 @@ export function loadPool(name = 'test', teamsDir = TEAMS_DIR): TeamPool {
   return { id, format, teams };
 }
 
+type ShowdownSets = NonNullable<ReturnType<ReturnType<typeof loadShowdown>['Teams']['unpack']>>;
+
+export function enforceBaseFormes(sets: ShowdownSets, psDir = defaultPsDir()): void {
+  const { Dex } = loadShowdown(psDir);
+  for (const set of sets) {
+    const species = Dex.species.get(set.species || set.name);
+    if (!species.exists || (!species.isMega && species.forme !== 'Primal')) continue;
+    const required = species.requiredItem ?? '';
+    const stone = required ? Dex.items.get(required) : undefined;
+    const baseName =
+      Object.entries(stone?.megaStone ?? {}).find(([, mega]) => id(mega) === id(species.name))?.[0] ??
+      species.baseSpecies;
+    const base = Dex.species.get(baseName);
+    if (!required || id(set.item ?? '') !== id(required)) {
+      throw new Error(
+        `${species.name} must be entered as ${base.name} holding ${required || 'its trigger item'}: team sheets use base formes`,
+      );
+    }
+    const baseAbilities = Object.values(base.abilities).filter(Boolean);
+    if (set.ability && !baseAbilities.some((ability) => id(ability) === id(set.ability))) {
+      throw new Error(
+        `${species.name} must use one of ${base.name}'s abilities (${baseAbilities.join('/')}), not ${set.ability}`,
+      );
+    }
+    if (!set.name || id(set.name) === id(species.name)) set.name = base.name;
+    set.species = base.name;
+  }
+}
+
+export function normalizePackedTeam(packed: string, psDir = defaultPsDir()): string {
+  const { Teams } = loadShowdown(psDir);
+  const sets = Teams.unpack(packed);
+  if (!sets) throw new Error('packed team does not unpack');
+  enforceBaseFormes(sets, psDir);
+  const repacked = Teams.pack(sets);
+  if (!repacked) throw new Error('Showdown produced an empty packed team');
+  return repacked;
+}
+
 export function packTeam(exportText: string, psDir = defaultPsDir()): string {
   const { Teams } = loadShowdown(psDir);
   const team = Teams.import(exportText);
   if (!team) throw new Error('Showdown could not parse team export');
+  enforceBaseFormes(team, psDir);
   const packed = Teams.pack(team);
   if (!packed) throw new Error('Showdown produced an empty packed team');
   return packed;
 }
 
 export function validateTeam(packed: string, format: string, psDir = defaultPsDir()): void {
-  const { Teams, TeamValidator } = loadShowdown(psDir);
-  const problems = new TeamValidator(format).validateTeam(Teams.unpack(packed));
+  const { Dex, Teams, TeamValidator } = loadShowdown(psDir);
+  const sets = Teams.unpack(packed) ?? [];
+  for (const set of sets) {
+    const species = Dex.species.get(set.species || set.name);
+    if (!species.exists || (!species.isMega && species.forme !== 'Primal')) continue;
+    const required = species.requiredItem ?? '';
+    const stone = required ? Dex.items.get(required) : undefined;
+    const baseName =
+      Object.entries(stone?.megaStone ?? {}).find(([, mega]) => id(mega) === id(species.name))?.[0] ??
+      species.baseSpecies;
+    throw new Error(
+      `${species.name} must be entered as ${baseName} holding ${required || 'its trigger item'}: team sheets use base formes`,
+    );
+  }
+  const problems = new TeamValidator(format).validateTeam(sets);
   if (problems?.length) throw new Error(problems.join('\n'));
 }
 
@@ -165,7 +222,7 @@ export function createPool(
   if (drafts.length > 32) throw new Error('a pool supports at most 32 teams');
   const poolDir = path.resolve(teamsDir, name);
   if (fs.existsSync(poolDir))
-    throw new Error(`pool ${JSON.stringify(name)} already exists; pools are immutable snapshots — pick a new name`);
+    throw new Error(`pool ${JSON.stringify(name)} already exists; pools are immutable snapshots, so pick a new name`);
   const seenIds = new Set<string>();
   const seenSpecies = new Map<string, string>();
   const teams = drafts.map((draft) => {

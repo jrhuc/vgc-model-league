@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 
 import type { AppState, AuthView, BattleMessage, PoolInfo, RunSnapshot, ServerEvent } from '../api';
 import { api, configureCsrf } from './http';
+import type { StoredBattle } from './views/arena';
 import { ArenaView } from './views/arena';
 import { FixturesView } from './views/fixtures';
 import { ResultsView } from './views/results';
@@ -13,6 +14,11 @@ const NAV = [
 ] as const;
 
 export type ViewId = (typeof NAV)[number]['id'];
+
+function isFresherBattle(candidate: BattleMessage, current: BattleMessage | undefined): boolean {
+  if (!candidate.snapshot) return false;
+  return !current?.snapshot || candidate.revision > current.revision;
+}
 
 function canContribute(auth: AuthView): boolean {
   return auth.mode === 'local' || auth.user?.role === 'contributor' || auth.user?.role === 'operator';
@@ -60,7 +66,7 @@ export function App() {
   const [app, setApp] = useState<AppState | null>(null);
   const [bootError, setBootError] = useState('');
   const [run, setRun] = useState<RunSnapshot | null>(null);
-  const [battles, setBattles] = useState<Record<number, BattleMessage>>({});
+  const [battles, setBattles] = useState<Record<number, StoredBattle>>({});
   const [selected, setSelected] = useState<number | null>(null);
   const [view, setView] = useState<ViewId>('fixtures');
   const [recordsEpoch, setRecordsEpoch] = useState(0);
@@ -99,7 +105,10 @@ export function App() {
         runWasLive.current = live;
         setRun(message.run);
       } else {
-        setBattles((previous) => ({ ...previous, [message.index]: message }));
+        setBattles((previous) => {
+          if (!isFresherBattle(message, previous[message.index])) return previous;
+          return { ...previous, [message.index]: { ...message, receivedAt: Date.now() } };
+        });
       }
     };
     return () => events.close();
@@ -118,15 +127,23 @@ export function App() {
 
   const selectBattle = (index: number) => {
     setSelected(index);
-    if (battles[index]?.snapshot) return;
     api<BattleMessage>(`${contribute ? '/api/battle' : '/api/battle/public'}?index=${index}`)
       .then((data) => {
-        if (data.snapshot) setBattles((previous) => ({ ...previous, [index]: data }));
+        setBattles((previous) => {
+          if (!data.snapshot || !isFresherBattle(data, previous[index])) return previous;
+          return { ...previous, [index]: { ...data, receivedAt: Date.now() } };
+        });
       })
       .catch(() => {});
   };
 
-  const onStarted = () => {
+  const loadGame = (index: number, game: number) =>
+    api<BattleMessage>(`${contribute ? '/api/battle' : '/api/battle/public'}?index=${index}&game=${game}`);
+
+  const onStarted = (startedRun: RunSnapshot) => {
+    runIdRef.current = startedRun.runId;
+    runWasLive.current = true;
+    setRun(startedRun);
     setSelected(null);
     setBattles({});
     navigate('arena');
@@ -148,11 +165,19 @@ export function App() {
   if (bootError) {
     return (
       <main class="shell">
-        <div class="message error">Could not load the control room: {bootError}</div>
+        <div class="message error" role="alert">
+          Could not load the league: {bootError}
+        </div>
       </main>
     );
   }
-  if (!app) return <main class="shell" />;
+  if (!app) {
+    return (
+      <main class="shell">
+        <p class="muted">Loading the league…</p>
+      </main>
+    );
+  }
 
   const live = run?.state === 'running';
   const user = app.auth.user;
@@ -218,6 +243,7 @@ export function App() {
             battles={battles}
             selected={selected}
             onSelect={selectBattle}
+            onLoadGame={loadGame}
             onGoFixtures={() => navigate('fixtures')}
           />
         </section>

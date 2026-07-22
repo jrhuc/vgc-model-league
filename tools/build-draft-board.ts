@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 
 import { BOARDS_DIR, defaultPsDir } from '../src/paths.js';
 import { loadShowdown } from '../src/showdown.js';
-import { loadPool } from '../src/teams.js';
+import { loadPool, validatePool } from '../src/teams.js';
 
 // Tiers from Smogon's "VGC Regulation M-B Viability Rankings"
 // (https://www.smogon.com/forums/threads/vgc-regulation-m-b-viability-rankings.3785289/),
@@ -107,6 +107,7 @@ export function buildBoard(poolName: string): string {
   const psDir = defaultPsDir();
   const { Dex, Teams } = loadShowdown(psDir);
   const pool = loadPool(poolName);
+  validatePool(pool, psDir);
   const seen = new Set<string>();
   const mons = [];
   for (const team of pool.teams) {

@@ -19,11 +19,6 @@ export interface SeriesRecord extends JsonObject {
 /** Disposable local test data; excluded from every unscoped standings view. */
 export const TEST_POOL = 'test';
 
-/**
- * With a pool, only that pool's rows qualify; without one, every pool except the
- * disposable test pool qualifies (legacy rows without a pool field stay in), and
- * only rotation rows rate the ladder — exhibition and tournament results never do.
- */
 export function scopeRows(rows: SeriesRecord[], pool?: string): SeriesRecord[] {
   return pool === undefined
     ? rows.filter((row) => row.pool !== TEST_POOL && (row.mode ?? 'rotation') === 'rotation')
@@ -61,7 +56,7 @@ export function loadRows(file: string): SeriesRecord[] {
   return fs
     .readFileSync(file, 'utf8')
     .split('\n')
-    .filter(Boolean)
+    .filter((line) => line.trim())
     .map((line) => JSON.parse(line) as SeriesRecord);
 }
 

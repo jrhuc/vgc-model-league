@@ -84,7 +84,16 @@ export interface TimerPlayer {
   sendRoom(message: string): void;
 }
 
+export interface RoomBattleTimerSettings {
+  starting: number;
+  grace: number;
+  addPerTurn: number;
+  maxPerTurn: number;
+  maxFirstTurn: number;
+}
+
 export interface RoomBattleTimer {
+  settings: RoomBattleTimerSettings;
   start(): boolean;
   nextRequest(player: TimerPlayer): void;
   end(): boolean;

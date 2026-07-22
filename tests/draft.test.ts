@@ -9,10 +9,11 @@ import { boardInfo, draftScaffoldRevision, legalPicks, loadBoard, runDraft, snak
 import type { DraftLeagueEvent } from '../src/draftleague.js';
 import { DRAFT_PROTOCOL_VERSION, runDraftLeague } from '../src/draftleague.js';
 import { scaffoldRevision } from '../src/engines.js';
+import { ApiError } from '../src/providers.js';
 import { seededRng } from '../src/random.js';
 import { loadRows } from '../src/records.js';
 import { loadShowdown } from '../src/showdown.js';
-import type { Completion, Provider } from '../src/types.js';
+import type { Completion, Provider, ProviderMessage } from '../src/types.js';
 
 const BOARD = loadBoard('regmb-202607');
 
@@ -37,10 +38,29 @@ test('the bundled board is coherent and sized for a mini league', () => {
   assert.equal(new Set(BOARD.mons.map((mon) => mon.id)).size, BOARD.mons.length);
   const info = boardInfo(BOARD);
   assert.ok(info.maxEntrants >= 4, 'the board must support at least a four-coach league');
-  const { Teams } = loadShowdown();
+  const { Dex, Teams } = loadShowdown();
   for (const mon of BOARD.mons) {
-    assert.equal((Teams.unpack(mon.packed) ?? []).length, 1, `${mon.id} packs exactly one set`);
+    const sets = Teams.unpack(mon.packed) ?? [];
+    assert.equal(sets.length, 1, `${mon.id} packs exactly one set`);
+    assert.equal(Dex.species.get(sets[0]!.species || sets[0]!.name).name, mon.species);
   }
+});
+
+test('a board id must match its filename', (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-draft-board-id-'));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(directory, 'foo.json'), JSON.stringify({ ...BOARD, id: 'bar' }));
+  assert.throws(() => loadBoard('foo', directory), /id must match its filename/);
+});
+
+test('each board entry must pack exactly one set', (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-draft-board-packed-'));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const mons = BOARD.mons.map((mon, index) =>
+    index === 0 ? { ...mon, packed: `${mon.packed}]${BOARD.mons[1]!.packed}` } : mon,
+  );
+  fs.writeFileSync(path.join(directory, 'two-sets.json'), JSON.stringify({ ...BOARD, id: 'two-sets', mons }));
+  assert.throws(() => loadBoard('two-sets', directory), /must contain exactly one packed set/);
 });
 
 test('snake order reverses on every round', () => {
@@ -73,7 +93,6 @@ test('legal picks enforce exclusivity, item clause, and budget feasibility', () 
 
   state.budgets[0] = 20;
   const constrained = legalPicks(state, 0);
-  // Five picks remain, so every choice must leave enough for four available sets.
   assert.ok(constrained.every((mon) => mon.cost <= 20 - 3 * 4));
 });
 
@@ -92,10 +111,109 @@ test('budget feasibility follows the remaining board instead of a fixed minimum 
   assert.deepEqual(legalPicks(state, 0), []);
 });
 
-function scriptedProvider(responses: string[]): Provider {
+test('legal picks preserve a clause-valid path to a complete roster', () => {
+  const { Teams } = loadShowdown();
+  const garchomp = BOARD.mons.find((mon) => mon.id === 'garchomp')!;
+  const kingambit = BOARD.mons.find((mon) => mon.id === 'kingambit')!;
+  const farigiraf = BOARD.mons.find((mon) => mon.id === 'farigiraf')!;
+  const sinistcha = BOARD.mons.find((mon) => mon.id === 'sinistcha')!;
+  const alternateSet = (Teams.unpack(garchomp.packed) ?? [])[0]!;
+  const alternateGarchomp = {
+    ...garchomp,
+    id: 'garchomp-leftovers',
+    cost: 1,
+    packed: Teams.pack([{ ...alternateSet, item: 'Leftovers' }]),
+  };
+  const state: DraftState = {
+    board: {
+      ...BOARD,
+      picks: 4,
+      mons: [farigiraf, sinistcha, { ...garchomp, cost: 3 }, { ...kingambit, cost: 1 }, alternateGarchomp],
+    },
+    taken: new Map([
+      [farigiraf.id, 0],
+      [sinistcha.id, 0],
+    ]),
+    rosters: [[farigiraf, sinistcha]],
+    budgets: [4],
+  };
+
+  assert.deepEqual(
+    legalPicks(state, 0).map((mon) => mon.id),
+    ['kingambit', 'garchomp-leftovers'],
+  );
+});
+
+test("a pick cannot consume another coach's only legal completion", () => {
+  const mon = (id: string) => BOARD.mons.find((candidate) => candidate.id === id)!;
+  const firstRoster = [mon('garchomp'), mon('pelipper'), mon('grimmsnarl')];
+  const secondRoster = [mon('whimsicott'), mon('farigiraf'), mon('sinistcha')];
+  const sylveon = { ...mon('sylveon'), cost: 1 };
+  const lycanroc = { ...mon('lycanroc-dusk'), cost: 1 };
+  const state: DraftState = {
+    board: {
+      ...BOARD,
+      picks: 4,
+      mons: [...firstRoster, ...secondRoster, sylveon, lycanroc],
+    },
+    taken: new Map([
+      ...firstRoster.map((candidate) => [candidate.id, 0] as const),
+      ...secondRoster.map((candidate) => [candidate.id, 1] as const),
+    ]),
+    rosters: [firstRoster, secondRoster],
+    budgets: [1, 1],
+  };
+
+  assert.deepEqual(
+    legalPicks(state, 0).map((candidate) => candidate.id),
+    ['lycanroc-dusk'],
+  );
+});
+
+test('draft completion assigns remaining sets disjointly across coaches', () => {
+  const costs: Record<string, number> = {
+    garchomp: 19,
+    incineroar: 19,
+    'aerodactyl-mega': 19,
+    kingambit: 20,
+    basculegion: 20,
+    'charizard-mega-y': 20,
+    'floette-mega': 19,
+    sinistcha: 19,
+    whimsicott: 19,
+    'camerupt-mega': 3,
+    'pyroar-mega': 5,
+    'delphox-mega': 20,
+    farigiraf: 20,
+    sneasler: 20,
+    sylveon: 20,
+    'blastoise-mega': 20,
+  };
+  const mons = Object.entries(costs).map(([id, cost]) => ({
+    ...BOARD.mons.find((candidate) => candidate.id === id)!,
+    cost,
+  }));
+  const byId = Object.fromEntries(mons.map((mon) => [mon.id, mon]));
+  const rosters = [
+    [byId.garchomp!, byId.incineroar!, byId['aerodactyl-mega']!],
+    [byId.kingambit!, byId.basculegion!, byId['charizard-mega-y']!],
+    [byId['floette-mega']!, byId.sinistcha!, byId.whimsicott!],
+  ];
+  const state: DraftState = {
+    board: { ...BOARD, budget: 63, picks: 4, mons },
+    taken: new Map(rosters.flatMap((roster, entrant) => roster.map((mon) => [mon.id, entrant] as const))),
+    rosters,
+    budgets: [6, 3, 6],
+  };
+
+  assert.deepEqual(legalPicks(state, 2), []);
+});
+
+function scriptedProvider(responses: string[], onComplete?: (messages: ProviderMessage[]) => void): Provider {
   let call = 0;
   return {
-    complete(): Promise<Completion> {
+    complete(_system, messages): Promise<Completion> {
+      onComplete?.(messages);
       const text = responses[Math.min(call, responses.length - 1)]!;
       call += 1;
       return Promise.resolve({ text, usage: { total_tokens: 10 }, toolCalls: [] });
@@ -107,6 +225,7 @@ test('llm drafters get retries with feedback and their rationale is logged', asy
   const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-draft-logs-'));
   t.after(() => fs.rmSync(logDir, { recursive: true, force: true }));
   let receivedReasoning = '';
+  const messageRoles: string[][] = [];
   const outcome = await runDraft(
     ['fake:model', 'random'],
     { ...BOARD, picks: 4 },
@@ -116,13 +235,16 @@ test('llm drafters get retries with feedback and their rationale is logged', asy
       reasoningByModel: { 'fake:model': 'high' },
       makeDraftProvider: (_spec, _apiKey, reasoning) => {
         receivedReasoning = reasoning ?? '';
-        return scriptedProvider([
-          'I will take {"pick": "not-a-mon", "reasoning": "bad id"}',
-          '{"pick": "garchomp", "reasoning": "Best stats on the board and Life Orb pressure."}',
-          '{"pick": "incineroar", "reasoning": "Fake Out support."}',
-          '{"pick": "sinistcha", "reasoning": "Redirection and Matcha Gotcha."}',
-          '{"pick": "farigiraf", "reasoning": "Trick Room insurance."}',
-        ]);
+        return scriptedProvider(
+          [
+            'I will take {"pick": "not-a-mon", "reasoning": "bad id"}',
+            '{"pick": "garchomp", "reasoning": "Best stats on the board and Life Orb pressure."}',
+            '{"pick": "incineroar", "reasoning": "Fake Out support."}',
+            '{"pick": "sinistcha", "reasoning": "Redirection and Matcha Gotcha."}',
+            '{"pick": "farigiraf", "reasoning": "Trick Room insurance."}',
+          ],
+          (messages) => messageRoles.push(messages.map((message) => message.role)),
+        );
       },
     },
   );
@@ -144,6 +266,8 @@ test('llm drafters get retries with feedback and their rationale is logged', asy
   assert.ok(seatLog[0]!.system, 'the first attempt records the system prompt');
   assert.equal(seatLog[1]!.attempt, 2);
   assert.match(String(seatLog[1]!.user), /rejected/);
+  assert.deepEqual(messageRoles[0], ['user']);
+  assert.deepEqual(messageRoles[1], ['user', 'assistant', 'user']);
 
   const transcript = fs
     .readFileSync(path.join(logDir, 'draft.jsonl'), 'utf8')
@@ -172,6 +296,34 @@ test('a drafter that never answers falls back to a random legal pick', async (t)
   assert.match(llmPicks[0]!.rationale, /fallback pick/);
 });
 
+test('a hard quota failure stops the draft instead of making random picks', async (t) => {
+  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-draft-quota-'));
+  t.after(() => fs.rmSync(logDir, { recursive: true, force: true }));
+  await assert.rejects(
+    runDraft(
+      ['google:gemini-test', 'random'],
+      { ...BOARD, picks: 4 },
+      {
+        logDir,
+        rng: seededRng(3),
+        makeDraftProvider: () => ({
+          async complete() {
+            throw new ApiError(429, 'google:gemini-test 429: exceeded your current quota; requests per day');
+          },
+        }),
+      },
+    ),
+    /Google API quota is exhausted.*cannot continue/,
+  );
+  const rows = fs
+    .readFileSync(path.join(logDir, 'drafter-0-google-gemini-test.jsonl'), 'utf8')
+    .trim()
+    .split('\n')
+    .map((line) => JSON.parse(line) as Record<string, unknown>);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0]!.error, 'Google API quota is exhausted (429).');
+});
+
 test('a full draft league drafts, plays a round robin, and crowns a playoff champion', async (t) => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-draft-league-'));
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
@@ -194,6 +346,10 @@ test('a full draft league drafts, plays a round robin, and crowns a playoff cham
     assert.equal(row.pool, undefined);
     assert.equal(row.scaffold, scaffoldRevision());
     assert.equal(row.draft_scaffold, draftScaffoldRevision());
+  }
+  for (const row of rows.filter((record) => record.stage === 'playoff')) {
+    assert.equal(typeof row.winner, 'string');
+    assert.equal(row.advanced, row.winner);
   }
 
   const config = JSON.parse(fs.readFileSync(path.join(directory, 'config.json'), 'utf8')) as Record<string, unknown>;
@@ -242,4 +398,6 @@ test('a two-coach league skips semifinals and plays a single playoff final', asy
     rows.map((row) => row.stage),
     ['roundrobin', 'playoff'],
   );
+  assert.equal(rows[1]!.round, 1);
+  assert.equal(typeof rows[1]!.advanced, 'string');
 });

@@ -1,14 +1,28 @@
 import type { BattleStream } from 'pokemon-showdown';
 import type { RoomBattleTimer, TimerPlayer } from './showdown.js';
 import { loadRoomBattleTimer } from './showdown.js';
-import type { Pid } from './types.js';
+import type { Pid, TimerScale } from './types.js';
 
 export type TimerEvent = 'autodefault' | 'forfeit' | 'tie';
+
+export const TIMER_SCALE_MIN = 0.5;
+export const TIMER_SCALE_MAX = 4;
+
+export function parseTimerScale(value: unknown): TimerScale | undefined {
+  if (value === undefined || value === null || value === '') return undefined;
+  if (value === 'off' || value === 'untimed') return 'off';
+  const scale = Number(value);
+  if (!Number.isFinite(scale) || scale < TIMER_SCALE_MIN || scale > TIMER_SCALE_MAX) {
+    throw new Error(`timer scale must be 'off' or a number between ${TIMER_SCALE_MIN} and ${TIMER_SCALE_MAX}`);
+  }
+  return scale;
+}
 
 export class TimerAdapter {
   private readonly players: TimerPlayer[];
   private readonly bySlot: Record<Pid, TimerPlayer>;
   private readonly timer: RoomBattleTimer;
+  private readonly enabled: boolean;
   private readonly battle: {
     format: string;
     challengeType: string;
@@ -28,8 +42,9 @@ export class TimerAdapter {
     private readonly stream: BattleStream,
     private readonly onEvent: (pid: Pid, event: TimerEvent) => void,
     psDir: string,
-    private readonly enabled = true,
+    scale: TimerScale = 1,
   ) {
+    this.enabled = scale !== 'off';
     this.players = (['p1', 'p2'] as const).map((slot) => ({
       slot,
       name: slot,
@@ -74,7 +89,21 @@ export class TimerAdapter {
     };
     const Timer = loadRoomBattleTimer(psDir);
     this.timer = new Timer(this.battle);
+    if (typeof scale === 'number' && scale !== 1) this.scaleSettings(scale);
     if (this.enabled) this.timer.start();
+  }
+
+  private scaleSettings(scale: number): void {
+    const settings = this.timer.settings;
+    for (const key of ['starting', 'grace', 'addPerTurn', 'maxPerTurn', 'maxFirstTurn'] as const) {
+      if (settings[key] && Number.isFinite(settings[key])) {
+        settings[key] = Math.max(5, Math.round((settings[key] * scale) / 5) * 5);
+      }
+    }
+    for (const player of this.players) {
+      player.secondsLeft = settings.starting + settings.grace;
+      player.turnSecondsLeft = player.secondsLeft;
+    }
   }
 
   setPlayer(pid: Pid, name: string): void {

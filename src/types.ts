@@ -28,6 +28,9 @@ export interface BattleRequest extends JsonObject {
   };
 }
 
+/** Multiplier applied to the Showdown battle timer; 'off' disables it entirely. */
+export type TimerScale = number | 'off';
+
 export interface AgentContext {
   povLines: string[];
   error?: string;
@@ -58,14 +61,20 @@ export interface ToolCall {
   id: string;
   name: string;
   arguments: JsonObject;
+  /** Provider metadata that must be replayed with the call (e.g. Gemini 3 thought signatures). */
+  providerMetadata?: JsonObject;
 }
 
 export interface Completion {
   text: string;
   usage: Record<string, number>;
   toolCalls: ToolCall[];
+  /** Unified AI SDK finish reason ('stop', 'length', 'tool-calls', …) when the provider reports one. */
+  finishReason?: string;
   /** Provider reasoning / thinking summary when exposed by the AI SDK. */
   reasoning?: string;
+  /** AI SDK response messages, replayed verbatim so provider metadata (e.g. Gemini thought signatures) survives. */
+  responseMessages?: JsonObject[];
 }
 
 export interface ProviderMessage extends JsonObject {
@@ -74,6 +83,8 @@ export interface ProviderMessage extends JsonObject {
   toolCallId?: string;
   name?: string;
   toolCalls?: ToolCall[];
+  /** Raw AI SDK messages sent in place of this message when present. */
+  raw?: JsonObject[];
 }
 
 export interface CompleteOptions {

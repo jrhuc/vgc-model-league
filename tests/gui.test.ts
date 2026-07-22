@@ -3,13 +3,17 @@ import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
+import test, { after } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
+import { BattleLog } from '../src/gui/battlelog.js';
 import { GuiServer } from '../src/gui/server.js';
 import { TEAMS_DIR } from '../src/paths.js';
 import { loadShowdown } from '../src/showdown.js';
 import { loadPool } from '../src/teams.js';
+
+const RUNS_SCRATCH = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-gui-runs-'));
+after(() => fs.rmSync(RUNS_SCRATCH, { recursive: true, force: true }));
 
 const FORMAT = 'gen9championsvgc2026regmbbo3';
 
@@ -88,8 +92,34 @@ function rawJsonRequest(
   return promise;
 }
 
+test('battle log turns protocol lines into a compact spectator feed', () => {
+  const log = new BattleLog();
+  log.feed([
+    '|turn|1',
+    '|move|p1a: Garchomp|Earthquake|p2a: Tornadus',
+    '|-damage|p2a: Tornadus|150/250',
+    '|switch|p2a: Incineroar|Incineroar, L50|100/100',
+    '|faint|p2a: Incineroar',
+    '|-vgctimeout|p1|autodefault',
+    '|win|p1-Alpha',
+  ]);
+  assert.deepEqual(
+    log.entries.map((entry) => [entry.kind, entry.text]),
+    [
+      ['turn', 'Turn 1'],
+      ['move', 'Garchomp used Earthquake → Tornadus'],
+      ['detail', 'Tornadus → 60%'],
+      ['switch', 'P2 sent out Incineroar'],
+      ['faint', 'Incineroar fainted'],
+      ['timer', 'P1 ran out of time. Default action used'],
+      ['win', 'Alpha (P1) won the game'],
+    ],
+  );
+  assert.ok(!log.entries.some((entry) => entry.text.includes('—')));
+});
+
 test('gui serves the built app shell and setup state', async () => {
-  const gui = new GuiServer();
+  const gui = new GuiServer({ runsDir: RUNS_SCRATCH });
   const base = await gui.listen(0);
   try {
     const pageResponse = await fetch(base);
@@ -136,7 +166,7 @@ test('gui serves the built app shell and setup state', async () => {
 });
 
 test('gui rejects spoofed hosts, cross-origin posts, and non-json posts', async () => {
-  const gui = new GuiServer();
+  const gui = new GuiServer({ runsDir: RUNS_SCRATCH });
   const base = await gui.listen(0);
   const port = Number(new URL(base).port);
   try {
@@ -175,7 +205,11 @@ test('gui rejects spoofed hosts, cross-origin posts, and non-json posts', async 
 });
 
 test('hosted mode enforces its canonical origin and defaults to read-only', async () => {
-  const gui = new GuiServer({ host: '127.0.0.1', publicOrigin: 'https://league.example' });
+  const gui = new GuiServer({
+    runsDir: RUNS_SCRATCH,
+    host: '127.0.0.1',
+    publicOrigin: 'https://league.example',
+  });
   await gui.listen(0);
   const address = gui.server.address();
   assert.ok(address && typeof address === 'object');
@@ -210,7 +244,10 @@ test('hosted mode enforces its canonical origin and defaults to read-only', asyn
 
 test('gui validates teambuilder pastes and creates immutable pools', async () => {
   const teamsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-model-league-gui-pools-'));
-  const gui = new GuiServer({ teamsDir });
+  const gui = new GuiServer({
+    runsDir: RUNS_SCRATCH,
+    teamsDir,
+  });
   const base = await gui.listen(0);
   try {
     const pasteA = pasteFromPool('jpnats-mega-swampert.team');
@@ -306,6 +343,7 @@ test('gui requires browser credentials and never exposes server keys', async () 
   process.env.ANTHROPIC_API_KEY = 'server-secret-must-not-be-used';
   let receivedKeys: Record<string, string> | undefined;
   const gui = new GuiServer({
+    runsDir: RUNS_SCRATCH,
     runner: async (_models, _seriesPerPair, _runDir, options = {}) => {
       receivedKeys = { ...options.apiKeys };
       return [];
@@ -318,7 +356,7 @@ test('gui requires browser credentials and never exposes server keys', async () 
       pool: 'test',
     });
     assert.equal(missing.status, 400);
-    assert.match(String(missing.data.error), /bring an API key/);
+    assert.match(String(missing.data.error), /API key required for/);
     assert.doesNotMatch(JSON.stringify(missing.data), /server-secret/);
 
     const started = await apiJson(`${base}api/run`, {
@@ -340,6 +378,7 @@ test('gui requires browser credentials and never exposes server keys', async () 
 test('gui validates shared and per-model reasoning before launching', async () => {
   let received: Record<string, string> | undefined;
   const gui = new GuiServer({
+    runsDir: RUNS_SCRATCH,
     runner: async (_models, _seriesPerPair, _runDir, options = {}) => {
       received = options.reasoningByModel ? { ...options.reasoningByModel } : undefined;
       return [];
@@ -399,8 +438,41 @@ test('gui validates shared and per-model reasoning before launching', async () =
   }
 });
 
+test('gui validates the timer scale and forwards it to the runner', async () => {
+  let received: unknown = 'unset';
+  const gui = new GuiServer({
+    runsDir: RUNS_SCRATCH,
+    runner: async (_models, _seriesPerPair, _runDir, options = {}) => {
+      received = options.timerScale;
+      return [];
+    },
+  });
+  const base = await gui.listen(0);
+  try {
+    const invalid = await apiJson(`${base}api/run`, { models: ['random', 'random'], pool: 'test', timerScale: 9 });
+    assert.equal(invalid.status, 400);
+    assert.match(String(invalid.data.error), /timer scale must be/);
+
+    const scaled = await apiJson(`${base}api/run`, { models: ['random', 'random'], pool: 'test', timerScale: 1.5 });
+    assert.equal(scaled.status, 200, JSON.stringify(scaled.data));
+    assert.equal(received, 1.5);
+    let run = (await apiJson(`${base}api/state`)).data.run as Record<string, unknown>;
+    for (let attempt = 0; attempt < 40 && run.state === 'running'; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      run = (await apiJson(`${base}api/state`)).data.run as Record<string, unknown>;
+    }
+
+    const untimed = await apiJson(`${base}api/run`, { models: ['random', 'random'], pool: 'test', timerScale: 'off' });
+    assert.equal(untimed.status, 200, JSON.stringify(untimed.data));
+    assert.equal(received, 'off');
+  } finally {
+    gui.close();
+  }
+});
+
 test('gui rejects a second run while one is active and stops on request', async () => {
   const gui = new GuiServer({
+    runsDir: RUNS_SCRATCH,
     runner: (_models, _seriesPerPair, _runDir, options = {}) =>
       new Promise((resolve) => {
         options.onEvent?.({
@@ -440,9 +512,102 @@ test('gui rejects a second run while one is active and stops on request', async 
   }
 });
 
+test('a run whose task ignores the stop abort is detached so new runs can start', async () => {
+  let launches = 0;
+  const gui = new GuiServer({
+    runsDir: RUNS_SCRATCH,
+    stopFallbackMs: 100,
+    runner: (_models, _seriesPerPair, _runDir, options = {}) => {
+      launches += 1;
+      if (launches > 1) return Promise.resolve([]);
+      options.onEvent?.({
+        mode: 'rotation',
+        protocolVersion: 1,
+        type: 'plans',
+        plans: [{ index: 0, players: { p1: 'random', p2: 'random' } }],
+        pool: 'test',
+        seed: 7,
+      });
+      return new Promise(() => {});
+    },
+  });
+  const base = await gui.listen(0);
+  try {
+    const started = await apiJson(`${base}api/run`, { models: ['random', 'random'], pool: 'test' });
+    assert.equal(started.status, 200, JSON.stringify(started.data));
+    const firstRunId = String(started.data.runId);
+
+    await apiJson(`${base}api/run/stop`, {});
+    let run = (await apiJson(`${base}api/state`)).data.run as Record<string, unknown>;
+    assert.equal(run.state, 'running');
+    for (let attempt = 0; attempt < 40 && run.state === 'running'; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      run = (await apiJson(`${base}api/state`)).data.run as Record<string, unknown>;
+    }
+    assert.equal(run.state, 'stopped');
+    const status = JSON.parse(fs.readFileSync(path.join(RUNS_SCRATCH, firstRunId, 'status.json'), 'utf8')) as Record<
+      string,
+      unknown
+    >;
+    assert.equal(status.state, 'stopped');
+
+    const second = await apiJson(`${base}api/run`, { models: ['random', 'random'], pool: 'test' });
+    assert.equal(second.status, 200, JSON.stringify(second.data));
+    assert.notEqual(second.data.runId, firstRunId);
+  } finally {
+    gui.close();
+  }
+});
+
+test('pokepaste import fetches the raw paste and rejects non-pokepaste links', async () => {
+  const gui = new GuiServer({ runsDir: RUNS_SCRATCH });
+  const base = await gui.listen(0);
+  const realFetch = globalThis.fetch;
+  const requested: string[] = [];
+  globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    const url = String(input instanceof Request ? input.url : input);
+    if (!url.startsWith('https://pokepast.es/')) return realFetch(input, init);
+    requested.push(url);
+    return new Response('Gengar @ Gengarite\nAbility: Cursed Body\n', { status: 200 });
+  }) as typeof fetch;
+  try {
+    const imported = await apiJson(`${base}api/team/pokepaste`, { url: 'https://pokepast.es/af47b5292e00a94d' });
+    assert.equal(imported.status, 200);
+    assert.match(String(imported.data.paste), /Gengar @ Gengarite/);
+    assert.deepEqual(requested, ['https://pokepast.es/af47b5292e00a94d/raw']);
+
+    const bare = await apiJson(`${base}api/team/pokepaste`, { url: 'af47b5292e00a94d' });
+    assert.equal(bare.status, 200);
+
+    const rejected = await apiJson(`${base}api/team/pokepaste`, { url: 'https://evil.example/af47b5292e00a94d' });
+    assert.equal(rejected.status, 400);
+    assert.equal(requested.length, 2);
+  } finally {
+    globalThis.fetch = realFetch;
+    gui.close();
+  }
+});
+
+test('shutdown labels a wedged run before the process exits', async () => {
+  const gui = new GuiServer({
+    runsDir: RUNS_SCRATCH,
+    runner: () => new Promise(() => {}),
+  });
+  const base = await gui.listen(0);
+  const started = await apiJson(`${base}api/run`, { models: ['random', 'random'], pool: 'test' });
+  assert.equal(started.status, 200, JSON.stringify(started.data));
+  await gui.shutdown(50);
+  const status = JSON.parse(
+    fs.readFileSync(path.join(RUNS_SCRATCH, String(started.data.runId), 'status.json'), 'utf8'),
+  ) as Record<string, unknown>;
+  assert.equal(status.state, 'failed');
+  assert.equal(status.error, 'run interrupted by server shutdown');
+});
+
 test('gui aborts runs that exceed the configured duration', async () => {
   const timedOut = Promise.withResolvers<void>();
   const gui = new GuiServer({
+    runsDir: RUNS_SCRATCH,
     maxRunMs: 1,
     runner: async (_models, _seriesPerPair, _runDir, options = {}) => {
       const aborted = Promise.withResolvers<void>();
@@ -469,6 +634,7 @@ test('gui aborts runs that exceed the configured duration', async () => {
 test('server shutdown marks an active run as failed', async () => {
   const settled = Promise.withResolvers<Record<string, unknown>>();
   const gui = new GuiServer({
+    runsDir: RUNS_SCRATCH,
     runner: async (_models, _seriesPerPair, _runDir, options = {}) => {
       const aborted = Promise.withResolvers<void>();
       options.signal?.addEventListener('abort', () => aborted.resolve(), { once: true });
@@ -491,6 +657,7 @@ test('hosted runs execute in a child process and return events to the server', a
   t.after(() => fs.rmSync(scratch, { recursive: true, force: true }));
   const settled = Promise.withResolvers<Record<string, unknown>>();
   const gui = new GuiServer({
+    runsDir: RUNS_SCRATCH,
     host: '127.0.0.1',
     publicOrigin: 'http://league.example',
     mutationsEnabled: true,
@@ -530,6 +697,7 @@ test('hosted runs execute in a child process and return events to the server', a
 test('a hung hosted worker is killed without taking down the web process', async () => {
   const settled = Promise.withResolvers<Record<string, unknown>>();
   const gui = new GuiServer({
+    runsDir: RUNS_SCRATCH,
     host: '127.0.0.1',
     publicOrigin: 'http://league.example',
     mutationsEnabled: true,
@@ -569,7 +737,10 @@ test('a hung hosted worker is killed without taking down the web process', async
 
 test('gui runs a random-vs-random series and streams live battle state', async () => {
   const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-model-league-gui-run-'));
-  const gui = new GuiServer({ recordsPath: path.join(scratch, 'results.jsonl') });
+  const gui = new GuiServer({
+    runsDir: RUNS_SCRATCH,
+    recordsPath: path.join(scratch, 'results.jsonl'),
+  });
   const base = await gui.listen(0);
   const sse = new AbortController();
   let stream = '';
@@ -619,6 +790,14 @@ test('gui runs a random-vs-random series and streams live battle state', async (
     const sides = snapshot.sides as Record<string, { player: string; mons: unknown[] }>;
     assert.equal(sides.p1!.player, 'random');
     assert.ok(sides.p1!.mons.length > 0);
+    const games = battle.data.games as number[];
+    assert.ok(games.length >= 2, 'a finished bo3 should retain each game');
+    assert.equal(battle.data.game, games[games.length - 1], 'the default view is the latest game');
+    const first = await apiJson(`${base}api/battle?index=0&game=1`);
+    assert.equal(first.data.game, 1);
+    const firstSnapshot = first.data.snapshot as Record<string, unknown>;
+    assert.ok(firstSnapshot, 'game 1 stays viewable after the series ends');
+    assert.ok(Number(firstSnapshot.turn) >= 1);
 
     const overall = await apiJson(`${base}api/records`);
     assert.equal(overall.status, 200);
@@ -654,6 +833,7 @@ test('gui runs a random-vs-random series and streams live battle state', async (
 
 test('gui starts tournament runs and mirrors bracket state', async () => {
   const gui = new GuiServer({
+    runsDir: RUNS_SCRATCH,
     tournamentRunner: async (_models, _runDir, options = {}) => {
       options.onEvent?.({
         type: 'plans',
@@ -674,6 +854,25 @@ test('gui starts tournament runs and mirrors bracket state', async () => {
           champion: 0,
         },
       });
+      options.onEvent?.({ type: 'series-start', index: 0 });
+      options.onEvent?.({ type: 'game-update', index: 0, game: 1, lines: ['|turn|7'], publicLines: ['|turn|7'] });
+      options.onEvent?.({
+        type: 'decision',
+        index: 0,
+        pid: 'p1',
+        row: {
+          kind: 'decision',
+          game_number: 1,
+          turn: 7,
+          phase: 'turn',
+          selection: [],
+          rationale: 'No decision was submitted; the battle timer decides.',
+          automatic: false,
+          fallback: true,
+          error_summary: 'Google API quota is exhausted (429).',
+          error: 'raw upstream response',
+        },
+      });
       return [];
     },
   });
@@ -692,6 +891,12 @@ test('gui starts tournament runs and mirrors bracket state', async () => {
     const bracket = run.bracket as Record<string, unknown>;
     assert.equal(bracket.champion, 0);
     assert.equal((bracket.entrants as unknown[]).length, 2);
+    const battle = await apiJson(`${base}api/battle?index=0`);
+    const snapshot = battle.data.snapshot as Record<string, unknown>;
+    const decisions = snapshot.decisions as Array<Record<string, unknown>>;
+    assert.equal(decisions[0]!.error, 'Google API quota is exhausted (429).');
+    const publicBattle = await apiJson(`${base}api/battle/public?index=0`);
+    assert.deepEqual((publicBattle.data.snapshot as Record<string, unknown>).decisions, []);
   } finally {
     gui.close();
   }
@@ -700,6 +905,7 @@ test('gui starts tournament runs and mirrors bracket state', async () => {
 test('gui validates inline match teams and hands packed teams to the tournament', async () => {
   let received: { teams?: Array<{ id: string; packed: string }>; format?: string; pool?: string } | undefined;
   const gui = new GuiServer({
+    runsDir: RUNS_SCRATCH,
     tournamentRunner: async (_models, _runDir, options = {}) => {
       received = {
         ...(options.teams ? { teams: options.teams } : {}),
@@ -764,6 +970,7 @@ test('hosted tournament runs execute in the worker and stream the bracket', asyn
   t.after(() => fs.rmSync(scratch, { recursive: true, force: true }));
   const settled = Promise.withResolvers<Record<string, unknown>>();
   const gui = new GuiServer({
+    runsDir: RUNS_SCRATCH,
     host: '127.0.0.1',
     publicOrigin: 'http://league.example',
     mutationsEnabled: true,
@@ -806,6 +1013,7 @@ test('hosted tournament runs execute in the worker and stream the bracket', asyn
 test('gui starts draft runs, validates the board, and mirrors draft state', async () => {
   let received: { board?: string } | undefined;
   const gui = new GuiServer({
+    runsDir: RUNS_SCRATCH,
     draftRunner: async (_models, _runDir, options = {}) => {
       received = { ...(options.board ? { board: options.board } : {}) };
       options.onEvent?.({
@@ -878,6 +1086,7 @@ test('hosted draft runs execute in the worker and stream draft state', async (t)
   t.after(() => fs.rmSync(scratch, { recursive: true, force: true }));
   const settled = Promise.withResolvers<Record<string, unknown>>();
   const gui = new GuiServer({
+    runsDir: RUNS_SCRATCH,
     host: '127.0.0.1',
     publicOrigin: 'http://league.example',
     mutationsEnabled: true,

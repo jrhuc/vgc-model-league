@@ -1,7 +1,7 @@
 import type { DraftLeagueEvent } from '../draftleague.js';
 import type { ModelReasoningConfig } from '../providers.js';
 import type { Team } from '../teams.js';
-import type { ContributorAttribution } from '../types.js';
+import type { ContributorAttribution, TimerScale } from '../types.js';
 
 export interface RunWorkerStart extends ModelReasoningConfig {
   type: 'start';
@@ -17,6 +17,7 @@ export interface RunWorkerStart extends ModelReasoningConfig {
   format?: string;
   board?: string;
   seed?: number;
+  timerScale?: TimerScale;
   contributor?: ContributorAttribution;
 }
 

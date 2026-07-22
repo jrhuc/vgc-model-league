@@ -102,7 +102,7 @@ test('key-carrying runs require a key for every hosted model', async (t) => {
       apiKeys: {},
       recordsPath: path.join(directory, 'results.jsonl'),
     }),
-    /no API key was supplied for anthropic:claude-x/,
+    /API key missing for anthropic:claude-x/,
   );
 });
 

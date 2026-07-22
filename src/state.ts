@@ -1,4 +1,4 @@
-import type { CompactMon, MatchupMon } from './reference.js';
+import type { CompactMon, CompactMonReference, MatchupMon, ShowdownReference, SpeedProfile } from './reference.js';
 import type { BattleRequest, JsonObject, Pid } from './types.js';
 
 import { afterColon, asRecord, asRecords, asStrings, text } from './value.js';
@@ -32,6 +32,7 @@ export class MonState {
   volatiles = new Set<string>();
   moves = new Map<string, MoveState>();
   lastMove: LastMove | undefined;
+  choiceLock: string | undefined;
   item: string | undefined;
   itemConsumed = false;
   ability: string | undefined;
@@ -63,6 +64,17 @@ export class SideState {
   showteam = false;
 }
 
+const STAT_LABELS: Record<string, string> = {
+  atk: 'Attack',
+  def: 'Defense',
+  spa: 'Special Attack',
+  spd: 'Special Defense',
+  spe: 'Speed',
+  accuracy: 'accuracy',
+  evasion: 'evasion',
+};
+
+const CHOICE_ITEMS = new Set(['choiceband', 'choicescarf', 'choicespecs']);
 const SCREEN_MOVES = new Set(['reflect', 'lightscreen', 'auroraveil']);
 
 const WEATHER_ROCKS: Record<string, string> = {
@@ -83,11 +95,19 @@ export const PROTECT_MOVES = new Set([
   'burningbulwark',
 ]);
 
+export interface SideTimer {
+  seconds: number | null;
+  turnSeconds: number | null;
+  at: number;
+  running: boolean;
+}
+
 export class BattleState {
   turn = 0;
   weather: TimedEffect | undefined;
   fields = new Map<string, TimedEffect>();
   sides: Record<Pid, SideState> = { p1: new SideState(), p2: new SideState() };
+  timers: Record<Pid, SideTimer | undefined> = { p1: undefined, p2: undefined };
 
   constructor(readonly pid: Pid) {}
 
@@ -122,11 +142,13 @@ export class BattleState {
         if (previousMon) {
           previousMon.boosts = {};
           previousMon.volatiles.clear();
+          previousMon.choiceLock = undefined;
         }
         if (kind !== 'replace') {
           mon.boosts = {};
           mon.volatiles.clear();
           mon.protectSuccessStreak = 0;
+          mon.choiceLock = undefined;
         }
         this.sides[side].active[slot] = this.monKey(args[0]!);
       }
@@ -148,6 +170,7 @@ export class BattleState {
         ...(args[2] ? { target: args[2] } : {}),
         turn: this.turn,
       };
+      if (!mon.itemConsumed && CHOICE_ITEMS.has(this.speciesKey(mon.item ?? ''))) mon.choiceLock = args[1]!;
       const moveId = this.speciesKey(args[1]!);
       if (!PROTECT_MOVES.has(moveId)) mon.protectSuccessStreak = 0;
     } else if (kind === '-singleturn' && args.length >= 2) {
@@ -185,8 +208,14 @@ export class BattleState {
     } else if ((kind === '-start' || kind === '-end') && args.length >= 2) {
       const mon = this.mon(args[0]!);
       const effect = this.effect(args[1]!);
-      if (kind === '-start') mon.volatiles.add(effect);
-      else mon.volatiles.delete(effect);
+      if (kind === '-start') {
+        if (/^perish\d$/.test(this.speciesKey(effect))) {
+          for (const volatile of mon.volatiles) {
+            if (/^perish\d$/.test(this.speciesKey(volatile))) mon.volatiles.delete(volatile);
+          }
+        }
+        mon.volatiles.add(effect);
+      } else mon.volatiles.delete(effect);
     } else if (kind === '-weather' && args[0] !== undefined) {
       if (args[0] === 'none' || !args[0]) this.weather = undefined;
       else if (
@@ -224,10 +253,12 @@ export class BattleState {
       const mon = this.mon(args[0]!);
       mon.item = args[1];
       mon.itemConsumed = false;
+      mon.choiceLock = undefined;
     } else if (kind === '-enditem' && args[0]) {
       const mon = this.mon(args[0]);
       if (args[1]) mon.item = args[1];
       mon.itemConsumed = true;
+      mon.choiceLock = undefined;
     } else if (kind === '-ability' && args.length >= 2) this.mon(args[0]!).ability = args[1];
     else if (kind === '-mega' && args[0]) {
       const mon = this.mon(args[0]);
@@ -238,17 +269,26 @@ export class BattleState {
       mon.species = args[1]!;
       mon.ability = undefined;
     } else if (kind === 'showteam' && args.length >= 2) this.showTeam(args[0]!, args.slice(1).join('|'));
+    else if (kind === '-vgctimer' && (args[0] === 'p1' || args[0] === 'p2')) {
+      const parse = (value: string | undefined) => (value && Number.isFinite(Number(value)) ? Number(value) : null);
+      this.timers[args[0]] = { seconds: parse(args[1]), turnSeconds: parse(args[2]), at: Date.now(), running: true };
+    } else if ((kind === '-vgctimerstop' || kind === '-vgctimeout') && (args[0] === 'p1' || args[0] === 'p2')) {
+      this.stopTimer(args[0]);
+    } else if (kind === 'win' || kind === 'tie') {
+      this.stopTimer('p1');
+      this.stopTimer('p2');
+    }
   }
 
-  render(request: BattleRequest): string {
+  render(request: BattleRequest, referenceFor?: (mon: CompactMon) => CompactMonReference | undefined): string {
     this.updateOwnRequest(request);
     const foe: Pid = this.pid === 'p1' ? 'p2' : 'p1';
     return [
       `Turn: ${this.turn}`,
       `Weather: ${this.weatherLabel()}`,
       `Field: ${this.fieldLabels().join(', ') || 'none'}`,
-      ...this.renderSide(this.pid, true),
-      ...this.renderSide(foe, false),
+      ...this.renderSide(this.pid, true, request.teamPreview === true, referenceFor),
+      ...this.renderSide(foe, false, request.teamPreview === true, referenceFor),
     ].join('\n');
   }
 
@@ -261,7 +301,6 @@ export class BattleState {
     return active[slot] ? BattleState.requestName(active[slot]) : 'Pokémon';
   }
 
-  /** Active + brought/revealed bench only, for compact always-on mechanics. */
   compactMons(): CompactMon[] {
     const out: CompactMon[] = [];
     for (const pid of ['p1', 'p2'] as const) {
@@ -328,6 +367,205 @@ export class BattleState {
     return { allies: collect(this.pid, true), foes: collect(foe, false) };
   }
 
+  renderEffectiveSpeeds(reference: ShowdownReference): string {
+    const entries = this.activeEntries().flatMap((entry) => {
+      const profile = this.speedProfile(entry.pid, entry.mon, reference);
+      if (!profile) return [];
+      const role = entry.pid === this.pid ? 'your' : 'foe';
+      const effective = this.formatRange(profile.effective);
+      const modifiers = profile.modifiers.length ? ` (${profile.modifiers.join(', ')})` : '';
+      return [`${role} ${entry.mon.species} ${effective}${modifiers}`];
+    });
+    if (!entries.length) return '';
+    const trickRoom = this.fields.has('trickroom') ? ' Trick Room reverses order within equal priority.' : '';
+    return `Effective Speed before move priority (foe values preserve hidden EV ranges): ${entries.join('; ')}.${trickRoom}`;
+  }
+
+  moveAnnotation(moveName: string, targetSide: 'foe' | 'ally', targetNumber: number): string | undefined {
+    if (this.speciesKey(moveName) !== 'encore') return undefined;
+    const pid = targetSide === 'ally' ? this.pid : this.pid === 'p1' ? 'p2' : 'p1';
+    const target = this.activeEntry(pid, targetNumber);
+    if (!target) return undefined;
+    if ([...target.volatiles].some((volatile) => this.speciesKey(volatile) === 'encore'))
+      return 'fails: target already Encored';
+    if (target.choiceLock) return `redundant: target is Choice-locked into ${target.choiceLock}`;
+    return undefined;
+  }
+
+  compareActionOrder(args: Record<string, unknown>, reference: ShowdownReference): string {
+    const firstName = typeof args.first === 'string' ? args.first.trim() : '';
+    const secondName = typeof args.second === 'string' ? args.second.trim() : '';
+    if (!firstName || !secondName) return 'first and second are required active Pokémon names or ally/foe slot labels.';
+    const first = this.findActive(firstName);
+    const second = this.findActive(secondName);
+    const active = this.activeEntries().map(
+      (entry) => `${entry.pid === this.pid ? 'ally' : 'foe'} ${entry.slot}: ${entry.mon.species}`,
+    );
+    if (!first || !second)
+      return `Could not resolve ${!first ? JSON.stringify(firstName) : JSON.stringify(secondName)}. Active Pokémon: ${active.join('; ') || 'none'}.`;
+    if (first.mon === second.mon) return 'first and second must identify different active Pokémon.';
+
+    const firstProfile = this.speedProfile(first.pid, first.mon, reference);
+    const secondProfile = this.speedProfile(second.pid, second.mon, reference);
+    if (!firstProfile || !secondProfile) return 'Speed data is unavailable for one of the selected Pokémon.';
+    const firstMove = typeof args.first_move === 'string' ? args.first_move.trim() : '';
+    const secondMove = typeof args.second_move === 'string' ? args.second_move.trim() : '';
+    const firstPriority = firstMove ? reference.movePriority(firstMove) : 0;
+    const secondPriority = secondMove ? reference.movePriority(secondMove) : 0;
+    if (firstMove && firstPriority === undefined) return `No move data for ${JSON.stringify(firstMove)}.`;
+    if (secondMove && secondPriority === undefined) return `No move data for ${JSON.stringify(secondMove)}.`;
+
+    const trickRoom = this.fields.has('trickroom');
+    let order: 'first' | 'second' | 'tie' | 'uncertain';
+    let reason: string;
+    if (firstPriority !== secondPriority) {
+      order = firstPriority! > secondPriority! ? 'first' : 'second';
+      reason = `base move priority ${firstPriority! >= 0 ? '+' : ''}${firstPriority!} vs ${secondPriority! >= 0 ? '+' : ''}${secondPriority!}`;
+    } else {
+      order = this.speedOrder(firstProfile, secondProfile, trickRoom);
+      reason = trickRoom ? 'equal priority under Trick Room' : 'equal priority';
+    }
+    const orderText =
+      order === 'first'
+        ? `${first.mon.species} is guaranteed to act first`
+        : order === 'second'
+          ? `${second.mon.species} is guaranteed to act first`
+          : order === 'tie'
+            ? 'The Pokémon speed-tie'
+            : 'Their order is uncertain across the legal hidden Speed range';
+    const describe = (name: string, profile: SpeedProfile) => {
+      const raw = this.formatRange(profile.raw);
+      const effective = this.formatRange(profile.effective);
+      return `${name}: raw Speed ${raw}; effective Speed ${effective}${
+        profile.modifiers.length ? ` (${profile.modifiers.join(', ')})` : ''
+      }`;
+    };
+    const lines = [
+      describe(first.mon.species, firstProfile),
+      describe(second.mon.species, secondProfile),
+      `${orderText} (${reason}).`,
+    ];
+    if (this.speciesKey(firstMove) === 'encore') {
+      const alreadyEncored = [...second.mon.volatiles].some((volatile) => this.speciesKey(volatile) === 'encore');
+      if (alreadyEncored) lines.push(`Encore fails: ${second.mon.species} is already Encored.`);
+      else if (second.mon.choiceLock)
+        lines.push(
+          `Encore is redundant: ${second.mon.species} is already Choice-locked into ${second.mon.choiceLock}.`,
+        );
+      else if (order === 'first')
+        lines.push(
+          second.mon.lastMove
+            ? `Encore acts before the target and attempts to lock its prior move, ${second.mon.lastMove.name}.`
+            : 'Encore acts before the target and fails because it has no prior move.',
+        );
+      else if (order === 'second')
+        lines.push(
+          `Encore acts after the target and attempts to lock the move used this turn${
+            secondMove ? `, ${secondMove}` : ''
+          }.`,
+        );
+      else
+        lines.push(
+          'Encore timing depends on the unresolved order; it may lock the prior move or the move used this turn.',
+        );
+    }
+    return lines.join('\n');
+  }
+
+  private activeEntries(): Array<{ pid: Pid; slot: number; mon: MonState }> {
+    const entries: Array<{ pid: Pid; slot: number; mon: MonState }> = [];
+    for (const pid of ['p1', 'p2'] as const) {
+      const side = this.sides[pid];
+      for (const [slot, letter] of [
+        [1, 'a'],
+        [2, 'b'],
+      ] as const) {
+        const key = side.active[letter];
+        const mon = key ? side.mons.get(key) : undefined;
+        if (mon && !mon.fainted) entries.push({ pid, slot, mon });
+      }
+    }
+    return entries;
+  }
+
+  private activeEntry(pid: Pid, slot: number): MonState | undefined {
+    const key = this.sides[pid].active[slot === 1 ? 'a' : slot === 2 ? 'b' : ''];
+    const mon = key ? this.sides[pid].mons.get(key) : undefined;
+    return mon && !mon.fainted ? mon : undefined;
+  }
+
+  private findActive(query: string): { pid: Pid; slot: number; mon: MonState } | undefined {
+    const normalized = this.speciesKey(query);
+    const slot = /^(ally|foe)([12])$/.exec(normalized);
+    if (slot) {
+      const own = slot[1] === 'ally';
+      const pid = own ? this.pid : this.pid === 'p1' ? 'p2' : 'p1';
+      const mon = this.activeEntry(pid, Number(slot[2]));
+      return mon ? { pid, slot: Number(slot[2]), mon } : undefined;
+    }
+    return this.activeEntries().find(
+      (entry) =>
+        this.speciesKey(entry.mon.species) === normalized ||
+        this.speciesKey(afterColon(entry.mon.ident)) === normalized,
+    );
+  }
+
+  private speedProfile(pid: Pid, mon: MonState, reference: ShowdownReference): SpeedProfile | undefined {
+    const conditions = this.sides[pid].conditions;
+    const terrain = [...this.fields.values()].find((effect) => /terrain/i.test(effect.name))?.name;
+    return reference.speedProfile({
+      species: mon.species,
+      ...(mon.nature === undefined ? {} : { nature: mon.nature }),
+      ...(pid === this.pid && Number.isInteger(mon.stats.spe) ? { exact: mon.stats.spe } : {}),
+      ...(mon.item === undefined ? {} : { item: mon.item }),
+      itemConsumed: mon.itemConsumed,
+      ...(mon.ability === undefined ? {} : { ability: mon.ability }),
+      ...(mon.status === undefined ? {} : { status: mon.status }),
+      ...(mon.boosts.spe === undefined ? {} : { boost: mon.boosts.spe }),
+      tailwind: conditions.has('tailwind'),
+      ...(this.weather?.name === undefined ? {} : { weather: this.weather.name }),
+      ...(terrain === undefined ? {} : { terrain }),
+    });
+  }
+
+  private speedOrder(
+    first: SpeedProfile,
+    second: SpeedProfile,
+    trickRoom: boolean,
+  ): 'first' | 'second' | 'tie' | 'uncertain' {
+    if (
+      first.effective[0] === first.effective[1] &&
+      first.effective[0] === second.effective[0] &&
+      second.effective[0] === second.effective[1]
+    )
+      return 'tie';
+    if (trickRoom) {
+      if (first.effective[1] < second.effective[0]) return 'first';
+      if (second.effective[1] < first.effective[0]) return 'second';
+    } else {
+      if (first.effective[0] > second.effective[1]) return 'first';
+      if (second.effective[0] > first.effective[1]) return 'second';
+    }
+    return 'uncertain';
+  }
+
+  private formatRange(range: [number, number]): string {
+    return range[0] === range[1] ? String(range[0]) : `${range[0]}–${range[1]}`;
+  }
+
+  private stopTimer(pid: Pid): void {
+    const timer = this.timers[pid];
+    if (!timer?.running) return;
+    const now = Date.now();
+    const drained = (now - timer.at) / 1000;
+    this.timers[pid] = {
+      seconds: timer.seconds === null ? null : Math.max(0, timer.seconds - drained),
+      turnSeconds: timer.turnSeconds === null ? null : Math.max(0, timer.turnSeconds - drained),
+      at: now,
+      running: false,
+    };
+  }
+
   weatherLabel(): string {
     return this.formatTimed(this.weather);
   }
@@ -391,7 +629,12 @@ export class BattleState {
     return undefined;
   }
 
-  private renderSide(pid: Pid, own: boolean): string[] {
+  private renderSide(
+    pid: Pid,
+    own: boolean,
+    expandedRoster: boolean,
+    referenceFor?: (mon: CompactMon) => CompactMonReference | undefined,
+  ): string[] {
     const side = this.sides[pid];
     const title = own ? 'Your side' : 'Opponent side';
     const conditions = this.conditionLabels(pid);
@@ -420,19 +663,44 @@ export class BattleState {
         !mon.ability
       )
         continue;
-      const attrs = [mon.species];
       const activeSlots = Object.entries(side.active).flatMap(([slot, key]) =>
         key === this.monKey(mon.ident) ? [slot] : [],
       );
+      const reference = referenceFor?.({
+        species: mon.species,
+        item: mon.item ?? null,
+        nature: mon.nature ?? null,
+        moves: [...mon.moves.values()].map((move) => move.name),
+        active: activeSlots.length > 0,
+      });
+      const attrs = [mon.species];
+      if (reference?.types) attrs.push(`types ${reference.types}`);
       if (activeSlots.length) attrs.push(`active slot ${activeSlots.join('/')}`);
-      attrs.push(`HP ${mon.hp ?? '?'}`);
+      attrs.push(`HP ${mon.hpPercent === undefined ? '?' : `${Math.round(mon.hpPercent)}%`}`);
       if (mon.status) attrs.push(mon.status);
       if (mon.fainted) attrs.push('fainted');
+      if (!expandedRoster && !activeSlots.length) {
+        if (mon.moves.size) attrs.push(`moves ${[...mon.moves.values()].map((entry) => entry.name).join(', ')}`);
+        const speed = own ? mon.stats.spe : undefined;
+        if (speed !== undefined) attrs.push(`Speed ${speed}`);
+        else if (reference?.speed) attrs.push(`raw Speed range ${reference.speed}`);
+        if (mon.item) attrs.push(`item ${mon.item}${mon.itemConsumed ? ' (consumed)' : ''}`);
+        if (mon.ability) attrs.push(`ability ${mon.ability}`);
+        if (mon.nature) attrs.push(`stat alignment ${mon.nature}`);
+        if (mon.mega) attrs.push('Mega Evolved');
+        if (!mon.mega && reference?.mega) attrs.push(reference.mega);
+        lines.push(`- ${attrs.join('; ')}`);
+        continue;
+      }
       const boosts = Object.entries(mon.boosts)
         .filter(([, value]) => value)
         .sort(([a], [b]) => a.localeCompare(b));
       if (boosts.length)
-        attrs.push(`boosts ${boosts.map(([stat, value]) => `${stat} ${value >= 0 ? '+' : ''}${value}`).join(', ')}`);
+        attrs.push(
+          `boosts ${boosts
+            .map(([stat, value]) => `${STAT_LABELS[stat] ?? stat} ${value >= 0 ? '+' : ''}${value}`)
+            .join(', ')}`,
+        );
       if (mon.volatiles.size) attrs.push(`volatile ${[...mon.volatiles].sort().join(', ')}`);
       if (mon.moves.size)
         attrs.push(
@@ -442,7 +710,10 @@ export class BattleState {
                 ...(entry.pp !== undefined ? [`PP ${entry.pp}/${entry.maxpp ?? '?'}`] : []),
                 ...(entry.used ? [`used ${entry.used}`] : []),
               ];
-              return `${entry.name}${details.length ? ` (${details.join('; ')})` : ''}`;
+              const referenceDetail = reference?.moves[this.speciesKey(entry.name)];
+              return `${entry.name}${referenceDetail ? ` [${referenceDetail}]` : ''}${
+                details.length ? ` (${details.join('; ')})` : ''
+              }`;
             })
             .join(', ')}`,
         );
@@ -456,16 +727,19 @@ export class BattleState {
         const target = mon.lastMove.target ? ` into ${this.targetSpecies(mon.lastMove.target)}` : '';
         attrs.push(`last move ${mon.lastMove.name}${target} (turn ${mon.lastMove.turn})`);
       }
+      if (mon.choiceLock) attrs.push(`Choice-locked into ${mon.choiceLock}`);
       if (own && Object.keys(mon.stats).length)
         attrs.push(
           `stats ${Object.entries(mon.stats)
-            .map(([stat, value]) => `${stat} ${value}`)
+            .map(([stat, value]) => `${STAT_LABELS[stat] ?? stat} ${value}`)
             .join(', ')}`,
         );
+      else if (reference?.speed) attrs.push(`raw Speed range ${reference.speed}`);
       if (mon.item) attrs.push(`item ${mon.item}${mon.itemConsumed ? ' (consumed)' : ''}`);
       if (mon.ability) attrs.push(`ability ${mon.ability}`);
       if (mon.nature) attrs.push(`stat alignment ${mon.nature}`);
       if (mon.mega) attrs.push('Mega Evolved');
+      if (!mon.mega && reference?.mega) attrs.push(reference.mega);
       lines.push(`- ${attrs.join('; ')}`);
     }
     if (lines.length === 1) lines.push('- no Pokémon revealed');

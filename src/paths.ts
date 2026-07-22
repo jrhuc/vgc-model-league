@@ -8,7 +8,6 @@ export const DATA_DIR = path.resolve(process.env.VGC_LEAGUE_DATA_DIR ?? REPO_ROO
 export const AUTH_DB_PATH = path.resolve(process.env.VGC_LEAGUE_DB_PATH ?? path.join(DATA_DIR, 'vgcleague.sqlite'));
 export const PINNED_PS_DIR = path.join(REPO_ROOT, 'pokemon-showdown');
 export const TEAMS_DIR = path.join(DATA_DIR, 'teams');
-/** Draft boards are immutable bundled data, always read from the install. */
 export const BOARDS_DIR = path.join(REPO_ROOT, 'boards');
 export const RUNS_DIR = path.join(DATA_DIR, 'runs');
 export const RESULTS_PATH = path.join(DATA_DIR, 'records', 'results.jsonl');

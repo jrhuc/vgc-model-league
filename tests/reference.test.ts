@@ -5,6 +5,7 @@ import test from 'node:test';
 import { REPO_ROOT } from '../src/paths.js';
 import { DEX_TOOLS, ShowdownReference } from '../src/reference.js';
 import { SHOWDOWN_LOCK, showdownCommit } from '../src/showdown.js';
+import { isRecord } from '../src/value.js';
 
 test('reference reads exact data from the configured Showdown checkout', () => {
   const reference = new ShowdownReference('gen9championsvgc2026regmb');
@@ -23,16 +24,16 @@ test('reference reads exact data from the configured Showdown checkout', () => {
   assert.match(rendered, /commit /);
   assert.match(
     rendered,
-    /Species Gengar: Ghost\/Poison; base stats HP 60, Atk 65, Def 60, SpA 130, SpD 75, Spe 110; abilities Cursed Body/,
+    /Species Gengar: Ghost\/Poison; base stats HP 60, Attack 65, Defense 60, Special Attack 130, Special Defense 75, Speed 110; abilities Cursed Body/,
   );
-  assert.match(rendered, /Speed 126-178 with Timid alignment/);
+  assert.match(rendered, /raw Speed 126-178 with Timid alignment/);
   assert.match(
     rendered,
-    /Gengar-Mega \(Ghost\/Poison, base stats HP 60, Atk 65, Def 80, SpA 170, SpD 95, Spe 130, abilities Shadow Tag; Speed 148-200 with Timid alignment\)/,
+    /Gengar-Mega \(Ghost\/Poison, base stats HP 60, Attack 65, Defense 80, Special Attack 170, Special Defense 95, Speed 130, abilities Shadow Tag; raw Speed 148-200 with Timid alignment\)/,
   );
   assert.match(
     rendered,
-    /Species Garchomp: Dragon\/Ground; base stats HP 108, Atk 130, Def 95, SpA 80, SpD 85, Spe 102/,
+    /Species Garchomp: Dragon\/Ground; base stats HP 108, Attack 130, Defense 95, Special Attack 80, Special Defense 85, Speed 102/,
   );
   assert.match(rendered, /Move Shadow Ball: Ghost; Special; BP 80; acc 100%; priority \+0; target normal/);
   assert.equal(rendered.match(/- Move Shadow Ball:/g)?.length, 1);
@@ -45,8 +46,60 @@ test('Mega formes require the visible matching stone', () => {
   const rendered = new ShowdownReference('gen9championsvgc2026regmb')
     .render({ speciesSets: [['Charizard', 'Choice Specs']], items: ['Choice Specs'] })
     .join('\n');
-  assert.match(rendered, /Species Charizard: Fire\/Flying; base stats .* Spe 100/);
+  assert.match(rendered, /Species Charizard: Fire\/Flying; base stats .* Speed 100/);
   assert.doesNotMatch(rendered, /Charizard-Mega/);
+});
+
+test('active matchup chart resolves Weather Ball under the live weather', () => {
+  const reference = new ShowdownReference('gen9championsvgc2026regmb');
+  const attackers = [{ species: 'Politoed', moves: ['Weather Ball'], ally: true }];
+  const defenders = [{ species: 'Incineroar', moves: [], ally: false }];
+  const clear = reference.renderActiveMatchups(attackers, defenders).join('\n');
+  assert.equal(clear, '');
+  const rain = reference.renderActiveMatchups(attackers, defenders, 'RainDance').join('\n');
+  assert.match(rain, /Weather Ball \(currently Water in RainDance\): Incineroar super-effective \(2x\)/);
+  const sun = reference.renderActiveMatchups(attackers, defenders, 'SunnyDay').join('\n');
+  assert.match(sun, /currently Fire in SunnyDay\): Incineroar not very effective/);
+  const renderedRain = reference.renderActiveMatchups(attackers, defenders, 'RainDance (4 turns left)').join('\n');
+  assert.match(renderedRain, /currently Water in RainDance \(4 turns left\)/);
+  assert.match(
+    reference.lookup('estimate_damage', {
+      attacker: 'Politoed',
+      defender: 'Incineroar',
+      move: 'Weather Ball',
+      weather: 'RainDance (4 turns left)',
+    }),
+    /weather 1\.5x/,
+  );
+});
+
+test('active matchups exclude same-side targets and handle primal weather', () => {
+  const reference = new ShowdownReference('gen9championsvgc2026regmb');
+  const attackers = [
+    { species: 'Politoed', moves: ['Weather Ball'], ally: true },
+    { species: 'Incineroar', moves: ['Flare Blitz'], ally: false },
+  ];
+  const defenders = [
+    { species: 'Swampert', moves: [], ally: true },
+    { species: 'Landorus', moves: [], ally: false },
+  ];
+  const rain = reference.renderActiveMatchups(attackers, defenders, 'PrimordialSea').join('\n');
+  assert.match(rain, /Politoed Weather Ball \(currently Water in PrimordialSea\): Landorus/);
+  assert.doesNotMatch(rain, /Politoed Weather Ball.*Swampert/);
+  assert.match(rain, /Incineroar Flare Blitz \(Fire\): Swampert/);
+  assert.doesNotMatch(rain, /Incineroar Flare Blitz.*Landorus/);
+
+  const sun = reference.renderActiveMatchups(attackers, defenders, 'DesolateLand').join('\n');
+  assert.doesNotMatch(sun, /Weather Ball/);
+  assert.match(
+    reference.lookup('estimate_damage', {
+      attacker: 'Incineroar',
+      defender: 'Gholdengo',
+      move: 'Flare Blitz',
+      weather: 'PrimordialSea (5 turns left)',
+    }),
+    /fails in Primordial Sea; 0% damage\. Cannot KO\./,
+  );
 });
 
 test('lookup tools return one entry and reject missing data', () => {
@@ -65,6 +118,7 @@ test('lookup tools return one entry and reject missing data', () => {
 
 test('default Showdown checkout matches the pinned revision', () => {
   assert.equal(showdownCommit(), SHOWDOWN_LOCK.commit);
+  assert.match(ShowdownReference.renderRevision(), /^[0-9a-f]{12}$/);
 });
 
 test('missing Showdown checkout fails immediately', () => {
@@ -90,7 +144,7 @@ test('matchup and damage tools stay within open information', () => {
     defender_nature: 'Calm',
     is_spread_hit: true,
   });
-  assert.match(damage, /damage \d+-\d+/);
+  assert.match(damage, /\d+(?:\.\d+)?-\d+(?:\.\d+)?% of maximum HP/);
   assert.match(damage, /legal range|exact from request/);
   assert.doesNotMatch(damage, /exact foe|hidden (iv|ev)s?/i);
   assert.ok(DEX_TOOLS.some((tool) => tool.name === 'lookup_matchup'));
@@ -112,25 +166,44 @@ test('defender items model Assault Vest and Eviolite and disclose everything els
   );
 });
 
-test('damage percentages use real foe HP even when the model passes percent-scale HP', () => {
+test('damage estimates accept percentages only, reject zero exact stats, and label KO certainty', () => {
   const reference = new ShowdownReference('gen9championsvgc2026regmb');
-  const args = {
-    attacker: 'Whimsicott',
+  const possible = reference.lookup('estimate_damage', {
+    attacker: 'Tauros-Paldea-Aqua',
     defender: 'Incineroar',
-    move: 'Moonblast',
-    attacker_stats: { atk: 78, def: 105, spa: 129, spd: 95, spe: 184 },
-    defender_nature: 'Impish',
-  };
-  // Showdown shows foe HP as x/100; raw 70/100 must not be treated as 70 real HP.
-  const misused = reference.lookup('estimate_damage', { ...args, defender_hp: 70, defender_max_hp: 100 });
-  assert.match(misused, /legal max HP \d{3}/);
-  assert.match(misused, /defender shown at 70%/);
-  assert.doesNotMatch(misused, /1[0-9][0-9](?:\.\d)?% of/);
-  const explicit = reference.lookup('estimate_damage', { ...args, defender_hp_percent: 70 });
-  assert.match(explicit, /defender shown at 70%/);
-  // Exact raw HP for the model's own side still reports percent of current HP.
-  const own = reference.lookup('estimate_damage', { ...args, defender_hp: 142, defender_max_hp: 202 });
-  assert.match(own, /% of current HP 142/);
+    move: 'Raging Bull',
+    attacker_stats: { atk: 0, def: 0, spa: 0, spd: 0, spe: 0 },
+    attacker_nature: 'Adamant',
+    defender_hp_percent: 70,
+  });
+  assert.match(possible, /Raging Bull \(Water Physical BP 90\)/);
+  assert.match(possible, /Possible KO from the shown 70%, not guaranteed/);
+  assert.match(possible, /legal attack range/);
+  assert.doesNotMatch(possible, /damage \d+-\d+|max HP \d+|current HP \d+/);
+
+  const guaranteed = reference.lookup('estimate_damage', {
+    attacker: 'Tauros-Paldea-Aqua',
+    defender: 'Incineroar',
+    move: 'Raging Bull',
+    attacker_nature: 'Adamant',
+    defender_hp_percent: 10,
+  });
+  assert.match(guaranteed, /Guaranteed KO from the shown 10%/);
+
+  const impossible = reference.lookup('estimate_damage', {
+    attacker: 'Pikachu',
+    defender: 'Steelix',
+    move: 'Quick Attack',
+    attacker_nature: 'Timid',
+  });
+  assert.match(impossible, /Cannot OHKO/);
+
+  const damageProperties = DEX_TOOLS.find((tool) => tool.name === 'estimate_damage')!.parameters.properties;
+  assert.ok(isRecord(damageProperties));
+  assert.equal('attacker_hp' in damageProperties, false);
+  assert.equal('attacker_max_hp' in damageProperties, false);
+  assert.equal('defender_hp' in damageProperties, false);
+  assert.equal('defender_max_hp' in damageProperties, false);
 });
 
 test('compact reference omits ability essays and full move text', () => {
@@ -150,4 +223,112 @@ test('compact reference omits ability essays and full move text', () => {
   assert.match(compact, /Earthquake Ground\/Physical\/100/);
   assert.doesNotMatch(compact, /Damage doubles if the target is using Dig/);
   assert.doesNotMatch(compact, /abilities Damp\/Torrent/);
+});
+
+test('compact reference tags non-single-target moves', () => {
+  const compact = new ShowdownReference('gen9championsvgc2026regmb')
+    .renderCompact([
+      {
+        species: 'Sylveon',
+        item: 'Fairy Feather',
+        nature: 'Modest',
+        moves: ['Hyper Voice', 'Earthquake', 'Tailwind', 'Rage Powder', 'Quick Attack'],
+        active: false,
+      },
+    ])
+    .join('\n');
+  assert.match(compact, /Hyper Voice Normal\/Special\/90\/spread/);
+  assert.match(compact, /Earthquake Ground\/Physical\/100\/spread\+ally/);
+  assert.match(compact, /Tailwind Flying\/Status\/no power\/ally-side/);
+  assert.match(
+    compact,
+    /Rage Powder Bug\/Status\/no power\/self\/priority \+2\/powder: fails on Grass types, Overcoat, and Safety Goggles/,
+  );
+  assert.match(compact, /Quick Attack Normal\/Physical\/40\/priority \+1/);
+});
+
+test('compact and matchup references resolve Raging Bull from the Tauros forme', () => {
+  const reference = new ShowdownReference('gen9championsvgc2026regmb');
+  const compact = reference
+    .renderCompact([
+      { species: 'Tauros-Paldea-Combat', moves: ['Raging Bull'] },
+      { species: 'Tauros-Paldea-Blaze', moves: ['Raging Bull'] },
+      { species: 'Tauros-Paldea-Aqua', moves: ['Raging Bull'] },
+    ])
+    .join('\n');
+  assert.match(compact, /Tauros-Paldea-Combat: Fighting;.*Raging Bull Fighting\/Physical\/90/);
+  assert.match(compact, /Tauros-Paldea-Blaze: Fighting\/Fire;.*Raging Bull Fire\/Physical\/90/);
+  assert.match(compact, /Tauros-Paldea-Aqua: Fighting\/Water;.*Raging Bull Water\/Physical\/90/);
+  assert.match(
+    reference.lookup('lookup_matchup', {
+      attacker: 'Tauros-Paldea-Aqua',
+      move: 'Raging Bull',
+      defender: 'Gengar',
+    }),
+    /Raging Bull \(Water\).*neutral/,
+  );
+  assert.equal(
+    reference.lookup('lookup_matchup', { move: 'Raging Bull', defender: 'Gengar' }),
+    'attacker is required to resolve Raging Bull typing.',
+  );
+});
+
+test('move lookups surface powder and sound interactions missing from descriptions', () => {
+  const reference = new ShowdownReference('gen9championsvgc2026regmb');
+  assert.match(
+    reference.lookup('lookup_move', { name: 'Rage Powder' }),
+    /powder move: no effect on Grass types, Overcoat, or Safety Goggles holders \(including redirection\)/,
+  );
+  assert.match(
+    reference.lookup('lookup_move', { name: 'Hyper Voice' }),
+    /sound move: blocked by Soundproof, bypasses Substitute/,
+  );
+  assert.doesNotMatch(reference.lookup('lookup_move', { name: 'Earthquake' }), /powder move|sound move/);
+});
+
+test('compact reference shows the mega outcome for stone holders only', () => {
+  const reference = new ShowdownReference('gen9championsvgc2026regmb');
+  const holder = reference
+    .renderCompact([{ species: 'Swampert', item: 'Swampertite', nature: 'Adamant', moves: [], active: false }])
+    .join('\n');
+  assert.match(holder, /if Mega Evolved -> Swampert-Mega: Water\/Ground, ability Swift Swim/);
+  assert.match(holder, /Attack 150/);
+  const wrongStone = reference
+    .renderCompact([{ species: 'Swampert', item: 'Gengarite', nature: 'Adamant', moves: [], active: false }])
+    .join('\n');
+  assert.doesNotMatch(wrongStone, /Mega Evolved/);
+});
+
+test('speed profiles apply visible battle modifiers without collapsing hidden ranges', () => {
+  const reference = new ShowdownReference('gen9championsvgc2026regmb');
+  assert.deepEqual(
+    reference.speedProfile({
+      species: 'Tauros-Paldea-Aqua',
+      nature: 'Adamant',
+      item: 'Choice Scarf',
+    }),
+    {
+      raw: [105, 152],
+      effective: [157, 228],
+      modifiers: ['Choice Scarf ×1.5'],
+    },
+  );
+  assert.deepEqual(
+    reference.speedProfile({
+      species: 'Venusaur-Mega',
+      nature: 'Modest',
+      tailwind: true,
+    })?.effective,
+    [170, 264],
+  );
+  assert.deepEqual(
+    reference.speedProfile({
+      species: 'Gengar-Mega',
+      exact: 170,
+      status: 'par',
+    })?.effective,
+    [85, 85],
+  );
+  assert.equal(reference.movePriority('Quick Attack'), 1);
+  assert.equal(reference.movePriority('Encore'), 0);
 });

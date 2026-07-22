@@ -1,22 +1,23 @@
 import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import type { GameEnd, GameStart } from './engines.js';
+import type { DecisionLog, GameEnd, GameStart } from './engines.js';
 import { LLMEngine, RandomEngine } from './engines.js';
 import { REPO_ROOT } from './paths.js';
 import type { ModelReasoningConfig, ReasoningLevel } from './providers.js';
 import { makeProvider, parseSpec, reasoningForModel } from './providers.js';
+import { seededRng } from './random.js';
 import { ShowdownReference } from './reference.js';
 import { SimBattle } from './sim.js';
 import type { Team } from './teams.js';
-import type { JsonObject, Pid, PlayerOptions } from './types.js';
+import type { BattleOutcome, JsonObject, Pid, PlayerOptions, TimerScale } from './types.js';
 
 export function makeEngine(
   pid: Pid,
   spec: string,
   seed: number,
-  decisionLog: string,
-  traceLog: string,
+  decisionLog: DecisionLog,
+  traceLog: DecisionLog,
   format: string,
   psDir: string,
   reasoning?: ReasoningLevel,
@@ -40,6 +41,31 @@ export function makeEngine(
   });
 }
 
+export interface GameLuck {
+  misses: number;
+  crits_taken: number;
+  flinched_turns: number;
+  full_paralysis: number;
+}
+
+export function gameLuck(log: string[]): Record<Pid, GameLuck> {
+  const luck: Record<Pid, GameLuck> = {
+    p1: { misses: 0, crits_taken: 0, flinched_turns: 0, full_paralysis: 0 },
+    p2: { misses: 0, crits_taken: 0, flinched_turns: 0, full_paralysis: 0 },
+  };
+  for (const line of log) {
+    if (!line.startsWith('|')) continue;
+    const [, kind = '', ...args] = line.split('|');
+    const pid = args[0]?.startsWith('p1') ? 'p1' : args[0]?.startsWith('p2') ? 'p2' : undefined;
+    if (!pid) continue;
+    if (kind === '-miss') luck[pid].misses += 1;
+    else if (kind === '-crit') luck[pid].crits_taken += 1;
+    else if (kind === 'cant' && args[1] === 'flinch') luck[pid].flinched_turns += 1;
+    else if (kind === 'cant' && args[1] === 'par') luck[pid].full_paralysis += 1;
+  }
+  return luck;
+}
+
 export interface Bo3Context {
   engines: Record<Pid, RandomEngine | LLMEngine>;
   /** Showdown player names; game winners come back as these. */
@@ -52,11 +78,16 @@ export interface Bo3Context {
   seriesDir: string;
   format: string;
   psDir: string;
-  timer?: boolean;
+  timerScale?: TimerScale;
   signal?: AbortSignal;
   onGameStart?: (game: number) => void;
   onGameUpdate?: (game: number, lines: string[], publicLines: string[]) => void;
   onGameEnd?: (game: number, winner: string | null, turns: number, score: Record<Pid, number>) => void;
+  requireWinner?: boolean;
+  runBattle?: (
+    seed: [number, number, number, number],
+    onUpdate: (lines: string[], publicLines: string[]) => void,
+  ) => Promise<BattleOutcome>;
 }
 
 export interface Bo3Result {
@@ -65,12 +96,20 @@ export interface Bo3Result {
   winnerSide: Pid | undefined;
 }
 
+export const SINGLE_ELIMINATION_GAME_LIMIT = 9;
+
 export async function playBo3(context: Bo3Context): Promise<Bo3Result> {
   const { engines, names, seriesId } = context;
+  if (context.requireWinner && context.gameSeeds.length !== 3) {
+    throw new Error('single-elimination series require exactly three regulation game seeds');
+  }
   const score: Record<Pid, number> = { p1: 0, p2: 0 };
   const games: JsonObject[] = [];
+  const gameSeeds = [...context.gameSeeds];
+  const tiebreakRandom = seededRng(JSON.stringify(context.gameSeeds));
 
-  for (const [index, gameSeed] of context.gameSeeds.entries()) {
+  for (let index = 0; index < gameSeeds.length; index += 1) {
+    const gameSeed = gameSeeds[index]!;
     context.signal?.throwIfAborted();
     const gameNumber = index + 1;
     const gameId = `${seriesId}-${gameNumber}`;
@@ -81,10 +120,14 @@ export async function playBo3(context: Bo3Context): Promise<Bo3Result> {
       p1: { name: names.p1, team: context.teams.p1.packed },
       p2: { name: names.p2, team: context.teams.p2.packed },
     };
-    const outcome = await new SimBattle(context.format, players, gameSeed, context.psDir, context.timer ?? true).run(
-      engines,
-      (lines, publicLines) => context.onGameUpdate?.(gameNumber, lines, publicLines),
-    );
+    const onUpdate = (lines: string[], publicLines: string[]) => context.onGameUpdate?.(gameNumber, lines, publicLines);
+    const outcome = context.runBattle
+      ? await context.runBattle(gameSeed, onUpdate)
+      : await new SimBattle(context.format, players, gameSeed, context.psDir, context.timerScale ?? 1).run(
+          engines,
+          onUpdate,
+          context.signal,
+        );
     context.signal?.throwIfAborted();
     const winnerSide = (['p1', 'p2'] as const).find((pid) => names[pid] === outcome.winner);
     if (winnerSide) score[winnerSide] += 1;
@@ -116,10 +159,19 @@ export async function playBo3(context: Bo3Context): Promise<Bo3Result> {
       seed: gameSeed,
       errors: outcome.errors,
       fallbacks: outcome.fallbacks,
+      luck: gameLuck(outcome.log),
       log: relative(logPath),
     });
     context.onGameEnd?.(gameNumber, winnerSide ? context.players[winnerSide] : null, outcome.turns, { ...score });
     if (Math.max(...Object.values(score)) === 2) break;
+    if (index + 1 < context.gameSeeds.length) continue;
+    if (!context.requireWinner || score.p1 !== score.p2) break;
+    if (games.length >= SINGLE_ELIMINATION_GAME_LIMIT) {
+      throw new Error(`single-elimination series remained tied after ${SINGLE_ELIMINATION_GAME_LIMIT} games`);
+    }
+    gameSeeds.push(
+      Array.from({ length: 4 }, () => 1 + Math.floor(tiebreakRandom() * 0xffff)) as [number, number, number, number],
+    );
   }
 
   return { score, games, winnerSide: score.p1 === score.p2 ? undefined : score.p1 > score.p2 ? 'p1' : 'p2' };
@@ -137,9 +189,11 @@ export interface RecordedSeriesContext extends ModelReasoningConfig {
   signal?: AbortSignal;
   onGameUpdate?: (game: number, lines: string[], publicLines: string[]) => void;
   onGameEnd?: (game: number, winner: string | null, turns: number, score: Record<Pid, number>) => void;
+  onDecision?: (pid: Pid, row: JsonObject) => void;
+  requireWinner?: boolean;
+  timerScale?: TimerScale;
 }
 
-/** Common record fields shared by every mode; callers add mode identity on top. */
 export interface RecordedSeriesFields extends JsonObject {
   timestamp: string;
   run_id: string;
@@ -153,6 +207,7 @@ export interface RecordedSeriesFields extends JsonObject {
   turns: number;
   games: JsonObject[];
   engine_seeds: Record<Pid, number>;
+  timer_scale: number | 'off';
   reasoning: ReasoningLevel | null;
   reasoning_by_player?: Record<Pid, ReasoningLevel | null>;
   decision_stats: JsonObject;
@@ -176,6 +231,15 @@ export async function playRecordedSeries(context: RecordedSeriesContext): Promis
     p1: reasoningForModel(context.players.p1, context),
     p2: reasoningForModel(context.players.p2, context),
   };
+  const decisionRows: Record<Pid, JsonObject[]> = { p1: [], p2: [] };
+  const decisionSink = (pid: Pid): DecisionLog => {
+    const file = path.join(seriesDir, `${pid}-decisions.jsonl`);
+    return (row) => {
+      fs.appendFileSync(file, `${JSON.stringify(row)}\n`, 'utf8');
+      decisionRows[pid].push(row);
+      context.onDecision?.(pid, row);
+    };
+  };
   const engines = Object.fromEntries(
     (['p1', 'p2'] as const).map((pid) => [
       pid,
@@ -183,7 +247,7 @@ export async function playRecordedSeries(context: RecordedSeriesContext): Promis
         pid,
         context.players[pid],
         context.engineSeeds[pid],
-        path.join(seriesDir, `${pid}-decisions.jsonl`),
+        decisionSink(pid),
         path.join(seriesDir, `${pid}-trace.jsonl`),
         context.format,
         context.psDir,
@@ -204,10 +268,13 @@ export async function playRecordedSeries(context: RecordedSeriesContext): Promis
     seriesDir,
     format: context.format,
     psDir: context.psDir,
+    ...(context.requireWinner === undefined ? {} : { requireWinner: context.requireWinner }),
+    ...(context.timerScale === undefined ? {} : { timerScale: context.timerScale }),
     ...(context.signal === undefined ? {} : { signal: context.signal }),
     ...(context.onGameUpdate === undefined ? {} : { onGameUpdate: context.onGameUpdate }),
     ...(context.onGameEnd === undefined ? {} : { onGameEnd: context.onGameEnd }),
   });
+  writeTurnsFile(seriesDir, games, decisionRows);
   const stats = Object.fromEntries(
     (['p1', 'p2'] as const).map((pid) => [pid, engines[pid].decisionStats()]),
   ) as JsonObject;
@@ -226,6 +293,7 @@ export async function playRecordedSeries(context: RecordedSeriesContext): Promis
       turns: games.reduce((sum, game) => sum + Number(game.turns), 0),
       games,
       engine_seeds: context.engineSeeds,
+      timer_scale: context.timerScale ?? 1,
       reasoning: context.reasoning ?? null,
       ...(context.reasoningByModel === undefined
         ? {}
@@ -238,4 +306,51 @@ export async function playRecordedSeries(context: RecordedSeriesContext): Promis
 function relative(file: string): string {
   const value = path.relative(REPO_ROOT, file);
   return value.startsWith('..') ? file : value;
+}
+
+/** Audit convenience: one file joining each turn's protocol lines with both sides' decisions. */
+function writeTurnsFile(seriesDir: string, games: JsonObject[], rows: Record<Pid, JsonObject[]>): void {
+  if (!rows.p1.length && !rows.p2.length) return;
+  const out: string[] = [];
+  const decisionsByTurn: Record<Pid, Map<string, JsonObject[]>> = { p1: new Map(), p2: new Map() };
+  for (const pid of ['p1', 'p2'] as const) {
+    for (const row of rows[pid]) {
+      if (row.kind !== 'decision') continue;
+      const key = `${Number(row.game_number)}:${Number(row.turn)}`;
+      const decisions = decisionsByTurn[pid].get(key);
+      if (decisions) decisions.push(row);
+      else decisionsByTurn[pid].set(key, [row]);
+    }
+  }
+  for (const game of games) {
+    const number = Number(game.number);
+    let logLines: string[] = [];
+    try {
+      logLines = fs.readFileSync(path.join(seriesDir, `game-${number}.log`), 'utf8').split('\n');
+    } catch {
+      continue;
+    }
+    const chunks = new Map<number, string[]>();
+    let turn = 0;
+    for (const line of logLines) {
+      if (line.startsWith('|turn|')) turn = Number(line.slice(6)) || turn;
+      const chunk = chunks.get(turn) ?? [];
+      chunk.push(line);
+      chunks.set(turn, chunk);
+    }
+    for (const [turnNumber, chunk] of chunks) {
+      out.push(
+        JSON.stringify({
+          game: number,
+          turn: turnNumber,
+          decisions: {
+            p1: decisionsByTurn.p1.get(`${number}:${turnNumber}`) ?? [],
+            p2: decisionsByTurn.p2.get(`${number}:${turnNumber}`) ?? [],
+          },
+          lines: chunk,
+        }),
+      );
+    }
+  }
+  fs.writeFileSync(path.join(seriesDir, 'turns.jsonl'), out.length ? `${out.join('\n')}\n` : '', 'utf8');
 }

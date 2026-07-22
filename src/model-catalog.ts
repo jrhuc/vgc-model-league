@@ -73,15 +73,6 @@ export const PROVIDER_OPTIONS: readonly ProviderOption[] = [
     requiresKey: true,
   },
   {
-    id: 'openrouter',
-    label: 'OpenRouter',
-    description: 'Text-generation models available through OpenRouter',
-    envKey: 'OPENROUTER_API_KEY',
-    baseUrl: 'https://openrouter.ai/api/v1',
-    discovery: 'list',
-    requiresKey: true,
-  },
-  {
     id: 'cerebras',
     label: 'Cerebras',
     description: 'Fast inference models from Cerebras',
@@ -107,6 +98,42 @@ export const PROVIDER_OPTIONS: readonly ProviderOption[] = [
     envKey: 'ZAI_API_KEY',
     baseUrl: 'https://api.z.ai/api/paas/v4',
     discovery: 'manual',
+    requiresKey: true,
+  },
+  {
+    id: 'openrouter',
+    label: 'OpenRouter',
+    description: 'Text-generation models available through OpenRouter',
+    envKey: 'OPENROUTER_API_KEY',
+    baseUrl: 'https://openrouter.ai/api/v1',
+    discovery: 'list',
+    requiresKey: true,
+  },
+  {
+    id: 'opencode-go',
+    label: 'OpenCode Go',
+    description: 'Models available through OpenCode Go',
+    envKey: 'OPENCODE_API_KEY',
+    baseUrl: 'https://opencode.ai/zen/go/v1',
+    discovery: 'list',
+    requiresKey: true,
+  },
+  {
+    id: 'opencode-zen',
+    label: 'OpenCode Zen',
+    description: 'Models available through OpenCode Zen',
+    envKey: 'OPENCODE_API_KEY',
+    baseUrl: 'https://opencode.ai/zen/v1',
+    discovery: 'list',
+    requiresKey: true,
+  },
+  {
+    id: 'vercel',
+    label: 'Vercel AI Gateway',
+    description: 'Models available through Vercel AI Gateway',
+    envKey: 'AI_GATEWAY_API_KEY',
+    baseUrl: 'https://ai-gateway.vercel.sh/v1',
+    discovery: 'list',
     requiresKey: true,
   },
   {
@@ -146,6 +173,7 @@ export async function discoverModels(
 
   const request = options.fetch ?? fetch;
   const signal = options.signal ?? AbortSignal.timeout(20_000);
+  if (provider.id === 'openrouter' && apiKey) await validateOpenRouterKey(request, provider, apiKey, signal);
   let models: DiscoveredModel[];
   if (provider.id === 'anthropic') models = await discoverAnthropic(request, apiKey ?? '', signal);
   else if (provider.id === 'google') models = await discoverGoogle(request, apiKey ?? '', signal);
@@ -227,6 +255,25 @@ async function discoverGoogle(
   }
 
   return models;
+}
+
+async function validateOpenRouterKey(
+  request: typeof fetch,
+  provider: ProviderOption,
+  apiKey: string,
+  signal: AbortSignal | undefined,
+): Promise<void> {
+  if (!provider.baseUrl) throw new Error('OpenRouter does not define an API endpoint');
+  const response = await request(
+    `${provider.baseUrl.replace(/\/$/, '')}/key`,
+    requestInit({ Authorization: `Bearer ${apiKey}` }, signal),
+  );
+  const raw = await readCappedText(response, 100_000);
+  if (raw === undefined) throw new Error('OpenRouter API key validation response was too large');
+  if (response.ok) return;
+  const detail = errorDetail(raw, apiKey);
+  const status = response.statusText ? `${response.status} ${response.statusText}` : String(response.status);
+  throw new Error(`OpenRouter API key validation failed (${status})${detail ? `: ${detail}` : ''}`);
 }
 
 async function discoverOpenAICompatible(

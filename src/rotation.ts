@@ -14,7 +14,7 @@ import { playRecordedSeries } from './series.js';
 import { showdownCommit } from './showdown.js';
 import type { Team } from './teams.js';
 import { loadPool, validatePool } from './teams.js';
-import type { ContributorAttribution, ExperimentMode, Pid } from './types.js';
+import type { ContributorAttribution, ExperimentMode, JsonObject, Pid, TimerScale } from './types.js';
 export const ROTATION_PROTOCOL_VERSION = 1;
 
 interface SeriesPlan {
@@ -37,11 +37,13 @@ export type RotationEvent =
   | { type: 'series-start'; index: number }
   | { type: 'game-update'; index: number; game: number; lines: string[]; publicLines: string[] }
   | { type: 'game-end'; index: number; game: number; winner: string | null; turns: number; score: Record<Pid, number> }
+  | { type: 'decision'; index: number; pid: Pid; row: JsonObject }
   | { type: 'series-end'; index: number; record: SeriesRecord };
 
 export interface RotationOptions extends ModelReasoningConfig {
   seed?: number;
   concurrency?: number;
+  timerScale?: TimerScale;
   recordsPath?: string;
   psDir?: string;
   apiKeys?: Readonly<Record<string, string>>;
@@ -52,9 +54,9 @@ export interface RotationOptions extends ModelReasoningConfig {
   contributor?: ContributorAttribution;
 }
 
-export function makeRunDirectory(): string {
+export function makeRunDirectory(base: string = RUNS_DIR): string {
   const stamp = new Date().toISOString().replaceAll('-', '').replaceAll(':', '').replace('Z', '000Z');
-  const directory = path.join(RUNS_DIR, `${stamp}-${randomUUID().slice(0, 8)}`);
+  const directory = path.join(base, `${stamp}-${randomUUID().slice(0, 8)}`);
   fs.mkdirSync(directory, { recursive: true });
   return directory;
 }
@@ -102,6 +104,7 @@ export async function runRotation(
         concurrency: options.concurrency ?? 2,
         reasoning: options.reasoning ?? null,
         reasoning_by_model: options.reasoningByModel ?? null,
+        timer_scale: options.timerScale ?? 1,
         pool: pool.id,
         format: pool.format,
         contributor: options.contributor ?? null,
@@ -125,11 +128,13 @@ export async function runRotation(
       signal,
       ...(options.reasoning === undefined ? {} : { reasoning: options.reasoning }),
       ...(options.reasoningByModel === undefined ? {} : { reasoningByModel: options.reasoningByModel }),
+      ...(options.timerScale === undefined ? {} : { timerScale: options.timerScale }),
       ...(options.apiKeys === undefined ? {} : { apiKeys: options.apiKeys }),
       onGameUpdate: (game, lines, publicLines) =>
         options.onEvent?.({ type: 'game-update', index: plan.index, game, lines, publicLines }),
       onGameEnd: (game, winner, turns, score) =>
         options.onEvent?.({ type: 'game-end', index: plan.index, game, winner, turns, score }),
+      onDecision: (pid, row) => options.onEvent?.({ type: 'decision', index: plan.index, pid, row }),
     });
     const row = {
       schema_version: 1,

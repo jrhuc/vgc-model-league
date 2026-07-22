@@ -37,6 +37,7 @@ interface OAuthUser {
 
 const SESSION_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 const OAUTH_FLOW_AGE_MS = 10 * 60 * 1000;
+const MAX_OAUTH_FLOWS = 1024;
 const ROLE_RANK: Record<UserRole, number> = { reader: 0, contributor: 1, operator: 2 };
 const requireFromHere = createRequire(import.meta.url);
 
@@ -77,23 +78,26 @@ export class AuthService {
   }
 
   private recoverInterruptedExperiments(): void {
-    const interrupted = this.db
-      .prepare("SELECT run_id, owner_user_id FROM experiments WHERE status = 'running'")
-      .all() as Array<{ run_id: string; owner_user_id: number }>;
-    if (!interrupted.length) return;
     const timestamp = this.now();
     this.db.exec('BEGIN IMMEDIATE');
     try {
-      this.db.prepare("UPDATE experiments SET status = 'failed', ended_at = ? WHERE status = 'running'").run(timestamp);
-      for (const row of interrupted) {
-        this.insertAudit(
-          row.owner_user_id,
-          'experiment.failed',
-          'experiment',
-          row.run_id,
-          { reason: 'server_restart' },
-          timestamp,
-        );
+      const interrupted = this.db
+        .prepare("SELECT run_id, owner_user_id FROM experiments WHERE status = 'running'")
+        .all() as Array<{ run_id: string; owner_user_id: number }>;
+      if (interrupted.length) {
+        this.db
+          .prepare("UPDATE experiments SET status = 'failed', ended_at = ? WHERE status = 'running'")
+          .run(timestamp);
+        for (const row of interrupted) {
+          this.insertAudit(
+            row.owner_user_id,
+            'experiment.failed',
+            'experiment',
+            row.run_id,
+            { reason: 'server_restart' },
+            timestamp,
+          );
+        }
       }
       this.db.exec('COMMIT');
     } catch (error) {
@@ -103,13 +107,22 @@ export class AuthService {
   }
 
   beginLogin(): { location: string; state: string } {
-    this.cleanup();
     const state = randomToken();
     const verifier = randomToken();
     const challenge = createHash('sha256').update(verifier).digest('base64url');
-    this.db
-      .prepare('INSERT INTO oauth_flows (state_hash, code_verifier, expires_at) VALUES (?, ?, ?)')
-      .run(hashToken(state), verifier, this.now() + OAUTH_FLOW_AGE_MS);
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      this.cleanup();
+      const flowCount = this.db.prepare('SELECT COUNT(*) AS count FROM oauth_flows').get() as { count: number };
+      if (flowCount.count >= MAX_OAUTH_FLOWS) throw new AuthError(429, 'too many pending login attempts');
+      this.db
+        .prepare('INSERT INTO oauth_flows (state_hash, code_verifier, expires_at) VALUES (?, ?, ?)')
+        .run(hashToken(state), verifier, this.now() + OAUTH_FLOW_AGE_MS);
+      this.db.exec('COMMIT');
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
     const url = new URL('https://github.com/login/oauth/authorize');
     url.searchParams.set('client_id', this.options.clientId);
     url.searchParams.set('redirect_uri', this.redirectUri);
@@ -280,7 +293,9 @@ export class AuthService {
     this.db.exec('BEGIN IMMEDIATE');
     try {
       const row = this.db
-        .prepare('UPDATE experiments SET status = ?, ended_at = ? WHERE run_id = ? RETURNING owner_user_id')
+        .prepare(
+          "UPDATE experiments SET status = ?, ended_at = ? WHERE run_id = ? AND status = 'running' RETURNING owner_user_id",
+        )
         .get(status, timestamp, runId) as { owner_user_id?: unknown } | undefined;
       if (row) this.insertAudit(Number(row.owner_user_id), `experiment.${status}`, 'experiment', runId, {}, timestamp);
       this.db.exec('COMMIT');
@@ -333,14 +348,10 @@ export class AuthService {
         applied_at INTEGER NOT NULL
       ) STRICT;
     `);
-    const applied = this.db.prepare('SELECT 1 FROM schema_migrations WHERE version = 1').get();
-    if (applied) {
-      this.migrateStoppedExperiments();
-      return;
-    }
     this.db.exec('BEGIN IMMEDIATE');
     try {
-      this.db.exec(`
+      if (!this.db.prepare('SELECT 1 FROM schema_migrations WHERE version = 1').get()) {
+        this.db.exec(`
         CREATE TABLE users (
           id INTEGER PRIMARY KEY,
           provider TEXT NOT NULL,
@@ -394,7 +405,8 @@ export class AuthService {
         CREATE INDEX audit_events_actor_user_id ON audit_events(actor_user_id);
         CREATE INDEX audit_events_created_at ON audit_events(created_at);
       `);
-      this.db.prepare('INSERT INTO schema_migrations (version, applied_at) VALUES (1, ?)').run(this.now());
+        this.db.prepare('INSERT INTO schema_migrations (version, applied_at) VALUES (1, ?)').run(this.now());
+      }
       this.db.exec('COMMIT');
     } catch (error) {
       this.db.exec('ROLLBACK');
@@ -407,6 +419,10 @@ export class AuthService {
     if (this.db.prepare('SELECT 1 FROM schema_migrations WHERE version = 2').get()) return;
     this.db.exec('BEGIN IMMEDIATE');
     try {
+      if (this.db.prepare('SELECT 1 FROM schema_migrations WHERE version = 2').get()) {
+        this.db.exec('COMMIT');
+        return;
+      }
       this.db.exec(`
         CREATE TABLE experiments_v2 (
           run_id TEXT PRIMARY KEY,

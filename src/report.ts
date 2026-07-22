@@ -63,7 +63,7 @@ function seriesTable(rows: SeriesRecord[], limit = 40): string {
       const score = asRecord(row.score);
       const games = Array.isArray(row.games) ? row.games : [];
       const side = row.winner_side === 'p1' || row.winner_side === 'p2' ? row.winner_side : '';
-      return `<tr class='${side === 'p1' ? 'winner-a' : side === 'p2' ? 'winner-b' : ''}'><td>${escapeHtml(String(row.timestamp ?? '').slice(0, 19))}</td><td class=a>${escapeHtml(row.players.p1)}</td><td class=b>${escapeHtml(row.players.p2)}</td><td>${escapeHtml(`${teams.p1 ?? '—'} vs ${teams.p2 ?? '—'}`)}</td><td class=num>${escapeHtml(`${score.p1 ?? '?'}-${score.p2 ?? '?'}`)}</td><td>${escapeHtml(row.winner ?? 'tie')}</td><td class=num>${games.length}</td><td class=num>${escapeHtml(row.turns ?? '?')}</td></tr>`;
+      return `<tr class='${side === 'p1' ? 'winner-a' : side === 'p2' ? 'winner-b' : ''}'><td>${escapeHtml(String(row.timestamp ?? '').slice(0, 19))}</td><td class=a>${escapeHtml(row.players.p1)}</td><td class=b>${escapeHtml(row.players.p2)}</td><td>${escapeHtml(`${teams.p1 ?? 'not recorded'} vs ${teams.p2 ?? 'not recorded'}`)}</td><td class=num>${escapeHtml(`${score.p1 ?? '?'}-${score.p2 ?? '?'}`)}</td><td>${escapeHtml(row.winner ?? 'tie')}</td><td class=num>${games.length}</td><td class=num>${escapeHtml(row.turns ?? '?')}</td></tr>`;
     })
     .join('');
   return `<h3>Recent series</h3><div class=wrap><table>${head}${body}</table></div>`;
@@ -92,7 +92,7 @@ export function writeReport(recordsPath: string, outPath: string, pool?: string)
   );
   const poolText =
     pool === undefined ? ` across all pools (pool ${escapeHtml(TEST_POOL)} excluded)` : ` for pool ${escapeHtml(pool)}`;
-  const document = `<!doctype html><meta charset=utf-8><title>VGC Model League records</title><style>${CSS}</style><h1>VGC Model League records</h1><p class=meta>${rows.length} completed series${poolText} — generated ${stamp} UTC</p>${standingsTable(rows)}${h2hTable(rows)}${seriesTable(rows)}${gamesTable(rows)}`;
+  const document = `<!doctype html><meta charset=utf-8><title>VGC Model League records</title><style>${CSS}</style><h1>VGC Model League records</h1><p class=meta>${rows.length} completed series${poolText}. Generated ${stamp} UTC.</p>${standingsTable(rows)}${h2hTable(rows)}${seriesTable(rows)}${gamesTable(rows)}`;
   fs.mkdirSync(path.dirname(outPath), { recursive: true });
   fs.writeFileSync(outPath, document, 'utf8');
   return outPath;

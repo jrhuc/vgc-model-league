@@ -20,21 +20,78 @@ test('provider options preserve ordering and discovery capabilities', () => {
       'xai',
       'deepseek',
       'kimi',
-      'openrouter',
       'cerebras',
       'meta',
       'zai',
+      'openrouter',
+      'opencode-go',
+      'opencode-zen',
+      'vercel',
       'compat',
       'random',
     ],
   );
   assert.deepEqual(
     PROVIDER_OPTIONS.map((provider) => provider.discovery),
-    ['list', 'list', 'list', 'list', 'list', 'list', 'list', 'list', 'manual', 'manual', 'manual', 'none'],
+    [
+      'list',
+      'list',
+      'list',
+      'list',
+      'list',
+      'list',
+      'list',
+      'manual',
+      'manual',
+      'list',
+      'list',
+      'list',
+      'list',
+      'manual',
+      'none',
+    ],
+  );
+  assert.deepEqual(
+    PROVIDER_OPTIONS.slice(9, 13).map(({ id, baseUrl, envKey, discovery, requiresKey }) => ({
+      id,
+      baseUrl,
+      envKey,
+      discovery,
+      requiresKey,
+    })),
+    [
+      {
+        id: 'openrouter',
+        baseUrl: 'https://openrouter.ai/api/v1',
+        envKey: 'OPENROUTER_API_KEY',
+        discovery: 'list',
+        requiresKey: true,
+      },
+      {
+        id: 'opencode-go',
+        baseUrl: 'https://opencode.ai/zen/go/v1',
+        envKey: 'OPENCODE_API_KEY',
+        discovery: 'list',
+        requiresKey: true,
+      },
+      {
+        id: 'opencode-zen',
+        baseUrl: 'https://opencode.ai/zen/v1',
+        envKey: 'OPENCODE_API_KEY',
+        discovery: 'list',
+        requiresKey: true,
+      },
+      {
+        id: 'vercel',
+        baseUrl: 'https://ai-gateway.vercel.sh/v1',
+        envKey: 'AI_GATEWAY_API_KEY',
+        discovery: 'list',
+        requiresKey: true,
+      },
+    ],
   );
   assert.equal(providerOption('kimi')?.envKey, 'MOONSHOT_API_KEY');
   assert.equal(providerOption('meta')?.envKey, 'META_MODEL_API_KEY');
-  assert.equal(providerOption('openrouter')?.requiresKey, true);
   assert.equal(providerOption('compat')?.requiresKey, false);
   assert.equal(providerOption('random')?.envKey, undefined);
   assert.equal(providerOption('missing'), undefined);
@@ -140,6 +197,25 @@ test('Google discovery normalizes names and keeps generateContent models across 
   ]);
 });
 
+test('multi-model routers discover models with bearer auth', async () => {
+  const providers = [
+    ['opencode-go', 'https://opencode.ai/zen/go/v1/models', 'opencode-key'],
+    ['opencode-zen', 'https://opencode.ai/zen/v1/models', 'opencode-key'],
+    ['vercel', 'https://ai-gateway.vercel.sh/v1/models', 'vercel-key'],
+  ] as const;
+  for (const [id, expectedUrl, apiKey] of providers) {
+    const mockFetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      assert.equal(String(input), expectedUrl);
+      assert.equal(new Headers(init?.headers).get('authorization'), `Bearer ${apiKey}`);
+      return jsonResponse({ data: [{ id: 'vendor/text-model' }] });
+    }) as typeof fetch;
+
+    assert.deepEqual(await discoverModels(providerOption(id)!, apiKey, { fetch: mockFetch }), [
+      { id: 'vendor/text-model' },
+    ]);
+  }
+});
+
 test('OpenRouter permits unauthenticated catalogs and uses architecture output metadata', async () => {
   const mockFetch = (async (_input: string | URL | Request, init?: RequestInit) => {
     assert.equal(new Headers(init?.headers).has('authorization'), false);
@@ -159,6 +235,47 @@ test('OpenRouter permits unauthenticated catalogs and uses architecture output m
   assert.deepEqual(await discoverModels(providerOption('openrouter')!, undefined, { fetch: mockFetch }), [
     { id: 'vendor/text-model', displayName: 'Text Model', description: '128,000 token context' },
   ]);
+});
+
+test('OpenRouter validates a supplied key before loading its public catalog', async () => {
+  const urls: string[] = [];
+  const mockFetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    urls.push(String(input));
+    assert.equal(new Headers(init?.headers).get('authorization'), 'Bearer openrouter-secret');
+    if (String(input).endsWith('/key')) return jsonResponse({ data: { label: 'sk-or-v1-test' } });
+    return jsonResponse({ data: [{ id: 'vendor/text-model', architecture: { output_modalities: ['text'] } }] });
+  }) as typeof fetch;
+
+  assert.deepEqual(await discoverModels(providerOption('openrouter')!, 'openrouter-secret', { fetch: mockFetch }), [
+    { id: 'vendor/text-model' },
+  ]);
+  assert.deepEqual(urls, ['https://openrouter.ai/api/v1/key', 'https://openrouter.ai/api/v1/models']);
+});
+
+test('OpenRouter rejects an invalid key before loading its public catalog', async () => {
+  const secret = 'not-an-openrouter-key';
+  let calls = 0;
+  const mockFetch = (async () => {
+    calls += 1;
+    return jsonResponse(
+      { error: { message: `Missing Authentication header ${secret}` } },
+      { status: 401, statusText: 'Unauthorized' },
+    );
+  }) as typeof fetch;
+
+  await assert.rejects(
+    discoverModels(providerOption('openrouter')!, secret, { fetch: mockFetch }),
+    (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.match(
+        error.message,
+        /OpenRouter API key validation failed \(401 Unauthorized\): Missing Authentication header/,
+      );
+      assert.doesNotMatch(error.message, new RegExp(secret));
+      return true;
+    },
+  );
+  assert.equal(calls, 1);
 });
 
 test('discovery deduplicates, sorts, and forwards abort signals', async () => {

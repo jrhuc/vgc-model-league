@@ -4,6 +4,7 @@ import test from 'node:test';
 import {
   ApiError,
   assistantToolMessage,
+  classifyProviderFailure,
   makeProvider,
   parseSpec,
   reasoningLevels,
@@ -17,6 +18,15 @@ test('provider specs route aliases and custom endpoints', () => {
   assert.equal(meta.baseUrl, 'https://api.meta.ai/v1');
   assert.deepEqual(reasoningLevels(meta), ['off', 'minimal', 'low', 'medium', 'high', 'xhigh']);
   assert.ok(makeProvider(meta, { apiKey: 'test', reasoning: 'medium' }) instanceof SdkProvider);
+  for (const [provider, baseUrl] of Object.entries({
+    'opencode-go': 'https://opencode.ai/zen/go/v1',
+    'opencode-zen': 'https://opencode.ai/zen/v1',
+    vercel: 'https://ai-gateway.vercel.sh/v1',
+  })) {
+    const spec = parseSpec(`${provider}:vendor/model`);
+    assert.deepEqual(spec, { provider, model: 'vendor/model', baseUrl });
+    assert.ok(makeProvider(spec, { apiKey: 'test' }) instanceof SdkProvider);
+  }
   assert.deepEqual(parseSpec('compat:https://example.test/v1:model'), {
     provider: 'compat',
     baseUrl: 'https://example.test/v1',
@@ -30,11 +40,78 @@ test('provider specs route aliases and custom endpoints', () => {
   assert.throws(() => parseSpec('human'), /Usage/);
 });
 
+test('OpenAI-compatible routers use explicit environment key names', async () => {
+  const openCodeKey = process.env.OPENCODE_API_KEY;
+  const vercelKey = process.env.AI_GATEWAY_API_KEY;
+  delete process.env.OPENCODE_API_KEY;
+  delete process.env.AI_GATEWAY_API_KEY;
+  try {
+    for (const provider of ['opencode-go', 'opencode-zen']) {
+      await assert.rejects(
+        makeProvider(parseSpec(`${provider}:model`)).complete('system', []),
+        /Missing OPENCODE_API_KEY/,
+      );
+    }
+    await assert.rejects(makeProvider(parseSpec('vercel:model')).complete('system', []), /Missing AI_GATEWAY_API_KEY/);
+  } finally {
+    if (openCodeKey === undefined) delete process.env.OPENCODE_API_KEY;
+    else process.env.OPENCODE_API_KEY = openCodeKey;
+    if (vercelKey === undefined) delete process.env.AI_GATEWAY_API_KEY;
+    else process.env.AI_GATEWAY_API_KEY = vercelKey;
+  }
+});
+
 test('reasoning levels are validated by model family', () => {
   const meta = parseSpec('meta:muse-spark-1.1');
   validateReasoning(meta, 'xhigh');
   assert.throws(() => validateReasoning(meta, 'max'), /reasoning=max/);
   assert.deepEqual(reasoningLevels(parseSpec('anthropic:claude-opus-4-10')), ['low', 'medium', 'high', 'xhigh', 'max']);
+});
+
+test('provider failures distinguish terminal capacity from recoverable upstream errors', () => {
+  assert.deepEqual(
+    classifyProviderFailure(
+      new ApiError(429, 'google:gemini-3.6-flash 429: exceeded your current quota; GenerateRequestsPerDay-FreeTier'),
+      'google:gemini-3.6-flash',
+    ),
+    { kind: 'quota', summary: 'Google API quota is exhausted (429).', terminal: true },
+  );
+  assert.deepEqual(classifyProviderFailure(new ApiError(429, 'rate limit; retry in 20s'), 'google:gemini'), {
+    kind: 'rate_limit',
+    summary: 'Google API rate limit was reached (429).',
+    terminal: false,
+  });
+  assert.deepEqual(classifyProviderFailure(new ApiError(0, 'request timed out after 55s'), 'openai:gpt'), {
+    kind: 'timeout',
+    summary: 'OpenAI API request timed out.',
+    terminal: false,
+  });
+  assert.deepEqual(classifyProviderFailure(new Error('empty response'), 'opencode-go:deepseek-v4-flash'), {
+    kind: 'upstream',
+    summary: 'OpenCode Go API returned no usable response.',
+    terminal: true,
+    retryable: true,
+  });
+  assert.deepEqual(
+    classifyProviderFailure(new Error('reasoning exhausted the 16384-token response budget'), 'opencode-go:glm-5.2'),
+    {
+      kind: 'truncation',
+      summary: 'OpenCode Go API spent the whole response budget on reasoning and returned no answer.',
+      terminal: false,
+    },
+  );
+  assert.equal(classifyProviderFailure(new ApiError(401, 'invalid key'), 'anthropic:claude').terminal, true);
+  assert.equal(classifyProviderFailure(new ApiError(503, 'overloaded'), 'anthropic:claude').terminal, false);
+  assert.equal(classifyProviderFailure(new ApiError(501, 'not implemented'), 'compat:model').terminal, true);
+});
+
+test('restart only recognizes vgcleague GUI processes', async () => {
+  const { looksLikeGuiCommand } = await import('../src/restart.js');
+  assert.equal(looksLikeGuiCommand('node dist/src/cli.js gui --port 8484'), true);
+  assert.equal(looksLikeGuiCommand('node /srv/vgcleague gui'), true);
+  assert.equal(looksLikeGuiCommand('node server.js --port 8484'), false);
+  assert.equal(looksLikeGuiCommand('postgres -D /usr/local/var'), false);
+  assert.equal(looksLikeGuiCommand('node dist/src/cli.js rotation --models a b'), false);
 });
 
 test('shared tool messages preserve typed calls', () => {
@@ -118,11 +195,81 @@ test('OpenAI uses Responses API with reasoning and tools', async () => {
   assert.match(JSON.stringify(body), /lookup_move/);
   const reasoning = body.reasoning as Record<string, unknown> | undefined;
   assert.equal(reasoning?.effort ?? body.reasoning_effort, 'medium');
-  assert.deepEqual(completion, {
+  const { responseMessages, ...rest } = completion;
+  assert.deepEqual(rest, {
     text: 'hello',
+    finishReason: 'tool-calls',
     usage: { input_tokens: 10, output_tokens: 5 },
-    toolCalls: [{ id: 'call_1', name: 'lookup_move', arguments: { name: 'Protect' } }],
+    toolCalls: [
+      {
+        id: 'call_1',
+        name: 'lookup_move',
+        arguments: { name: 'Protect' },
+        providerMetadata: { openai: { itemId: 'fc_1' } },
+      },
+    ],
   });
+  assert.match(JSON.stringify(responseMessages), /msg_1/, 'raw response messages keep provider item ids');
+});
+
+test('Gemini thought signatures round-trip through replayed tool calls', async () => {
+  let body: Record<string, unknown> = {};
+  const fetch = (async (_input, init) => {
+    body = JSON.parse(String(init?.body));
+    return jsonResponse({
+      candidates: [
+        {
+          content: {
+            role: 'model',
+            parts: [{ functionCall: { name: 'estimate_damage', args: { move: 'Surf' } }, thoughtSignature: 'sig-2' }],
+          },
+          finishReason: 'STOP',
+        },
+      ],
+      usageMetadata: { promptTokenCount: 12, candidatesTokenCount: 4, totalTokenCount: 16 },
+    });
+  }) as typeof globalThis.fetch;
+  const provider = makeProvider(parseSpec('google:gemini-3.1-flash-lite'), { apiKey: 'google-key', fetch });
+
+  const completion = await provider.complete(
+    'system',
+    [
+      { role: 'user', content: 'hello' },
+      {
+        role: 'assistant',
+        content: null,
+        toolCalls: [
+          {
+            id: 'call_1',
+            name: 'estimate_damage',
+            arguments: { move: 'Thunderbolt' },
+            providerMetadata: { google: { thoughtSignature: 'sig-1' } },
+          },
+        ],
+      },
+      toolResultMessage('call_1', '42%'),
+    ],
+    {
+      tools: [
+        {
+          name: 'estimate_damage',
+          description: 'Estimate damage',
+          parameters: {
+            type: 'object',
+            properties: { move: { type: 'string' } },
+            required: ['move'],
+            additionalProperties: false,
+          },
+        },
+      ],
+    },
+  );
+
+  const replayed = (body.contents as Array<{ parts: Array<Record<string, unknown>> }>)
+    .flatMap((content) => content.parts)
+    .find((part) => 'functionCall' in part);
+  assert.equal(replayed?.thoughtSignature, 'sig-1');
+  assert.deepEqual(completion.toolCalls[0]?.providerMetadata, { google: { thoughtSignature: 'sig-2' } });
 });
 
 test('compat provider uses chat completions', async () => {
@@ -144,11 +291,14 @@ test('compat provider uses chat completions', async () => {
   assert.equal(url, 'https://api.moonshot.ai/v1/chat/completions');
   assert.equal(body.temperature, 0.2);
   assert.equal('reasoning_effort' in body, false);
-  assert.deepEqual(completion, {
+  const { responseMessages, ...rest } = completion;
+  assert.deepEqual(rest, {
     text: 'ok',
+    finishReason: 'stop',
     usage: { input_tokens: 4, output_tokens: 2 },
     toolCalls: [],
   });
+  assert.equal(responseMessages?.length, 1);
 });
 
 test('temperature is dropped after a 400 response', async () => {
@@ -185,6 +335,29 @@ test('API call errors map to ApiError without leaking credentials', async () => 
       error.message.startsWith('kimi:kimi-k3 503:') &&
       error.message.includes('[redacted]') &&
       !error.message.includes('moonshot-key'),
+  );
+});
+
+test('OpenRouter preserves in-band error status after generation starts', async () => {
+  const fetch = (async () =>
+    jsonResponse({
+      error: {
+        code: 502,
+        message: 'ResourceExhausted: Worker local total request limit reached (33/32)',
+      },
+    })) as typeof globalThis.fetch;
+  const provider = makeProvider(parseSpec('openrouter:nvidia/nemotron-3-super-120b-a12b:free'), {
+    apiKey: 'openrouter-key',
+    fetch,
+  });
+
+  await assert.rejects(
+    provider.complete('system', [{ role: 'user', content: 'hello' }]),
+    (error: unknown) =>
+      error instanceof ApiError &&
+      error.status === 502 &&
+      error.message.startsWith('openrouter:nvidia/nemotron-3-super-120b-a12b:free 502:') &&
+      error.message.includes('ResourceExhausted'),
   );
 });
 

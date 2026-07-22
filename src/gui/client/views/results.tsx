@@ -25,14 +25,14 @@ export function ResultsView({ active, epoch }: { active: boolean; epoch: number 
 
   const rows = data?.standings ?? [];
   const poolOptions = [
-    { value: '', label: 'Overall', description: 'Every pool except the disposable test pool' },
+    { value: '', label: 'Overall', description: 'All pools except the test pool' },
     ...(data?.pools ?? []).map((name) => ({ value: name, label: name })),
   ];
   const scopeText = data
     ? data.pool
       ? `${data.count} recorded series in pool ${data.pool}.`
-      : `${data.count} recorded series across all pools (test excluded).`
-    : 'Loading the record book…';
+      : `${data.count} recorded series across all pools except the test pool.`
+    : 'Loading records...';
   return (
     <>
       <div class="page-heading">
@@ -45,8 +45,8 @@ export function ResultsView({ active, epoch }: { active: boolean; epoch: number 
           </h1>
         </div>
         <p class="lede">
-          Recorded Rotation series in this checkout, rated by Elo. The overall view excludes the disposable test pool;
-          select a pool to keep ratings within one team-pool epoch.
+          Rotation series rated by Elo. Overall standings exclude the test pool. Select a pool to show ratings for that
+          team-pool period.
         </p>
       </div>
       <div class="results-grid">
@@ -62,7 +62,7 @@ export function ResultsView({ active, epoch }: { active: boolean; epoch: number 
           </div>
           <div class="table-scroll">
             {rows.length === 0 ? (
-              <div class="results-empty">No completed series yet — standings appear after the first recorded run.</div>
+              <div class="results-empty">No completed series. Standings appear after the first recorded run.</div>
             ) : (
               <table class="data-table">
                 <thead>

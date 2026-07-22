@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import type { Dex } from 'pokemon-showdown';
 import { defaultPsDir } from './paths.js';
 import { loadShowdown, showdownCommit } from './showdown.js';
@@ -19,7 +20,7 @@ function tool(
 export const DEX_TOOLS: ToolDefinition[] = [
   tool(
     'lookup_species',
-    'Look up a species: typing, abilities, base stats, forme, Mega Stone outcomes, and optional nature-based Speed range.',
+    'Look up a species: typing, abilities, base stats, forme, Mega Stone outcomes, and optional nature-based raw Speed range.',
     {
       name: { type: 'string' },
       item: { type: ['string', 'null'] },
@@ -42,43 +43,48 @@ export const DEX_TOOLS: ToolDefinition[] = [
   ]),
   tool(
     'lookup_matchup',
-    'Look up type-chart effectiveness for an attacking move or type into a defending species. Returns immunity/SE/NVE multipliers only—not damage.',
+    'Look up type-chart effectiveness for an attacking move or type into a defending species. Returns immunity/SE/NVE multipliers only, not damage.',
     {
+      attacker: {
+        type: 'string',
+        description: 'Attacking species, required for form-dependent moves such as Raging Bull.',
+      },
       attacker_type: { type: 'string', description: 'Attacking type, or omit when move is provided.' },
-      move: { type: 'string', description: 'Move name; its type is used when provided.' },
+      move: { type: 'string', description: 'Move name; its contextual type is used when provided.' },
       defender: { type: 'string', description: 'Defending species name.' },
     },
     ['defender'],
   ),
   tool(
     'estimate_damage',
-    'Estimate Gen 9 level-50 damage in doubles from base stats, STAB, type chart, weather, common items, and spread reduction. Ignores abilities, boosts, burn, screens, and terrain. Own exact stats may be supplied; opposing stats use legal IV/EV ranges from the open team sheet nature only. Never invent hidden IVs/EVs.',
+    'Estimate Gen 9 level-50 damage in doubles as a percentage range from base stats, STAB, type chart, weather, common items, and spread reduction. Ignores abilities, boosts, burn, screens, and terrain. Own exact battle stats may be supplied; opposing stats use legal IV/EV ranges from the open team sheet nature only. Never invent hidden IVs/EVs or raw HP.',
     {
       attacker: { type: 'string' },
       defender: { type: 'string' },
       move: { type: 'string' },
       attacker_stats: {
         type: 'object',
-        description: 'Optional exact attacker stats from your request (atk/def/spa/spd/spe).',
+        description: 'Optional exact positive attacker stats from your request (atk/def/spa/spd/spe).',
         properties: {
-          atk: { type: 'number' },
-          def: { type: 'number' },
-          spa: { type: 'number' },
-          spd: { type: 'number' },
-          spe: { type: 'number' },
+          atk: { type: 'number', exclusiveMinimum: 0 },
+          def: { type: 'number', exclusiveMinimum: 0 },
+          spa: { type: 'number', exclusiveMinimum: 0 },
+          spd: { type: 'number', exclusiveMinimum: 0 },
+          spe: { type: 'number', exclusiveMinimum: 0 },
         },
         additionalProperties: false,
       },
-      attacker_hp: { type: 'number', description: 'Optional current attacker HP for HP-scaling moves.' },
-      attacker_max_hp: { type: 'number' },
-      defender_hp: {
+      attacker_hp_percent: {
         type: 'number',
-        description: 'Exact current defender HP in raw points—own Pokémon only, whose real HP you know.',
+        minimum: 0,
+        maximum: 100,
+        description: 'Current attacker HP percentage for HP-scaling moves.',
       },
-      defender_max_hp: { type: 'number', description: 'Exact defender max HP in raw points (own side only).' },
       defender_hp_percent: {
         type: 'number',
-        description: 'Foe HP as the percent shown in battle (0-100). Use this for opponents; never guess raw foe HP.',
+        minimum: 0,
+        maximum: 100,
+        description: 'Current defender HP percentage shown in battle.',
       },
       attacker_item: { type: 'string' },
       defender_item: {
@@ -116,6 +122,33 @@ export interface CompactMon {
   active?: boolean;
 }
 
+export interface CompactMonReference {
+  types: string;
+  speed: string;
+  moves: Readonly<Record<string, string>>;
+  mega?: string;
+}
+
+export interface SpeedProfileInput {
+  species: string;
+  nature?: string | null;
+  exact?: number;
+  item?: string | null;
+  itemConsumed?: boolean;
+  ability?: string | null;
+  status?: string | null;
+  boost?: number;
+  tailwind?: boolean;
+  weather?: string | null;
+  terrain?: string | null;
+}
+
+export interface SpeedProfile {
+  raw: [number, number];
+  effective: [number, number];
+  modifiers: string[];
+}
+
 export interface MatchupMon {
   species: string;
   moves: string[];
@@ -124,6 +157,10 @@ export interface MatchupMon {
 
 function id(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, '');
+}
+
+function canonicalWeather(value: string): string {
+  return id(value.replace(/\s*\(\d+\s+turns?\s+left\)\s*$/i, ''));
 }
 
 function uniqueNames(values: Array<string | null | undefined>): string[] {
@@ -140,7 +177,7 @@ function cleanDescription(value: unknown): string {
 }
 
 function baseStats(stats: Dex.StatsTable): string {
-  return `base stats HP ${stats.hp}, Atk ${stats.atk}, Def ${stats.def}, SpA ${stats.spa}, SpD ${stats.spd}, Spe ${stats.spe}`;
+  return `base stats HP ${stats.hp}, Attack ${stats.atk}, Defense ${stats.def}, Special Attack ${stats.spa}, Special Defense ${stats.spd}, Speed ${stats.spe}`;
 }
 
 function statRange(
@@ -187,6 +224,53 @@ function asFinite(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
 }
 
+const WEATHER_BALL_TYPE: Record<string, string> = {
+  sun: 'Fire',
+  sunnyday: 'Fire',
+  desolateland: 'Fire',
+  rain: 'Water',
+  raindance: 'Water',
+  primordialsea: 'Water',
+  sand: 'Rock',
+  sandstorm: 'Rock',
+  snow: 'Ice',
+  snowscape: 'Ice',
+  hail: 'Ice',
+};
+
+function weatherBallOverride(moveId: string, weather: string): { type: string; power: number } | null {
+  const type = WEATHER_BALL_TYPE[weather];
+  return moveId === 'weatherball' && type ? { type, power: 100 } : null;
+}
+
+const RAGING_BULL_TYPE: Record<string, string> = {
+  taurospaldeacombat: 'Fighting',
+  taurospaldeablaze: 'Fire',
+  taurospaldeaaqua: 'Water',
+};
+
+function speciesMoveType(moveId: string, defaultType: string, speciesName: string): string {
+  return moveId === 'ragingbull' ? (RAGING_BULL_TYPE[id(speciesName)] ?? defaultType) : defaultType;
+}
+
+const SPEED_HALVING_ITEMS = new Set([
+  'ironball',
+  'machobrace',
+  'poweranklet',
+  'powerband',
+  'powerbelt',
+  'powerbracer',
+  'powerlens',
+  'powerweight',
+]);
+
+function modifyRange(range: [number, number], numerator: number, denominator = 1): [number, number] {
+  return [
+    Math.max(1, Math.floor((range[0] * numerator) / denominator)),
+    Math.max(1, Math.floor((range[1] * numerator) / denominator)),
+  ];
+}
+
 const TYPE_BOOST_ITEMS: Record<string, string> = {
   charcoal: 'Fire',
   mysticwater: 'Water',
@@ -207,6 +291,21 @@ const TYPE_BOOST_ITEMS: Record<string, string> = {
   fairyfeather: 'Fairy',
 };
 
+const TARGET_TAGS: Record<string, string> = {
+  allAdjacentFoes: 'spread',
+  allAdjacent: 'spread+ally',
+  self: 'self',
+  adjacentAlly: 'ally',
+  adjacentAllyOrSelf: 'ally/self',
+  allySide: 'ally-side',
+  allyTeam: 'ally-side',
+  allies: 'ally-side',
+  foeSide: 'foe-side',
+  all: 'field',
+  any: 'any-range',
+  randomNormal: 'random-foe',
+};
+
 export class ShowdownReference {
   private readonly dex;
 
@@ -221,7 +320,45 @@ export class ShowdownReference {
     return showdownCommit(this.psDir).slice(0, 12);
   }
 
-  /** Compact always-on context: typing, speed band, move type/BP only. */
+  static renderRevision(): string {
+    const prototype = ShowdownReference.prototype as unknown as Record<string, unknown>;
+    const surfaces = [
+      Object.getOwnPropertyDescriptor(ShowdownReference.prototype, 'revision')?.get,
+      ShowdownReference.prototype.renderCompact,
+      ShowdownReference.prototype.describeCompact,
+      ShowdownReference.prototype.speedProfile,
+      ShowdownReference.prototype.movePriority,
+      ShowdownReference.prototype.renderActiveMatchups,
+      ShowdownReference.prototype.render,
+      ShowdownReference.prototype.lookup,
+      prototype.lookupSpecies,
+      prototype.lookupOne,
+      prototype.lookupMatchup,
+      prototype.estimateDamage,
+      id,
+      canonicalWeather,
+      uniqueNames,
+      cleanDescription,
+      baseStats,
+      statRange,
+      hpRange,
+      effectivenessLabel,
+      typeModifier,
+      asFinite,
+      weatherBallOverride,
+      speciesMoveType,
+      JSON.stringify(RAGING_BULL_TYPE),
+      JSON.stringify(WEATHER_BALL_TYPE),
+      JSON.stringify(SPEED_HALVING_ITEMS),
+      JSON.stringify(TYPE_BOOST_ITEMS),
+    ];
+    return createHash('sha256')
+      .update(surfaces.map((surface) => String(surface)).join('\n'))
+      .digest('hex')
+      .slice(0, 12);
+  }
+
+  /** Compact always-on context: typing, speed band, and decision-relevant move mechanics. */
   renderCompact(mons: CompactMon[]): string[] {
     const lines: string[] = [];
     const seen = new Set<string>();
@@ -231,45 +368,142 @@ export class ShowdownReference {
       const key = `${species.id}|${id(mon.nature ?? '')}|${id(mon.item ?? '')}`;
       if (seen.has(key)) continue;
       seen.add(key);
-      const nature = mon.nature ? this.dex.natures.get(mon.nature) : undefined;
-      const knownNature = nature?.exists ? nature : undefined;
-      const [low, high] = statRange(species.baseStats.spe, knownNature, 'spe');
-      const speed = knownNature ? `Spe ${low}-${high} ${knownNature.name}` : `Spe ${low}-${high}`;
-      const moveBits = uniqueNames(mon.moves ?? [])
-        .flatMap((moveName) => {
-          const move = this.dex.moves.get(moveName);
-          if (!move.exists) return [];
-          const power = move.basePower ? String(move.basePower) : '—';
-          return [`${move.name} ${move.type}/${move.category}/${power}`];
-        })
-        .slice(0, 6);
+      const reference = this.describeCompact(mon);
+      if (!reference) continue;
+      const moves = uniqueNames(mon.moves ?? []).flatMap((moveName) => {
+        const detail = reference.moves[id(moveName)];
+        return detail ? [`${moveName} ${detail}`] : [];
+      });
       const active = mon.active ? 'active; ' : '';
       lines.push(
-        `- ${species.name}: ${species.types.join('/')}; ${active}${speed}${mon.item ? `; item ${mon.item}` : ''}${
-          moveBits.length ? `; moves ${moveBits.join(', ')}` : ''
-        }`,
+        `- ${species.name}: ${reference.types}; ${active}raw Speed ${reference.speed}${mon.item ? `; item ${mon.item}` : ''}${
+          reference.mega ? ` (${reference.mega})` : ''
+        }${moves.length ? `; moves ${moves.join(', ')}` : ''}`,
       );
     }
     return lines.length ? [`Compact Showdown reference (${this.format}, commit ${this.revision}):`, ...lines] : [];
   }
 
-  renderActiveMatchups(attackers: MatchupMon[], defenders: MatchupMon[]): string[] {
+  describeCompact(mon: CompactMon): CompactMonReference | undefined {
+    const species = this.dex.species.get(mon.species);
+    if (!species.exists) return undefined;
+    const nature = mon.nature ? this.dex.natures.get(mon.nature) : undefined;
+    const knownNature = nature?.exists ? nature : undefined;
+    const [low, high] = statRange(species.baseStats.spe, knownNature, 'spe');
+    const moves = Object.fromEntries(
+      uniqueNames(mon.moves ?? []).flatMap((moveName) => {
+        const move = this.dex.moves.get(moveName);
+        if (!move.exists) return [];
+        const power = move.basePower ? String(move.basePower) : 'no power';
+        const moveType = speciesMoveType(move.id, move.type, species.name);
+        const details = [`${moveType}/${move.category}/${power}`];
+        if (move.target !== 'normal') details.push(TARGET_TAGS[move.target] ?? move.target);
+        if (move.priority) details.push(`priority ${move.priority > 0 ? '+' : ''}${move.priority}`);
+        if (move.accuracy !== true && move.accuracy < 100) details.push(`accuracy ${move.accuracy}%`);
+        if (move.flags.powder)
+          details.push('powder: fails on Grass types, Overcoat, and Safety Goggles (including redirection)');
+        return [[move.id, details.join('/')]];
+      }),
+    );
+    const mega: string[] = [];
+    const item = mon.item ? this.dex.items.get(mon.item) : undefined;
+    if (item?.exists && item.megaStone) {
+      for (const formeName of species.otherFormes ?? []) {
+        const forme = this.dex.species.get(formeName);
+        if (!forme.exists || !/^Mega(?:-|$)/.test(forme.forme)) continue;
+        const target = typeof item.megaStone === 'string' ? item.megaStone : item.megaStone[species.name];
+        if (id(target ?? '') !== id(forme.name)) continue;
+        const [megaLow, megaHigh] = statRange(forme.baseStats.spe, knownNature, 'spe');
+        mega.push(
+          `if Mega Evolved -> ${forme.name}: ${forme.types.join('/')}, ability ${uniqueNames(Object.values(forme.abilities)).join('/')}, ${baseStats(forme.baseStats)}, raw Speed ${megaLow}-${megaHigh}`,
+        );
+      }
+    }
+    return {
+      types: species.types.join('/'),
+      speed: `${low}-${high}`,
+      moves,
+      ...(mega.length ? { mega: mega.join('; ') } : {}),
+    };
+  }
+
+  speedProfile(input: SpeedProfileInput): SpeedProfile | undefined {
+    const species = this.dex.species.get(input.species);
+    if (!species.exists) return undefined;
+    const nature = input.nature ? this.dex.natures.get(input.nature) : undefined;
+    const exact = Number.isInteger(input.exact) && input.exact! > 0 ? input.exact : undefined;
+    const raw: [number, number] =
+      exact === undefined
+        ? statRange(species.baseStats.spe, nature?.exists ? nature : undefined, 'spe')
+        : [exact, exact];
+    const stage = Math.max(-6, Math.min(6, Math.trunc(input.boost ?? 0)));
+    let effective = stage >= 0 ? modifyRange(raw, 2 + stage, 2) : modifyRange(raw, 2, 2 - stage);
+    const modifiers: string[] = [];
+    if (stage) modifiers.push(`Speed stage ${stage > 0 ? '+' : ''}${stage}`);
+
+    const fallbackAbility = Object.values(species.abilities)[0];
+    const ability = id(input.ability || fallbackAbility || '');
+    const weather = canonicalWeather(input.weather ?? '');
+    const terrain = id(input.terrain ?? '');
+    let numerator = 1;
+    let denominator = 1;
+    const multiply = (label: string, top: number, bottom = 1) => {
+      numerator *= top;
+      denominator *= bottom;
+      modifiers.push(label);
+    };
+    if (
+      (ability === 'chlorophyll' && ['sun', 'sunnyday', 'desolateland'].includes(weather)) ||
+      (ability === 'swiftswim' && ['rain', 'raindance', 'primordialsea'].includes(weather)) ||
+      (ability === 'sandrush' && ['sand', 'sandstorm'].includes(weather)) ||
+      (ability === 'slushrush' && ['hail', 'snow', 'snowscape'].includes(weather))
+    )
+      multiply(`${input.ability || fallbackAbility} ×2`, 2);
+    if (ability === 'surgesurfer' && ['electricterrain', 'electric'].includes(terrain))
+      multiply(`${input.ability || fallbackAbility} ×2`, 2);
+    if (ability === 'quickfeet' && input.status) multiply(`${input.ability || fallbackAbility} ×1.5`, 3, 2);
+    if (ability === 'unburden' && input.itemConsumed) multiply(`${input.ability || fallbackAbility} ×2`, 2);
+
+    const item = input.itemConsumed ? '' : id(input.item ?? '');
+    if (item === 'choicescarf') multiply('Choice Scarf ×1.5', 3, 2);
+    else if (SPEED_HALVING_ITEMS.has(item)) multiply(`${input.item} ×0.5`, 1, 2);
+    if (input.tailwind) multiply('Tailwind ×2', 2);
+    if (id(input.status ?? '') === 'par' && ability !== 'quickfeet') multiply('paralysis ×0.5', 1, 2);
+    effective = modifyRange(effective, numerator, denominator);
+    return { raw, effective, modifiers };
+  }
+
+  movePriority(name: string): number | undefined {
+    const move = this.dex.moves.get(name);
+    return move.exists ? move.priority : undefined;
+  }
+
+  renderActiveMatchups(attackers: MatchupMon[], defenders: MatchupMon[], weather = ''): string[] {
     const lines: string[] = [];
+    const weatherId = canonicalWeather(weather);
     for (const attacker of attackers) {
       const species = this.dex.species.get(attacker.species);
       if (!species.exists) continue;
       for (const moveName of uniqueNames(attacker.moves)) {
         const move = this.dex.moves.get(moveName);
         if (!move.exists || move.category === 'Status' || !move.type || move.type === '???') continue;
+        const override = weatherBallOverride(move.id, weatherId);
+        const moveType = override?.type ?? speciesMoveType(move.id, move.type, species.name);
+        const contextualType = moveType !== move.type;
+        const typeLabel = override
+          ? `currently ${override.type} in ${weather}`
+          : contextualType
+            ? `currently ${moveType} for ${species.name}`
+            : moveType;
         const bits: string[] = [];
         for (const defender of defenders) {
-          if (attacker.ally && defender.ally) continue;
+          if (attacker.ally !== undefined && defender.ally !== undefined && attacker.ally === defender.ally) continue;
           const target = this.dex.species.get(defender.species);
           if (!target.exists) continue;
-          const mod = typeModifier(this.dex, move.type, target.types);
-          bits.push(`${target.name} ${effectivenessLabel(mod)}`);
+          const mod = typeModifier(this.dex, moveType, target.types);
+          if (mod !== 1) bits.push(`${target.name} ${effectivenessLabel(mod)}`);
         }
-        if (bits.length) lines.push(`- ${species.name} ${move.name} (${move.type}): ${bits.join('; ')}`);
+        if (bits.length) lines.push(`- ${species.name} ${move.name} (${typeLabel}): ${bits.join('; ')}`);
       }
     }
     return lines;
@@ -307,8 +541,8 @@ export class ShowdownReference {
         const knownNature = nature?.exists ? nature : undefined;
         const [low, high] = statRange(species.baseStats.spe, knownNature, 'spe');
         const detail = knownNature
-          ? `Speed ${low}-${high} with ${knownNature.name} alignment (full legal IV/EV range)`
-          : `Speed ${low}-${high} (full legal IV/EV/nature range)`;
+          ? `raw Speed ${low}-${high} with ${knownNature.name} alignment (full legal IV/EV range)`
+          : `raw Speed ${low}-${high} (full legal IV/EV/nature range)`;
         if (!details.includes(detail)) details.push(detail);
       }
       for (const itemName of uniqueNames(sets.map((set) => set[1]))) {
@@ -324,7 +558,7 @@ export class ShowdownReference {
             const nature = natureName ? this.dex.natures.get(natureName) : undefined;
             const knownNature = nature?.exists ? nature : undefined;
             const [low, high] = statRange(mega.baseStats.spe, knownNature, 'spe');
-            return [`Speed ${low}-${high}${knownNature ? ` with ${knownNature.name} alignment` : ''}`];
+            return [`raw Speed ${low}-${high}${knownNature ? ` with ${knownNature.name} alignment` : ''}`];
           });
           const megaAbilities = uniqueNames(Object.values(mega.abilities));
           for (const ability of megaAbilities)
@@ -343,11 +577,16 @@ export class ShowdownReference {
       const details = [
         move.type,
         move.category,
-        move.basePower ? `BP ${move.basePower}` : 'BP —',
+        move.basePower ? `BP ${move.basePower}` : 'BP none',
         move.accuracy === true ? 'always hits' : `acc ${move.accuracy}%`,
         `priority ${move.priority >= 0 ? '+' : ''}${move.priority}`,
         `target ${move.target}`,
       ];
+      if (move.flags.powder)
+        details.push(
+          'powder move: no effect on Grass types, Overcoat, or Safety Goggles holders (including redirection)',
+        );
+      if (move.flags.sound) details.push('sound move: blocked by Soundproof, bypasses Substitute');
       const description = cleanDescription(move.desc || move.shortDesc);
       if (description) details.push(description);
       lines.push(`- Move ${move.name}: ${details.join('; ')}`);
@@ -408,12 +647,15 @@ export class ShowdownReference {
     if (!defenderName.trim()) return 'defender is required.';
     const defender = this.dex.species.get(defenderName);
     if (!defender.exists) return `No species data for ${JSON.stringify(defenderName)} in ${this.format}.`;
+    const attackerName = typeof args.attacker === 'string' ? args.attacker : '';
+    const attacker = attackerName ? this.dex.species.get(attackerName) : undefined;
     let attackType = typeof args.attacker_type === 'string' ? args.attacker_type : '';
     let moveName = typeof args.move === 'string' ? args.move : '';
     if (moveName.trim()) {
       const move = this.dex.moves.get(moveName);
       if (!move.exists) return `No move data for ${JSON.stringify(moveName)} in ${this.format}.`;
-      attackType = move.type;
+      if (move.id === 'ragingbull' && !attacker?.exists) return 'attacker is required to resolve Raging Bull typing.';
+      attackType = speciesMoveType(move.id, move.type, attacker?.name ?? '');
       moveName = move.name;
     }
     if (!attackType.trim()) return 'Provide move or attacker_type.';
@@ -446,7 +688,8 @@ export class ShowdownReference {
     const attackStat = move.category === 'Special' ? 'spa' : 'atk';
     const defenseStat = move.category === 'Special' ? 'spd' : 'def';
     const exact = args.attacker_stats && typeof args.attacker_stats === 'object' ? args.attacker_stats : undefined;
-    const exactAttack = exact && asFinite((exact as Record<string, unknown>)[attackStat]);
+    const suppliedAttack = exact && asFinite((exact as Record<string, unknown>)[attackStat]);
+    const exactAttack = suppliedAttack !== undefined && suppliedAttack > 0 ? suppliedAttack : undefined;
     const [atkLow, atkHigh] =
       exactAttack !== undefined
         ? [exactAttack, exactAttack]
@@ -466,49 +709,37 @@ export class ShowdownReference {
     defLow = Math.floor(defLow * defenderItemMod);
     defHigh = Math.floor(defHigh * defenderItemMod);
     const [hpLow, hpHigh] = hpRange(defender.baseStats.hp);
-    let defenderHp = asFinite(args.defender_hp);
-    let defenderMaxHp = asFinite(args.defender_max_hp);
-    let hpPercent = asFinite(args.defender_hp_percent);
-    // Showdown shows foe HP as x/100; a "max HP" below the species' legal floor is that percent scale.
-    if (defenderMaxHp !== undefined && defenderMaxHp < hpLow) {
-      if (hpPercent === undefined && defenderHp !== undefined && defenderMaxHp > 0)
-        hpPercent = (100 * defenderHp) / defenderMaxHp;
-      defenderHp = undefined;
-      defenderMaxHp = undefined;
-    }
+    const suppliedHpPercent = asFinite(args.defender_hp_percent);
+    const hpPercent = suppliedHpPercent === undefined ? undefined : Math.max(0, Math.min(100, suppliedHpPercent));
 
     let power = move.basePower;
-    const weather = typeof args.weather === 'string' ? id(args.weather) : '';
-    let moveType = move.type;
-    if (id(move.name) === 'weatherball') {
-      if (weather.includes('sun')) {
-        moveType = 'Fire';
-        power = 100;
-      } else if (weather.includes('rain')) {
-        moveType = 'Water';
-        power = 100;
-      } else if (weather.includes('sand')) {
-        moveType = 'Rock';
-        power = 100;
-      } else if (weather.includes('snow') || weather.includes('hail')) {
-        moveType = 'Ice';
-        power = 100;
-      }
+    const weather = typeof args.weather === 'string' ? canonicalWeather(args.weather) : '';
+    let moveType = speciesMoveType(move.id, move.type, attacker.name);
+    const override = weatherBallOverride(move.id, weather);
+    if (override) {
+      moveType = override.type;
+      power = override.power;
     }
-    if (id(move.name) === 'eruption' || id(move.name) === 'waterspout') {
-      const hp = asFinite(args.attacker_hp);
-      const maxHp = asFinite(args.attacker_max_hp);
-      if (hp !== undefined && maxHp && maxHp > 0) power = Math.max(1, Math.floor((power * hp) / maxHp));
+    if (move.id === 'eruption' || move.id === 'waterspout') {
+      const attackerHpPercent = asFinite(args.attacker_hp_percent);
+      if (attackerHpPercent !== undefined)
+        power = Math.max(1, Math.floor((power * Math.max(0, Math.min(100, attackerHpPercent))) / 100));
     }
 
     const typeMod = typeModifier(this.dex, moveType, defender.types);
-    if (typeMod === 0) return `${attacker.name} ${move.name} into ${defender.name}: immune (0 damage).`;
+    if (typeMod === 0) return `${attacker.name} ${move.name} into ${defender.name}: immune; 0% damage. Cannot KO.`;
 
+    if (weather === 'desolateland' && moveType === 'Water')
+      return `${attacker.name} ${move.name} into ${defender.name}: fails in Desolate Land; 0% damage. Cannot KO.`;
+    if (weather === 'primordialsea' && moveType === 'Fire')
+      return `${attacker.name} ${move.name} into ${defender.name}: fails in Primordial Sea; 0% damage. Cannot KO.`;
+    const sun = WEATHER_BALL_TYPE[weather] === 'Fire';
+    const rain = WEATHER_BALL_TYPE[weather] === 'Water';
     let weatherMod = 1;
-    if (weather.includes('sun') && moveType === 'Fire') weatherMod = 1.5;
-    if (weather.includes('sun') && moveType === 'Water') weatherMod = 0.5;
-    if (weather.includes('rain') && moveType === 'Water') weatherMod = 1.5;
-    if (weather.includes('rain') && moveType === 'Fire') weatherMod = 0.5;
+    if (sun && moveType === 'Fire') weatherMod = 1.5;
+    if (sun && moveType === 'Water') weatherMod = 0.5;
+    if (rain && moveType === 'Water') weatherMod = 1.5;
+    if (rain && moveType === 'Fire') weatherMod = 0.5;
 
     const stab = attacker.types.includes(moveType) ? 1.5 : 1;
     const itemName = typeof args.attacker_item === 'string' ? args.attacker_item : '';
@@ -539,25 +770,23 @@ export class ShowdownReference {
     const minDamage = roll(atkLow, defHigh, 0.85);
     const maxDamage = roll(atkHigh, defLow, 1);
     const pct = (damage: number, hp: number) => Math.round((damage / hp) * 1000) / 10;
-    let hpText: string;
-    if (defenderHp !== undefined || defenderMaxHp !== undefined) {
-      const basis = defenderHp ?? defenderMaxHp!;
-      hpText = `${pct(minDamage, basis)}-${pct(maxDamage, basis)}% of ${defenderHp !== undefined ? 'current' : 'max'} HP ${basis}`;
-    } else {
-      hpText = `${pct(minDamage, hpHigh)}-${pct(maxDamage, hpLow)}% of max HP (legal max HP ${hpLow}-${hpHigh})`;
-      if (hpPercent !== undefined)
-        hpText += `; defender shown at ${Math.round(hpPercent)}%—KO only when damage % exceeds that`;
-    }
-    const exactNote =
-      exactAttack !== undefined ? 'attacker attack stat exact from request; ' : 'attacker attack stat legal range; ';
-    const defNote = 'defender defense/HP use open-sheet legal EV/IV ranges only (no private foe values).';
-    return [
-      `${attacker.name} ${move.name} (${moveType} ${move.category} BP ${power}) into ${defender.name}:`,
-      `damage ${minDamage}-${maxDamage} (${hpText})`,
-      `type ${effectivenessLabel(typeMod)}; STAB ${stab}x; weather ${weatherMod}x; item ${itemMod}x; defender item ${defenderItemMod}x; spread ${spreadMod}x.`,
-      `${exactNote}${defNote}`,
-      'Not modeled: abilities, stat boosts, burn, screens, terrain, defensive items other than Assault Vest/Eviolite—adjust the range yourself when these apply.',
-    ].join(' ');
+    const minimumPercent = pct(minDamage, hpHigh);
+    const maximumPercent = pct(maxDamage, hpLow);
+    const targetPercent = hpPercent ?? 100;
+    const fullHealth = targetPercent === 100;
+    const guaranteed = 100 * minDamage >= targetPercent * hpHigh;
+    const possible = 100 * maxDamage >= targetPercent * hpLow;
+    const outcome =
+      targetPercent <= 0
+        ? 'Target is already at 0%.'
+        : guaranteed
+          ? `Guaranteed ${fullHealth ? 'OHKO' : `KO from the shown ${Math.round(targetPercent)}%`} across the full legal range.`
+          : possible
+            ? `Possible ${fullHealth ? 'OHKO' : `KO from the shown ${Math.round(targetPercent)}%`}, not guaranteed across the legal range.`
+            : `Cannot ${fullHealth ? 'OHKO' : `KO from the shown ${Math.round(targetPercent)}%`} in this estimate.`;
+    const shownHp = hpPercent === undefined ? '' : ` Target HP shown: ${Math.round(hpPercent)}%.`;
+    const attackBasis = exactAttack !== undefined ? 'attack exact from request' : 'legal attack range';
+    return `${attacker.name} ${move.name} (${moveType} ${move.category} BP ${power}) into ${defender.name}: ${minimumPercent}-${maximumPercent}% of maximum HP.${shownHp} ${outcome} ${effectivenessLabel(typeMod)}; modifiers STAB ${stab}x, weather ${weatherMod}x, item ${itemMod}x, defender item ${defenderItemMod}x, spread ${spreadMod}x; ${attackBasis}, open-sheet defense/HP range. Omits abilities, boosts, burn, screens, terrain, and defensive items other than Assault Vest/Eviolite.`;
   }
 
   private lookupOne(kind: string, name: string, query: ReferenceQuery, prefix = `- ${kind} `): string {
