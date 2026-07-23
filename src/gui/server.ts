@@ -22,6 +22,8 @@ import {
   validateReasoning,
 } from '../providers.js';
 import { loadRows, ratingGroups, scopeRows } from '../records.js';
+import type { RecoveryPause } from '../recovery.js';
+import { RecoveryGate } from '../recovery.js';
 import { makeRunDirectory, ROTATION_PROTOCOL_VERSION, runRotation } from '../rotation.js';
 import { redactSecrets } from '../sanitize.js';
 import { loadShowdown } from '../showdown.js';
@@ -46,6 +48,7 @@ import type {
   MonView,
   PoolTeamsResponse,
   RecordsResponse,
+  RunPauseView,
   RunSnapshot,
   SampleTeam,
   SeriesRowView,
@@ -161,6 +164,10 @@ interface RunConfig extends ModelReasoningConfig {
   timerScale?: TimerScale;
 }
 
+function isActiveRunState(state: RunSnapshot['state']): state is 'running' | 'paused' {
+  return state === 'running' || state === 'paused';
+}
+
 interface GameBattle {
   state: BattleState;
   log: BattleLog;
@@ -183,12 +190,15 @@ class ActiveRun {
   rows: SeriesRow[] = [];
   bracket: BracketView | undefined;
   draft: DraftView | undefined;
-  state: 'running' | 'done' | 'failed' | 'stopped' = 'running';
+  pause: RunPauseView | undefined;
+  state: RunSnapshot['state'] = 'running';
   error = '';
   notices: string[] = [];
   seed: number | undefined;
   endTime: number | undefined;
   timeoutTimer: NodeJS.Timeout | undefined;
+  timeoutRemainingMs = 0;
+  timeoutStartedAt: number | undefined;
   stopFallbackTimer: NodeJS.Timeout | undefined;
   timedOut = false;
   interrupted = false;
@@ -201,6 +211,8 @@ class ActiveRun {
   readonly spend = new Map<number, Record<Pid, { ms: number; tokens: number }>>();
   readonly battleRevisions = new Map<number, number>();
   readonly controller = new AbortController();
+  readonly recovery = new RecoveryGate();
+  resumeAction: (() => void) | undefined;
   readonly runDir: string;
   readonly runId: string;
   readonly startTime = Date.now();
@@ -416,7 +428,7 @@ export class GuiServer {
     if (this.shutdownTask) return this.shutdownTask;
     this.shutdownTask = (async () => {
       const run = this.run;
-      if (run?.state === 'running' && !run.settling) {
+      if (run && isActiveRunState(run.state) && !run.settling) {
         run.interrupted = true;
         run.controller.abort();
       }
@@ -433,7 +445,7 @@ export class GuiServer {
       const timer = setTimeout(timeout.resolve, Math.max(0, graceMs));
       await Promise.race([settled, timeout.promise]);
       clearTimeout(timer);
-      if (run && run.state === 'running') this.detachRun(run, 'failed', SHUTDOWN_ERROR);
+      if (run && isActiveRunState(run.state)) this.detachRun(run, 'failed', SHUTDOWN_ERROR);
       this.server.closeAllConnections();
     })();
     return this.shutdownTask;
@@ -581,12 +593,18 @@ export class GuiServer {
       this.json(response, 200, this.startRun(await this.readJson(request), actor));
     } else if (key === 'POST /api/run/stop') {
       const run = this.run;
-      if (run?.state === 'running' && !run.settling) {
+      if (run && isActiveRunState(run.state) && !run.settling) {
         if (actor && this.options.auth) this.options.auth.stopExperiment(actor, run.runId);
         run.userStopped = true;
         run.controller.abort();
         this.scheduleStopFallback(run);
       }
+      this.json(response, 200, { ok: true });
+    } else if (key === 'POST /api/run/resume') {
+      const run = this.run;
+      if (run?.state !== 'paused' || run.settling) throw new HttpError(409, 'the run is not paused');
+      if (!this.controlsCurrentRun(actor)) throw new HttpError(403, 'you cannot resume this run');
+      run.resumeAction?.();
       this.json(response, 200, { ok: true });
     } else if (key === 'POST /api/pool') {
       this.json(response, 200, this.makePool(await this.readJson(request), actor));
@@ -833,6 +851,7 @@ export class GuiServer {
       runId: run.runId,
       state: run.state,
       error: publicView && run.error ? 'run failed' : run.error,
+      pause: run.pause ?? null,
       notices: publicView ? [] : run.notices.slice(-3),
       seed: run.seed ?? null,
       pool: run.config.pool,
@@ -891,7 +910,7 @@ export class GuiServer {
   }
 
   private startRun(body: Record<string, unknown>, owner: AuthUser | undefined): JsonObject {
-    if (this.run?.state === 'running') throw new HttpError(409, 'a run is already in progress');
+    if (this.run && isActiveRunState(this.run.state)) throw new HttpError(409, 'a run is already in progress');
     const mode = (
       body.mode === undefined || body.mode === 'rotation'
         ? 'rotation'
@@ -1035,6 +1054,16 @@ export class GuiServer {
       }
     }
     this.run = run;
+    run.timeoutRemainingMs = this.maxRunMs;
+    this.armRunTimeout(run);
+    this.runTask = this.launch(run);
+    this.queueRun();
+    return { ok: true, runId: run.runId };
+  }
+
+  private armRunTimeout(run: ActiveRun): void {
+    clearTimeout(run.timeoutTimer);
+    run.timeoutStartedAt = Date.now();
     run.timeoutTimer = setTimeout(() => {
       if (run !== this.run || run.state !== 'running' || run.settling) return;
       run.timedOut = true;
@@ -1042,11 +1071,27 @@ export class GuiServer {
       run.controller.abort();
       this.scheduleStopFallback(run);
       this.queueRun();
-    }, this.maxRunMs);
+    }, run.timeoutRemainingMs);
     run.timeoutTimer.unref();
-    this.runTask = this.launch(run);
+  }
+
+  private setRecoveryState(run: ActiveRun, pause: RecoveryPause | undefined): void {
+    if (run !== this.run || run.settling || !isActiveRunState(run.state)) return;
+    if (pause) {
+      if (run.state === 'running') {
+        clearTimeout(run.timeoutTimer);
+        if (run.timeoutStartedAt !== undefined) {
+          run.timeoutRemainingMs = Math.max(1, run.timeoutRemainingMs - (Date.now() - run.timeoutStartedAt));
+        }
+      }
+      run.state = 'paused';
+      run.pause = pause;
+    } else if (run.state === 'paused') {
+      run.state = 'running';
+      run.pause = undefined;
+      this.armRunTimeout(run);
+    }
     this.queueRun();
-    return { ok: true, runId: run.runId };
   }
 
   private async launch(run: ActiveRun): Promise<void> {
@@ -1056,6 +1101,10 @@ export class GuiServer {
         : run.config.mode === 'draft'
           ? this.options.draftRunner
           : this.options.runner;
+    const removeRecoveryListener = run.recovery.onChange((pause) => this.setRecoveryState(run, pause));
+    run.resumeAction = () => {
+      run.recovery.resume();
+    };
     const commonOptions = {
       concurrency: run.config.concurrency,
       recordsPath: this.options.recordsPath ?? RESULTS_PATH,
@@ -1065,6 +1114,7 @@ export class GuiServer {
       ...(run.config.reasoning === undefined ? {} : { reasoning: run.config.reasoning }),
       ...(run.config.reasoningByModel === undefined ? {} : { reasoningByModel: run.config.reasoningByModel }),
       ...(run.config.timerScale === undefined ? {} : { timerScale: run.config.timerScale }),
+      recovery: run.recovery,
       ...(run.owner
         ? {
             contributor: {
@@ -1135,7 +1185,7 @@ export class GuiServer {
           runId: run.runId,
         });
       } else {
-        const persistedState = run.state === 'running' ? 'failed' : run.state;
+        const persistedState = isActiveRunState(run.state) ? 'failed' : run.state;
         if (this.options.auth && run.owner) {
           try {
             this.options.auth.finishExperiment(run.runId, persistedState);
@@ -1167,6 +1217,8 @@ export class GuiServer {
         });
         this.queueRun();
       }
+      removeRecoveryListener();
+      run.resumeAction = undefined;
     }
   }
 
@@ -1228,7 +1280,7 @@ export class GuiServer {
   private scheduleStopFallback(run: ActiveRun): void {
     if (run.stopFallbackTimer) return;
     run.stopFallbackTimer = setTimeout(() => {
-      if (run.state !== 'running' || run.settling) return;
+      if (!isActiveRunState(run.state) || run.settling) return;
       run.notices.push('the run task did not shut down cleanly and was detached');
       this.detachRun(run, run.timedOut ? 'failed' : 'stopped', run.timedOut ? TIMEOUT_ERROR : '');
     }, this.stopFallbackMs);
@@ -1285,6 +1337,13 @@ export class GuiServer {
         } else if (message?.type === 'failed') {
           if (typeof message.error !== 'string') throw new Error('run worker sent an invalid failure');
           markTerminal(message as Extract<RunWorkerOutput, { type: 'failed' }>);
+        } else if (message?.type === 'paused') {
+          if (!isRecord(message.pause) || typeof message.pause.message !== 'string') {
+            throw new Error('run worker sent an invalid pause');
+          }
+          this.setRecoveryState(run, message.pause as unknown as RecoveryPause);
+        } else if (message?.type === 'resumed') {
+          this.setRecoveryState(run, undefined);
         }
       } catch (error) {
         child.kill();
@@ -1305,6 +1364,9 @@ export class GuiServer {
       scheduleKill();
     };
     run.controller.signal.addEventListener('abort', abort, { once: true });
+    run.resumeAction = () => {
+      if (child.connected) child.send({ type: 'resume' } satisfies RunWorkerInput);
+    };
     const message: RunWorkerStart = {
       type: 'start',
       mode: run.config.mode === 'tournament' || run.config.mode === 'draft' ? run.config.mode : 'rotation',
@@ -1342,6 +1404,7 @@ export class GuiServer {
     return completion.promise.finally(() => {
       clearTimeout(killTimer);
       run.controller.signal.removeEventListener('abort', abort);
+      run.resumeAction = undefined;
     });
   }
 

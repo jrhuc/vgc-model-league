@@ -625,7 +625,7 @@ export function FixturesView({ app, run, onStarted, onPools }: FixturesProps) {
       : mode === 'draft'
         ? draftSeries
         : Math.max(0, models.length - 1);
-  const active = run?.state === 'running';
+  const active = run?.state === 'running' || run?.state === 'paused';
   const missingKeys = models.filter((spec) => needsKey(providers, spec) && !apiKeysRef.current[spec]);
   const poolInfo = app.pools.find((info) => info.name === pool);
   const shownPairs = pairs.slice(0, 8);
@@ -668,7 +668,9 @@ export function FixturesView({ app, run, onStarted, onPools }: FixturesProps) {
               ? `Start the ${models.length}-coach draft`
               : `Start ${total} series`;
   const launchNote = active
-    ? 'Stop or finish the current run before starting another.'
+    ? run?.state === 'paused'
+      ? 'Resume or stop the current run before starting another.'
+      : 'Stop or finish the current run before starting another.'
     : missingKeys.length
       ? `${missingKeys.length} model${missingKeys.length === 1 ? ' needs' : 's need'} a browser-supplied key.`
       : mode === 'match'

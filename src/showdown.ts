@@ -95,6 +95,7 @@ export interface RoomBattleTimerSettings {
 export interface RoomBattleTimer {
   settings: RoomBattleTimerSettings;
   start(): boolean;
+  stop(): boolean;
   nextRequest(player: TimerPlayer): void;
   end(): boolean;
 }

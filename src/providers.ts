@@ -245,6 +245,7 @@ export interface ProviderFailure {
   terminal: boolean;
   /** Defaults to !terminal. */
   retryable?: boolean;
+  pausable?: boolean;
 }
 
 const HARD_QUOTA_ERROR =
@@ -271,11 +272,19 @@ export function classifyProviderFailure(error: unknown, spec = 'provider'): Prov
       } as Record<string, string>
     )[provider] ?? provider.charAt(0).toUpperCase() + provider.slice(1);
   const suffix = status ? ` (${status})` : '';
+  if (/Upstream request failed|Inference is temporarily unavailable/i.test(message)) {
+    return {
+      kind: 'upstream',
+      summary: `${label} API is temporarily unavailable${suffix}.`,
+      terminal: false,
+      pausable: true,
+    };
+  }
   if (HARD_QUOTA_ERROR.test(message)) {
-    return { kind: 'quota', summary: `${label} API quota is exhausted${suffix}.`, terminal: true };
+    return { kind: 'quota', summary: `${label} API quota is exhausted${suffix}.`, terminal: true, pausable: true };
   }
   if ((status === 0 || status === 408) && /(?:timed? ?out|timeout|time exhausted)/i.test(message)) {
-    return { kind: 'timeout', summary: `${label} API request timed out.`, terminal: false };
+    return { kind: 'timeout', summary: `${label} API request timed out.`, terminal: false, pausable: true };
   }
   if (status === 0 && /^reasoning exhausted the \d+-token response budget$/i.test(message.trim())) {
     return {
@@ -290,22 +299,38 @@ export function classifyProviderFailure(error: unknown, spec = 'provider'): Prov
       summary: `${label} API returned no usable response.`,
       terminal: true,
       retryable: true,
+      pausable: true,
     };
   }
   if (status === 0 && error instanceof ApiError) {
-    return { kind: 'network', summary: `${label} API could not be reached.`, terminal: false };
+    return { kind: 'network', summary: `${label} API could not be reached.`, terminal: false, pausable: true };
   }
   if (status === 409 || status === 425) {
-    return { kind: 'upstream', summary: `${label} API request was temporarily blocked (${status}).`, terminal: false };
+    return {
+      kind: 'upstream',
+      summary: `${label} API request was temporarily blocked (${status}).`,
+      terminal: false,
+      pausable: true,
+    };
   }
   if (status === 429) {
-    return { kind: 'rate_limit', summary: `${label} API rate limit was reached (429).`, terminal: false };
+    return {
+      kind: 'rate_limit',
+      summary: `${label} API rate limit was reached (429).`,
+      terminal: false,
+      pausable: true,
+    };
   }
   if (error instanceof TypeError) {
-    return { kind: 'network', summary: `${label} API could not be reached.`, terminal: false };
+    return { kind: 'network', summary: `${label} API could not be reached.`, terminal: false, pausable: true };
   }
   if (status >= 500 && status !== 501 && status !== 505) {
-    return { kind: 'upstream', summary: `${label} API is temporarily unavailable (${status}).`, terminal: false };
+    return {
+      kind: 'upstream',
+      summary: `${label} API is temporarily unavailable (${status}).`,
+      terminal: false,
+      pausable: true,
+    };
   }
   if (status === 401 || status === 403) {
     return { kind: 'request', summary: `${label} API rejected the credentials${suffix}.`, terminal: true };

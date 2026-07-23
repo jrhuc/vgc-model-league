@@ -11,6 +11,7 @@ import { validateModelExecution } from './providers.js';
 import { resolveSeed, seededRng, seriesEntropy, shuffle } from './random.js';
 import type { SeriesRecord } from './records.js';
 import { appendRow } from './records.js';
+import type { RecoveryGate } from './recovery.js';
 import { mapLimit } from './rotation.js';
 import { playRecordedSeries } from './series.js';
 import { showdownCommit } from './showdown.js';
@@ -36,6 +37,7 @@ export interface DraftLeagueOptions extends ModelReasoningConfig {
   onEvent?: (event: DraftLeagueEvent) => void;
   signal?: AbortSignal;
   contributor?: ContributorAttribution;
+  recovery?: RecoveryGate;
 }
 
 interface SeriesPlanned {
@@ -134,6 +136,7 @@ export async function runDraftLeague(
     ...(options.reasoning === undefined ? {} : { reasoning: options.reasoning }),
     ...(options.reasoningByModel === undefined ? {} : { reasoningByModel: options.reasoningByModel }),
     ...(options.apiKeys === undefined ? {} : { apiKeys: options.apiKeys }),
+    ...(options.recovery === undefined ? {} : { recovery: options.recovery }),
     ...(options.signal === undefined ? {} : { signal: options.signal }),
     onPick: (view, state) => {
       picks = [...picks, view];
@@ -214,6 +217,7 @@ export async function runDraftLeague(
       ...(plan.stage === 'playoff' ? { requireWinner: true } : {}),
       ...(options.reasoning === undefined ? {} : { reasoning: options.reasoning }),
       ...(options.apiKeys === undefined ? {} : { apiKeys: options.apiKeys }),
+      ...(options.recovery === undefined ? {} : { recovery: options.recovery }),
       ...(options.reasoningByModel === undefined ? {} : { reasoningByModel: options.reasoningByModel }),
       timerScale,
       onGameUpdate: (game, lines, publicLines) =>

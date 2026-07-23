@@ -3,6 +3,7 @@ import test from 'node:test';
 import type { ChoiceSubstitution } from '../src/engines.js';
 import { BaseEngine, decisionTokenBudget, LLMEngine, RandomEngine, updatedPace } from '../src/engines.js';
 import { ApiError } from '../src/providers.js';
+import { RecoveryGate } from '../src/recovery.js';
 import { SimBattle } from '../src/sim.js';
 import { loadPool } from '../src/teams.js';
 import type {
@@ -274,6 +275,54 @@ test('hard quota failures stop immediately without provider retries', async () =
   assert.equal(decisions[0]!.failure_kind, 'quota');
   assert.equal(decisions[0]!.error_summary, 'Google API quota is exhausted (429).');
   assert.match(String(decisions[0]!.rationale), /run cannot continue/i);
+});
+
+test('the timeline renders Protect blocks explicitly instead of a generic activation', async () => {
+  const provider = new ScriptedProvider([decision([0], 'noted')]);
+  const engine = new LLMEngine('p1', 'scripted', { provider, decisionLog: [] });
+  engine.beginGame({ gameId: 'game-1', gameNumber: 1, seriesId: 'series-1' });
+  engine.observe([
+    '|move|p1b: Metagross|Protect|p1b: Metagross',
+    '|move|p2b: Politoed|Encore|p1b: Metagross',
+    '|-activate|p1b: Metagross|move: Protect',
+    '|-activate|p2a: Gengar|move: Destiny Bond',
+  ]);
+  await engine.act(request(), { povLines: [] });
+
+  const prompt = String(provider.calls[0]!.messages[0]!.content);
+  assert.match(prompt, /Metagross's Protect blocked the incoming move/);
+  assert.match(prompt, /Gengar activated move: Destiny Bond/);
+});
+
+test('quota failures pause and resume the same decision context', async () => {
+  const decisions: Record<string, unknown>[] = [];
+  const recovery = new RecoveryGate();
+  const provider = new ScriptedProvider([
+    new ApiError(429, 'google:gemini-test 429: exceeded your current quota; requests per day'),
+    decision([1], 'resumed choice', 'retained notebook'),
+  ]);
+  const engine = new LLMEngine('p1', 'google:gemini-test', {
+    provider,
+    decisionLog: decisions,
+    recovery,
+  });
+  const paused = Promise.withResolvers<void>();
+  const removeListener = recovery.onChange((pause) => {
+    if (pause) paused.resolve();
+  });
+  const timed = request();
+  timed.timer = { turnSeconds: 55, seconds: 240 };
+
+  const pending = engine.act(timed, { povLines: [] });
+  await paused.promise;
+  assert.equal(recovery.paused?.kind, 'quota');
+  assert.equal(provider.calls.length, 1);
+  recovery.resume();
+
+  assert.equal(await pending, 'move 2');
+  assert.equal(provider.calls.length, 2);
+  assert.equal(decisions[0]!.notebook, 'retained notebook');
+  removeListener();
 });
 
 test('transient provider failures with a live timer leave the choice to the battle timer', async () => {

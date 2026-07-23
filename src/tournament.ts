@@ -8,6 +8,7 @@ import { validateModelExecution } from './providers.js';
 import { resolveSeed, seededRng, seriesEntropy, shuffle } from './random.js';
 import type { SeriesRecord } from './records.js';
 import { appendRow } from './records.js';
+import type { RecoveryGate } from './recovery.js';
 import type { RotationEvent } from './rotation.js';
 import { playRecordedSeries } from './series.js';
 import { showdownCommit } from './showdown.js';
@@ -37,6 +38,7 @@ export interface TournamentOptions extends ModelReasoningConfig {
   onNotice?: (message: string) => void;
   signal?: AbortSignal;
   contributor?: ContributorAttribution;
+  recovery?: RecoveryGate;
 }
 
 interface Entrant {
@@ -225,6 +227,7 @@ export async function runTournament(
         seriesSeeds: seriesSeeds[match.seriesIndex!]!,
         ...(options.reasoning === undefined ? {} : { reasoning: options.reasoning }),
         ...(options.apiKeys === undefined ? {} : { apiKeys: options.apiKeys }),
+        ...(options.recovery === undefined ? {} : { recovery: options.recovery }),
         ...(options.reasoningByModel === undefined ? {} : { reasoningByModel: options.reasoningByModel }),
         timerScale,
         ...(options.onEvent === undefined ? {} : { onEvent: options.onEvent }),
@@ -287,6 +290,7 @@ async function playMatch(
     signal?: AbortSignal;
     contributor?: ContributorAttribution;
     timerScale: TimerScale;
+    recovery?: RecoveryGate;
   } & ModelReasoningConfig,
 ): Promise<SeriesRecord> {
   context.signal?.throwIfAborted();
@@ -308,6 +312,7 @@ async function playMatch(
     ...(context.reasoning === undefined ? {} : { reasoning: context.reasoning }),
     timerScale: context.timerScale,
     ...(context.apiKeys === undefined ? {} : { apiKeys: context.apiKeys }),
+    ...(context.recovery === undefined ? {} : { recovery: context.recovery }),
     ...(context.signal === undefined ? {} : { signal: context.signal }),
     onGameUpdate: (game, lines, publicLines) =>
       context.onEvent?.({ type: 'game-update', index, game, lines, publicLines }),

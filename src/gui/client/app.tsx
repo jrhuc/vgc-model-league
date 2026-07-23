@@ -24,6 +24,10 @@ function canContribute(auth: AuthView): boolean {
   return auth.mode === 'local' || auth.user?.role === 'contributor' || auth.user?.role === 'operator';
 }
 
+function isActiveRunState(state: RunSnapshot['state'] | undefined | null): state is 'running' | 'paused' {
+  return state === 'running' || state === 'paused';
+}
+
 function AccessGate({ auth }: { auth: AuthView }) {
   if (auth.mode === 'read-only') {
     return (
@@ -80,7 +84,7 @@ export function App() {
         configureCsrf(state.auth.csrfToken);
         setApp(state);
         setRun(state.run);
-        runWasLive.current = state.run?.state === 'running';
+        runWasLive.current = isActiveRunState(state.run?.state);
         runIdRef.current = state.run?.runId ?? null;
       })
       .catch((error: Error) => setBootError(error.message));
@@ -88,22 +92,27 @@ export function App() {
 
   const contribute = app ? canContribute(app.auth) : false;
   const eventsPath = app ? (contribute ? '/api/events' : '/api/events/public') : null;
+
+  const acceptRun = (next: RunSnapshot | null) => {
+    const nextRunId = next?.runId ?? null;
+    if (runIdRef.current !== nextRunId) {
+      runIdRef.current = nextRunId;
+      setBattles({});
+      setSelected(null);
+    }
+    const active = isActiveRunState(next?.state);
+    if (runWasLive.current && !active) setRecordsEpoch((epoch) => epoch + 1);
+    runWasLive.current = active;
+    setRun(next);
+  };
+
   useEffect(() => {
     if (!eventsPath) return;
     const events = new EventSource(eventsPath);
     events.onmessage = (event: MessageEvent<string>) => {
       const message = JSON.parse(event.data) as ServerEvent;
       if (message.type === 'run') {
-        const nextRunId = message.run?.runId ?? null;
-        if (runIdRef.current !== nextRunId) {
-          runIdRef.current = nextRunId;
-          setBattles({});
-          setSelected(null);
-        }
-        const live = message.run?.state === 'running';
-        if (runWasLive.current && !live) setRecordsEpoch((epoch) => epoch + 1);
-        runWasLive.current = live;
-        setRun(message.run);
+        acceptRun(message.run);
       } else {
         setBattles((previous) => {
           if (!isFresherBattle(message, previous[message.index])) return previous;
@@ -145,11 +154,7 @@ export function App() {
     api<BattleMessage>(`${contribute ? '/api/battle' : '/api/battle/public'}?index=${index}&game=${game}`);
 
   const onStarted = (startedRun: RunSnapshot) => {
-    runIdRef.current = startedRun.runId;
-    runWasLive.current = true;
-    setRun(startedRun);
-    setSelected(null);
-    setBattles({});
+    acceptRun(startedRun);
     navigate('arena');
   };
 
@@ -183,8 +188,10 @@ export function App() {
     );
   }
 
-  const live = run?.state === 'running';
+  const running = run?.state === 'running';
+  const paused = run?.state === 'paused';
   const user = app.auth.user;
+  const headerLabel = running ? 'Run in progress' : paused ? 'Run paused' : run ? `Last run ${run.state}` : 'Idle';
   return (
     <>
       <header class="app-header">
@@ -207,9 +214,9 @@ export function App() {
           ))}
         </nav>
         <div class="header-aside">
-          <div class={`header-state ${live ? 'live' : ''}`}>
+          <div class={`header-state ${running ? 'live' : paused ? 'paused' : ''}`}>
             <span class="live-dot" />
-            <span>{live ? 'Run in progress' : run ? `Last run ${run.state}` : 'Idle'}</span>
+            <span>{headerLabel}</span>
           </div>
           {app.auth.mode === 'read-only' ? <span class="header-readonly">Read-only</span> : null}
           {app.auth.mode === 'github' && !user ? (

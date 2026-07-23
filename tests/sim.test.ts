@@ -96,6 +96,32 @@ test('timer scale multiplies Showdown timer settings and reseeds the banks', () 
   assert.ok(scaled.timer.settings.starting > base.timer.settings.starting);
 });
 
+test('recovery restores a timed request to its turn-start clock', () => {
+  const pool = loadPool();
+  const stream = { write: () => {} } as unknown as BattleStream;
+  const adapter = new TimerAdapter(pool.format, stream, () => {}, defaultPsDir(), 0.5) as unknown as {
+    receive(message: string): string;
+    pauseForRecovery(): string[];
+    resumeAfterRecovery(): string[];
+    end(): void;
+    players: Array<{ secondsLeft?: number; turnSecondsLeft?: number }>;
+  };
+  const received = adapter.receive('sideupdate\np1\n|request|{"active":[]}');
+  const request = JSON.parse(received.split('\n')[2]!.slice(9)) as {
+    timer: { seconds: number; turnSeconds: number };
+  };
+  adapter.players[0]!.secondsLeft! -= 20;
+  adapter.players[0]!.turnSecondsLeft! -= 20;
+
+  assert.deepEqual(adapter.pauseForRecovery(), ['|-vgctimerstop|p1']);
+  assert.equal(adapter.players[0]!.secondsLeft, request.timer.seconds);
+  assert.equal(adapter.players[0]!.turnSecondsLeft, request.timer.turnSeconds);
+  assert.deepEqual(adapter.resumeAfterRecovery(), [
+    `|-vgctimer|p1|${request.timer.seconds}|${request.timer.turnSeconds}`,
+  ]);
+  adapter.end();
+});
+
 test('parseTimerScale accepts multipliers and off, rejects everything else', () => {
   assert.equal(parseTimerScale(undefined), undefined);
   assert.equal(parseTimerScale(''), undefined);

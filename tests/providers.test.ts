@@ -74,23 +74,26 @@ test('provider failures distinguish terminal capacity from recoverable upstream 
       new ApiError(429, 'google:gemini-3.6-flash 429: exceeded your current quota; GenerateRequestsPerDay-FreeTier'),
       'google:gemini-3.6-flash',
     ),
-    { kind: 'quota', summary: 'Google API quota is exhausted (429).', terminal: true },
+    { kind: 'quota', summary: 'Google API quota is exhausted (429).', terminal: true, pausable: true },
   );
   assert.deepEqual(classifyProviderFailure(new ApiError(429, 'rate limit; retry in 20s'), 'google:gemini'), {
     kind: 'rate_limit',
     summary: 'Google API rate limit was reached (429).',
     terminal: false,
+    pausable: true,
   });
   assert.deepEqual(classifyProviderFailure(new ApiError(0, 'request timed out after 55s'), 'openai:gpt'), {
     kind: 'timeout',
     summary: 'OpenAI API request timed out.',
     terminal: false,
+    pausable: true,
   });
   assert.deepEqual(classifyProviderFailure(new Error('empty response'), 'opencode-go:deepseek-v4-flash'), {
     kind: 'upstream',
     summary: 'OpenCode Go API returned no usable response.',
     terminal: true,
     retryable: true,
+    pausable: true,
   });
   assert.deepEqual(
     classifyProviderFailure(new Error('reasoning exhausted the 16384-token response budget'), 'opencode-go:glm-5.2'),
@@ -98,6 +101,21 @@ test('provider failures distinguish terminal capacity from recoverable upstream 
       kind: 'truncation',
       summary: 'OpenCode Go API spent the whole response budget on reasoning and returned no answer.',
       terminal: false,
+    },
+  );
+  assert.deepEqual(
+    classifyProviderFailure(
+      new ApiError(
+        400,
+        'opencode-go:kimi-k3 400: {"error":{"message":"Error from provider (Console Go): Upstream request failed"}}',
+      ),
+      'opencode-go:kimi-k3',
+    ),
+    {
+      kind: 'upstream',
+      summary: 'OpenCode Go API is temporarily unavailable (400).',
+      terminal: false,
+      pausable: true,
     },
   );
   assert.equal(classifyProviderFailure(new ApiError(401, 'invalid key'), 'anthropic:claude').terminal, true);

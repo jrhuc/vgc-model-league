@@ -24,6 +24,11 @@ export class TimerAdapter {
   private readonly bySlot: Record<Pid, TimerPlayer>;
   private readonly timer: RoomBattleTimer;
   private readonly enabled: boolean;
+  private readonly requestStart: Record<Pid, { seconds?: number; turnSeconds?: number } | undefined> = {
+    p1: undefined,
+    p2: undefined,
+  };
+  private recoveryPaused = false;
   private readonly battle: {
     format: string;
     challengeType: string;
@@ -126,6 +131,10 @@ export class TimerAdapter {
         this.battle.requestCount += 1;
         if (this.enabled) {
           if (!request.update) this.timer.nextRequest(player);
+          this.requestStart[pid] = {
+            ...(player.secondsLeft === undefined ? {} : { seconds: player.secondsLeft }),
+            ...(player.turnSecondsLeft === undefined ? {} : { turnSeconds: player.turnSecondsLeft }),
+          };
           if (!request.wait) {
             request.timer = { turnSeconds: player.turnSecondsLeft, seconds: player.secondsLeft };
             lines[2] = `|request|${JSON.stringify(request)}`;
@@ -146,6 +155,40 @@ export class TimerAdapter {
     if (player.request.isWait) return;
     player.request.isWait = true;
     return this.stream.write(`>${pid} ${choice}`);
+  }
+
+  pauseForRecovery(): string[] {
+    if (this.recoveryPaused) return [];
+    this.recoveryPaused = true;
+    if (this.enabled) this.timer.stop();
+    const lines: string[] = [];
+    for (const player of this.players) {
+      if (player.request.isWait) continue;
+      const start = this.requestStart[player.slot];
+      if (start?.seconds !== undefined) player.secondsLeft = start.seconds;
+      if (start?.turnSeconds !== undefined) player.turnSecondsLeft = start.turnSeconds;
+      lines.push(`|-vgctimerstop|${player.slot}`);
+    }
+    return lines;
+  }
+
+  resumeAfterRecovery(): string[] {
+    if (!this.recoveryPaused) return [];
+    this.recoveryPaused = false;
+    if (this.enabled) this.timer.start();
+    const lines: string[] = [];
+    for (const player of this.players) {
+      if (player.request.isWait) continue;
+      const start = this.requestStart[player.slot];
+      if (start?.seconds !== undefined) player.secondsLeft = start.seconds;
+      if (start?.turnSeconds !== undefined) player.turnSecondsLeft = start.turnSeconds;
+      lines.push(
+        this.enabled
+          ? `|-vgctimer|${player.slot}|${player.secondsLeft ?? ''}|${player.turnSecondsLeft ?? ''}`
+          : `|-vgcdeciding|${player.slot}`,
+      );
+    }
+    return lines;
   }
 
   end(): void {

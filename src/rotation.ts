@@ -10,6 +10,7 @@ import type { Rng } from './random.js';
 import { resolveSeed, seededRng, seriesEntropy } from './random.js';
 import type { SeriesRecord } from './records.js';
 import { appendRow } from './records.js';
+import type { RecoveryGate } from './recovery.js';
 import { playRecordedSeries } from './series.js';
 import { showdownCommit } from './showdown.js';
 import type { Team } from './teams.js';
@@ -53,6 +54,7 @@ export interface RotationOptions extends ModelReasoningConfig {
   onNotice?: (message: string) => void;
   signal?: AbortSignal;
   contributor?: ContributorAttribution;
+  recovery?: RecoveryGate;
 }
 
 export function makeRunDirectory(base: string = RUNS_DIR): string {
@@ -132,6 +134,7 @@ export async function runRotation(
       ...(options.reasoningByModel === undefined ? {} : { reasoningByModel: options.reasoningByModel }),
       timerScale,
       ...(options.apiKeys === undefined ? {} : { apiKeys: options.apiKeys }),
+      ...(options.recovery === undefined ? {} : { recovery: options.recovery }),
       onGameUpdate: (game, lines, publicLines) =>
         options.onEvent?.({ type: 'game-update', index: plan.index, game, lines, publicLines }),
       onGameEnd: (game, winner, turns, score) =>

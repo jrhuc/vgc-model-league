@@ -37,6 +37,7 @@ button { color: inherit; }
 .header-state { display: flex; align-items: center; gap: 9px; color: var(--ink-soft); font: 700 11px/1 var(--mono); text-transform: uppercase; letter-spacing: .05em; white-space: nowrap; }
 .live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--line-strong); }
 .header-state.live .live-dot { background: var(--red); box-shadow: 0 0 0 5px rgba(232, 75, 79, .12); animation: pulse 1.6s ease-out infinite; }
+.header-state.paused .live-dot { background: var(--yellow); box-shadow: 0 0 0 5px rgba(243, 206, 57, .18); }
 .header-readonly { padding: 6px 9px; border: 1px solid var(--line-strong); color: var(--ink-soft); font: 800 9px/1 var(--mono); letter-spacing: .08em; text-transform: uppercase; white-space: nowrap; }
 .header-auth-link { color: var(--blue); font: 800 10px/1 var(--mono); letter-spacing: .06em; text-transform: uppercase; text-decoration: none; white-space: nowrap; }
 .header-auth-link:hover { color: var(--blue-dark); }
@@ -167,9 +168,11 @@ textarea { min-height: 170px; resize: vertical; font: 12px/1.5 var(--mono); }
 .status-pill { display: inline-flex; align-items: center; gap: 7px; padding: 7px 10px; background: var(--navy); color: white; font: 800 9px/1 var(--mono); text-transform: uppercase; letter-spacing: .07em; }
 .status-pill::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--line-strong); }
 .status-pill.running::before { background: var(--red); animation: pulse 1.6s ease-out infinite; }
+.status-pill.paused::before { background: var(--yellow); }
 .status-pill.done::before { background: var(--green); }
 .status-pill.failed::before { background: var(--red); }
 .status-pill.stopped::before { background: var(--yellow); }
+.run-controls { display: flex; gap: 8px; justify-content: flex-end; margin-top: 10px; flex-wrap: wrap; }
 .progress-rail { height: 5px; margin-top: 14px; overflow: hidden; background: var(--line); }
 .progress-fill { height: 100%; width: 0; background: var(--blue); transition: width .4s ease; }
 .arena-grid { display: grid; grid-template-columns: minmax(360px, .72fr) minmax(520px, 1.28fr); gap: 22px; align-items: start; }

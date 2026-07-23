@@ -17,6 +17,7 @@ import {
 } from './providers.js';
 import type { Rng } from './random.js';
 import { seededRng } from './random.js';
+import type { RecoveryGate } from './recovery.js';
 import { DEX_TOOLS, ShowdownReference } from './reference.js';
 import { BattleState } from './state.js';
 import type {
@@ -246,6 +247,7 @@ export interface LLMEngineOptions {
   reference?: ShowdownReference;
   reasoning?: ReasoningLevel;
   signal?: AbortSignal;
+  recovery?: RecoveryGate;
 }
 
 const RETRY_ATTEMPTS = 3;
@@ -625,7 +627,7 @@ export class LLMEngine extends BaseEngine {
   ): Promise<number[]> {
     const started = performance.now();
     const turnSeconds = request.timer?.turnSeconds;
-    const deadline = turnSeconds === undefined ? undefined : started + 1000 * turnSeconds;
+    let deadline = turnSeconds === undefined ? undefined : started + 1000 * turnSeconds;
     const forceCommitMs =
       turnSeconds === undefined
         ? FORCE_COMMIT_MS
@@ -781,7 +783,7 @@ export class LLMEngine extends BaseEngine {
         maxTokens = Math.max(tokenFloor, decisionTokenBudget(remainingMs(), pace()));
         let completion: Completion;
         try {
-          completion = await this.completeWithRetry(
+          completion = await this.completeRecoverably(
             messages,
             {
               maxTokens,
@@ -792,8 +794,11 @@ export class LLMEngine extends BaseEngine {
             },
             generation,
             SYSTEM,
-            deadline,
+            () => deadline,
             decisionSignal,
+            () => {
+              if (turnSeconds !== undefined) deadline = performance.now() + 1000 * turnSeconds;
+            },
           );
         } catch (caught) {
           if (generation !== this.generation) throw new DecisionAbandonedError();
@@ -885,6 +890,31 @@ export class LLMEngine extends BaseEngine {
         generation,
       });
     return decision.choices;
+  }
+
+  private async completeRecoverably(
+    messages: ProviderMessage[],
+    options: CompleteOptions,
+    generation: number,
+    system = SYSTEM,
+    deadline?: () => number | undefined,
+    operationSignal?: AbortSignal,
+    onResume?: () => void,
+  ): Promise<Completion> {
+    const runSignal = this.options.signal;
+    const signal =
+      runSignal && operationSignal ? AbortSignal.any([runSignal, operationSignal]) : (runSignal ?? operationSignal);
+    while (true) {
+      await this.options.recovery?.wait(signal);
+      try {
+        return await this.completeWithRetry(messages, options, generation, system, deadline?.(), operationSignal);
+      } catch (error) {
+        const failure = classifyProviderFailure(error, this.spec);
+        if (!this.options.recovery || !failure.pausable || signal?.aborted) throw error;
+        await this.options.recovery.pause(this.spec, failure.kind, failure.summary, signal);
+        onResume?.();
+      }
+    }
   }
 
   private async completeWithRetry(
@@ -1225,7 +1255,7 @@ export class LLMEngine extends BaseEngine {
     let terminalError: Error | undefined;
     try {
       for (let attempt = 0; attempt < 2 && !parsed; attempt += 1) {
-        const completion = await this.completeWithRetry(
+        const completion = await this.completeRecoverably(
           messages,
           { maxTokens: REFLECTION_MAX_TOKENS, temperature: DECISION_TEMPERATURE, timeout: REFLECTION_TIMEOUT_S },
           this.generation,
@@ -1385,6 +1415,22 @@ function battleHpPercent(value = ''): string {
   return value;
 }
 
+const PROTECTION_EFFECTS = new Set([
+  'Protect',
+  'Detect',
+  'Spiky Shield',
+  'Baneful Bunker',
+  "King's Shield",
+  'Silk Trap',
+  'Burning Bulwark',
+  'Obstruct',
+  'Mat Block',
+  'Crafty Shield',
+  'Quick Guard',
+  'Wide Guard',
+  'Max Guard',
+]);
+
 function summarizeBattleEvents(lines: string[]): string[] {
   const summary: string[] = [];
   const ident = (value = '') => value.replace(/^p[12][a-z]?:\s*/, '');
@@ -1412,8 +1458,14 @@ function summarizeBattleEvents(lines: string[]): string[] {
     else if (kind === '-crit' && args[0]) summary.push(`A critical hit landed on ${ident(args[0])}.`);
     else if (kind === '-supereffective' && args[0]) summary.push(`The hit on ${ident(args[0])} was super effective.`);
     else if (kind === '-resisted' && args[0]) summary.push(`${ident(args[0])} resisted the hit.`);
-    else if (kind === '-activate' && args.length >= 2) summary.push(`${ident(args[0])} activated ${args[1]}.`);
-    else if ((kind === '-start' || kind === '-end') && args.length >= 2)
+    else if (kind === '-activate' && args.length >= 2) {
+      const protection = /^move: (.+)$/.exec(args[1] ?? '');
+      summary.push(
+        protection && PROTECTION_EFFECTS.has(protection[1]!)
+          ? `${ident(args[0])}'s ${protection[1]} blocked the incoming move.`
+          : `${ident(args[0])} activated ${args[1]}.`,
+      );
+    } else if ((kind === '-start' || kind === '-end') && args.length >= 2)
       summary.push(`${ident(args[0])} ${kind === '-start' ? 'gained' : 'lost'} ${args[1]}.`);
     else if ((kind === '-boost' || kind === '-unboost') && args.length >= 3)
       summary.push(`${ident(args[0])} ${args[1]} ${kind === '-boost' ? 'rose' : 'fell'} by ${args[2]}.`);

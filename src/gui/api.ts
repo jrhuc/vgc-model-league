@@ -119,12 +119,20 @@ export interface BracketView {
   champion: number | null;
 }
 
+export interface RunPauseView {
+  model: string;
+  kind: string;
+  message: string;
+  since: number;
+}
+
 export interface RunSnapshot {
   runId: string;
   mode: ExperimentMode;
   protocolVersion: number;
-  state: 'running' | 'done' | 'failed' | 'stopped';
+  state: 'running' | 'paused' | 'done' | 'failed' | 'stopped';
   error: string;
+  pause: RunPauseView | null;
   notices: string[];
   seed: number | null;
   pool: string;

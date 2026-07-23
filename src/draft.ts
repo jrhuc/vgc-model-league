@@ -4,9 +4,10 @@ import path from 'node:path';
 
 import type { BoardInfo, DraftBoardMonView, DraftPickView } from './gui/api.js';
 import { BOARDS_DIR, defaultPsDir } from './paths.js';
-import type { ModelReasoningConfig, ReasoningLevel } from './providers.js';
+import type { ModelReasoningConfig, ProviderFailure, ReasoningLevel } from './providers.js';
 import { classifyProviderFailure, makeProvider, parseSpec, reasoningForModel } from './providers.js';
 import type { Rng } from './random.js';
+import type { RecoveryGate } from './recovery.js';
 import { loadShowdown } from './showdown.js';
 import type { Provider, ProviderMessage } from './types.js';
 import { text } from './value.js';
@@ -345,6 +346,7 @@ export interface RunDraftOptions extends ModelReasoningConfig {
   logDir: string;
   rng: Rng;
   signal?: AbortSignal;
+  recovery?: RecoveryGate;
   onPick?: (view: DraftPickView, state: DraftState) => void;
   makeDraftProvider?: (spec: string, apiKey: string | undefined, reasoning: ReasoningLevel | undefined) => Provider;
 }
@@ -528,7 +530,9 @@ export async function runDraft(models: string[], board: DraftBoard, options: Run
         let usage: Record<string, number> | undefined;
         let error: string | undefined;
         let terminalError: Error | undefined;
+        let pauseFailure: ProviderFailure | undefined;
         try {
+          await options.recovery?.wait(options.signal);
           const completion = await provider.complete(system, messages, {
             maxTokens: DRAFT_PROMPT_POLICY.maxTokens,
             timeout: DRAFT_PROMPT_POLICY.timeoutSeconds,
@@ -553,7 +557,9 @@ export async function runDraft(models: string[], board: DraftBoard, options: Run
           const failure = classifyProviderFailure(cause, models[drafter]);
           error = failure.summary;
           lastError = error;
-          if (failure.terminal) {
+          if (failure.pausable && options.recovery && (failure.terminal || attempt >= DRAFT_PROMPT_POLICY.attempts)) {
+            pauseFailure = failure;
+          } else if (failure.terminal) {
             terminalError = new Error(`${failure.summary} The run cannot continue.`, { cause });
           }
         }
@@ -571,6 +577,10 @@ export async function runDraft(models: string[], board: DraftBoard, options: Run
           'utf8',
         );
         if (terminalError) throw terminalError;
+        if (pauseFailure) {
+          await options.recovery?.pause(models[drafter]!, pauseFailure.kind, pauseFailure.summary, options.signal);
+          attempt -= 1;
+        }
       }
       if (!chosen) {
         chosen = legal[Math.floor(options.rng() * legal.length)]!;

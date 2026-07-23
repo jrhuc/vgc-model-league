@@ -543,6 +543,62 @@ test('gui rejects a second run while one is active and stops on request', async 
   }
 });
 
+test('recoverable provider failures pause and resume the same run', async () => {
+  const paused = Promise.withResolvers<void>();
+  const resumed = Promise.withResolvers<void>();
+  const gui = new GuiServer({
+    runsDir: RUNS_SCRATCH,
+    runner: async (_models, _seriesPerPair, _runDir, options = {}) => {
+      options.onEvent?.({
+        mode: 'rotation',
+        protocolVersion: 1,
+        type: 'plans',
+        plans: [{ index: 0, players: { p1: 'random', p2: 'random' } }],
+        pool: 'test',
+        seed: 11,
+      });
+      const waiting = options.recovery!.pause(
+        'google:gemini-test',
+        'quota',
+        'Google API quota is exhausted.',
+        options.signal,
+      );
+      paused.resolve();
+      await waiting;
+      resumed.resolve();
+      return [];
+    },
+  });
+  const base = await gui.listen(0);
+  try {
+    const started = await apiJson(`${base}api/run`, { models: ['random', 'random'], pool: 'test' });
+    assert.equal(started.status, 200, JSON.stringify(started.data));
+    await paused.promise;
+
+    let run = (await apiJson(`${base}api/state`)).data.run as Record<string, unknown>;
+    assert.equal(run.state, 'paused');
+    const pause = run.pause as Record<string, unknown>;
+    assert.equal(pause.model, 'google:gemini-test');
+    assert.equal(pause.kind, 'quota');
+    assert.equal(pause.message, 'Google API quota is exhausted.');
+    assert.equal(typeof pause.since, 'number');
+
+    const rejected = await apiJson(`${base}api/run`, { models: ['random', 'random'], pool: 'test' });
+    assert.equal(rejected.status, 409);
+    assert.equal((await apiJson(`${base}api/run/resume`, {})).status, 200);
+    await resumed.promise;
+    const nextTurn = Promise.withResolvers<void>();
+    setImmediate(nextTurn.resolve);
+    await nextTurn.promise;
+
+    run = (await apiJson(`${base}api/state`)).data.run as Record<string, unknown>;
+    assert.equal(run.state, 'done');
+    assert.equal(run.pause, null);
+  } finally {
+    gui.close();
+  }
+});
+
 test('a run whose task ignores the stop abort is detached so new runs can start', async () => {
   let launches = 0;
   const gui = new GuiServer({

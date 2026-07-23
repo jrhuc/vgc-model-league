@@ -559,11 +559,15 @@ function TurnLog({
 export function ArenaView({ run, battles, selected, onSelect, onLoadGame, onFetchBattle, onGoFixtures }: ArenaProps) {
   const [stopError, setStopError] = useState('');
   const [stopping, setStopping] = useState(false);
+  const [resumeError, setResumeError] = useState('');
+  const [resuming, setResuming] = useState(false);
   const [pastGame, setPastGame] = useState<StoredBattle | null>(null);
 
   useEffect(() => {
     setStopError('');
     setStopping(false);
+    setResumeError('');
+    setResuming(false);
   }, [run?.runId]);
 
   useEffect(() => {
@@ -635,6 +639,7 @@ export function ArenaView({ run, battles, selected, onSelect, onLoadGame, onFetc
         ? 'Draft league'
         : 'Rotation';
 
+  const active = run.state === 'running' || run.state === 'paused';
   const stop = () => {
     setStopError('');
     setStopping(true);
@@ -642,6 +647,23 @@ export function ArenaView({ run, battles, selected, onSelect, onLoadGame, onFetc
       .catch((error: Error) => setStopError(error.message))
       .finally(() => setStopping(false));
   };
+  const resume = () => {
+    setResumeError('');
+    setResuming(true);
+    api('/api/run/resume', {})
+      .catch((error: Error) => setResumeError(error.message))
+      .finally(() => setResuming(false));
+  };
+  const title =
+    run.state === 'running'
+      ? 'Run in progress'
+      : run.state === 'paused'
+        ? 'Run paused'
+        : run.state === 'done'
+          ? 'Run complete'
+          : run.state === 'stopped'
+            ? 'Run stopped'
+            : 'Run failed';
 
   return (
     <div>
@@ -652,15 +674,7 @@ export function ArenaView({ run, battles, selected, onSelect, onLoadGame, onFetc
             {run.seed === null ? '' : ` · seed ${run.seed}`}
           </p>
           <div class="run-identity">
-            <h1>
-              {run.state === 'running'
-                ? 'Run in progress'
-                : run.state === 'done'
-                  ? 'Run complete'
-                  : run.state === 'stopped'
-                    ? 'Run stopped'
-                    : 'Run failed'}
-            </h1>
+            <h1>{title}</h1>
             <span class={`status-pill ${run.state}`}>{run.state}</span>
           </div>
           <p class="kicker" style="margin:10px 0 0">
@@ -675,15 +689,27 @@ export function ArenaView({ run, battles, selected, onSelect, onLoadGame, onFetc
             {done} / {total} series · {elapsedText(run)}
           </p>
           {run.canControl && (
-            <button type="button" class="button danger" disabled={run.state !== 'running' || stopping} onClick={stop}>
-              {stopping ? 'Stopping…' : 'Stop run'}
-            </button>
+            <div class="run-controls">
+              {run.state === 'paused' && (
+                <button type="button" class="button primary" disabled={resuming || stopping} onClick={resume}>
+                  {resuming ? 'Resuming…' : 'Resume run'}
+                </button>
+              )}
+              <button type="button" class="button danger" disabled={!active || stopping || resuming} onClick={stop}>
+                {stopping ? 'Stopping…' : 'Stop run'}
+              </button>
+            </div>
           )}
         </div>
       </div>
-      {(run.error || stopError) && (
+      {run.state === 'paused' && run.pause && (
+        <div class="message" role="status">
+          {run.pause.model}: {run.pause.message}
+        </div>
+      )}
+      {(run.error || stopError || resumeError) && (
         <div class="message error" role="alert">
-          {run.error || stopError}
+          {run.error || stopError || resumeError}
         </div>
       )}
       {run.draft && <DraftPanel draft={run.draft} />}

@@ -1,10 +1,12 @@
 import type { DraftLeagueEvent } from '../draftleague.js';
+import { RecoveryGate } from '../recovery.js';
 import { runRotation } from '../rotation.js';
 import { redactSecrets } from '../sanitize.js';
 import { runTournament } from '../tournament.js';
 import type { RunWorkerInput, RunWorkerOutput, RunWorkerStart } from './run-worker-protocol.js';
 
 let controller: AbortController | undefined;
+const recovery = new RecoveryGate();
 let abortRequested = false;
 let started = false;
 
@@ -17,6 +19,10 @@ process.on('message', (value: unknown) => {
   const message = value as RunWorkerInput;
   if (message?.type === 'abort') {
     abort();
+    return;
+  }
+  if (message?.type === 'resume') {
+    recovery.resume();
     return;
   }
   if (message?.type !== 'start' || started) return;
@@ -32,6 +38,9 @@ process.once('disconnect', () => {
 async function execute(message: RunWorkerStart): Promise<void> {
   controller = new AbortController();
   if (abortRequested) controller.abort();
+  const removeRecoveryListener = recovery.onChange((pause) =>
+    send(pause ? { type: 'paused', pause } : { type: 'resumed' }),
+  );
   const commonOptions = {
     concurrency: message.concurrency,
     recordsPath: message.recordsPath,
@@ -41,6 +50,7 @@ async function execute(message: RunWorkerStart): Promise<void> {
     ...(message.reasoning === undefined ? {} : { reasoning: message.reasoning }),
     ...(message.reasoningByModel === undefined ? {} : { reasoningByModel: message.reasoningByModel }),
     ...(message.timerScale === undefined ? {} : { timerScale: message.timerScale }),
+    recovery,
     ...(message.contributor === undefined ? {} : { contributor: message.contributor }),
     onEvent: (event: DraftLeagueEvent) => send({ type: 'event', event }),
   };
@@ -75,6 +85,7 @@ async function execute(message: RunWorkerStart): Promise<void> {
     finish({ type: 'failed', error: detail }, 1);
   } finally {
     for (const model of Object.keys(message.apiKeys)) delete message.apiKeys[model];
+    removeRecoveryListener();
   }
 }
 

@@ -12,6 +12,7 @@ import { scaffoldRevision } from '../src/engines.js';
 import { ApiError } from '../src/providers.js';
 import { seededRng } from '../src/random.js';
 import { loadRows } from '../src/records.js';
+import { RecoveryGate } from '../src/recovery.js';
 import { loadShowdown } from '../src/showdown.js';
 import type { Completion, Provider, ProviderMessage } from '../src/types.js';
 
@@ -322,6 +323,51 @@ test('a hard quota failure stops the draft instead of making random picks', asyn
     .map((line) => JSON.parse(line) as Record<string, unknown>);
   assert.equal(rows.length, 1);
   assert.equal(rows[0]!.error, 'Google API quota is exhausted (429).');
+});
+
+test('transient draft failures retry on their own while quota failures pause for recovery', async (t) => {
+  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-draft-recovery-'));
+  t.after(() => fs.rmSync(logDir, { recursive: true, force: true }));
+  const recovery = new RecoveryGate();
+  const paused = Promise.withResolvers<void>();
+  const removeListener = recovery.onChange((pause) => {
+    if (pause) paused.resolve();
+  });
+  let calls = 0;
+  const provider: Provider = {
+    complete(): Promise<Completion> {
+      calls += 1;
+      if (calls === 1) return Promise.reject(new ApiError(503, 'overloaded'));
+      if (calls === 2) return Promise.reject(new ApiError(429, 'google:gemini-test 429: exceeded your current quota'));
+      return Promise.resolve({
+        text: '{"pick": "garchomp", "reasoning": "Best stats on the board."}',
+        usage: { total_tokens: 10 },
+        toolCalls: [],
+      });
+    },
+  };
+  const pending = runDraft(
+    ['google:gemini-test', 'random'],
+    { ...BOARD, picks: 4 },
+    { logDir, rng: seededRng(4), recovery, makeDraftProvider: () => provider },
+  );
+
+  await paused.promise;
+  assert.equal(recovery.paused?.kind, 'quota');
+  assert.equal(calls, 2, 'the 503 retried without pausing; only the quota failure paused');
+  recovery.resume();
+
+  const outcome = await pending;
+  assert.equal(outcome.picks[0]!.fallback, false);
+  assert.equal(outcome.rosters[0]![0]!.id, 'garchomp');
+  const rows = fs
+    .readFileSync(path.join(logDir, 'drafter-0-google-gemini-test.jsonl'), 'utf8')
+    .trim()
+    .split('\n')
+    .map((line) => JSON.parse(line) as Record<string, unknown>);
+  assert.match(String(rows[0]!.error), /temporarily unavailable/);
+  assert.match(String(rows[1]!.error), /quota is exhausted/);
+  removeListener();
 });
 
 test('a full draft league drafts, plays a round robin, and crowns a playoff champion', async (t) => {

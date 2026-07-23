@@ -7,6 +7,7 @@ import { REPO_ROOT } from './paths.js';
 import type { ModelReasoningConfig, ReasoningLevel } from './providers.js';
 import { makeProvider, parseSpec, reasoningForModel } from './providers.js';
 import { seededRng } from './random.js';
+import type { RecoveryGate } from './recovery.js';
 import { ShowdownReference } from './reference.js';
 import { SimBattle } from './sim.js';
 import type { Team } from './teams.js';
@@ -25,6 +26,7 @@ export function makeEngine(
   reference?: ShowdownReference,
   signal?: AbortSignal,
   apiKey?: string,
+  recovery?: RecoveryGate,
 ): RandomEngine | LLMEngine {
   if (spec === 'random') return new RandomEngine(pid, seed);
   return new LLMEngine(pid, spec, {
@@ -39,6 +41,7 @@ export function makeEngine(
     ...(reasoning === undefined ? {} : { reasoning }),
     ...(reference === undefined ? {} : { reference }),
     ...(signal === undefined ? {} : { signal }),
+    ...(recovery === undefined ? {} : { recovery }),
   });
 }
 
@@ -85,6 +88,7 @@ export interface Bo3Context {
   onGameUpdate?: (game: number, lines: string[], publicLines: string[]) => void;
   onGameEnd?: (game: number, winner: string | null, turns: number, score: Record<Pid, number>) => void;
   requireWinner?: boolean;
+  recovery?: RecoveryGate;
   runBattle?: (
     seed: [number, number, number, number],
     onUpdate: (lines: string[], publicLines: string[]) => void,
@@ -130,7 +134,7 @@ export async function playBo3(context: Bo3Context): Promise<Bo3Result> {
           gameSeed,
           context.psDir,
           context.timerScale ?? DEFAULT_TIMER_SCALE,
-        ).run(engines, onUpdate, context.signal);
+        ).run(engines, onUpdate, context.signal, context.recovery);
     context.signal?.throwIfAborted();
     const winnerSide = (['p1', 'p2'] as const).find((pid) => names[pid] === outcome.winner);
     if (winnerSide) score[winnerSide] += 1;
@@ -195,6 +199,7 @@ export interface RecordedSeriesContext extends ModelReasoningConfig {
   onDecision?: (pid: Pid, row: JsonObject) => void;
   requireWinner?: boolean;
   timerScale?: TimerScale;
+  recovery?: RecoveryGate;
 }
 
 export interface RecordedSeriesFields extends JsonObject {
@@ -259,6 +264,7 @@ export async function playRecordedSeries(context: RecordedSeriesContext): Promis
         reference,
         context.signal,
         context.apiKeys?.[context.players[pid]],
+        context.recovery,
       ),
     ]),
   ) as Record<Pid, RandomEngine | LLMEngine>;

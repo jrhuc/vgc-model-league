@@ -1,5 +1,6 @@
 import type { BattleStream } from 'pokemon-showdown';
 import { defaultPsDir } from './paths.js';
+import type { RecoveryGate } from './recovery.js';
 import { loadShowdown } from './showdown.js';
 import type { TimerEvent } from './timer.js';
 import { DEFAULT_TIMER_SCALE, TimerAdapter } from './timer.js';
@@ -99,6 +100,7 @@ export class SimBattle {
     agents: Record<Pid, BattleAgent>,
     onUpdate?: (lines: string[], publicLines: string[]) => void,
     signal?: AbortSignal,
+    recovery?: RecoveryGate,
   ): Promise<BattleOutcome> {
     const { BattleStream } = loadShowdown(this.psDir);
     const stream = new BattleStream({ noCatch: true }) as BattleStream;
@@ -158,6 +160,12 @@ export class SimBattle {
     for (const pid of ['p1', 'p2'] as const) stream.write(`>player ${pid} ${JSON.stringify(this.players[pid])}`);
     const timer = new TimerAdapter(this.format, stream, timerEvent, this.psDir, this.timerScale);
     for (const pid of ['p1', 'p2'] as const) timer.setPlayer(pid, this.players[pid].name);
+    const recoveryChanged = (paused: boolean) => {
+      const lines = paused ? timer.pauseForRecovery() : timer.resumeAfterRecovery();
+      if (lines.length) onUpdate?.(lines, lines);
+    };
+    const removeRecoveryListener = recovery?.onChange((pause) => recoveryChanged(Boolean(pause)));
+    if (recovery?.paused) recoveryChanged(true);
 
     const schedule = (pid: Pid, request: BattleRequest, error?: string) => {
       if (pending.has(pid)) throw new Error(`received another request while ${pid} is still deciding`);
@@ -280,6 +288,7 @@ export class SimBattle {
       }
     } finally {
       timer.end();
+      removeRecoveryListener?.();
       if (signal && onAbort) signal.removeEventListener('abort', onAbort);
       await stream.writeEnd();
       for (const pid of pending.keys()) agents[pid].abandonDecision?.();
