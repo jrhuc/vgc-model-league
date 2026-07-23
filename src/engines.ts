@@ -262,10 +262,10 @@ const DECISION_MAX_TOKENS_DEEP: Partial<Record<ReasoningLevel, number>> = {
   xhigh: 16_384,
   max: 16_384,
 };
-// Generation speed bounds what can arrive before the turn deadline, so max_tokens is sized to the
-// measured pace × remaining time and the prompt states that cap; a bigger budget would only let a
-// slow reasoning model burn the whole window and submit nothing.
-const DECISION_MAX_TOKENS_CEILING = 16_384;
+// Timed budgets follow generation pace so replies arrive before the deadline. The untimed ceiling
+// and wall clock only stop runaway reasoning loops.
+const DECISION_MAX_TOKENS_CEILING = 32_768;
+const UNTIMED_CALL_TIMEOUT_S = 600;
 const ASSUMED_TOKENS_PER_SECOND = 75;
 const PACE_SAFETY = 0.8;
 const PACE_SAMPLE_MIN_TOKENS = 256;
@@ -280,6 +280,7 @@ const DECISION_LIST_LIMIT = 3;
 const DECISION_LIST_ITEM_LIMIT = 240;
 const DECISION_TEMPERATURE = 0.2;
 const REFLECTION_MAX_TOKENS = 8192;
+const REFLECTION_TIMEOUT_S = 240;
 const TRANSCRIPT_CHARACTER_LIMIT = 2400;
 
 const ACTION_ORDER_TOOL: ToolDefinition = {
@@ -424,6 +425,7 @@ export function scaffoldRevision(): string {
           maxTokensCeiling: DECISION_MAX_TOKENS_CEILING,
           assumedTokensPerSecond: ASSUMED_TOKENS_PER_SECOND,
           paceSafety: PACE_SAFETY,
+          untimedCallTimeoutSeconds: UNTIMED_CALL_TIMEOUT_S,
           forceCommitTurnFraction: FORCE_COMMIT_TURN_FRACTION,
           bankHealthySeconds: BANK_HEALTHY_SECONDS,
           bankLowSeconds: BANK_LOW_SECONDS,
@@ -654,7 +656,9 @@ export class LLMEngine extends BaseEngine {
             ? 'The bank is healthy: think as deeply as this decision warrants before committing.'
             : 'Spend time only where it changes the choice.';
       const paceNote =
-        tokenFloor > decisionTokenBudget(remainingMs(), pace()) ? '' : ' — what your generation speed fits into the turn';
+        tokenFloor > decisionTokenBudget(remainingMs(), pace())
+          ? ''
+          : ' — what your generation speed fits into the turn';
       prompt += `\n\nShowdown timer: ${Math.round(turnSeconds)} seconds of wall clock this turn; ${Math.round(bank)} seconds remain in the clock bank. Your whole reply, reasoning included, is capped at ${maxTokens} tokens${paceNote}. A reply cut off at the cap submits nothing, so settle on a choice early and answer well inside it. ${bankAdvice}`;
     }
     if (context.error) prompt += `\n\nThe simulator rejected the previous joint action: ${context.error}`;
@@ -773,6 +777,7 @@ export class LLMEngine extends BaseEngine {
               temperature: DECISION_TEMPERATURE,
               tools: DECISION_TOOLS,
               toolChoice: finalRound ? 'none' : 'auto',
+              ...(deadline === undefined ? { timeout: UNTIMED_CALL_TIMEOUT_S } : {}),
             },
             generation,
             SYSTEM,
@@ -819,9 +824,7 @@ export class LLMEngine extends BaseEngine {
         break;
       }
       if (!rawResponse) {
-        error = truncatedBudget
-          ? `reasoning exhausted the ${truncatedBudget}-token response budget`
-          : 'empty response';
+        error = truncatedBudget ? `reasoning exhausted the ${truncatedBudget}-token response budget` : 'empty response';
         if (request.timer) return failDecision(new Error(error));
         break;
       }
@@ -1207,7 +1210,7 @@ export class LLMEngine extends BaseEngine {
       for (let attempt = 0; attempt < 2 && !parsed; attempt += 1) {
         const completion = await this.completeWithRetry(
           messages,
-          { maxTokens: REFLECTION_MAX_TOKENS, temperature: DECISION_TEMPERATURE, timeout: 60 },
+          { maxTokens: REFLECTION_MAX_TOKENS, temperature: DECISION_TEMPERATURE, timeout: REFLECTION_TIMEOUT_S },
           this.generation,
           REFLECTION_SYSTEM,
         );

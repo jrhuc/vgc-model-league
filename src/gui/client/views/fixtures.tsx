@@ -318,7 +318,7 @@ export function FixturesView({ app, run, onStarted, onPools }: FixturesProps) {
   const [reasoning, setReasoning] = useState('');
   const [sharedReasoning, setSharedReasoning] = useState(true);
   const [reasoningByModel, setReasoningByModel] = useState<Record<string, string>>({});
-  const [timerScale, setTimerScale] = useState('1');
+  const [timerScale, setTimerScale] = useState('off');
   const [seed, setSeed] = useState('');
   const [starting, setStarting] = useState(false);
 
@@ -559,7 +559,7 @@ export function FixturesView({ app, run, onStarted, onPools }: FixturesProps) {
       apiKeys,
       seed: seed.trim(),
       ...reasoningRequest,
-      ...(timerScale === '1' ? {} : { timerScale: timerScale === 'off' ? 'off' : Number(timerScale) }),
+      timerScale: timerScale === 'off' ? 'off' : Number(timerScale),
       ...(mode === 'match'
         ? {
             mode: 'tournament',
@@ -610,11 +610,11 @@ export function FixturesView({ app, run, onStarted, onPools }: FixturesProps) {
     ...sharedReasoningLevels.map((level) => ({ value: level, label: level })),
   ];
   const timerScaleOptions = [
-    { value: '1', label: '1x (standard VGC)' },
+    { value: 'off', label: 'Untimed (full reasoning)' },
+    { value: '1', label: '1x (standard VGC clock)' },
     { value: '1.25', label: '1.25x' },
     { value: '1.5', label: '1.5x' },
     { value: '2', label: '2x' },
-    { value: 'off', label: 'Untimed' },
   ];
   const pairs = pairings(models);
   const seriesPerPair = Math.max(1, Number(series) || 1);
@@ -1191,13 +1191,20 @@ export function FixturesView({ app, run, onStarted, onPools }: FixturesProps) {
                   <p class="reasoning-help">Random baselines do not use reasoning controls.</p>
                 )}
               </div>
-              <Dropdown
-                id="timer-scale"
-                label="Battle timer"
-                options={timerScaleOptions}
-                value={timerScale}
-                onChange={setTimerScale}
-              />
+              <div class="wide">
+                <Dropdown
+                  id="timer-scale"
+                  label="Battle timer"
+                  options={timerScaleOptions}
+                  value={timerScale}
+                  onChange={setTimerScale}
+                />
+                <p class="reasoning-help">
+                  {timerScale === 'off'
+                    ? 'Models reason at full length every decision; token spend can be far larger than a timed run.'
+                    : 'The Showdown clock caps thinking time, so slow providers can lose decisions to the timer.'}
+                </p>
+              </div>
               <div class="field wide">
                 <label class="field-label" for="seed">
                   Seed

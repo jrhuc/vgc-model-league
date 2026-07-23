@@ -470,6 +470,37 @@ test('gui validates the timer scale and forwards it to the runner', async () => 
   }
 });
 
+test('hosted runs accept untimed just like local runs', async () => {
+  let received: unknown = 'unset';
+  const gui = new GuiServer({
+    runsDir: RUNS_SCRATCH,
+    host: '127.0.0.1',
+    publicOrigin: 'http://league.example',
+    mutationsEnabled: true,
+    runner: async (_models, _seriesPerPair, _runDir, options = {}) => {
+      received = options.timerScale;
+      return [];
+    },
+  });
+  await gui.listen(0);
+  const address = gui.server.address();
+  assert.ok(address && typeof address === 'object');
+  const port = address.port;
+  const headers = { host: 'league.example', origin: 'http://league.example', 'content-type': 'application/json' };
+  try {
+    const untimed = await rawJsonRequest(port, {
+      method: 'POST',
+      path: '/api/run',
+      headers,
+      body: '{"models":["random","random"],"pool":"test","timerScale":"off"}',
+    });
+    assert.equal(untimed.status, 200, JSON.stringify(untimed.data));
+    assert.equal(received, 'off');
+  } finally {
+    gui.close();
+  }
+});
+
 test('gui rejects a second run while one is active and stops on request', async () => {
   const gui = new GuiServer({
     runsDir: RUNS_SCRATCH,
@@ -809,11 +840,14 @@ test('gui runs a random-vs-random series and streams live battle state', async (
     assert.equal(records.status, 200);
     assert.equal(records.data.count, 1);
     assert.equal(records.data.pool, 'test');
-    const standings = records.data.standings as Array<Record<string, unknown>>;
+    const groups = records.data.groups as Array<Record<string, unknown>>;
+    assert.equal(groups.length, 1);
+    assert.equal(groups[0]!.scale, 'off', 'runs record the untimed default and rate in the untimed group');
+    const standings = groups[0]!.standings as Array<Record<string, unknown>>;
     assert.equal(standings.length, 1);
     assert.equal(standings[0]!.spec, 'random');
     assert.equal(standings[0]!.series, 2);
-    const h2h = records.data.h2h as Record<string, Record<string, [number, number, number]>>;
+    const h2h = groups[0]!.h2h as Record<string, Record<string, [number, number, number]>>;
     assert.ok(h2h.random!.random);
 
     for (let attempt = 0; attempt < 40; attempt += 1) {

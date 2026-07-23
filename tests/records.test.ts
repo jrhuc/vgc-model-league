@@ -6,7 +6,7 @@ import test from 'node:test';
 
 import type { SeriesRecord } from '../src/records.js';
 
-import { appendRow, h2h, loadRows, scopeRows, standings } from '../src/records.js';
+import { appendRow, h2h, loadRows, modelKey, scopeRows, speedGroups, speedLabel, standings } from '../src/records.js';
 import { writeReport } from '../src/report.js';
 
 function row(p1: string, p2: string, winner: string | null): SeriesRecord {
@@ -34,6 +34,45 @@ test('head-to-head and self-play use each model perspective', () => {
   assert.equal(self.elo, 1000);
   assert.equal(self.series, 2);
   assert.deepEqual(h2h([row('a', 'a', 'a')]).a!.a, [1, 1, 0]);
+});
+
+test('the same model merges across providers and gateways', () => {
+  assert.equal(modelKey('openai:gpt-5.6-terra'), 'gpt-5.6-terra');
+  assert.equal(modelKey('opencode-go:gpt-5.6-terra'), 'gpt-5.6-terra');
+  assert.equal(modelKey('openrouter:deepseek/deepseek-v4'), 'deepseek-v4');
+  assert.equal(modelKey('deepseek:DeepSeek-V4'), 'deepseek-v4');
+  assert.equal(modelKey('random'), 'random');
+
+  const merged = standings([
+    row('openai:gpt-5.6-terra', 'anthropic:claude-opus-4-10', 'openai:gpt-5.6-terra'),
+    row('opencode-go:gpt-5.6-terra', 'anthropic:claude-opus-4-10', 'anthropic:claude-opus-4-10'),
+  ]);
+  assert.deepEqual(merged.map((item) => [item.spec, item.series, item.w, item.l]).sort(), [
+    ['claude-opus-4-10', 2, 1, 1],
+    ['gpt-5.6-terra', 2, 1, 1],
+  ]);
+  const matrix = h2h([row('openai:gpt-5', 'openrouter:openai/gpt-5', 'openai:gpt-5')]);
+  assert.deepEqual(matrix['gpt-5']!['gpt-5'], [1, 1, 0], 'colliding identities count as self-play');
+});
+
+test('speed groups split rows with untimed first and legacy rows on the standard clock', () => {
+  const rows = [
+    { ...row('a', 'b', 'a'), timer_scale: 'off' as const },
+    { ...row('a', 'b', 'b'), timer_scale: 1.5 },
+    row('a', 'b', 'a'),
+    { ...row('a', 'b', 'b'), timer_scale: 1 },
+  ];
+  const groups = speedGroups(rows);
+  assert.deepEqual(
+    groups.map(({ scale, rows: grouped }) => [scale, grouped.length]),
+    [
+      ['off', 1],
+      [1, 2],
+      [1.5, 1],
+    ],
+  );
+  assert.equal(speedLabel('off'), 'Untimed');
+  assert.equal(speedLabel(1.5), '1.5x clock');
 });
 
 test('scoping keeps the test pool out of overall views but selectable', () => {

@@ -8,7 +8,8 @@ test('system prompt concentrates strategic and tool policy', () => {
   assert.match(SYSTEM, /lookup_matchup/);
   assert.match(SYSTEM, /estimate_damage/);
   assert.match(SYSTEM, /two reference calculations plus one action-order comparison/);
-  assert.match(SYSTEM, /per-turn timer/);
+  assert.match(SYSTEM, /shows a battle timer/);
+  assert.match(SYSTEM, /Without a timer, reason as deeply/);
   assert.match(SYSTEM, /free super-effective hit/);
   assert.match(SYSTEM, /Omit current HP, active positions, turn recaps/);
 });

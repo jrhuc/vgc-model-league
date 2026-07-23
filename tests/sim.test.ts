@@ -15,7 +15,7 @@ import { loadPool } from '../src/teams.js';
 import { parseTimerScale, TimerAdapter } from '../src/timer.js';
 import type { BattleRequest, TimerScale } from '../src/types.js';
 
-test('seeded random VGC battle completes without protocol errors', async () => {
+test('seeded random VGC battle completes untimed by default without protocol errors', async () => {
   const pool = loadPool();
   const battle = new SimBattle(
     pool.format,
@@ -25,7 +25,16 @@ test('seeded random VGC battle completes without protocol errors', async () => {
     },
     [1, 2, 3, 4],
   );
-  const outcome = await battle.run({ p1: new RandomEngine('p1', 10), p2: new RandomEngine('p2', 20) });
+  const timers: unknown[] = [];
+  class TimerSpy extends RandomEngine {
+    override act(request: BattleRequest, context: { povLines: string[]; error?: string }): Promise<string> {
+      timers.push(request.timer);
+      return super.act(request, context);
+    }
+  }
+  const outcome = await battle.run({ p1: new TimerSpy('p1', 10), p2: new RandomEngine('p2', 20) });
+  assert.ok(timers.length > 0);
+  assert.ok(timers.every((timer) => timer === undefined));
   assert.ok(outcome.winner === 'A-random' || outcome.winner === 'B-random' || outcome.winner === null);
   assert.ok(outcome.turns > 0);
   assert.deepEqual(outcome.errors, { p1: 0, p2: 0 });
@@ -55,6 +64,8 @@ test('Showdown timer defaults a slow decision', { timeout: 25_000 }, async () =>
       p2: { name: 'B-random', team: pool.teams[1]!.packed },
     },
     [9, 10, 11, 12],
+    undefined,
+    1,
   );
   const outcome = await battle.run({ p1: new SlowEngine('p1', 1), p2: new RandomEngine('p2', 2) });
   assert.ok(outcome.fallbacks.p1 >= 1);

@@ -124,11 +124,16 @@ stored.
 ## Pokémon Showdown boundary
 
 The league loads the compiled `BattleStream`, dex, team validator, and room
-timer of Pokémon Showdown directly in process. A run-level timer scale
-multiplies the room timer's settings (starting bank, grace, per-turn caps)
-before the timer starts, or disables it entirely; engines see only the scaled
-clocks in their requests, and decision token budgets follow the clock
-automatically. It does not run the full
+timer of Pokémon Showdown directly in process. Battles are untimed by default:
+the room timer never starts, and each decision call is bounded only by a token
+ceiling and a per-call wall clock that catch runaway reasoning. An opt-in
+run-level timer scale starts the room timer with its settings (starting bank,
+grace, per-turn caps) multiplied; engines then see the scaled clocks in their
+requests, and decision token budgets follow the clock automatically. Hosted
+deployments behave the same: runs use visitor-supplied keys, so untimed
+reasoning spend is the run starter's own choice, and the per-call wall clock,
+single-run limit, and stop controls keep a public box bounded. It does not run
+the full
 HTTP/WebSocket server, and it does not expose a `--no-security` listener. This
 prevents ports, subprocess lifecycle, network protocol overhead, and one more
 authentication boundary. Showdown stays the authority on legality and

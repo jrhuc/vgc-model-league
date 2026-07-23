@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { ChoiceSubstitution } from '../src/engines.js';
-import { BaseEngine, LLMEngine, RandomEngine, decisionTokenBudget, updatedPace } from '../src/engines.js';
+import { BaseEngine, decisionTokenBudget, LLMEngine, RandomEngine, updatedPace } from '../src/engines.js';
 import { ApiError } from '../src/providers.js';
 import { SimBattle } from '../src/sim.js';
 import { loadPool } from '../src/teams.js';
@@ -195,6 +195,8 @@ test('simulator timer restarts while an invalid choice is retried', { timeout: 2
       p2: { name: 'random', team: pool.teams[1]!.packed },
     },
     [1, 2, 3, 4],
+    undefined,
+    1,
   );
   const outcome = await battle.run({ p1: retrying, p2: new RandomEngine('p2', 2) }, (lines) =>
     timerLines.push(...lines.filter((line) => line.includes('vgctimer'))),
@@ -362,7 +364,7 @@ test('decision token budgets track generation pace against the remaining turn ti
   assert.equal(await engine.act(request(), { povLines: [] }), 'move 2');
   assert.deepEqual(
     provider.calls.map((call) => call.options.maxTokens),
-    [5376, 2304, 1024, 16_384],
+    [5376, 2304, 1024, 32_768],
   );
   assert.match(
     String(provider.calls[0]!.messages[0]!.content),
@@ -381,11 +383,11 @@ test('decision token budgets track generation pace against the remaining turn ti
 });
 
 test('decisionTokenBudget clamps pace-feasible tokens between the minimum and ceiling', () => {
-  assert.equal(decisionTokenBudget(Number.POSITIVE_INFINITY, 75), 16_384);
+  assert.equal(decisionTokenBudget(Number.POSITIVE_INFINITY, 75), 32_768);
   assert.equal(decisionTokenBudget(90_000, 75), 5376);
   assert.equal(decisionTokenBudget(90_000, 140), 9984);
   assert.equal(decisionTokenBudget(5000, 75), 1024);
-  assert.equal(decisionTokenBudget(600_000, 100), 16_384);
+  assert.equal(decisionTokenBudget(600_000, 100), 32_768);
 });
 
 test('updatedPace averages qualifying samples and ignores noise', () => {
@@ -425,9 +427,10 @@ test('untimed truncation records a legal fallback with the truncation summary', 
   const decisions: Record<string, unknown>[] = [];
   const engine = new LLMEngine('p1', 'opencode-go:deepseek-v4-flash', { provider, decisionLog: decisions });
   assert.equal(await engine.act(request(), { povLines: [] }), 'move 1');
-  assert.equal(provider.calls[0]!.options.maxTokens, 16_384);
+  assert.equal(provider.calls[0]!.options.maxTokens, 32_768);
+  assert.equal(provider.calls[0]!.options.timeout, 600, 'untimed calls carry the loop-catch wall clock');
   assert.equal(decisions[0]!.fallback, true);
-  assert.equal(decisions[0]!.error, 'reasoning exhausted the 16384-token response budget');
+  assert.equal(decisions[0]!.error, 'reasoning exhausted the 32768-token response budget');
   assert.equal(
     decisions[0]!.error_summary,
     'OpenCode Go API spent the whole response budget on reasoning and returned no answer.',
@@ -541,7 +544,7 @@ test('two capped tool batches resolve before the final choice', async () => {
   const engine = new LLMEngine('p1', 'scripted', { provider, decisionLog: [], traceLog: traces });
   assert.equal(await engine.act(request(), { povLines: [] }), 'move 2');
   assert.equal(provider.calls.length, 3);
-  assert.equal(provider.calls[0]!.options.maxTokens, 16_384);
+  assert.equal(provider.calls[0]!.options.maxTokens, 32_768);
   assert.equal(provider.calls[0]!.options.toolChoice, 'auto');
   assert.equal(provider.calls[1]!.options.toolChoice, 'auto');
   assert.equal(provider.calls[2]!.options.toolChoice, 'none');

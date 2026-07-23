@@ -1,9 +1,7 @@
-# Node build artifacts
 node_modules/
 dist/
 *.tsbuildinfo
 
-# Local benchmark output
 runs/
 records/
 pokemon-showdown/
@@ -15,10 +13,8 @@ pokemon-showdown/
 .env.*
 !.env.example
 
-# Stray local environments
 .venv/
 
-# Editors and operating systems
 .DS_Store
 .idea/
 .vscode/

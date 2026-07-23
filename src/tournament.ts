@@ -13,6 +13,7 @@ import { playRecordedSeries } from './series.js';
 import { showdownCommit } from './showdown.js';
 import type { Team } from './teams.js';
 import { loadPool, validatePool, validateTeam } from './teams.js';
+import { DEFAULT_TIMER_SCALE } from './timer.js';
 import type { ContributorAttribution, Pid, TimerScale } from './types.js';
 
 export const TOURNAMENT_PROTOCOL_VERSION = 1;
@@ -101,6 +102,7 @@ export async function runTournament(
   const recordsPath = options.recordsPath ?? RESULTS_PATH;
   const psDir = options.psDir ?? defaultPsDir();
   const seed = resolveSeed(options.seed);
+  const timerScale = options.timerScale ?? DEFAULT_TIMER_SCALE;
   const random = seededRng(seed);
   const scaffold = scaffoldRevision();
 
@@ -164,7 +166,7 @@ export async function runTournament(
         reasoning: options.reasoning ?? null,
         pool: poolId,
         reasoning_by_model: options.reasoningByModel ?? null,
-        timer_scale: options.timerScale ?? 1,
+        timer_scale: timerScale,
         format,
         entrants: entrants.map((entrant) => ({ model: entrant.model, team: entrant.team.id })),
         contributor: options.contributor ?? null,
@@ -224,7 +226,7 @@ export async function runTournament(
         ...(options.reasoning === undefined ? {} : { reasoning: options.reasoning }),
         ...(options.apiKeys === undefined ? {} : { apiKeys: options.apiKeys }),
         ...(options.reasoningByModel === undefined ? {} : { reasoningByModel: options.reasoningByModel }),
-        ...(options.timerScale === undefined ? {} : { timerScale: options.timerScale }),
+        timerScale,
         ...(options.onEvent === undefined ? {} : { onEvent: options.onEvent }),
         ...(options.contributor === undefined ? {} : { contributor: options.contributor }),
       });
@@ -284,7 +286,7 @@ async function playMatch(
     onEvent?: (event: TournamentEvent) => void;
     signal?: AbortSignal;
     contributor?: ContributorAttribution;
-    timerScale?: TimerScale;
+    timerScale: TimerScale;
   } & ModelReasoningConfig,
 ): Promise<SeriesRecord> {
   context.signal?.throwIfAborted();
@@ -304,7 +306,7 @@ async function playMatch(
     requireWinner: true,
     ...(context.reasoningByModel === undefined ? {} : { reasoningByModel: context.reasoningByModel }),
     ...(context.reasoning === undefined ? {} : { reasoning: context.reasoning }),
-    ...(context.timerScale === undefined ? {} : { timerScale: context.timerScale }),
+    timerScale: context.timerScale,
     ...(context.apiKeys === undefined ? {} : { apiKeys: context.apiKeys }),
     ...(context.signal === undefined ? {} : { signal: context.signal }),
     onGameUpdate: (game, lines, publicLines) =>

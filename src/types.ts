@@ -28,7 +28,6 @@ export interface BattleRequest extends JsonObject {
   };
 }
 
-/** Multiplier applied to the Showdown battle timer; 'off' disables it entirely. */
 export type TimerScale = number | 'off';
 
 export interface AgentContext {
@@ -69,9 +68,7 @@ export interface Completion {
   text: string;
   usage: Record<string, number>;
   toolCalls: ToolCall[];
-  /** Unified AI SDK finish reason ('stop', 'length', 'tool-calls', …) when the provider reports one. */
   finishReason?: string;
-  /** Provider reasoning / thinking summary when exposed by the AI SDK. */
   reasoning?: string;
   /** AI SDK response messages, replayed verbatim so provider metadata (e.g. Gemini thought signatures) survives. */
   responseMessages?: JsonObject[];

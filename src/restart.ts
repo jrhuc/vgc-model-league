@@ -76,7 +76,9 @@ async function stopServer(port: number, force: boolean): Promise<boolean> {
   for (const pid of pids) {
     const command = processCommand(pid);
     if (!looksLikeGuiCommand(command)) {
-      console.error(`Port ${port} is held by pid ${pid} (${command || 'unknown'}); not a vgcleague GUI, not killing it.`);
+      console.error(
+        `Port ${port} is held by pid ${pid} (${command || 'unknown'}); not a vgcleague GUI, not killing it.`,
+      );
       return false;
     }
   }
@@ -127,6 +129,8 @@ export async function restartGui(options: RestartOptions): Promise<number> {
     console.error(`The new GUI (pid ${child.pid}) did not answer within 15s; check ${GUI_LOG_PATH}.`);
     return 1;
   }
-  console.log(`VGC Model League GUI restarted at http://127.0.0.1:${options.port} (pid ${child.pid}, log ${GUI_LOG_PATH}).`);
+  console.log(
+    `VGC Model League GUI restarted at http://127.0.0.1:${options.port} (pid ${child.pid}, log ${GUI_LOG_PATH}).`,
+  );
   return 0;
 }

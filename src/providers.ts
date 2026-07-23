@@ -243,7 +243,7 @@ export interface ProviderFailure {
   kind: ProviderFailureKind;
   summary: string;
   terminal: boolean;
-  /** Whether retrying the call may help before giving up; defaults to !terminal. */
+  /** Defaults to !terminal. */
   retryable?: boolean;
 }
 
