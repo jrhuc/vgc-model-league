@@ -8,7 +8,7 @@ import { AUTH_DB_PATH, prepareDataDirectories, RESULTS_PATH } from './paths.js';
 import type { ReasoningLevel } from './providers.js';
 import { REASONING_LEVELS } from './providers.js';
 import type { SeriesRecord } from './records.js';
-import { h2h, loadRows, scopeRows, standings, TEST_POOL } from './records.js';
+import { loadRows, ratingGroups, scopeRows, TEST_POOL } from './records.js';
 import { writeReport } from './report.js';
 import { restartGui, stopGui } from './restart.js';
 import { makeRunDirectory, runRotation } from './rotation.js';
@@ -373,33 +373,36 @@ function renderTable(head: string[], rows: string[][]): string {
 }
 
 function printStandings(rows: SeriesRecord[]): void {
-  console.log(
-    renderTable(
-      ['Model', 'Series', 'W', 'L', 'T', 'Win rate', 'Elo'],
-      standings(rows).map((item) => [
-        item.spec,
-        String(item.series),
-        String(item.w),
-        String(item.l),
-        String(item.t),
-        `${(100 * item.winrate).toFixed(1)}%`,
-        item.elo.toFixed(1),
-      ]),
-    ),
-  );
-  const matrix = h2h(rows);
-  const specs = Object.keys(matrix);
-  if (specs.length < 2) return;
-  console.log('');
-  console.log(
-    renderTable(
-      ['W-L-T', ...specs],
-      specs.map((model) => [
-        model,
-        ...specs.map((opponent) => (model === opponent ? '-' : matrix[model]![opponent]!.join('-'))),
-      ]),
-    ),
-  );
+  for (const [index, { label, count, standings: table, h2h: matrix }] of ratingGroups(rows).entries()) {
+    if (index) console.log('');
+    console.log(`${label} (${count} series)`);
+    console.log(
+      renderTable(
+        ['Model', 'Series', 'W', 'L', 'T', 'Win rate', 'Elo'],
+        table.map((item) => [
+          item.spec,
+          String(item.series),
+          String(item.w),
+          String(item.l),
+          String(item.t),
+          `${(100 * item.winrate).toFixed(1)}%`,
+          item.elo.toFixed(1),
+        ]),
+      ),
+    );
+    const specs = Object.keys(matrix);
+    if (specs.length < 2) continue;
+    console.log('');
+    console.log(
+      renderTable(
+        ['W-L-T', ...specs],
+        specs.map((model) => [
+          model,
+          ...specs.map((opponent) => (model === opponent ? '-' : matrix[model]![opponent]!.join('-'))),
+        ]),
+      ),
+    );
+  }
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

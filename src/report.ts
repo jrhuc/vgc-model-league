@@ -1,9 +1,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-import type { SeriesRecord } from './records.js';
+import type { HeadToHead, SeriesRecord, Standing } from './records.js';
 
-import { h2h, loadRows, scopeRows, standings, TEST_POOL } from './records.js';
+import { loadRows, ratingGroups, scopeRows, TEST_POOL } from './records.js';
 import { asRecord } from './value.js';
 
 const CSS = `
@@ -27,9 +27,9 @@ function escapeHtml(value: unknown): string {
   );
 }
 
-function standingsTable(rows: SeriesRecord[]): string {
+function standingsTable(table: Standing[]): string {
   const head = '<tr><th>Model</th><th>Series</th><th>W</th><th>L</th><th>T</th><th>Win rate</th><th>Elo</th></tr>';
-  const body = standings(rows)
+  const body = table
     .map(
       (item) =>
         `<tr><td>${escapeHtml(item.spec)}</td><td class=num>${item.series}</td><td class=num>${item.w}</td><td class=num>${item.l}</td><td class=num>${item.t}</td><td class=num>${(100 * item.winrate).toFixed(1)}%</td><td class=num>${item.elo.toFixed(1)}</td></tr>`,
@@ -38,8 +38,7 @@ function standingsTable(rows: SeriesRecord[]): string {
   return `<div class=wrap><table>${head}${body}</table></div>`;
 }
 
-function h2hTable(rows: SeriesRecord[]): string {
-  const matrix = h2h(rows);
+function h2hTable(matrix: HeadToHead): string {
   const specs = Object.keys(matrix);
   if (specs.length < 2) return '';
   const head = `<tr><th>W-L-T</th>${specs.map((spec) => `<th>${escapeHtml(spec)}</th>`).join('')}</tr>`;
@@ -92,7 +91,13 @@ export function writeReport(recordsPath: string, outPath: string, pool?: string)
   );
   const poolText =
     pool === undefined ? ` across all pools (pool ${escapeHtml(TEST_POOL)} excluded)` : ` for pool ${escapeHtml(pool)}`;
-  const document = `<!doctype html><meta charset=utf-8><title>VGC Model League records</title><style>${CSS}</style><h1>VGC Model League records</h1><p class=meta>${rows.length} completed series${poolText}. Generated ${stamp} UTC.</p>${standingsTable(rows)}${h2hTable(rows)}${seriesTable(rows)}${gamesTable(rows)}`;
+  const speedSections = ratingGroups(rows)
+    .map(
+      ({ label, standings: table, h2h: matrix }) =>
+        `<h2>${escapeHtml(label)}</h2>${standingsTable(table)}${h2hTable(matrix)}`,
+    )
+    .join('');
+  const document = `<!doctype html><meta charset=utf-8><title>VGC Model League records</title><style>${CSS}</style><h1>VGC Model League records</h1><p class=meta>${rows.length} completed series${poolText}. Battle speeds rate separately; untimed is the primary view. Generated ${stamp} UTC.</p>${speedSections}${seriesTable(rows)}${gamesTable(rows)}`;
   fs.mkdirSync(path.dirname(outPath), { recursive: true });
   fs.writeFileSync(outPath, document, 'utf8');
   return outPath;

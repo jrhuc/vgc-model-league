@@ -11,6 +11,7 @@ function code(index: number): string {
 export function ResultsView({ active, epoch }: { active: boolean; epoch: number }) {
   const [data, setData] = useState<RecordsResponse | null>(null);
   const [pool, setPool] = useState('');
+  const [speed, setSpeed] = useState('');
   const [error, setError] = useState('');
 
   useEffect(() => {
@@ -23,11 +24,18 @@ export function ResultsView({ active, epoch }: { active: boolean; epoch: number 
       .catch((failure: Error) => setError(failure.message));
   }, [active, epoch, pool]);
 
-  const rows = data?.standings ?? [];
+  const groups = data?.groups ?? [];
+  const group = groups.find((entry) => String(entry.scale) === speed) ?? groups[0];
+  const rows = group?.standings ?? [];
   const poolOptions = [
     { value: '', label: 'Overall', description: 'All pools except the test pool' },
     ...(data?.pools ?? []).map((name) => ({ value: name, label: name })),
   ];
+  const speedOptions = groups.map((entry) => ({
+    value: String(entry.scale),
+    label: entry.label,
+    description: `${entry.count} rated series`,
+  }));
   const scopeText = data
     ? data.pool
       ? `${data.count} recorded series in pool ${data.pool}.`
@@ -45,8 +53,8 @@ export function ResultsView({ active, epoch }: { active: boolean; epoch: number 
           </h1>
         </div>
         <p class="lede">
-          Rotation series rated by Elo. Overall standings exclude the test pool. Select a pool to show ratings for that
-          team-pool period.
+          Rotation series rated by Elo, with the same model merged across providers. Battle speeds rate separately so
+          timed and untimed games never mix; untimed is the primary view. Overall standings exclude the test pool.
         </p>
       </div>
       <div class="results-grid">
@@ -58,6 +66,15 @@ export function ResultsView({ active, epoch }: { active: boolean; epoch: number 
             </div>
             <div style="min-width:220px">
               <Dropdown id="recordsPool" label="Scope" options={poolOptions} value={pool} onChange={setPool} />
+              {speedOptions.length > 1 && (
+                <Dropdown
+                  id="recordsSpeed"
+                  label="Battle speed"
+                  options={speedOptions}
+                  value={String(group?.scale ?? '')}
+                  onChange={setSpeed}
+                />
+              )}
             </div>
           </div>
           <div class="table-scroll">
@@ -122,7 +139,7 @@ export function ResultsView({ active, epoch }: { active: boolean; epoch: number 
                     <tr key={rowStanding.spec}>
                       <td title={rowStanding.spec}>{code(rowIndex)}</td>
                       {rows.map((colStanding) => {
-                        const cell = data?.h2h[rowStanding.spec]?.[colStanding.spec] ?? [0, 0, 0];
+                        const cell = group?.h2h[rowStanding.spec]?.[colStanding.spec] ?? [0, 0, 0];
                         const played = cell[0] || cell[1] || cell[2];
                         return (
                           <td key={colStanding.spec} class="num">

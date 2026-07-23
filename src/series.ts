@@ -10,6 +10,7 @@ import { seededRng } from './random.js';
 import { ShowdownReference } from './reference.js';
 import { SimBattle } from './sim.js';
 import type { Team } from './teams.js';
+import { DEFAULT_TIMER_SCALE } from './timer.js';
 import type { BattleOutcome, JsonObject, Pid, PlayerOptions, TimerScale } from './types.js';
 
 export function makeEngine(
@@ -123,11 +124,13 @@ export async function playBo3(context: Bo3Context): Promise<Bo3Result> {
     const onUpdate = (lines: string[], publicLines: string[]) => context.onGameUpdate?.(gameNumber, lines, publicLines);
     const outcome = context.runBattle
       ? await context.runBattle(gameSeed, onUpdate)
-      : await new SimBattle(context.format, players, gameSeed, context.psDir, context.timerScale ?? 1).run(
-          engines,
-          onUpdate,
-          context.signal,
-        );
+      : await new SimBattle(
+          context.format,
+          players,
+          gameSeed,
+          context.psDir,
+          context.timerScale ?? DEFAULT_TIMER_SCALE,
+        ).run(engines, onUpdate, context.signal);
     context.signal?.throwIfAborted();
     const winnerSide = (['p1', 'p2'] as const).find((pid) => names[pid] === outcome.winner);
     if (winnerSide) score[winnerSide] += 1;
@@ -207,7 +210,7 @@ export interface RecordedSeriesFields extends JsonObject {
   turns: number;
   games: JsonObject[];
   engine_seeds: Record<Pid, number>;
-  timer_scale: number | 'off';
+  timer_scale: TimerScale;
   reasoning: ReasoningLevel | null;
   reasoning_by_player?: Record<Pid, ReasoningLevel | null>;
   decision_stats: JsonObject;
@@ -220,6 +223,7 @@ export interface RecordedSeries {
 
 export async function playRecordedSeries(context: RecordedSeriesContext): Promise<RecordedSeries> {
   context.signal?.throwIfAborted();
+  const timerScale = context.timerScale ?? DEFAULT_TIMER_SCALE;
   const seriesId = randomUUID().replaceAll('-', '').slice(0, 12);
   const seriesDir = path.join(context.runDir, 'series', seriesId);
   fs.mkdirSync(seriesDir, { recursive: true });
@@ -269,7 +273,7 @@ export async function playRecordedSeries(context: RecordedSeriesContext): Promis
     format: context.format,
     psDir: context.psDir,
     ...(context.requireWinner === undefined ? {} : { requireWinner: context.requireWinner }),
-    ...(context.timerScale === undefined ? {} : { timerScale: context.timerScale }),
+    timerScale,
     ...(context.signal === undefined ? {} : { signal: context.signal }),
     ...(context.onGameUpdate === undefined ? {} : { onGameUpdate: context.onGameUpdate }),
     ...(context.onGameEnd === undefined ? {} : { onGameEnd: context.onGameEnd }),
@@ -293,7 +297,7 @@ export async function playRecordedSeries(context: RecordedSeriesContext): Promis
       turns: games.reduce((sum, game) => sum + Number(game.turns), 0),
       games,
       engine_seeds: context.engineSeeds,
-      timer_scale: context.timerScale ?? 1,
+      timer_scale: timerScale,
       reasoning: context.reasoning ?? null,
       ...(context.reasoningByModel === undefined
         ? {}
@@ -308,7 +312,6 @@ function relative(file: string): string {
   return value.startsWith('..') ? file : value;
 }
 
-/** Audit convenience: one file joining each turn's protocol lines with both sides' decisions. */
 function writeTurnsFile(seriesDir: string, games: JsonObject[], rows: Record<Pid, JsonObject[]>): void {
   if (!rows.p1.length && !rows.p2.length) return;
   const out: string[] = [];

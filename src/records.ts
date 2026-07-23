@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-import type { ExperimentMode, JsonObject, Pid } from './types.js';
+import type { ExperimentMode, JsonObject, Pid, TimerScale } from './types.js';
 
 export interface SeriesRecord extends JsonObject {
   mode?: ExperimentMode;
@@ -11,12 +11,40 @@ export interface SeriesRecord extends JsonObject {
   run_id?: string;
   series_index?: number;
   pool?: string;
+  timer_scale?: TimerScale;
   contributor?: { provider: 'github'; subject: string; login: string };
   players: Record<Pid, string>;
   winner?: string | null;
 }
 
-/** Disposable local test data; excluded from every unscoped standings view. */
+/** Rows recorded before the timer-scale field existed all ran the standard 1x clock. */
+export function rowSpeed(row: SeriesRecord): TimerScale {
+  return row.timer_scale === 'off' || typeof row.timer_scale === 'number' ? row.timer_scale : 1;
+}
+
+export function speedLabel(scale: TimerScale): string {
+  return scale === 'off' ? 'Untimed' : `${scale}x clock`;
+}
+
+export function speedGroups(rows: SeriesRecord[]): Array<{ scale: TimerScale; rows: SeriesRecord[] }> {
+  const groups = new Map<TimerScale, SeriesRecord[]>();
+  for (const row of rows) {
+    const scale = rowSpeed(row);
+    const bucket = groups.get(scale);
+    if (bucket) bucket.push(row);
+    else groups.set(scale, [row]);
+  }
+  return [...groups.entries()]
+    .map(([scale, grouped]) => ({ scale, rows: grouped }))
+    .sort((a, b) => (a.scale === 'off' ? -1 : b.scale === 'off' ? 1 : a.scale - b.scale));
+}
+
+/** Ratings merge provider aliases by normalized model id. */
+export function modelKey(spec: string): string {
+  const model = spec.slice(spec.indexOf(':') + 1);
+  return model.slice(model.lastIndexOf('/') + 1).toLowerCase();
+}
+
 export const TEST_POOL = 'test';
 
 export function scopeRows(rows: SeriesRecord[], pool?: string): SeriesRecord[] {
@@ -46,6 +74,14 @@ export interface Standing {
 
 export type HeadToHead = Record<string, Record<string, [number, number, number]>>;
 
+export interface RatingGroup {
+  scale: TimerScale;
+  label: string;
+  count: number;
+  standings: Standing[];
+  h2h: HeadToHead;
+}
+
 export function appendRow(file: string, row: JsonObject): void {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.appendFileSync(file, `${JSON.stringify(row)}\n`, 'utf8');
@@ -73,16 +109,20 @@ function scheduled(rows: SeriesRecord[]): SeriesRecord[] {
     .map((item) => item.row);
 }
 
+function normalizedPlayers(row: SeriesRecord): { p1: string; p2: string; winner: string | null } {
+  const { p1, p2 } = row.players;
+  const winner = row.winner === p1 ? modelKey(p1) : row.winner === p2 ? modelKey(p2) : null;
+  return { p1: modelKey(p1), p2: modelKey(p2), winner };
+}
+
 export function standings(rows: SeriesRecord[]): Standing[] {
-  const ordered = scheduled(playedRows(rows));
-  const specs = [...new Set(ordered.flatMap((row) => Object.values(row.players ?? {})))].sort();
+  const ordered = scheduled(playedRows(rows)).map(normalizedPlayers);
+  const specs = [...new Set(ordered.flatMap(({ p1, p2 }) => [p1, p2]))].sort();
   const ratings: Record<string, number> = Object.fromEntries(specs.map((spec) => [spec, 1000]));
   const totals: Record<string, { series: number; w: number; l: number; t: number }> = Object.fromEntries(
     specs.map((spec) => [spec, { series: 0, w: 0, l: 0, t: 0 }]),
   );
-  for (const row of ordered) {
-    const { p1, p2 } = row.players;
-    const winner = row.winner === p1 || row.winner === p2 ? row.winner : null;
+  for (const { p1, p2, winner } of ordered) {
     const score1 = winner === null ? 0.5 : Number(winner === p1);
     if (p1 !== p2) {
       const expected1 = 1 / (1 + 10 ** ((ratings[p2]! - ratings[p1]!) / 400));
@@ -115,14 +155,12 @@ export function standings(rows: SeriesRecord[]): Standing[] {
 }
 
 export function h2h(input: SeriesRecord[]): HeadToHead {
-  const rows = playedRows(input);
-  const specs = [...new Set(rows.flatMap((row) => Object.values(row.players ?? {})))].sort();
+  const rows = playedRows(input).map(normalizedPlayers);
+  const specs = [...new Set(rows.flatMap(({ p1, p2 }) => [p1, p2]))].sort();
   const matrix: HeadToHead = Object.fromEntries(
     specs.map((a) => [a, Object.fromEntries(specs.map((b) => [b, [0, 0, 0]]))]),
   );
-  for (const row of rows) {
-    const { p1, p2 } = row.players;
-    const winner = row.winner === p1 || row.winner === p2 ? row.winner : null;
+  for (const { p1, p2, winner } of rows) {
     if (p1 === p2) {
       const cell = matrix[p1]![p1]!;
       if (winner === null) cell[2] += 2;
@@ -142,4 +180,14 @@ export function h2h(input: SeriesRecord[]): HeadToHead {
     }
   }
   return matrix;
+}
+
+export function ratingGroups(rows: SeriesRecord[]): RatingGroup[] {
+  return speedGroups(rows).map(({ scale, rows: grouped }) => ({
+    scale,
+    label: speedLabel(scale),
+    count: grouped.length,
+    standings: standings(grouped),
+    h2h: h2h(grouped),
+  }));
 }

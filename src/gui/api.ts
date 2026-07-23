@@ -93,7 +93,6 @@ export interface DraftView {
   entrants: string[];
   board: DraftBoardMonView[];
   picks: DraftPickView[];
-  /** Mon ids per entrant, in pick order. */
   rosters: string[][];
   budgets: number[];
   /** Round-robin table, present once battles begin; sorted by rank. */
@@ -238,14 +237,21 @@ export interface StandingView {
   elo: number;
 }
 
+export interface SpeedGroupView {
+  scale: number | 'off';
+  label: string;
+  count: number;
+  standings: StandingView[];
+  h2h: Record<string, Record<string, [number, number, number]>>;
+}
+
 export interface RecordsResponse {
   count: number;
   /** Applied pool filter; null is the overall view, which excludes the test pool. */
   pool: string | null;
-  /** Every pool present in the records file, including the test pool. */
   pools: string[];
-  standings: StandingView[];
-  h2h: Record<string, Record<string, [number, number, number]>>;
+  /** Rated rotation rows split by battle speed; untimed first, then ascending clock scales. */
+  groups: SpeedGroupView[];
   records: unknown[];
 }
 

@@ -16,13 +16,12 @@ import { makeEngine, playBo3 } from './series.js';
 import { showdownCommit } from './showdown.js';
 import type { Team } from './teams.js';
 import { loadPool, validatePool } from './teams.js';
+import { DEFAULT_TIMER_SCALE } from './timer.js';
 import type { Pid } from './types.js';
 
 export interface ExhibitionOptions {
-  /** Opponent model spec, or "random". CLI runs may take its key from the environment. */
   opponent: string;
   seat?: Pid;
-  /** Participant label recorded for the external seat. */
   name?: string;
   pool?: string;
   seed?: number;
@@ -30,18 +29,12 @@ export interface ExhibitionOptions {
   port?: number;
   psDir?: string;
   recordsPath?: string;
-  /** Where the agent-facing workspace (seat.mjs, SEAT.md, seat.json) is written. */
   agentDir?: string;
   onNotice?: (line: string) => void;
   onReady?: (info: { url: string; agentDir: string }) => void;
 }
 
-/**
- * Host one best-of-three where an external terminal agent plays one seat through
- * the seat bridge and the opponent runs in-process. Hidden information stays in
- * this process; the agent workspace holds only the thin client and its token.
- * The row is recorded as mode "exhibition" and never rates the rotation ladder.
- */
+/** External seat bridge; only that seat's view crosses the process boundary, and the result is unrated. */
 export async function runExhibition(runDir: string, options: ExhibitionOptions): Promise<SeriesRecord> {
   const seatSide: Pid = options.seat ?? 'p1';
   const oppSide: Pid = seatSide === 'p1' ? 'p2' : 'p1';
@@ -152,7 +145,7 @@ export async function runExhibition(runDir: string, options: ExhibitionOptions):
       seriesDir,
       format: pool.format,
       psDir,
-      timerScale: 'off',
+      timerScale: DEFAULT_TIMER_SCALE,
       onGameStart: (game) => {
         bridge.status = { ...bridge.status, game };
         notice(`game ${game} started`);

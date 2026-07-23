@@ -2,7 +2,7 @@ import type { BattleStream } from 'pokemon-showdown';
 import { defaultPsDir } from './paths.js';
 import { loadShowdown } from './showdown.js';
 import type { TimerEvent } from './timer.js';
-import { TimerAdapter } from './timer.js';
+import { DEFAULT_TIMER_SCALE, TimerAdapter } from './timer.js';
 import type { BattleAgent, BattleOutcome, BattleRequest, Pid, PlayerOptions, TimerScale } from './types.js';
 
 interface RouteState {
@@ -80,7 +80,7 @@ export class SimBattle {
     readonly players: Record<Pid, PlayerOptions>,
     seed?: number | [number, number, number, number],
     psDir = defaultPsDir(),
-    private readonly timerScale: TimerScale = 1,
+    private readonly timerScale: TimerScale = DEFAULT_TIMER_SCALE,
   ) {
     this.psDir = psDir;
     if (Array.isArray(seed)) {

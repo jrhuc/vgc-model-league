@@ -7,6 +7,7 @@ export type TimerEvent = 'autodefault' | 'forfeit' | 'tie';
 
 export const TIMER_SCALE_MIN = 0.5;
 export const TIMER_SCALE_MAX = 4;
+export const DEFAULT_TIMER_SCALE: TimerScale = 'off';
 
 export function parseTimerScale(value: unknown): TimerScale | undefined {
   if (value === undefined || value === null || value === '') return undefined;
@@ -42,7 +43,7 @@ export class TimerAdapter {
     private readonly stream: BattleStream,
     private readonly onEvent: (pid: Pid, event: TimerEvent) => void,
     psDir: string,
-    scale: TimerScale = 1,
+    scale: TimerScale,
   ) {
     this.enabled = scale !== 'off';
     this.players = (['p1', 'p2'] as const).map((slot) => ({
@@ -102,7 +103,6 @@ export class TimerAdapter {
     }
     for (const player of this.players) {
       player.secondsLeft = settings.starting + settings.grace;
-      player.turnSecondsLeft = player.secondsLeft;
     }
   }
 

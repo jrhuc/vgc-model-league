@@ -13,9 +13,8 @@ export type SlotMenu = MenuItem[];
 export type TargetNames = Record<'foe' | 'ally', Record<number, string>>;
 
 export interface MenuHints {
-  /** Species currently in ally slots, used to annotate ally-hitting spreads. */
   names?: TargetNames;
-  /** Per active slot (1/2): Protect success already reduced because it worked last turn. */
+  /** Per active slot: whether consecutive Protect odds are reduced. */
   protectReduced?: Record<number, boolean>;
   moveAnnotation?: (slot: number, move: string, targetSide: 'foe' | 'ally', targetNumber: number) => string | undefined;
 }

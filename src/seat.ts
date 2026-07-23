@@ -36,12 +36,7 @@ export interface SeatBridgeOptions {
 const POLL_LIMIT_MS = 55_000;
 const BODY_LIMIT_BYTES = 1_000_000;
 
-/**
- * Localhost HTTP bridge that lets an external process play one seat through the
- * standard LLMEngine scaffold. The engine's provider calls surface here as
- * exchanges; the bridge only ever serializes that seat's own prompts and menus,
- * so the external agent cannot receive information an API model would not.
- */
+/** Localhost agent bridge that exposes only one seat's prompts and menus. */
 export class SeatBridge {
   readonly token = randomBytes(16).toString('hex');
   status: JsonObject = {};

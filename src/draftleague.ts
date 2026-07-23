@@ -16,6 +16,7 @@ import { playRecordedSeries } from './series.js';
 import { showdownCommit } from './showdown.js';
 import type { Team } from './teams.js';
 import { normalizePackedTeam, validateTeam } from './teams.js';
+import { DEFAULT_TIMER_SCALE } from './timer.js';
 import type { TournamentEvent } from './tournament.js';
 import type { ContributorAttribution, Pid, TimerScale } from './types.js';
 
@@ -64,6 +65,7 @@ export async function runDraftLeague(
     );
   }
   const seed = resolveSeed(options.seed);
+  const timerScale = options.timerScale ?? DEFAULT_TIMER_SCALE;
   const random = seededRng(seed);
   const scaffold = scaffoldRevision();
   const draftScaffold = draftScaffoldRevision();
@@ -177,7 +179,7 @@ export async function runDraftLeague(
         concurrency: options.concurrency ?? 2,
         reasoning: options.reasoning ?? null,
         reasoning_by_model: options.reasoningByModel ?? null,
-        timer_scale: options.timerScale ?? 1,
+        timer_scale: timerScale,
         board: board.id,
         format: board.format,
         entrants,
@@ -213,7 +215,7 @@ export async function runDraftLeague(
       ...(options.reasoning === undefined ? {} : { reasoning: options.reasoning }),
       ...(options.apiKeys === undefined ? {} : { apiKeys: options.apiKeys }),
       ...(options.reasoningByModel === undefined ? {} : { reasoningByModel: options.reasoningByModel }),
-      ...(options.timerScale === undefined ? {} : { timerScale: options.timerScale }),
+      timerScale,
       onGameUpdate: (game, lines, publicLines) =>
         options.onEvent?.({ type: 'game-update', index: plan.index, game, lines, publicLines }),
       onGameEnd: (game, winner, turns, score) =>

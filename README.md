@@ -73,19 +73,25 @@ npm run vgcleague -- report    --pool regmb-202607
 All experiment commands accept `--seed` for reproducible runs. They accept
 `--reasoning <level>` to set the provider reasoning effort. Rotation,
 tournament, and draft also accept `--concurrency` for parallel series and
-`--timer-scale <n|off>` to multiply the Showdown battle timer (0.5–4, e.g.
-`1.5` gives every clock 1.5x the standard VGC time; `off` disables the timer).
-The scale is recorded in the run config and every series row, so runs at
-different scales can be compared. The CLI rejects an unsupported reasoning
-level before the run starts.
+`--timer-scale <n|off>`. Battles are untimed by default: a model reasons as
+long as it needs, bounded only by a generous per-decision token ceiling and
+wall-clock cap that catch runaway reasoning loops. `--timer-scale` turns on
+the Showdown battle timer to simulate human match conditions: `1` is the
+standard VGC clock, values 0.5–4 multiply every clock, and `off` is the
+untimed default. The scale is recorded in the run config and every series
+row, so runs at different scales can be compared. The CLI rejects an
+unsupported reasoning level before the run starts.
 
 A failed series stops the full run. Queued series do not start. In-flight
 series stop. Completed series stay on disk. A run that the league reports as
 failed does not use provider credits in the background.
 
 If you do not give `--pool`, standings and reports include every pool except
-the disposable `test` pool, and they keep only rotation rows. The GUI record
-book uses the same scope.
+the disposable `test` pool, and they keep only rotation rows. Ratings never
+mix battle speeds: each timer scale gets its own standings and head-to-head,
+with untimed shown first as the primary data. Within a speed group, the same
+model id reached through different providers or gateways rates as one player.
+The GUI record book uses the same scope.
 
 ### Exhibition seats
 

@@ -358,7 +358,6 @@ export class ShowdownReference {
       .slice(0, 12);
   }
 
-  /** Compact always-on context: typing, speed band, and decision-relevant move mechanics. */
   renderCompact(mons: CompactMon[]): string[] {
     const lines: string[] = [];
     const seen = new Set<string>();

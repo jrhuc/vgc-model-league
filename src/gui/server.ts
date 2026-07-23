@@ -21,15 +21,15 @@ import {
   reasoningLevels,
   validateReasoning,
 } from '../providers.js';
-import { h2h, loadRows, scopeRows, standings } from '../records.js';
+import { loadRows, ratingGroups, scopeRows } from '../records.js';
 import { makeRunDirectory, ROTATION_PROTOCOL_VERSION, runRotation } from '../rotation.js';
 import { redactSecrets } from '../sanitize.js';
 import { loadShowdown } from '../showdown.js';
-import { parseTimerScale } from '../timer.js';
 import type { MonState } from '../state.js';
 import { BattleState } from '../state.js';
 import type { Team, TeamDraft } from '../teams.js';
 import { createPool, inspectTeam, listPools, loadPool, packTeam, validateTeam } from '../teams.js';
+import { parseTimerScale } from '../timer.js';
 import { runTournament, TOURNAMENT_PROTOCOL_VERSION } from '../tournament.js';
 import type { ExperimentMode, JsonObject, Pid, TimerScale } from '../types.js';
 import { afterColon, isRecord } from '../value.js';
@@ -807,7 +807,8 @@ export class GuiServer {
     const rows = scopeRows(all, pool ?? undefined);
     const rated = rows.filter((row) => (row.mode ?? 'rotation') === 'rotation');
     const pools = [...new Set(all.map((row) => (typeof row.pool === 'string' ? row.pool : '')))].filter(Boolean).sort();
-    return { count: rows.length, pool, pools, standings: standings(rated), h2h: h2h(rated), records: rows };
+    const groups = ratingGroups(rated);
+    return { count: rows.length, pool, pools, groups, records: rows };
   }
 
   private runBody(publicView = false): RunSnapshot | null {
@@ -983,9 +984,6 @@ export class GuiServer {
     } catch (error) {
       throw new HttpError(400, error instanceof Error ? error.message : String(error));
     }
-    if (this.publicOrigin && timerScale === 'off') {
-      throw new HttpError(400, 'untimed runs are disabled in hosted mode');
-    }
     const maximumSeriesPerPair = this.publicOrigin ? 4 : 20;
     const maximumConcurrency = this.publicOrigin ? 2 : 8;
     const config: RunConfig = {
@@ -1154,7 +1152,6 @@ export class GuiServer {
     }
   }
 
-  /** Mark a run that outlived its abort as settled so it cannot hold the server or its run dir open. */
   private detachRun(run: ActiveRun, state: 'stopped' | 'failed', error: string): void {
     run.detached = true;
     run.state = state;
@@ -1589,7 +1586,7 @@ export class GuiServer {
     return { ok: true, name: path.basename(dir), pools: listPools(this.options.teamsDir ?? TEAMS_DIR) };
   }
 
-  /** Fetch a paste from pokepast.es by link or bare id. The host is fixed, so this cannot be aimed elsewhere. */
+  /** The fixed upstream host prevents SSRF. */
   private async importPokepaste(body: Record<string, unknown>): Promise<JsonObject> {
     const raw = String(body.url ?? '').trim();
     const id = /^(?:https?:\/\/pokepast\.es\/)?([0-9a-f]{8,16})(?:\/(?:raw\/?)?)?$/i.exec(raw)?.[1];
