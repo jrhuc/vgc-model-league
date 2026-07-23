@@ -16,8 +16,9 @@ import {
   tool,
 } from 'ai';
 
+import { PROVIDER_OPTIONS, providerOption } from './provider-registry.js';
 import { redactSecrets } from './sanitize.js';
-import type { CompleteOptions, Completion, JsonObject, Provider, ProviderMessage } from './types.js';
+import type { CompleteOptions, Completion, JsonObject, Provider, ProviderFailure, ProviderMessage } from './types.js';
 
 import { isRecord } from './value.js';
 
@@ -59,58 +60,26 @@ export function validateModelExecution(
   }
 }
 
-export const USAGE =
+const USAGE =
   'Usage: anthropic:<model>, openai:<model>, google:<model>, xai:<model>, deepseek:<model>, meta:<model>, kimi:<model>, zai:<model>, openrouter:<model>, opencode-go:<model>, opencode-zen:<model>, vercel:<model>, cerebras:<model>, compat:<base_url>:<model>, or random';
-
-const COMPAT_BASE_URLS: Record<string, string> = {
-  xai: 'https://api.x.ai/v1',
-  deepseek: 'https://api.deepseek.com',
-  meta: 'https://api.meta.ai/v1',
-  kimi: 'https://api.moonshot.ai/v1',
-  zai: 'https://api.z.ai/api/paas/v4',
-  openrouter: 'https://openrouter.ai/api/v1',
-  'opencode-go': 'https://opencode.ai/zen/go/v1',
-  'opencode-zen': 'https://opencode.ai/zen/v1',
-  vercel: 'https://ai-gateway.vercel.sh/v1',
-  cerebras: 'https://api.cerebras.ai/v1',
-};
-
-const COMPAT_ENV_KEYS: Record<string, string> = {
-  xai: 'XAI_API_KEY',
-  deepseek: 'DEEPSEEK_API_KEY',
-  meta: 'META_MODEL_API_KEY',
-  kimi: 'MOONSHOT_API_KEY',
-  zai: 'ZAI_API_KEY',
-  openrouter: 'OPENROUTER_API_KEY',
-  'opencode-go': 'OPENCODE_API_KEY',
-  'opencode-zen': 'OPENCODE_API_KEY',
-  vercel: 'AI_GATEWAY_API_KEY',
-  cerebras: 'CEREBRAS_API_KEY',
-};
 export interface ProviderSpec {
   provider: string;
   model: string;
   baseUrl?: string;
 }
 
-function envKeyName(spec: ProviderSpec): string | undefined {
-  if (spec.provider === 'random') return undefined;
-  if (spec.provider === 'anthropic') return 'ANTHROPIC_API_KEY';
-  if (spec.provider === 'openai') return 'OPENAI_API_KEY';
-  if (spec.provider === 'google') return 'GEMINI_API_KEY';
-  if (spec.provider === 'compat') return 'OPENAI_COMPAT_API_KEY';
-  return COMPAT_ENV_KEYS[spec.provider];
-}
-
 export function parseSpec(value: string): ProviderSpec {
   if (value === 'random') return { provider: 'random', model: 'random' };
-  for (const provider of ['anthropic', 'openai', 'google']) {
-    if (value.startsWith(`${provider}:`) && value.length > provider.length + 1)
-      return { provider, model: value.slice(provider.length + 1) };
-  }
-  for (const [provider, baseUrl] of Object.entries(COMPAT_BASE_URLS)) {
-    if (value.startsWith(`${provider}:`) && value.length > provider.length + 1)
-      return { provider, model: value.slice(provider.length + 1), baseUrl };
+  for (const option of PROVIDER_OPTIONS) {
+    const provider = option.id;
+    if (provider === 'random' || provider === 'compat') continue;
+    if (!value.startsWith(`${provider}:`) || value.length <= provider.length + 1) continue;
+    const spec: ProviderSpec = { provider, model: value.slice(provider.length + 1) };
+    if (provider !== 'anthropic' && provider !== 'openai' && provider !== 'google') {
+      if (!option.baseUrl) throw new Error(USAGE);
+      spec.baseUrl = option.baseUrl;
+    }
+    return spec;
   }
   if (value.startsWith('compat:')) {
     const rest = value.slice(7);
@@ -228,24 +197,6 @@ export class ApiError extends Error {
     super(message);
     this.name = 'ApiError';
   }
-}
-
-export type ProviderFailureKind =
-  | 'quota'
-  | 'rate_limit'
-  | 'timeout'
-  | 'truncation'
-  | 'upstream'
-  | 'network'
-  | 'request';
-
-export interface ProviderFailure {
-  kind: ProviderFailureKind;
-  summary: string;
-  terminal: boolean;
-  /** Defaults to !terminal. */
-  retryable?: boolean;
-  pausable?: boolean;
 }
 
 const HARD_QUOTA_ERROR =
@@ -456,7 +407,7 @@ export class SdkProvider implements Provider {
   }
 
   private key(): string {
-    const envKey = envKeyName(this.spec);
+    const envKey = providerOption(this.spec.provider)?.envKey;
     if (!envKey) throw new Error(USAGE);
     const apiKey = this.apiKey ?? process.env[envKey] ?? (envKey === 'OPENAI_COMPAT_API_KEY' ? 'none' : undefined);
     if (!apiKey) throw new Error(`Missing ${envKey}`);
@@ -582,7 +533,6 @@ export function makeProvider(
   validateReasoning(spec, options.reasoning);
   if (spec.provider === 'random') throw new Error('random provider is handled separately');
   if (spec.provider === 'compat' && !spec.baseUrl) throw new Error('compat provider requires base_url');
-  if (!['anthropic', 'openai', 'google', 'compat', ...Object.keys(COMPAT_BASE_URLS)].includes(spec.provider))
-    throw new Error(USAGE);
+  if (!providerOption(spec.provider)) throw new Error(USAGE);
   return new SdkProvider(spec, options);
 }

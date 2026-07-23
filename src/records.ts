@@ -18,7 +18,7 @@ export interface SeriesRecord extends JsonObject {
 }
 
 /** Rows recorded before the timer-scale field existed all ran the standard 1x clock. */
-export function rowSpeed(row: SeriesRecord): TimerScale {
+function rowSpeed(row: SeriesRecord): TimerScale {
   return row.timer_scale === 'off' || typeof row.timer_scale === 'number' ? row.timer_scale : 1;
 }
 

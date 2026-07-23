@@ -2,7 +2,8 @@ import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { LLMEngine, type RandomEngine, scaffoldRevision } from './engines.js';
+import type { RandomEngine } from './battle-agent.js';
+import { LLMEngine, scaffoldRevision } from './llm-engine.js';
 import { defaultPsDir, RESULTS_PATH } from './paths.js';
 import type { ReasoningLevel } from './providers.js';
 import { parseSpec, validateReasoning } from './providers.js';
@@ -10,7 +11,6 @@ import { resolveSeed, seededRng } from './random.js';
 import type { SeriesRecord } from './records.js';
 import { appendRow } from './records.js';
 import { ShowdownReference } from './reference.js';
-import { ROTATION_PROTOCOL_VERSION } from './rotation.js';
 import { SeatBridge } from './seat.js';
 import { makeEngine, playBo3 } from './series.js';
 import { showdownCommit } from './showdown.js';
@@ -18,6 +18,8 @@ import type { Team } from './teams.js';
 import { loadPool, validatePool } from './teams.js';
 import { DEFAULT_TIMER_SCALE } from './timer.js';
 import type { Pid } from './types.js';
+
+const EXHIBITION_PROTOCOL_VERSION = 1;
 
 export interface ExhibitionOptions {
   opponent: string;
@@ -68,7 +70,7 @@ export async function runExhibition(runDir: string, options: ExhibitionOptions):
     `${JSON.stringify(
       {
         mode: 'exhibition',
-        protocol_version: ROTATION_PROTOCOL_VERSION,
+        protocol_version: EXHIBITION_PROTOCOL_VERSION,
         scaffold,
         seat: seatSide,
         players,
@@ -160,7 +162,7 @@ export async function runExhibition(runDir: string, options: ExhibitionOptions):
     const row: SeriesRecord = {
       schema_version: 1,
       mode: 'exhibition',
-      protocol_version: ROTATION_PROTOCOL_VERSION,
+      protocol_version: EXHIBITION_PROTOCOL_VERSION,
       scaffold,
       timestamp: new Date().toISOString(),
       run_id: path.basename(runDir),

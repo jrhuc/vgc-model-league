@@ -1,8 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import type { DecisionLog, GameEnd, GameStart } from './engines.js';
-import { LLMEngine, RandomEngine } from './engines.js';
+import type { DecisionLog, GameEnd, GameStart } from './battle-agent.js';
+import { RandomEngine } from './battle-agent.js';
+import { LLMEngine } from './llm-engine.js';
 import { REPO_ROOT } from './paths.js';
 import type { ModelReasoningConfig, ReasoningLevel } from './providers.js';
 import { makeProvider, parseSpec, reasoningForModel } from './providers.js';
@@ -12,7 +13,52 @@ import { ShowdownReference } from './reference.js';
 import { SimBattle } from './sim.js';
 import type { Team } from './teams.js';
 import { DEFAULT_TIMER_SCALE } from './timer.js';
-import type { BattleOutcome, JsonObject, Pid, PlayerOptions, TimerScale } from './types.js';
+import type { BattleOutcome, ContributorAttribution, JsonObject, Pid, PlayerOptions, TimerScale } from './types.js';
+
+export interface ExperimentOptions extends ModelReasoningConfig {
+  seed?: number;
+  concurrency?: number;
+  timerScale?: TimerScale;
+  recordsPath?: string;
+  psDir?: string;
+  apiKeys?: Readonly<Record<string, string>>;
+  signal?: AbortSignal;
+  contributor?: ContributorAttribution;
+  recovery?: RecoveryGate;
+}
+
+export async function mapLimit<T, R>(
+  items: T[],
+  limit: number,
+  signal: AbortSignal | undefined,
+  task: (item: T, signal: AbortSignal) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R | undefined>(items.length);
+  const controller = new AbortController();
+  const forward = () => controller.abort();
+  if (signal?.aborted) controller.abort();
+  else signal?.addEventListener('abort', forward, { once: true });
+  let failure: { error: unknown } | undefined;
+  let next = 0;
+  const workers = Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, async () => {
+    while (next < items.length && !controller.signal.aborted) {
+      const index = next++;
+      try {
+        results[index] = await task(items[index]!, controller.signal);
+      } catch (error) {
+        if (!controller.signal.aborted) {
+          failure ??= { error };
+          controller.abort();
+        }
+        return;
+      }
+    }
+  });
+  await Promise.all(workers);
+  signal?.removeEventListener('abort', forward);
+  if (failure && !signal?.aborted) throw failure.error;
+  return results.filter((result): result is R => result !== undefined);
+}
 
 export function makeEngine(
   pid: Pid,
@@ -202,7 +248,7 @@ export interface RecordedSeriesContext extends ModelReasoningConfig {
   recovery?: RecoveryGate;
 }
 
-export interface RecordedSeriesFields extends JsonObject {
+interface RecordedSeriesFields extends JsonObject {
   timestamp: string;
   run_id: string;
   series_id: string;

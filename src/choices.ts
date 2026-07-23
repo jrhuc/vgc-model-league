@@ -3,8 +3,8 @@ import type { BattleRequest, JsonObject } from './types.js';
 
 import { afterColon, asRecords, text } from './value.js';
 
-export type MenuKind = 'move' | 'switch' | 'team' | 'pass';
-export interface MenuItem {
+type MenuKind = 'move' | 'switch' | 'team' | 'pass';
+interface MenuItem {
   label: string;
   part: string;
   kind: MenuKind;

@@ -5,7 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
 import type { BattleStream } from 'pokemon-showdown';
-import { RandomEngine } from '../src/engines.js';
+import { RandomEngine } from '../src/battle-agent.js';
 import { defaultPsDir } from '../src/paths.js';
 import { runRotation } from '../src/rotation.js';
 import type { RoomBattleTimerSettings } from '../src/showdown.js';

@@ -3,41 +3,30 @@ import path from 'node:path';
 
 import type { DraftBoardMon } from './draft.js';
 import { describeBoardMon, draftScaffoldRevision, loadBoard, runDraft } from './draft.js';
-import { scaffoldRevision } from './engines.js';
 import type { BracketView, DraftTableRow, DraftView } from './gui/api.js';
+import { scaffoldRevision } from './llm-engine.js';
 import { BOARDS_DIR, defaultPsDir, RESULTS_PATH } from './paths.js';
-import type { ModelReasoningConfig } from './providers.js';
 import { validateModelExecution } from './providers.js';
 import { resolveSeed, seededRng, seriesEntropy, shuffle } from './random.js';
 import type { SeriesRecord } from './records.js';
 import { appendRow } from './records.js';
-import type { RecoveryGate } from './recovery.js';
-import { mapLimit } from './rotation.js';
-import { playRecordedSeries } from './series.js';
+import type { ExperimentOptions } from './series.js';
+import { mapLimit, playRecordedSeries } from './series.js';
 import { showdownCommit } from './showdown.js';
 import type { Team } from './teams.js';
 import { normalizePackedTeam, validateTeam } from './teams.js';
 import { DEFAULT_TIMER_SCALE } from './timer.js';
 import type { TournamentEvent } from './tournament.js';
-import type { ContributorAttribution, Pid, TimerScale } from './types.js';
+import type { Pid } from './types.js';
 
 export const DRAFT_PROTOCOL_VERSION = 1;
 
 export type DraftLeagueEvent = TournamentEvent | { type: 'draft'; draft: DraftView };
 
-export interface DraftLeagueOptions extends ModelReasoningConfig {
-  seed?: number;
-  concurrency?: number;
-  timerScale?: TimerScale;
-  recordsPath?: string;
-  psDir?: string;
+export interface DraftLeagueOptions extends ExperimentOptions {
   boardsDir?: string;
-  apiKeys?: Readonly<Record<string, string>>;
   board?: string;
   onEvent?: (event: DraftLeagueEvent) => void;
-  signal?: AbortSignal;
-  contributor?: ContributorAttribution;
-  recovery?: RecoveryGate;
 }
 
 interface SeriesPlanned {

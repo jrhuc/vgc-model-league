@@ -2,9 +2,9 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
+import { BaseEngine } from '../src/battle-agent.js';
 import type { SlotMenu } from '../src/choices.js';
 import { buildMenus } from '../src/choices.js';
-import { BaseEngine } from '../src/engines.js';
 import { REPO_ROOT } from '../src/paths.js';
 import type { BattleRequest } from '../src/types.js';
 

@@ -8,7 +8,7 @@ import { DEX_TOOLS } from './reference.js';
 import type { Completion, JsonObject, Provider, ProviderMessage } from './types.js';
 import { isRecord, text } from './value.js';
 
-export type SeatPhase = 'decision' | 'reflection';
+type SeatPhase = 'decision' | 'reflection';
 
 export interface SeatExchangeView extends JsonObject {
   id: number;

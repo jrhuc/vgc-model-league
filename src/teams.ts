@@ -89,7 +89,7 @@ export function loadPool(name = 'test', teamsDir = TEAMS_DIR): TeamPool {
 
 type ShowdownSets = NonNullable<ReturnType<ReturnType<typeof loadShowdown>['Teams']['unpack']>>;
 
-export function enforceBaseFormes(sets: ShowdownSets, psDir = defaultPsDir()): void {
+function enforceBaseFormes(sets: ShowdownSets, psDir = defaultPsDir()): void {
   const { Dex } = loadShowdown(psDir);
   for (const set of sets) {
     const species = Dex.species.get(set.species || set.name);
@@ -160,7 +160,7 @@ export interface TeamDraft {
   paste: string;
 }
 
-export interface TeamMember {
+interface TeamMember {
   species: string;
   item: string;
   ability: string;

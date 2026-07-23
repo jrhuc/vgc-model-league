@@ -5,7 +5,8 @@ import path from 'node:path';
 import test from 'node:test';
 
 import type { RotationEvent } from '../src/rotation.js';
-import { makePlans, mapLimit, ROTATION_PROTOCOL_VERSION, runRotation } from '../src/rotation.js';
+import { makePlans, ROTATION_PROTOCOL_VERSION, runRotation } from '../src/rotation.js';
+import { mapLimit } from '../src/series.js';
 
 test('even series counts reuse team matchups while swapping model sides', () => {
   const plans = makePlans(

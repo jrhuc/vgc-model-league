@@ -2,7 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { RandomEngine } from '../src/engines.js';
+import { RandomEngine } from '../src/battle-agent.js';
 import { REPO_ROOT } from '../src/paths.js';
 import { SimBattle } from '../src/sim.js';
 import { loadPool } from '../src/teams.js';
@@ -18,7 +18,7 @@ class CaptureEngine extends RandomEngine {
   }
 
   override async act(request: BattleRequest, context: AgentContext): Promise<string> {
-    const kind = request.teamPreview ? 'teampreview' : request.forceSwitch ? 'forceswitch' : 'move';
+    const kind = request.teamPreview ? 'teampreview' : 'move';
     this.captured[kind] ??= structuredClone(request);
     return super.act(request, context);
   }
@@ -40,16 +40,15 @@ export async function captureRequests(): Promise<void> {
       p1: new CaptureEngine('p1', seed * 2, captured),
       p2: new CaptureEngine('p2', seed * 2 + 1, captured),
     });
-    if (['teampreview', 'move', 'forceswitch'].every((kind) => captured[kind])) break;
+    if (['teampreview', 'move'].every((kind) => captured[kind])) break;
   }
-  const missing = ['teampreview', 'move', 'forceswitch'].filter((kind) => !captured[kind]);
+  const missing = ['teampreview', 'move'].filter((kind) => !captured[kind]);
   if (missing.length) throw new Error(`could not capture request kinds: ${missing.join(', ')}`);
   const output = path.join(REPO_ROOT, 'tests', 'data', 'showdown_requests');
   fs.mkdirSync(output, { recursive: true });
   const names: Record<string, string> = {
     teampreview: 'team_preview.json',
     move: 'turn.json',
-    forceswitch: 'forced_switch.json',
   };
   for (const [kind, request] of Object.entries(captured))
     fs.writeFileSync(path.join(output, names[kind]!), `${JSON.stringify(request, null, 1)}\n`);

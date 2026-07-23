@@ -4,12 +4,12 @@ import path from 'node:path';
 
 import type { BoardInfo, DraftBoardMonView, DraftPickView } from './gui/api.js';
 import { BOARDS_DIR, defaultPsDir } from './paths.js';
-import type { ModelReasoningConfig, ProviderFailure, ReasoningLevel } from './providers.js';
+import type { ModelReasoningConfig, ReasoningLevel } from './providers.js';
 import { classifyProviderFailure, makeProvider, parseSpec, reasoningForModel } from './providers.js';
 import type { Rng } from './random.js';
 import type { RecoveryGate } from './recovery.js';
 import { loadShowdown } from './showdown.js';
-import type { Provider, ProviderMessage } from './types.js';
+import type { Provider, ProviderFailure, ProviderMessage } from './types.js';
 import { text } from './value.js';
 
 const BOARD_SLUG = /^[a-z0-9][a-z0-9-]{0,63}$/;
@@ -330,7 +330,7 @@ export function legalPicks(state: DraftState, drafter: number, psDir = defaultPs
     .map((candidate) => candidate.mon);
 }
 
-export interface DraftSeatLog {
+interface DraftSeatLog {
   pick: number;
   attempt: number;
   system?: string;

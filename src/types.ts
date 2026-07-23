@@ -96,3 +96,20 @@ export interface CompleteOptions {
 export interface Provider {
   complete(system: string, messages: ProviderMessage[], options?: CompleteOptions): Promise<Completion>;
 }
+
+export type ProviderFailureKind =
+  | 'quota'
+  | 'rate_limit'
+  | 'timeout'
+  | 'truncation'
+  | 'upstream'
+  | 'network'
+  | 'request';
+
+export interface ProviderFailure {
+  kind: ProviderFailureKind;
+  summary: string;
+  terminal: boolean;
+  retryable?: boolean;
+  pausable?: boolean;
+}

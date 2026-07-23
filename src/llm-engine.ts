@@ -3,6 +3,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 
+import type { ChoiceSubstitution, DecisionLog, GameEnd, GameStart } from './battle-agent.js';
+import { BaseEngine } from './battle-agent.js';
+import { summarizeBattleEvents } from './battle-transcript.js';
 import type { MenuHints, SlotMenu, TargetNames } from './choices.js';
 import { buildMenus } from './choices.js';
 import { REFLECTION_SYSTEM, renderDecision, SYSTEM } from './prompts.js';
@@ -15,14 +18,11 @@ import {
   parseSpec,
   toolResultMessage,
 } from './providers.js';
-import type { Rng } from './random.js';
-import { seededRng } from './random.js';
 import type { RecoveryGate } from './recovery.js';
 import { DEX_TOOLS, ShowdownReference } from './reference.js';
 import { BattleState } from './state.js';
 import type {
   AgentContext,
-  BattleAgent,
   BattleRequest,
   CompleteOptions,
   Completion,
@@ -34,165 +34,6 @@ import type {
   ToolDefinition,
 } from './types.js';
 import { isRecord, text } from './value.js';
-
-export interface GameStart {
-  gameId: string;
-  gameNumber: number;
-  seriesId: string;
-  seriesScore?: Record<Pid, number>;
-}
-
-export interface GameEnd {
-  outcome: JsonObject;
-  gameNumber: number;
-  seriesScore?: Record<Pid, number>;
-}
-
-export type DecisionLog = string | JsonObject[] | ((row: JsonObject) => void);
-
-export interface ChoiceSubstitution {
-  requested: number[];
-  reason: string;
-}
-
-export abstract class BaseEngine implements BattleAgent {
-  constructor(readonly pid: Pid) {}
-
-  beginGame(_context: GameStart): void {}
-  endGame(_context: GameEnd): Promise<void> | void {}
-  observe(_lines: string[]): void {}
-  abandonDecision(): void {}
-  decisionStats(): Record<string, number> {
-    return {};
-  }
-
-  async act(request: BattleRequest, context: AgentContext): Promise<string> {
-    const menus = buildMenus(request, this.menuHints(request));
-    if (!menus.length) return '';
-    let automatic = menus.every((menu) => menu.length === 1);
-    let choices = automatic ? menus.map(() => 0) : await this.decideJoint(menus, request, context);
-    let parts: string[];
-    let substitution: ChoiceSubstitution | undefined;
-    try {
-      parts = BaseEngine.parts(menus, choices);
-    } catch (caught) {
-      substitution = { requested: choices, reason: caught instanceof Error ? caught.message : String(caught) };
-      [choices, parts] = BaseEngine.defaults(menus);
-      automatic = false;
-    }
-    this.actionCommitted(request, context, menus, choices, parts, automatic, substitution);
-    return request.teamPreview ? `team ${parts.join('')}` : parts.join(', ');
-  }
-
-  protected abstract decideJoint(
-    menus: SlotMenu[],
-    request: BattleRequest,
-    context: AgentContext,
-  ): Promise<number[]> | number[];
-  protected actionCommitted(
-    _request: BattleRequest,
-    _context: AgentContext,
-    _menus: SlotMenu[],
-    _choices: number[],
-    _parts: string[],
-    _automatic: boolean,
-    _substitution?: ChoiceSubstitution,
-  ): void {}
-  protected menuHints(_request: BattleRequest): MenuHints | undefined {
-    return undefined;
-  }
-
-  static parts(menus: SlotMenu[], choices: number[]): string[] {
-    if (choices.length !== menus.length) throw new Error(`choices must contain exactly ${menus.length} indices`);
-    const parts: string[] = [];
-    choices.forEach((choice, slot) => {
-      const menu = menus[slot]!;
-      if (!Number.isInteger(choice) || choice < 0 || choice >= menu.length)
-        throw new Error(`choice for slot ${slot + 1} is outside its menu`);
-      const item = menu[choice]!;
-      if (!BaseEngine.remaining(menu, parts).includes(item)) {
-        if (item.part.endsWith(' mega') && parts.some((part) => part.endsWith(' mega')))
-          throw new Error(`slot ${slot + 1} also chose Mega Evolve; only one Pokémon can Mega Evolve per battle`);
-        if (item.kind === 'switch')
-          throw new Error(`slot ${slot + 1} switches to a Pokémon an earlier slot already switches to`);
-        throw new Error(`choice for slot ${slot + 1} conflicts with an earlier slot`);
-      }
-      parts.push(item.part);
-    });
-    const forced = menus.flatMap((menu, index) => (menu.some((item) => item.kind === 'switch') ? [index] : []));
-    if (forced.some((index) => parts[index] === 'pass')) {
-      const replacements = new Set(
-        forced.flatMap((index) => menus[index]!.filter((item) => item.kind === 'switch').map((item) => item.part)),
-      );
-      const allowed = Math.max(0, forced.length - replacements.size);
-      if (forced.filter((index) => parts[index] === 'pass').length > allowed)
-        throw new Error('cannot pass a forced switch while a replacement remains');
-    }
-    return parts;
-  }
-
-  static defaults(menus: SlotMenu[]): [number[], string[]] {
-    const choices: number[] = [];
-    const parts: string[] = [];
-    for (const menu of menus) {
-      const item = BaseEngine.remaining(menu, parts)[0];
-      if (!item) {
-        choices.push(-1);
-        parts.push('pass');
-      } else {
-        choices.push(menu.indexOf(item));
-        parts.push(item.part);
-      }
-    }
-    return [choices, parts];
-  }
-
-  static remaining(menu: SlotMenu, chosen: string[]): SlotMenu {
-    const switches = new Set(chosen.filter((part) => part.startsWith('switch ')));
-    const selected = new Set(chosen);
-    const mega = chosen.some((part) => part.endsWith(' mega'));
-    return menu.filter(
-      (item) =>
-        !(item.kind === 'switch' && switches.has(item.part)) &&
-        !(item.kind === 'team' && selected.has(item.part)) &&
-        !(mega && item.part.endsWith(' mega')),
-    );
-  }
-}
-
-export class RandomEngine extends BaseEngine {
-  private readonly random: Rng;
-
-  constructor(pid: Pid, seed: string | number = Math.random()) {
-    super(pid);
-    this.random = seededRng(seed);
-  }
-
-  protected decideJoint(menus: SlotMenu[]): number[] {
-    const choices: number[] = [];
-    const parts: string[] = [];
-    for (const menu of menus) {
-      const candidates = BaseEngine.remaining(menu, parts);
-      if (!candidates.length) {
-        choices.push(-1);
-        parts.push('pass');
-        continue;
-      }
-      const weights = candidates.map((item) => (item.part.endsWith(' mega') ? 0.25 : 1));
-      const target = this.random() * weights.reduce((sum, value) => sum + value, 0);
-      let total = 0;
-      let index = 0;
-      while (index < weights.length - 1 && total + weights[index]! <= target) {
-        total += weights[index]!;
-        index += 1;
-      }
-      const item = candidates[index]!;
-      choices.push(menu.indexOf(item));
-      parts.push(item.part);
-    }
-    return choices;
-  }
-}
 
 interface ParsedDecision {
   choices: number[];
@@ -1404,88 +1245,6 @@ export class LLMEngine extends BaseEngine {
       fs.appendFileSync(output, `${JSON.stringify(row)}\n`, 'utf8');
     }
   }
-}
-
-function battleHpPercent(value = ''): string {
-  const [raw = '', status] = value.trim().split(/\s+/);
-  const match = /^(\d+)\/(\d+)[a-z]*$/i.exec(raw);
-  if (match && Number(match[2]))
-    return `${Math.round((100 * Number(match[1])) / Number(match[2]))}%${status ? ` ${status}` : ''}`;
-  if (raw === '0') return `0%${status ? ` ${status}` : ''}`;
-  return value;
-}
-
-const PROTECTION_EFFECTS = new Set([
-  'Protect',
-  'Detect',
-  'Spiky Shield',
-  'Baneful Bunker',
-  "King's Shield",
-  'Silk Trap',
-  'Burning Bulwark',
-  'Obstruct',
-  'Mat Block',
-  'Crafty Shield',
-  'Quick Guard',
-  'Wide Guard',
-  'Max Guard',
-]);
-
-function summarizeBattleEvents(lines: string[]): string[] {
-  const summary: string[] = [];
-  const ident = (value = '') => value.replace(/^p[12][a-z]?:\s*/, '');
-  for (const line of lines) {
-    if (!line.startsWith('|')) continue;
-    const [, kind = '', ...args] = line.split('|');
-    if (kind === 'turn') summary.push(`Turn ${args[0]} begins.`);
-    else if ((kind === 'switch' || kind === 'drag' || kind === 'replace') && args.length >= 3)
-      summary.push(`${ident(args[0])} entered as ${args[1]!.split(',', 1)[0]} at ${battleHpPercent(args[2])}.`);
-    else if (kind === 'move' && args.length >= 2)
-      summary.push(`${ident(args[0])} used ${args[1]}${args[2] ? ` into ${ident(args[2])}` : ''}.`);
-    else if ((kind === '-damage' || kind === '-heal') && args.length >= 2)
-      summary.push(
-        `${ident(args[0])} HP became ${battleHpPercent(args[1])}${kind === '-heal' ? ' after healing' : ''}.`,
-      );
-    else if (kind === 'faint' && args[0]) summary.push(`${ident(args[0])} fainted.`);
-    else if (kind === 'cant' && args.length >= 2) summary.push(`${ident(args[0])} could not act (${args[1]}).`);
-    else if (kind === '-status' && args.length >= 2) summary.push(`${ident(args[0])} became ${args[1]}.`);
-    else if (kind === '-curestatus' && args.length >= 2) summary.push(`${ident(args[0])} was cured of ${args[1]}.`);
-    else if (kind === '-ability' && args.length >= 2) summary.push(`${ident(args[0])} revealed ${args[1]}.`);
-    else if (kind === '-mega' && args[0]) summary.push(`${ident(args[0])} Mega Evolved.`);
-    else if (kind === '-miss' && args.length >= 2) summary.push(`${ident(args[0])} missed ${ident(args[1])}.`);
-    else if (kind === '-immune' && args[0]) summary.push(`${ident(args[0])} was immune.`);
-    else if (kind === '-fail' && args[0]) summary.push(`${ident(args[0])}'s action failed.`);
-    else if (kind === '-crit' && args[0]) summary.push(`A critical hit landed on ${ident(args[0])}.`);
-    else if (kind === '-supereffective' && args[0]) summary.push(`The hit on ${ident(args[0])} was super effective.`);
-    else if (kind === '-resisted' && args[0]) summary.push(`${ident(args[0])} resisted the hit.`);
-    else if (kind === '-activate' && args.length >= 2) {
-      const protection = /^move: (.+)$/.exec(args[1] ?? '');
-      summary.push(
-        protection && PROTECTION_EFFECTS.has(protection[1]!)
-          ? `${ident(args[0])}'s ${protection[1]} blocked the incoming move.`
-          : `${ident(args[0])} activated ${args[1]}.`,
-      );
-    } else if ((kind === '-start' || kind === '-end') && args.length >= 2)
-      summary.push(`${ident(args[0])} ${kind === '-start' ? 'gained' : 'lost'} ${args[1]}.`);
-    else if ((kind === '-boost' || kind === '-unboost') && args.length >= 3)
-      summary.push(`${ident(args[0])} ${args[1]} ${kind === '-boost' ? 'rose' : 'fell'} by ${args[2]}.`);
-    else if (kind === '-weather' && !args.includes('[upkeep]')) summary.push(`Weather became ${args[0] || 'none'}.`);
-    else if (kind === '-fieldstart' && args[0]) summary.push(`Field started: ${args[0]}.`);
-    else if (kind === '-fieldend' && args[0]) summary.push(`Field ended: ${args[0]}.`);
-    else if ((kind === '-sidestart' || kind === '-sideend') && args.length >= 2)
-      summary.push(`${args[0]} ${kind === '-sidestart' ? 'gained' : 'lost'} ${args[1]}.`);
-    else if (kind === 'win' && args[0]) summary.push(`${args[0]} won the game.`);
-    else if (kind === 'tie') summary.push('The game tied.');
-    else if (kind === 'timer' && args[0])
-      summary.push(
-        args[0] === 'autodefault'
-          ? 'Move time expired; the simulator chose default actions.'
-          : args[0] === 'forfeit'
-            ? 'The time bank ran out; the game was lost on time.'
-            : 'The game was declared a tie on time.',
-      );
-  }
-  return summary.slice(-60);
 }
 
 function jsonObjects(input: string, preferOuterDecision = false): JsonObject[] {

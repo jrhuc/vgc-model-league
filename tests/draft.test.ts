@@ -8,7 +8,7 @@ import type { DraftState } from '../src/draft.js';
 import { boardInfo, draftScaffoldRevision, legalPicks, loadBoard, runDraft, snakeOrder } from '../src/draft.js';
 import type { DraftLeagueEvent } from '../src/draftleague.js';
 import { DRAFT_PROTOCOL_VERSION, runDraftLeague } from '../src/draftleague.js';
-import { scaffoldRevision } from '../src/engines.js';
+import { scaffoldRevision } from '../src/llm-engine.js';
 import { ApiError } from '../src/providers.js';
 import { seededRng } from '../src/random.js';
 import { loadRows } from '../src/records.js';
