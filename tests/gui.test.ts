@@ -889,7 +889,13 @@ test('gui starts tournament runs and mirrors bracket state', async () => {
         },
       });
       options.onEvent?.({ type: 'series-start', index: 0 });
-      options.onEvent?.({ type: 'game-update', index: 0, game: 1, lines: ['|turn|7'], publicLines: ['|turn|7'] });
+      options.onEvent?.({
+        type: 'game-update',
+        index: 0,
+        game: 1,
+        lines: ['|turn|7', '|-vgcdeciding|p2'],
+        publicLines: ['|turn|7', '|-vgcdeciding|p2'],
+      });
       options.onEvent?.({
         type: 'decision',
         index: 0,
@@ -905,7 +911,15 @@ test('gui starts tournament runs and mirrors bracket state', async () => {
           fallback: true,
           error_summary: 'Google API quota is exhausted (429).',
           error: 'raw upstream response',
+          latency_ms: 12_400,
+          total_tokens: 45_000,
         },
+      });
+      options.onEvent?.({
+        type: 'decision',
+        index: 0,
+        pid: 'p1',
+        row: { kind: 'game_reflection', game_number: 1, total_tokens: 5_000 },
       });
       return [];
     },
@@ -929,8 +943,17 @@ test('gui starts tournament runs and mirrors bracket state', async () => {
     const snapshot = battle.data.snapshot as Record<string, unknown>;
     const decisions = snapshot.decisions as Array<Record<string, unknown>>;
     assert.equal(decisions[0]!.error, 'Google API quota is exhausted (429).');
+    const spend = snapshot.spend as Record<string, { seconds: number; tokens: number }>;
+    assert.deepEqual(spend.p1, { seconds: 12, tokens: 50_000 }, 'decision and reflection spend accumulate');
+    assert.deepEqual(spend.p2, { seconds: 0, tokens: 0 });
+    const timers = snapshot.timers as Record<string, Record<string, unknown> | null>;
+    assert.equal(timers.p2?.running, true, 'the deciding marker starts an untimed clock');
+    assert.equal(timers.p2?.seconds, null);
+    assert.equal(typeof timers.p2?.elapsedSeconds, 'number');
     const publicBattle = await apiJson(`${base}api/battle/public?index=0`);
-    assert.deepEqual((publicBattle.data.snapshot as Record<string, unknown>).decisions, []);
+    const publicSnapshot = publicBattle.data.snapshot as Record<string, unknown>;
+    assert.deepEqual(publicSnapshot.decisions, []);
+    assert.deepEqual((publicSnapshot.spend as Record<string, unknown>).p1, { seconds: 12, tokens: 50_000 });
   } finally {
     gui.close();
   }

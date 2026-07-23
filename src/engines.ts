@@ -270,9 +270,14 @@ const ASSUMED_TOKENS_PER_SECOND = 75;
 const PACE_SAFETY = 0.8;
 const PACE_SAMPLE_MIN_TOKENS = 256;
 const PACE_SAMPLE_MIN_MS = 2000;
+// Timed tool budgets keep lookups from burning the battle clock; untimed budgets exist only to
+// bound runaway loops, so they allow wide mechanical verification.
 const DECISION_MAX_TOOL_ROUNDS = 2;
 const DECISION_MAX_STANDARD_TOOL_CALLS = 2;
 const DECISION_MAX_ORDER_TOOL_CALLS = 1;
+const UNTIMED_MAX_TOOL_ROUNDS = 4;
+const UNTIMED_MAX_STANDARD_TOOL_CALLS = 4;
+const UNTIMED_MAX_ORDER_TOOL_CALLS = 2;
 const DECISION_PARSE_ATTEMPTS = 2;
 const DECISION_NOTE_LIMIT = 1600;
 const DECISION_RATIONALE_LIMIT = 500;
@@ -302,6 +307,11 @@ const ACTION_ORDER_TOOL: ToolDefinition = {
 
 const DECISION_TOOLS = [...DEX_TOOLS, ACTION_ORDER_TOOL];
 
+// reasoning_tokens is a breakdown of output_tokens, so summing input and output covers the full spend.
+function totalTokens(usage: Record<string, number> | undefined): number {
+  return Math.trunc((usage?.input_tokens ?? 0) + (usage?.output_tokens ?? 0));
+}
+
 export function decisionTokenBudget(remainingMs: number, tokensPerSecond: number): number {
   if (!Number.isFinite(remainingMs)) return DECISION_MAX_TOKENS_CEILING;
   const feasible = Math.floor(((remainingMs / 1000) * tokensPerSecond * PACE_SAFETY) / 256) * 256;
@@ -314,15 +324,10 @@ export function updatedPace(previous: number | undefined, outputTokens: number, 
   return previous === undefined ? rate : (previous + rate) / 2;
 }
 
-function boundedToolCalls(calls: ToolCall[]): ToolCall[] {
-  const order = calls.find((call) => call.name === ACTION_ORDER_TOOL.name);
-  const standard = calls
-    .filter((call) => call.name !== ACTION_ORDER_TOOL.name)
-    .slice(0, DECISION_MAX_STANDARD_TOOL_CALLS);
-  const selected = order
-    ? [...standard, order].slice(0, DECISION_MAX_STANDARD_TOOL_CALLS + DECISION_MAX_ORDER_TOOL_CALLS)
-    : standard;
-  const selectedIds = new Set(selected.map((call) => call.id));
+function boundedToolCalls(calls: ToolCall[], standardMax: number, orderMax: number): ToolCall[] {
+  const order = calls.filter((call) => call.name === ACTION_ORDER_TOOL.name).slice(0, orderMax);
+  const standard = calls.filter((call) => call.name !== ACTION_ORDER_TOOL.name).slice(0, standardMax);
+  const selectedIds = new Set([...standard, ...order].map((call) => call.id));
   return calls.filter((call) => selectedIds.has(call.id));
 }
 
@@ -432,6 +437,9 @@ export function scaffoldRevision(): string {
           maxToolRounds: DECISION_MAX_TOOL_ROUNDS,
           maxStandardToolCalls: DECISION_MAX_STANDARD_TOOL_CALLS,
           maxOrderToolCalls: DECISION_MAX_ORDER_TOOL_CALLS,
+          untimedMaxToolRounds: UNTIMED_MAX_TOOL_ROUNDS,
+          untimedMaxStandardToolCalls: UNTIMED_MAX_STANDARD_TOOL_CALLS,
+          untimedMaxOrderToolCalls: UNTIMED_MAX_ORDER_TOOL_CALLS,
           parseAttempts: DECISION_PARSE_ATTEMPTS,
           noteLimit: DECISION_NOTE_LIMIT,
           rationaleLimit: DECISION_RATIONALE_LIMIT,
@@ -713,6 +721,8 @@ export class LLMEngine extends BaseEngine {
         error_summary: failure.summary,
         error: message,
         parse_failures: parseFailures,
+        latency_ms: Math.round(performance.now() - started),
+        total_tokens: totalTokens(usage),
         timer,
         tool_lookups: toolCalls.map((call) => call.name),
       });
@@ -763,10 +773,11 @@ export class LLMEngine extends BaseEngine {
         });
       }
       rawResponse = '';
-      for (let round = 0; round <= DECISION_MAX_TOOL_ROUNDS; round += 1) {
+      const maxToolRounds = deadline === undefined ? UNTIMED_MAX_TOOL_ROUNDS : DECISION_MAX_TOOL_ROUNDS;
+      for (let round = 0; round <= maxToolRounds; round += 1) {
         if (generation !== this.generation) throw new DecisionAbandonedError();
         if (request.timer && remainingMs() < 2000) return failDecision(new Error('turn time exhausted'));
-        const finalRound = round === DECISION_MAX_TOOL_ROUNDS || remainingMs() < forceCommitMs;
+        const finalRound = round === maxToolRounds || remainingMs() < forceCommitMs;
         maxTokens = Math.max(tokenFloor, decisionTokenBudget(remainingMs(), pace()));
         let completion: Completion;
         try {
@@ -793,7 +804,11 @@ export class LLMEngine extends BaseEngine {
         if (completion.reasoning) reasoningParts.push(completion.reasoning);
         if (completion.toolCalls.length && !finalRound) {
           toolRounds += 1;
-          const calls = boundedToolCalls(completion.toolCalls);
+          const calls = boundedToolCalls(
+            completion.toolCalls,
+            deadline === undefined ? UNTIMED_MAX_STANDARD_TOOL_CALLS : DECISION_MAX_STANDARD_TOOL_CALLS,
+            deadline === undefined ? UNTIMED_MAX_ORDER_TOOL_CALLS : DECISION_MAX_ORDER_TOOL_CALLS,
+          );
           messages.push(
             assistantToolMessage(
               calls.length === completion.toolCalls.length
@@ -978,6 +993,8 @@ export class LLMEngine extends BaseEngine {
       ...(pending.errorSummary ? { error_summary: pending.errorSummary } : {}),
       ...substituted,
       parse_failures: pending.parseFailures ?? 0,
+      latency_ms: Math.round(pending.latencyMs ?? 0),
+      total_tokens: totalTokens(pending.usage),
       timer,
       tool_lookups: (pending.toolCalls ?? []).map((call) => call.name),
     });
@@ -1262,6 +1279,7 @@ export class LLMEngine extends BaseEngine {
       summary: review.summary,
       adjustment: review.adjustment,
       ...this.notebookUpdate(),
+      total_tokens: totalTokens(usage),
       fallback,
       error: error ?? null,
       ...(failureSummary ? { error_summary: failureSummary, failure_kind: failureKind } : {}),

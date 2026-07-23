@@ -186,11 +186,19 @@ export interface BattleLogEntryView {
 }
 
 export interface SideTimerView {
-  /** Remaining time bank in seconds as of snapshot generation; null when the simulator did not report one. */
+  /** Remaining time bank in seconds as of snapshot generation; null in untimed play. */
   seconds: number | null;
   turnSeconds: number | null;
+  /** Seconds spent on the decision in progress; null when idle. Clients count up from the snapshot time. */
+  elapsedSeconds: number | null;
   /** True while the player is deciding; clients may count down from the snapshot time. */
   running: boolean;
+}
+
+/** Cumulative series spend for one side: decision wall-clock plus all model tokens, reflections included. */
+export interface SpendView {
+  seconds: number;
+  tokens: number;
 }
 
 export interface DecisionView {
@@ -212,6 +220,7 @@ export interface BattleSnapshot {
   fields: string[];
   sides: Record<Pid, SideView>;
   timers: Record<Pid, SideTimerView | null>;
+  spend: Record<Pid, SpendView>;
   log: BattleLogEntryView[];
   decisions: DecisionView[];
 }

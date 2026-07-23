@@ -198,6 +198,7 @@ class ActiveRun {
   readonly battles = new Map<number, Map<number, GameBattle>>();
   readonly publicBattles = new Map<number, Map<number, GameBattle>>();
   readonly decisions = new Map<number, DecisionView[]>();
+  readonly spend = new Map<number, Record<Pid, { ms: number; tokens: number }>>();
   readonly battleRevisions = new Map<number, number>();
   readonly controller = new AbortController();
   readonly runDir: string;
@@ -257,6 +258,7 @@ function snapshotBattle(
   players: Record<Pid, string> | undefined,
   log: BattleLog,
   decisions: DecisionView[] = [],
+  spend?: Record<Pid, { ms: number; tokens: number }>,
 ): BattleSnapshot {
   const side = (pid: Pid) => ({
     player: players?.[pid] ?? pid,
@@ -268,14 +270,24 @@ function snapshotBattle(
     if (!timer) return null;
     const drained = timer.running ? (Date.now() - timer.at) / 1000 : 0;
     const remaining = (value: number | null) => (value === null ? null : Math.max(0, Math.round(value - drained)));
-    return { seconds: remaining(timer.seconds), turnSeconds: remaining(timer.turnSeconds), running: timer.running };
+    return {
+      seconds: remaining(timer.seconds),
+      turnSeconds: remaining(timer.turnSeconds),
+      elapsedSeconds: timer.running ? Math.max(0, Math.floor(drained)) : null,
+      running: timer.running,
+    };
   };
+  const spendView = (pid: Pid) => ({
+    seconds: Math.round((spend?.[pid]?.ms ?? 0) / 1000),
+    tokens: spend?.[pid]?.tokens ?? 0,
+  });
   return {
     turn: battle.turn,
     weather: battle.weatherLabel(),
     fields: battle.fieldLabels(),
     sides: { p1: side('p1'), p2: side('p2') },
     timers: { p1: timerView('p1'), p2: timerView('p2') },
+    spend: { p1: spendView('p1'), p2: spendView('p2') },
     log: log.entries,
     decisions,
   };
@@ -853,7 +865,13 @@ export class GuiServer {
       game: shown,
       games: [...games.keys()].sort((a, b) => a - b),
       revision: this.run?.battleRevisions.get(index) ?? 0,
-      snapshot: snapshotBattle(entry.state, this.run?.rows[index]?.players, entry.log, decisions),
+      snapshot: snapshotBattle(
+        entry.state,
+        this.run?.rows[index]?.players,
+        entry.log,
+        decisions,
+        this.run?.spend.get(index),
+      ),
     };
   }
 
@@ -1389,6 +1407,20 @@ export class GuiServer {
           row.fallback === true && row.action !== 'abandoned'
             ? 'The model returned no usable decision; a legal fallback was selected.'
             : classifyProviderFailure(rawError, run.rows[event.index]!.players[event.pid]).summary;
+      }
+      if (row.kind === 'decision' || row.kind === 'game_reflection') {
+        const totals = run.spend.get(event.index) ?? { p1: { ms: 0, tokens: 0 }, p2: { ms: 0, tokens: 0 } };
+        if (row.kind === 'decision') totals[event.pid].ms += Number(row.latency_ms) || 0;
+        totals[event.pid].tokens += Number(row.total_tokens) || 0;
+        run.spend.set(event.index, totals);
+        if (row.kind === 'game_reflection') {
+          run.battleRevisions.set(event.index, (run.battleRevisions.get(event.index) ?? 0) + 1);
+          this.queue(
+            `battle:${event.index}`,
+            () => ({ type: 'battle', ...this.battleBody(event.index) }),
+            () => ({ type: 'battle', ...this.battleBody(event.index, true) }),
+          );
+        }
       }
       if (row.kind === 'decision') {
         const list = run.decisions.get(event.index) ?? [];

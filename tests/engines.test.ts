@@ -518,48 +518,52 @@ test('transient API errors retry before falling back', async () => {
   assert.equal(persistentProvider.calls.length, 3);
 });
 
-test('two capped tool batches resolve before the final choice', async () => {
+test('untimed tool batches allow wide verification across four rounds', async () => {
+  const batch = (ids: number[], name: string) => ({
+    text: '',
+    usage: { input_tokens: 1 },
+    toolCalls: ids.map((id) => ({ id: String(id), name: 'lookup_move', arguments: { name } })),
+  });
   const provider = new ScriptedProvider([
-    {
-      text: '',
-      usage: { input_tokens: 1 },
-      toolCalls: [
-        { id: '1', name: 'lookup_move', arguments: { name: 'Earthquake' } },
-        { id: '2', name: 'lookup_move', arguments: { name: 'Protect' } },
-        { id: '3', name: 'lookup_move', arguments: { name: 'Tailwind' } },
-      ],
-    },
-    {
-      text: '',
-      usage: { input_tokens: 1 },
-      toolCalls: [
-        { id: '4', name: 'lookup_species', arguments: { name: 'Garchomp' } },
-        { id: '5', name: 'lookup_species', arguments: { name: 'Dragonite' } },
-        { id: '6', name: 'lookup_species', arguments: { name: 'Gholdengo' } },
-      ],
-    },
+    batch([1, 2, 3], 'Earthquake'),
+    batch([4, 5, 6, 7, 8], 'Protect'),
+    batch([9], 'Tailwind'),
+    batch([10], 'Surf'),
     { text: decision([1], 'spread', 'spread'), usage: { output_tokens: 1 }, toolCalls: [] },
   ]);
   const traces: Record<string, unknown>[] = [];
   const engine = new LLMEngine('p1', 'scripted', { provider, decisionLog: [], traceLog: traces });
   assert.equal(await engine.act(request(), { povLines: [] }), 'move 2');
-  assert.equal(provider.calls.length, 3);
+  assert.equal(provider.calls.length, 5);
   assert.equal(provider.calls[0]!.options.maxTokens, 32_768);
-  assert.equal(provider.calls[0]!.options.toolChoice, 'auto');
-  assert.equal(provider.calls[1]!.options.toolChoice, 'auto');
-  assert.equal(provider.calls[2]!.options.toolChoice, 'none');
-  const replayedCalls = provider.calls[2]!.messages.filter((message) => message.role === 'assistant').flatMap(
-    (message) => message.toolCalls ?? [],
-  );
-  assert.deepEqual(
-    replayedCalls.map((call) => call.name),
-    ['lookup_move', 'lookup_move', 'lookup_species', 'lookup_species'],
-  );
-  assert.doesNotMatch(JSON.stringify(provider.calls[2]!.messages), /Tailwind|Gholdengo/);
+  for (const call of provider.calls.slice(0, 4)) assert.equal(call.options.toolChoice, 'auto');
+  assert.equal(provider.calls[4]!.options.toolChoice, 'none', 'round budget exhausted forces the final answer');
   const toolTrace = traces[0]!.tool_calls as Array<Record<string, unknown>>;
-  assert.equal(toolTrace.length, 4);
-  assert.match(String(toolTrace[0]!.result), /BP 100/);
-  assert.match(String(toolTrace[2]!.result), /Garchomp/);
+  assert.equal(toolTrace.length, 9, 'the untimed cap keeps four standard calls of the five-call batch');
+  assert.equal(traces[0]!.tool_rounds, 4);
+});
+
+test('timed tool batches stay capped at two rounds of two calls', async () => {
+  const batch = (ids: number[]) => ({
+    text: '',
+    usage: { input_tokens: 1 },
+    toolCalls: ids.map((id) => ({ id: String(id), name: 'lookup_move', arguments: { name: 'Earthquake' } })),
+  });
+  const provider = new ScriptedProvider([
+    batch([1, 2, 3]),
+    batch([4, 5, 6]),
+    { text: decision([1], 'spread', 'spread'), usage: { output_tokens: 1 }, toolCalls: [] },
+  ]);
+  const traces: Record<string, unknown>[] = [];
+  const engine = new LLMEngine('p1', 'scripted', { provider, decisionLog: [], traceLog: traces });
+  assert.equal(
+    await engine.act({ ...request(), timer: { seconds: 400, turnSeconds: 40 } }, { povLines: [] }),
+    'move 2',
+  );
+  assert.equal(provider.calls.length, 3);
+  assert.equal(provider.calls[2]!.options.toolChoice, 'none');
+  const toolTrace = traces[0]!.tool_calls as Array<Record<string, unknown>>;
+  assert.equal(toolTrace.length, 4, 'two rounds of two standard calls under the clock');
 });
 
 test('one action-order call may accompany two standard calls in the single tool round', async () => {

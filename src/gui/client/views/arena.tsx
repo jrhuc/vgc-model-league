@@ -11,6 +11,7 @@ import type {
   SeriesRowView,
   SideTimerView,
   SideView,
+  SpendView,
 } from '../../api';
 import { api } from '../http';
 
@@ -22,6 +23,7 @@ interface ArenaProps {
   selected: number | null;
   onSelect: (index: number) => void;
   onLoadGame: (index: number, game: number) => Promise<BattleMessage>;
+  onFetchBattle: (index: number) => void;
   onGoFixtures: () => void;
 }
 
@@ -256,15 +258,36 @@ function Mon({ mon }: { mon: MonView }) {
 
 function clockText(total: number): string {
   const clamped = Math.max(0, Math.floor(total));
+  if (clamped >= 3600) {
+    const minutes = Math.floor((clamped % 3600) / 60);
+    return `${Math.floor(clamped / 3600)}:${String(minutes).padStart(2, '0')}:${String(clamped % 60).padStart(2, '0')}`;
+  }
   return `${Math.floor(clamped / 60)}:${String(clamped % 60).padStart(2, '0')}`;
+}
+
+function tokenText(count: number): string {
+  if (count < 1000) return String(count);
+  if (count < 1_000_000) return `${(count / 1000).toFixed(count < 10_000 ? 1 : 0)}k`;
+  return `${(count / 1_000_000).toFixed(2)}M`;
 }
 
 function timerInfo(
   timer: SideTimerView | null | undefined,
+  spend: SpendView | undefined,
   receivedAt: number,
 ): { text: string; urgent: boolean; running: boolean } | null {
-  if (!timer || timer.seconds === null) return null;
-  const drained = timer.running ? Math.max(0, (Date.now() - receivedAt) / 1000) : 0;
+  const drained = timer?.running ? Math.max(0, (Date.now() - receivedAt) / 1000) : 0;
+  if (!timer || timer.seconds === null) {
+    const thinking = timer?.running && typeof timer.elapsedSeconds === 'number' ? timer.elapsedSeconds + drained : null;
+    const total = (spend?.seconds ?? 0) + (thinking ?? 0);
+    if (thinking === null && !total && !spend?.tokens) return null;
+    const parts = [
+      ...(thinking === null ? [] : [`Thinking ${clockText(thinking)}`]),
+      `Total ${clockText(total)}`,
+      ...(spend?.tokens ? [`${tokenText(spend.tokens)} tokens`] : []),
+    ];
+    return { text: parts.join(' · '), urgent: false, running: timer?.running ?? false };
+  }
   const seconds = Math.max(0, timer.seconds - drained);
   const turnSeconds = timer.turnSeconds === null ? null : Math.max(0, timer.turnSeconds - drained);
   const move = turnSeconds === null ? '' : `Move ${clockText(turnSeconds)} · `;
@@ -285,6 +308,7 @@ function Side({
   side,
   right,
   timer,
+  spend,
   receivedAt,
   warning,
 }: {
@@ -292,10 +316,11 @@ function Side({
   side: SideView;
   right: boolean;
   timer: SideTimerView | null | undefined;
+  spend: SpendView | undefined;
   receivedAt: number;
   warning: string;
 }) {
-  const clock = timerInfo(timer, receivedAt);
+  const clock = timerInfo(timer, spend, receivedAt);
   const mons = [...side.mons].sort((a, b) => monRank(a) - monRank(b));
   return (
     <div class={`side ${right ? 'right' : ''}`}>
@@ -531,7 +556,7 @@ function TurnLog({
   );
 }
 
-export function ArenaView({ run, battles, selected, onSelect, onLoadGame, onGoFixtures }: ArenaProps) {
+export function ArenaView({ run, battles, selected, onSelect, onLoadGame, onFetchBattle, onGoFixtures }: ArenaProps) {
   const [stopError, setStopError] = useState('');
   const [stopping, setStopping] = useState(false);
   const [pastGame, setPastGame] = useState<StoredBattle | null>(null);
@@ -544,6 +569,20 @@ export function ArenaView({ run, battles, selected, onSelect, onLoadGame, onGoFi
   useEffect(() => {
     setPastGame(null);
   }, [selected, run?.runId]);
+
+  useEffect(() => {
+    if (!run) return;
+    const liveIndex = run.rows.findIndex((row) => row.status === 'running');
+    const shown =
+      selected !== null && selected < run.rows.length
+        ? selected
+        : liveIndex >= 0
+          ? liveIndex
+          : run.rows.length
+            ? 0
+            : null;
+    if (shown !== null && !battles[shown]) onFetchBattle(shown);
+  }, [run, selected, battles]);
 
   if (!run) {
     return (
@@ -742,6 +781,7 @@ export function ArenaView({ run, battles, selected, onSelect, onLoadGame, onGoFi
                   side={shown.snapshot.sides.p1}
                   right={false}
                   timer={shown.snapshot.timers?.p1}
+                  spend={shown.snapshot.spend?.p1}
                   receivedAt={shown.receivedAt}
                   warning={latestFallback(shown.snapshot.decisions, 'p1')}
                 />
@@ -751,6 +791,7 @@ export function ArenaView({ run, battles, selected, onSelect, onLoadGame, onGoFi
                   side={shown.snapshot.sides.p2}
                   right={true}
                   timer={shown.snapshot.timers?.p2}
+                  spend={shown.snapshot.spend?.p2}
                   receivedAt={shown.receivedAt}
                   warning={latestFallback(shown.snapshot.decisions, 'p2')}
                 />

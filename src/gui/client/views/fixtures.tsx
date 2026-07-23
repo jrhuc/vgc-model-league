@@ -1126,7 +1126,7 @@ export function FixturesView({ app, run, onStarted, onPools }: FixturesProps) {
                   />
                 </div>
               )}
-              <div class="reasoning-settings wide">
+              <div class="setting-stack wide">
                 <div class="reasoning-heading">
                   <span class="field-label">Reasoning assignment</span>
                   <fieldset class="reasoning-mode">
@@ -1191,7 +1191,7 @@ export function FixturesView({ app, run, onStarted, onPools }: FixturesProps) {
                   <p class="reasoning-help">Random baselines do not use reasoning controls.</p>
                 )}
               </div>
-              <div class="wide">
+              <div class="setting-stack wide">
                 <Dropdown
                   id="timer-scale"
                   label="Battle timer"

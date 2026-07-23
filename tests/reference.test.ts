@@ -55,7 +55,7 @@ test('active matchup chart resolves Weather Ball under the live weather', () => 
   const attackers = [{ species: 'Politoed', moves: ['Weather Ball'], ally: true }];
   const defenders = [{ species: 'Incineroar', moves: [], ally: false }];
   const clear = reference.renderActiveMatchups(attackers, defenders).join('\n');
-  assert.equal(clear, '');
+  assert.equal(clear, '- Damaging matchups not listed above are neutral (1x).');
   const rain = reference.renderActiveMatchups(attackers, defenders, 'RainDance').join('\n');
   assert.match(rain, /Weather Ball \(currently Water in RainDance\): Incineroar super-effective \(2x\)/);
   const sun = reference.renderActiveMatchups(attackers, defenders, 'SunnyDay').join('\n');
@@ -149,6 +149,48 @@ test('matchup and damage tools stay within open information', () => {
   assert.doesNotMatch(damage, /exact foe|hidden (iv|ev)s?/i);
   assert.ok(DEX_TOOLS.some((tool) => tool.name === 'lookup_matchup'));
   assert.ok(DEX_TOOLS.some((tool) => tool.name === 'estimate_damage'));
+});
+
+test('effectiveness shows the per-type factors behind the combined multiplier', () => {
+  const reference = new ShowdownReference('gen9championsvgc2026regmb');
+  assert.match(
+    reference.lookup('lookup_matchup', { move: 'High Horsepower', defender: 'Venusaur' }),
+    /neutral \(1x\) = Ground vs Grass 0\.5x × vs Poison 2x/,
+  );
+  assert.match(
+    reference.lookup('lookup_matchup', { move: 'Close Combat', defender: 'Tinkaton' }),
+    /neutral \(1x\) = Fighting vs Fairy 0\.5x × vs Steel 2x/,
+  );
+  assert.match(
+    reference.lookup('estimate_damage', { attacker: 'Swampert', defender: 'Venusaur', move: 'High Horsepower' }),
+    /neutral \(1x\) = Ground vs Grass 0\.5x × vs Poison 2x/,
+  );
+  assert.match(
+    reference.lookup('estimate_damage', { attacker: 'Swampert', defender: 'Pelipper', move: 'Earthquake' }),
+    /immune \(0x\) = Ground vs Water 1x × vs Flying 0x; 0% damage/,
+  );
+});
+
+test('exact defender stats collapse the open-sheet range', () => {
+  const reference = new ShowdownReference('gen9championsvgc2026regmb');
+  const args = {
+    attacker: 'Gengar',
+    defender: 'Farigiraf',
+    move: 'Sludge Bomb',
+    attacker_stats: { atk: 90, def: 80, spa: 182, spd: 95, spe: 178 },
+  };
+  const open = reference.lookup('estimate_damage', args);
+  assert.match(open, /attack exact from request, open-sheet defense\/HP range/);
+  const exact = reference.lookup('estimate_damage', {
+    ...args,
+    defender_stats: { hp: 217, def: 121, spd: 141 },
+  });
+  assert.match(exact, /attack exact from request, defense\/HP exact from request/);
+  const spread = (text: string) => {
+    const match = text.match(/: ([\d.]+)-([\d.]+)% of maximum HP/)!;
+    return Number(match[2]) - Number(match[1]);
+  };
+  assert.ok(spread(exact) < spread(open), 'exact stats must narrow the damage range');
 });
 
 test('defender items model Assault Vest and Eviolite and disclose everything else', () => {

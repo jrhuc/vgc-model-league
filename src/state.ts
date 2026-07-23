@@ -272,6 +272,8 @@ export class BattleState {
     else if (kind === '-vgctimer' && (args[0] === 'p1' || args[0] === 'p2')) {
       const parse = (value: string | undefined) => (value && Number.isFinite(Number(value)) ? Number(value) : null);
       this.timers[args[0]] = { seconds: parse(args[1]), turnSeconds: parse(args[2]), at: Date.now(), running: true };
+    } else if (kind === '-vgcdeciding' && (args[0] === 'p1' || args[0] === 'p2')) {
+      this.timers[args[0]] = { seconds: null, turnSeconds: null, at: Date.now(), running: true };
     } else if ((kind === '-vgctimerstop' || kind === '-vgctimeout') && (args[0] === 'p1' || args[0] === 'p2')) {
       this.stopTimer(args[0]);
     } else if (kind === 'win' || kind === 'tie') {

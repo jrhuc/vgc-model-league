@@ -57,7 +57,7 @@ export const DEX_TOOLS: ToolDefinition[] = [
   ),
   tool(
     'estimate_damage',
-    'Estimate Gen 9 level-50 damage in doubles as a percentage range from base stats, STAB, type chart, weather, common items, and spread reduction. Ignores abilities, boosts, burn, screens, and terrain. Own exact battle stats may be supplied; opposing stats use legal IV/EV ranges from the open team sheet nature only. Never invent hidden IVs/EVs or raw HP.',
+    "Estimate Gen 9 level-50 damage in doubles as a percentage range from base stats, STAB, type chart, weather, common items, and spread reduction. Ignores abilities, boosts, burn, screens, and terrain. Supply your own Pokémon's exact battle stats on whichever side is yours to narrow the range; opposing stats use legal IV/EV ranges from the open team sheet nature only. Never invent hidden IVs/EVs or raw HP.",
     {
       attacker: { type: 'string' },
       defender: { type: 'string' },
@@ -66,6 +66,20 @@ export const DEX_TOOLS: ToolDefinition[] = [
         type: 'object',
         description: 'Optional exact positive attacker stats from your request (atk/def/spa/spd/spe).',
         properties: {
+          atk: { type: 'number', exclusiveMinimum: 0 },
+          def: { type: 'number', exclusiveMinimum: 0 },
+          spa: { type: 'number', exclusiveMinimum: 0 },
+          spd: { type: 'number', exclusiveMinimum: 0 },
+          spe: { type: 'number', exclusiveMinimum: 0 },
+        },
+        additionalProperties: false,
+      },
+      defender_stats: {
+        type: 'object',
+        description:
+          'Optional exact positive defender stats when the defender is your own Pokémon (hp/atk/def/spa/spd/spe).',
+        properties: {
+          hp: { type: 'number', exclusiveMinimum: 0 },
           atk: { type: 'number', exclusiveMinimum: 0 },
           def: { type: 'number', exclusiveMinimum: 0 },
           spa: { type: 'number', exclusiveMinimum: 0 },
@@ -208,6 +222,21 @@ function effectivenessLabel(mod: number): string {
   return `${mod}x`;
 }
 
+// The per-type factors let a model with a wrong internal chart see exactly which pairing it misremembers
+// instead of dismissing the combined multiplier as a tool bug.
+function effectivenessDetail(
+  dex: {
+    getImmunity: (source: string, target: string[]) => boolean;
+    getEffectiveness: (source: string, target: string[]) => number;
+  },
+  attackType: string,
+  defenderTypes: string[],
+): string {
+  const mod = typeModifier(dex, attackType, defenderTypes);
+  const parts = defenderTypes.map((type) => `vs ${type} ${typeModifier(dex, attackType, [type])}x`);
+  return `${effectivenessLabel(mod)} = ${attackType} ${parts.join(' × ')}`;
+}
+
 function typeModifier(
   dex: {
     getImmunity: (source: string, target: string[]) => boolean;
@@ -343,6 +372,7 @@ export class ShowdownReference {
       statRange,
       hpRange,
       effectivenessLabel,
+      effectivenessDetail,
       typeModifier,
       asFinite,
       weatherBallOverride,
@@ -479,6 +509,7 @@ export class ShowdownReference {
 
   renderActiveMatchups(attackers: MatchupMon[], defenders: MatchupMon[], weather = ''): string[] {
     const lines: string[] = [];
+    let examined = false;
     const weatherId = canonicalWeather(weather);
     for (const attacker of attackers) {
       const species = this.dex.species.get(attacker.species);
@@ -499,12 +530,14 @@ export class ShowdownReference {
           if (attacker.ally !== undefined && defender.ally !== undefined && attacker.ally === defender.ally) continue;
           const target = this.dex.species.get(defender.species);
           if (!target.exists) continue;
+          examined = true;
           const mod = typeModifier(this.dex, moveType, target.types);
           if (mod !== 1) bits.push(`${target.name} ${effectivenessLabel(mod)}`);
         }
         if (bits.length) lines.push(`- ${species.name} ${move.name} (${typeLabel}): ${bits.join('; ')}`);
       }
     }
+    if (examined) lines.push('- Damaging matchups not listed above are neutral (1x).');
     return lines;
   }
 
@@ -660,9 +693,8 @@ export class ShowdownReference {
     if (!attackType.trim()) return 'Provide move or attacker_type.';
     const type = this.dex.types.get(attackType);
     if (!type.exists) return `No type data for ${JSON.stringify(attackType)}.`;
-    const mod = typeModifier(this.dex, type.name, defender.types);
     const source = moveName ? `${moveName} (${type.name})` : type.name;
-    return `${source} into ${defender.name} (${defender.types.join('/')}): ${effectivenessLabel(mod)}.`;
+    return `${source} into ${defender.name} (${defender.types.join('/')}): ${effectivenessDetail(this.dex, type.name, defender.types)}.`;
   }
 
   private estimateDamage(args: Record<string, unknown>): string {
@@ -700,14 +732,19 @@ export class ShowdownReference {
       if (id(defenderItem.name) === 'assaultvest' && move.category === 'Special') defenderItemMod = 1.5;
       else if (id(defenderItem.name) === 'eviolite' && defender.nfe) defenderItemMod = 1.5;
     }
-    let [defLow, defHigh] = statRange(
-      defender.baseStats[defenseStat],
-      defenderNature?.exists ? defenderNature : undefined,
-      defenseStat,
-    );
+    const exactDefender =
+      args.defender_stats && typeof args.defender_stats === 'object' ? args.defender_stats : undefined;
+    const suppliedDefense = exactDefender && asFinite((exactDefender as Record<string, unknown>)[defenseStat]);
+    const exactDefense = suppliedDefense !== undefined && suppliedDefense > 0 ? suppliedDefense : undefined;
+    const suppliedHp = exactDefender && asFinite((exactDefender as Record<string, unknown>).hp);
+    const exactHp = suppliedHp !== undefined && suppliedHp > 0 ? suppliedHp : undefined;
+    let [defLow, defHigh] =
+      exactDefense !== undefined
+        ? [exactDefense, exactDefense]
+        : statRange(defender.baseStats[defenseStat], defenderNature?.exists ? defenderNature : undefined, defenseStat);
     defLow = Math.floor(defLow * defenderItemMod);
     defHigh = Math.floor(defHigh * defenderItemMod);
-    const [hpLow, hpHigh] = hpRange(defender.baseStats.hp);
+    const [hpLow, hpHigh] = exactHp !== undefined ? [exactHp, exactHp] : hpRange(defender.baseStats.hp);
     const suppliedHpPercent = asFinite(args.defender_hp_percent);
     const hpPercent = suppliedHpPercent === undefined ? undefined : Math.max(0, Math.min(100, suppliedHpPercent));
 
@@ -726,7 +763,8 @@ export class ShowdownReference {
     }
 
     const typeMod = typeModifier(this.dex, moveType, defender.types);
-    if (typeMod === 0) return `${attacker.name} ${move.name} into ${defender.name}: immune; 0% damage. Cannot KO.`;
+    if (typeMod === 0)
+      return `${attacker.name} ${move.name} into ${defender.name}: ${effectivenessDetail(this.dex, moveType, defender.types)}; 0% damage. Cannot KO.`;
 
     if (weather === 'desolateland' && moveType === 'Water')
       return `${attacker.name} ${move.name} into ${defender.name}: fails in Desolate Land; 0% damage. Cannot KO.`;
@@ -785,7 +823,15 @@ export class ShowdownReference {
             : `Cannot ${fullHealth ? 'OHKO' : `KO from the shown ${Math.round(targetPercent)}%`} in this estimate.`;
     const shownHp = hpPercent === undefined ? '' : ` Target HP shown: ${Math.round(hpPercent)}%.`;
     const attackBasis = exactAttack !== undefined ? 'attack exact from request' : 'legal attack range';
-    return `${attacker.name} ${move.name} (${moveType} ${move.category} BP ${power}) into ${defender.name}: ${minimumPercent}-${maximumPercent}% of maximum HP.${shownHp} ${outcome} ${effectivenessLabel(typeMod)}; modifiers STAB ${stab}x, weather ${weatherMod}x, item ${itemMod}x, defender item ${defenderItemMod}x, spread ${spreadMod}x; ${attackBasis}, open-sheet defense/HP range. Omits abilities, boosts, burn, screens, terrain, and defensive items other than Assault Vest/Eviolite.`;
+    const defenseBasis =
+      exactDefense !== undefined && exactHp !== undefined
+        ? 'defense/HP exact from request'
+        : exactDefense !== undefined
+          ? 'defense exact from request, open-sheet HP range'
+          : exactHp !== undefined
+            ? 'HP exact from request, open-sheet defense range'
+            : 'open-sheet defense/HP range';
+    return `${attacker.name} ${move.name} (${moveType} ${move.category} BP ${power}) into ${defender.name}: ${minimumPercent}-${maximumPercent}% of maximum HP.${shownHp} ${outcome} ${effectivenessDetail(this.dex, moveType, defender.types)}; modifiers STAB ${stab}x, weather ${weatherMod}x, item ${itemMod}x, defender item ${defenderItemMod}x, spread ${spreadMod}x; ${attackBasis}, ${defenseBasis}. Omits abilities, boosts, burn, screens, terrain, and defensive items other than Assault Vest/Eviolite.`;
   }
 
   private lookupOne(kind: string, name: string, query: ReferenceQuery, prefix = `- ${kind} `): string {

@@ -179,6 +179,9 @@ export class SimBattle {
       if (currentRequest.timer) {
         const line = `|-vgctimer|${pid}|${currentRequest.timer.seconds ?? ''}|${currentRequest.timer.turnSeconds ?? ''}`;
         onUpdate?.([line], [line]);
+      } else {
+        const line = `|-vgcdeciding|${pid}`;
+        onUpdate?.([line], [line]);
       }
       const lines = state.pov[pid].slice(povCursor[pid]);
       povCursor[pid] = state.pov[pid].length;

@@ -125,8 +125,7 @@ export function App() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  const selectBattle = (index: number) => {
-    setSelected(index);
+  const fetchBattle = (index: number) => {
     api<BattleMessage>(`${contribute ? '/api/battle' : '/api/battle/public'}?index=${index}`)
       .then((data) => {
         setBattles((previous) => {
@@ -135,6 +134,11 @@ export function App() {
         });
       })
       .catch(() => {});
+  };
+
+  const selectBattle = (index: number) => {
+    setSelected(index);
+    fetchBattle(index);
   };
 
   const loadGame = (index: number, game: number) =>
@@ -244,6 +248,7 @@ export function App() {
             selected={selected}
             onSelect={selectBattle}
             onLoadGame={loadGame}
+            onFetchBattle={fetchBattle}
             onGoFixtures={() => navigate('fixtures')}
           />
         </section>
