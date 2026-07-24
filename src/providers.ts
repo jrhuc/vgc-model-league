@@ -16,6 +16,7 @@ import {
   tool,
 } from 'ai';
 
+import { CliProvider } from './cli-provider.js';
 import { PROVIDER_OPTIONS, providerOption } from './provider-registry.js';
 import { redactSecrets } from './sanitize.js';
 import type { CompleteOptions, Completion, JsonObject, Provider, ProviderFailure, ProviderMessage } from './types.js';
@@ -61,7 +62,7 @@ export function validateModelExecution(
 }
 
 const USAGE =
-  'Usage: anthropic:<model>, openai:<model>, google:<model>, xai:<model>, deepseek:<model>, meta:<model>, kimi:<model>, zai:<model>, openrouter:<model>, opencode-go:<model>, opencode-zen:<model>, vercel:<model>, cerebras:<model>, compat:<base_url>:<model>, or random';
+  'Usage: anthropic:<model>, openai:<model>, google:<model>, xai:<model>, deepseek:<model>, meta:<model>, kimi:<model>, zai:<model>, openrouter:<model>, opencode-go:<model>, opencode-zen:<model>, vercel:<model>, cerebras:<model>, compat:<base_url>:<model>, omp:<cli-model>, claude-cli:<model>, or random';
 export interface ProviderSpec {
   provider: string;
   model: string;
@@ -70,6 +71,8 @@ export interface ProviderSpec {
 
 export function parseSpec(value: string): ProviderSpec {
   if (value === 'random') return { provider: 'random', model: 'random' };
+  if (value.startsWith('omp:') && value.length > 4) return { provider: 'omp', model: value.slice(4) };
+  if (value.startsWith('claude-cli:') && value.length > 11) return { provider: 'claude-cli', model: value.slice(11) };
   for (const option of PROVIDER_OPTIONS) {
     const provider = option.id;
     if (provider === 'random' || provider === 'compat') continue;
@@ -95,6 +98,8 @@ export function parseSpec(value: string): ProviderSpec {
 
 export function reasoningLevels(spec: ProviderSpec): ReasoningLevel[] {
   const model = spec.model.toLowerCase();
+  if (spec.provider === 'omp') return [...REASONING_LEVELS];
+  if (spec.provider === 'claude-cli') return [];
   if (spec.provider === 'meta' && model.includes('muse-spark'))
     return ['off', 'minimal', 'low', 'medium', 'high', 'xhigh'];
   if (spec.provider === 'anthropic') {
@@ -223,6 +228,14 @@ export function classifyProviderFailure(error: unknown, spec = 'provider'): Prov
       } as Record<string, string>
     )[provider] ?? provider.charAt(0).toUpperCase() + provider.slice(1);
   const suffix = status ? ` (${status})` : '';
+  if (/Connect error (?:unauthenticated|unavailable|resource[_ -]?exhausted|internal|aborted|deadline[_ -]?exceeded)/i.test(message)) {
+    return {
+      kind: 'upstream',
+      summary: `${label} transport failed transiently.`,
+      terminal: false,
+      pausable: true,
+    };
+  }
   if (/Upstream request failed|Inference is temporarily unavailable/i.test(message)) {
     return {
       kind: 'upstream',
@@ -532,6 +545,8 @@ export function makeProvider(
 ): Provider {
   validateReasoning(spec, options.reasoning);
   if (spec.provider === 'random') throw new Error('random provider is handled separately');
+  if (spec.provider === 'omp' || spec.provider === 'claude-cli')
+    return new CliProvider(spec.provider, spec.model, options.reasoning);
   if (spec.provider === 'compat' && !spec.baseUrl) throw new Error('compat provider requires base_url');
   if (!providerOption(spec.provider)) throw new Error(USAGE);
   return new SdkProvider(spec, options);
