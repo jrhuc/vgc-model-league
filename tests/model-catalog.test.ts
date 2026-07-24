@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { discoverModels, PROVIDER_OPTIONS, providerOption } from '../src/model-catalog.js';
+import { discoverModels } from '../src/model-catalog.js';
+import { PROVIDER_OPTIONS, providerOption } from '../src/provider-registry.js';
 
 function jsonResponse(body: unknown, init?: ResponseInit): Response {
   return new Response(JSON.stringify(body), {

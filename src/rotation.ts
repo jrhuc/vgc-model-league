@@ -1,22 +1,20 @@
-import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { scaffoldRevision } from './engines.js';
-import { defaultPsDir, RESULTS_PATH, RUNS_DIR } from './paths.js';
-import type { ModelReasoningConfig } from './providers.js';
+import { scaffoldRevision } from './llm-engine.js';
+import { defaultPsDir, RESULTS_PATH } from './paths.js';
 import { validateModelExecution } from './providers.js';
 import type { Rng } from './random.js';
 import { resolveSeed, seededRng, seriesEntropy } from './random.js';
 import type { SeriesRecord } from './records.js';
 import { appendRow } from './records.js';
-import type { RecoveryGate } from './recovery.js';
-import { playRecordedSeries } from './series.js';
+import type { ExperimentOptions } from './series.js';
+import { mapLimit, playRecordedSeries } from './series.js';
 import { showdownCommit } from './showdown.js';
 import type { Team } from './teams.js';
 import { loadPool, validatePool } from './teams.js';
 import { DEFAULT_TIMER_SCALE } from './timer.js';
-import type { ContributorAttribution, ExperimentMode, JsonObject, Pid, TimerScale } from './types.js';
+import type { ExperimentMode, JsonObject, Pid } from './types.js';
 export const ROTATION_PROTOCOL_VERSION = 1;
 
 interface SeriesPlan {
@@ -42,26 +40,10 @@ export type RotationEvent =
   | { type: 'decision'; index: number; pid: Pid; row: JsonObject }
   | { type: 'series-end'; index: number; record: SeriesRecord };
 
-export interface RotationOptions extends ModelReasoningConfig {
-  seed?: number;
-  concurrency?: number;
-  timerScale?: TimerScale;
-  recordsPath?: string;
-  psDir?: string;
-  apiKeys?: Readonly<Record<string, string>>;
+export interface RotationOptions extends ExperimentOptions {
   pool?: string;
   onEvent?: (event: RotationEvent) => void;
   onNotice?: (message: string) => void;
-  signal?: AbortSignal;
-  contributor?: ContributorAttribution;
-  recovery?: RecoveryGate;
-}
-
-export function makeRunDirectory(base: string = RUNS_DIR): string {
-  const stamp = new Date().toISOString().replaceAll('-', '').replaceAll(':', '').replace('Z', '000Z');
-  const directory = path.join(base, `${stamp}-${randomUUID().slice(0, 8)}`);
-  fs.mkdirSync(directory, { recursive: true });
-  return directory;
 }
 
 export async function runRotation(
@@ -157,44 +139,6 @@ export async function runRotation(
     options.onEvent?.({ type: 'series-end', index: plan.index, record: row });
     return row;
   });
-}
-
-/**
- * The first failure aborts the shared signal so queued series never start and in-flight
- * series stop consuming provider credits; the failure is rethrown only after every worker
- * has settled. An external abort still resolves with the completed results.
- */
-export async function mapLimit<T, R>(
-  items: T[],
-  limit: number,
-  signal: AbortSignal | undefined,
-  task: (item: T, signal: AbortSignal) => Promise<R>,
-): Promise<R[]> {
-  const results = new Array<R | undefined>(items.length);
-  const controller = new AbortController();
-  const forward = () => controller.abort();
-  if (signal?.aborted) controller.abort();
-  else signal?.addEventListener('abort', forward, { once: true });
-  let failure: { error: unknown } | undefined;
-  let next = 0;
-  const workers = Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, async () => {
-    while (next < items.length && !controller.signal.aborted) {
-      const index = next++;
-      try {
-        results[index] = await task(items[index]!, controller.signal);
-      } catch (error) {
-        if (!controller.signal.aborted) {
-          failure ??= { error };
-          controller.abort();
-        }
-        return;
-      }
-    }
-  });
-  await Promise.all(workers);
-  signal?.removeEventListener('abort', forward);
-  if (failure && !signal?.aborted) throw failure.error;
-  return results.filter((result): result is R => result !== undefined);
 }
 
 export function makePlans(models: string[], seriesPerPair: number, teams: Team[], random: Rng): SeriesPlan[] {

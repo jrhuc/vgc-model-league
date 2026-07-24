@@ -4,16 +4,31 @@ import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { AuthService } from './auth.js';
 import { GuiServer } from './gui/server.js';
-import { AUTH_DB_PATH, prepareDataDirectories, RESULTS_PATH } from './paths.js';
+import { AUTH_DB_PATH, makeRunDirectory, prepareDataDirectories, RESULTS_PATH } from './paths.js';
 import type { ReasoningLevel } from './providers.js';
 import { REASONING_LEVELS } from './providers.js';
 import type { SeriesRecord } from './records.js';
 import { loadRows, ratingGroups, scopeRows, TEST_POOL } from './records.js';
 import { writeReport } from './report.js';
 import { restartGui, stopGui } from './restart.js';
-import { makeRunDirectory, runRotation } from './rotation.js';
+import { runRotation } from './rotation.js';
 import { parseTimerScale } from './timer.js';
 import type { TimerScale } from './types.js';
+
+const EXPERIMENT_CLI_OPTIONS = {
+  models: { type: 'string', multiple: true },
+  seed: { type: 'string' },
+  concurrency: { type: 'string', default: '2' },
+  reasoning: { type: 'string' },
+  'timer-scale': { type: 'string' },
+} as const;
+
+interface ExperimentCliValues {
+  seed?: string;
+  concurrency: string;
+  reasoning?: string;
+  'timer-scale'?: string;
+}
 
 const HELP = `Usage: vgcleague <command>
 
@@ -69,6 +84,24 @@ function timerScaleOption(value: string | undefined): TimerScale | undefined {
   } catch (error) {
     throw new Error(`--timer-scale ${error instanceof Error ? error.message : String(error)}`);
   }
+}
+
+function experimentModels(command: string, models: string[] | undefined, positionals: string[]): string[] {
+  const selected = [...(models ?? []), ...positionals];
+  if (selected.length < 2) throw new Error(`${command} requires at least two --models`);
+  return selected;
+}
+
+function experimentExecution(values: ExperimentCliValues) {
+  const reasoning = reasoningLevel(values.reasoning);
+  const timerScale = timerScaleOption(values['timer-scale']);
+  const seed = optionalInteger('seed', values.seed);
+  return {
+    recordsPath: RESULTS_PATH,
+    ...(seed === undefined ? {} : { seed }),
+    ...(reasoning === undefined ? {} : { reasoning }),
+    ...(timerScale === undefined ? {} : { timerScale }),
+  };
 }
 
 function environmentInteger(name: string, fallback: number, minimum: number, maximum: number): number {
@@ -174,20 +207,13 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
       args: rest,
       allowPositionals: true,
       options: {
-        models: { type: 'string', multiple: true },
+        ...EXPERIMENT_CLI_OPTIONS,
         'series-per-pair': { type: 'string', default: '2' },
         pool: { type: 'string', default: 'test' },
-        seed: { type: 'string' },
-        concurrency: { type: 'string', default: '2' },
-        reasoning: { type: 'string' },
-        'timer-scale': { type: 'string' },
       },
     });
-    const models = [...(values.models ?? []), ...positionals];
-    if (models.length < 2) throw new Error('rotation requires at least two --models');
-    const reasoning = reasoningLevel(values.reasoning);
-    const timerScale = timerScaleOption(values['timer-scale']);
-    const seed = optionalInteger('seed', values.seed);
+    const models = experimentModels(command, values.models, positionals);
+    const execution = experimentExecution(values);
     const rows = await runRotation(
       models,
       positiveInteger('series-per-pair', values['series-per-pair']),
@@ -195,10 +221,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
       {
         pool: values.pool,
         concurrency: positiveInteger('concurrency', values.concurrency),
-        recordsPath: RESULTS_PATH,
-        ...(seed === undefined ? {} : { seed }),
-        ...(reasoning === undefined ? {} : { reasoning }),
-        ...(timerScale === undefined ? {} : { timerScale }),
+        ...execution,
       },
     );
     printResults(rows);
@@ -209,28 +232,17 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
       args: rest,
       allowPositionals: true,
       options: {
-        models: { type: 'string', multiple: true },
+        ...EXPERIMENT_CLI_OPTIONS,
         pool: { type: 'string', default: 'test' },
-        seed: { type: 'string' },
-        concurrency: { type: 'string', default: '2' },
-        reasoning: { type: 'string' },
-        'timer-scale': { type: 'string' },
       },
     });
-    const models = [...(values.models ?? []), ...positionals];
-    if (models.length < 2) throw new Error('tournament requires at least two --models');
-    const reasoning = reasoningLevel(values.reasoning);
-    const timerScale = timerScaleOption(values['timer-scale']);
-    const seed = optionalInteger('seed', values.seed);
+    const models = experimentModels(command, values.models, positionals);
+    const execution = experimentExecution(values);
     const { runTournament } = await import('./tournament.js');
     const rows = await runTournament(models, makeRunDirectory(), {
       pool: values.pool,
       concurrency: positiveInteger('concurrency', values.concurrency),
-      recordsPath: RESULTS_PATH,
-      ...(seed === undefined ? {} : { seed }),
-      ...(reasoning === undefined ? {} : { reasoning }),
-      ...(timerScale === undefined ? {} : { timerScale }),
-      onNotice: (line) => console.log(line),
+      ...execution,
     });
     printResults(rows);
     const champion = rows[rows.length - 1];
@@ -242,28 +254,18 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
       args: rest,
       allowPositionals: true,
       options: {
-        models: { type: 'string', multiple: true },
+        ...EXPERIMENT_CLI_OPTIONS,
         board: { type: 'string', default: 'regmb-202607' },
-        seed: { type: 'string' },
-        concurrency: { type: 'string', default: '2' },
-        reasoning: { type: 'string' },
-        'timer-scale': { type: 'string' },
       },
     });
-    const models = [...(values.models ?? []), ...positionals];
-    if (models.length < 2) throw new Error('draft requires at least two --models');
-    const reasoning = reasoningLevel(values.reasoning);
-    const timerScale = timerScaleOption(values['timer-scale']);
-    const seed = optionalInteger('seed', values.seed);
+    const models = experimentModels(command, values.models, positionals);
+    const execution = experimentExecution(values);
     const { runDraftLeague } = await import('./draftleague.js');
     const runDir = makeRunDirectory();
     const rows = await runDraftLeague(models, runDir, {
       board: values.board,
       concurrency: positiveInteger('concurrency', values.concurrency),
-      recordsPath: RESULTS_PATH,
-      ...(seed === undefined ? {} : { seed }),
-      ...(reasoning === undefined ? {} : { reasoning }),
-      ...(timerScale === undefined ? {} : { timerScale }),
+      ...execution,
       onEvent: (event) => {
         if (event.type === 'draft' && event.draft.phase === 'draft' && event.draft.picks.length > 0) {
           const pick = event.draft.picks[event.draft.picks.length - 1]!;

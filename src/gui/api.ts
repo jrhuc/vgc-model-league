@@ -22,7 +22,7 @@ export interface PoolInfo {
   teamCount: number;
 }
 
-export interface SessionUserView {
+interface SessionUserView {
   login: string;
   avatarUrl: string;
   role: 'reader' | 'contributor' | 'operator';
@@ -100,12 +100,12 @@ export interface DraftView {
   phase: 'draft' | 'roundrobin' | 'playoffs' | 'done';
 }
 
-export interface BracketEntrantView {
+interface BracketEntrantView {
   model: string;
   team: string;
 }
 
-export interface BracketMatchView {
+interface BracketMatchView {
   /** Index into RunSnapshot.rows; null for byes, which play no series. */
   seriesIndex: number | null;
   /** Entrant indices; null until the feeding match resolves. */
@@ -244,7 +244,7 @@ export interface BattleMessage {
 
 export type ServerEvent = { type: 'run'; run: RunSnapshot | null } | ({ type: 'battle' } & BattleMessage);
 
-export interface StandingView {
+interface StandingView {
   spec: string;
   series: number;
   w: number;
@@ -254,7 +254,7 @@ export interface StandingView {
   elo: number;
 }
 
-export interface SpeedGroupView {
+interface SpeedGroupView {
   scale: number | 'off';
   label: string;
   count: number;

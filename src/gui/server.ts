@@ -11,8 +11,9 @@ import { AuthError } from '../auth.js';
 import { listBoards } from '../draft.js';
 import type { DraftLeagueEvent } from '../draftleague.js';
 import { DRAFT_PROTOCOL_VERSION, runDraftLeague } from '../draftleague.js';
-import { discoverModels, PROVIDER_OPTIONS, providerOption } from '../model-catalog.js';
-import { DATA_DIR, prepareDataDirectories, RESULTS_PATH, TEAMS_DIR } from '../paths.js';
+import { discoverModels } from '../model-catalog.js';
+import { DATA_DIR, makeRunDirectory, prepareDataDirectories, RESULTS_PATH, TEAMS_DIR } from '../paths.js';
+import { PROVIDER_OPTIONS, providerOption } from '../provider-registry.js';
 import type { ModelReasoningConfig, ReasoningLevel } from '../providers.js';
 import {
   classifyProviderFailure,
@@ -24,7 +25,7 @@ import {
 import { loadRows, ratingGroups, scopeRows } from '../records.js';
 import type { RecoveryPause } from '../recovery.js';
 import { RecoveryGate } from '../recovery.js';
-import { makeRunDirectory, ROTATION_PROTOCOL_VERSION, runRotation } from '../rotation.js';
+import { ROTATION_PROTOCOL_VERSION, runRotation } from '../rotation.js';
 import { redactSecrets } from '../sanitize.js';
 import { loadShowdown } from '../showdown.js';
 import type { MonState } from '../state.js';
@@ -1094,6 +1095,23 @@ export class GuiServer {
     this.queueRun();
   }
 
+  private settleRun(run: ActiveRun, failed: boolean, error?: unknown): void {
+    if (run.timedOut) {
+      run.state = 'failed';
+      run.error = TIMEOUT_ERROR;
+    } else if (run.interrupted) {
+      run.state = 'failed';
+      run.error = SHUTDOWN_ERROR;
+    } else if (run.userStopped) {
+      run.state = 'stopped';
+    } else if (failed) {
+      run.state = 'failed';
+      run.error = redactSecrets(error instanceof Error ? error.message : String(error), Object.values(run.apiKeys));
+    } else {
+      run.state = 'done';
+    }
+  }
+
   private async launch(run: ActiveRun): Promise<void> {
     const injected =
       run.config.mode === 'tournament'
@@ -1140,7 +1158,6 @@ export class GuiServer {
           ...(run.config.pool ? { pool: run.config.pool } : {}),
           ...(run.config.teams === undefined ? {} : { teams: run.config.teams }),
           ...(run.config.format === undefined ? {} : { format: run.config.format }),
-          onNotice: (message) => run.notices.push(message),
         });
       } else {
         await (this.options.runner ?? runRotation)(run.config.models, run.config.seriesPerPair, run.runDir, {
@@ -1149,30 +1166,9 @@ export class GuiServer {
           onNotice: (message) => run.notices.push(message),
         });
       }
-      if (run.timedOut) {
-        run.state = 'failed';
-        run.error = TIMEOUT_ERROR;
-      } else if (run.interrupted) {
-        run.state = 'failed';
-        run.error = SHUTDOWN_ERROR;
-      } else if (run.userStopped) {
-        run.state = 'stopped';
-      } else {
-        run.state = 'done';
-      }
+      this.settleRun(run, false);
     } catch (error) {
-      if (run.timedOut) {
-        run.state = 'failed';
-        run.error = TIMEOUT_ERROR;
-      } else if (run.interrupted) {
-        run.state = 'failed';
-        run.error = SHUTDOWN_ERROR;
-      } else if (run.userStopped) {
-        run.state = 'stopped';
-      } else {
-        run.state = 'failed';
-        run.error = redactSecrets(error instanceof Error ? error.message : String(error), Object.values(run.apiKeys));
-      }
+      this.settleRun(run, true, error);
     } finally {
       clearTimeout(run.timeoutTimer);
       clearTimeout(run.stopFallbackTimer);
@@ -1455,11 +1451,7 @@ export class GuiServer {
       const row = run.rows[event.index];
       if (row && row.status === 'running') row.game = event.game;
       run.battleRevisions.set(event.index, (run.battleRevisions.get(event.index) ?? 0) + 1);
-      this.queue(
-        `battle:${event.index}`,
-        () => ({ type: 'battle', ...this.battleBody(event.index) }),
-        () => ({ type: 'battle', ...this.battleBody(event.index, true) }),
-      );
+      this.queueBattle(event.index);
     } else if (event.type === 'decision') {
       if (!run.rows[event.index]) return;
       const row = event.row;
@@ -1478,11 +1470,7 @@ export class GuiServer {
         run.spend.set(event.index, totals);
         if (row.kind === 'game_reflection') {
           run.battleRevisions.set(event.index, (run.battleRevisions.get(event.index) ?? 0) + 1);
-          this.queue(
-            `battle:${event.index}`,
-            () => ({ type: 'battle', ...this.battleBody(event.index) }),
-            () => ({ type: 'battle', ...this.battleBody(event.index, true) }),
-          );
+          this.queueBattle(event.index);
         }
       }
       if (row.kind === 'decision') {
@@ -1504,11 +1492,7 @@ export class GuiServer {
         if (list.length > 400) list.splice(0, list.length - 400);
         run.decisions.set(event.index, list);
         run.battleRevisions.set(event.index, (run.battleRevisions.get(event.index) ?? 0) + 1);
-        this.queue(
-          `battle:${event.index}`,
-          () => ({ type: 'battle', ...this.battleBody(event.index) }),
-          () => ({ type: 'battle', ...this.battleBody(event.index, true) }),
-        );
+        this.queueBattle(event.index);
       }
       return;
     } else if (event.type === 'game-end') {
@@ -1528,6 +1512,14 @@ export class GuiServer {
       }
     }
     this.queueRun();
+  }
+
+  private queueBattle(index: number): void {
+    this.queue(
+      `battle:${index}`,
+      () => ({ type: 'battle', ...this.battleBody(index) }),
+      () => ({ type: 'battle', ...this.battleBody(index, true) }),
+    );
   }
 
   private queueRun(): void {

@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import type { ChoiceSubstitution } from '../src/engines.js';
-import { BaseEngine, decisionTokenBudget, LLMEngine, RandomEngine, updatedPace } from '../src/engines.js';
+import type { ChoiceSubstitution } from '../src/battle-agent.js';
+import { BaseEngine, RandomEngine } from '../src/battle-agent.js';
+import { decisionTokenBudget, LLMEngine, updatedPace } from '../src/llm-engine.js';
 import { ApiError } from '../src/providers.js';
 import { RecoveryGate } from '../src/recovery.js';
 import { SimBattle } from '../src/sim.js';

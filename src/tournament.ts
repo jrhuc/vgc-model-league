@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { scaffoldRevision } from './engines.js';
 import type { BracketView } from './gui/api.js';
+import { scaffoldRevision } from './llm-engine.js';
 import { defaultPsDir, RESULTS_PATH } from './paths.js';
 import type { ModelReasoningConfig } from './providers.js';
 import { validateModelExecution } from './providers.js';
@@ -10,6 +10,7 @@ import type { SeriesRecord } from './records.js';
 import { appendRow } from './records.js';
 import type { RecoveryGate } from './recovery.js';
 import type { RotationEvent } from './rotation.js';
+import type { ExperimentOptions } from './series.js';
 import { playRecordedSeries } from './series.js';
 import { showdownCommit } from './showdown.js';
 import type { Team } from './teams.js';
@@ -24,21 +25,11 @@ export type TournamentEvent =
   | { type: 'bracket'; bracket: BracketView }
   | { type: 'series-players'; index: number; players: Record<Pid, string> };
 
-export interface TournamentOptions extends ModelReasoningConfig {
-  seed?: number;
-  concurrency?: number;
-  timerScale?: TimerScale;
-  recordsPath?: string;
-  psDir?: string;
-  apiKeys?: Readonly<Record<string, string>>;
+export interface TournamentOptions extends ExperimentOptions {
   pool?: string;
   teams?: Team[];
   format?: string;
   onEvent?: (event: TournamentEvent) => void;
-  onNotice?: (message: string) => void;
-  signal?: AbortSignal;
-  contributor?: ContributorAttribution;
-  recovery?: RecoveryGate;
 }
 
 interface Entrant {

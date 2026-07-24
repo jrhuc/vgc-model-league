@@ -5,8 +5,8 @@ import type { Pid, TimerScale } from './types.js';
 
 export type TimerEvent = 'autodefault' | 'forfeit' | 'tie';
 
-export const TIMER_SCALE_MIN = 0.5;
-export const TIMER_SCALE_MAX = 4;
+const TIMER_SCALE_MIN = 0.5;
+const TIMER_SCALE_MAX = 4;
 export const DEFAULT_TIMER_SCALE: TimerScale = 'off';
 
 export function parseTimerScale(value: unknown): TimerScale | undefined {

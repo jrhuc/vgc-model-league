@@ -1,4 +1,4 @@
-import type { ProviderFailureKind } from './providers.js';
+import type { ProviderFailureKind } from './types.js';
 
 export interface RecoveryPause {
   model: string;

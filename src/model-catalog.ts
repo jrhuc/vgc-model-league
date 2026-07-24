@@ -1,161 +1,6 @@
-import { readCappedText } from './sanitize.js';
-
-export interface ProviderOption {
-  id: string;
-  label: string;
-  description: string;
-  envKey?: string;
-  baseUrl?: string;
-  discovery: 'list' | 'manual' | 'none';
-  requiresKey: boolean;
-  models?: readonly DiscoveredModel[];
-}
-
-export interface DiscoveredModel {
-  id: string;
-  displayName?: string;
-  description?: string;
-}
-
-export const PROVIDER_OPTIONS: readonly ProviderOption[] = [
-  {
-    id: 'anthropic',
-    label: 'Anthropic',
-    description: 'Claude models from Anthropic',
-    envKey: 'ANTHROPIC_API_KEY',
-    baseUrl: 'https://api.anthropic.com/v1',
-    discovery: 'list',
-    requiresKey: true,
-  },
-  {
-    id: 'openai',
-    label: 'OpenAI',
-    description: 'GPT and reasoning models from OpenAI',
-    envKey: 'OPENAI_API_KEY',
-    baseUrl: 'https://api.openai.com/v1',
-    discovery: 'list',
-    requiresKey: true,
-  },
-  {
-    id: 'google',
-    label: 'Google',
-    description: 'Gemini models from Google AI',
-    envKey: 'GEMINI_API_KEY',
-    baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
-    discovery: 'list',
-    requiresKey: true,
-  },
-  {
-    id: 'xai',
-    label: 'xAI',
-    description: 'Grok models from xAI',
-    envKey: 'XAI_API_KEY',
-    baseUrl: 'https://api.x.ai/v1',
-    discovery: 'list',
-    requiresKey: true,
-  },
-  {
-    id: 'deepseek',
-    label: 'DeepSeek',
-    description: 'Chat and reasoning models from DeepSeek',
-    envKey: 'DEEPSEEK_API_KEY',
-    baseUrl: 'https://api.deepseek.com',
-    discovery: 'list',
-    requiresKey: true,
-  },
-  {
-    id: 'kimi',
-    label: 'Kimi',
-    description: 'Kimi and Moonshot models',
-    envKey: 'MOONSHOT_API_KEY',
-    baseUrl: 'https://api.moonshot.ai/v1',
-    discovery: 'list',
-    requiresKey: true,
-  },
-  {
-    id: 'cerebras',
-    label: 'Cerebras',
-    description: 'Fast inference models from Cerebras',
-    envKey: 'CEREBRAS_API_KEY',
-    baseUrl: 'https://api.cerebras.ai/v1',
-    discovery: 'list',
-    requiresKey: true,
-  },
-  {
-    id: 'meta',
-    label: 'Meta',
-    description: 'Muse Spark models from Meta',
-    envKey: 'META_MODEL_API_KEY',
-    baseUrl: 'https://api.meta.ai/v1',
-    discovery: 'manual',
-    requiresKey: true,
-    models: [{ id: 'muse-spark-1.1', displayName: 'Muse Spark 1.1' }],
-  },
-  {
-    id: 'zai',
-    label: 'Z.ai',
-    description: 'Enter a Z.ai model ID',
-    envKey: 'ZAI_API_KEY',
-    baseUrl: 'https://api.z.ai/api/paas/v4',
-    discovery: 'manual',
-    requiresKey: true,
-  },
-  {
-    id: 'openrouter',
-    label: 'OpenRouter',
-    description: 'Text-generation models available through OpenRouter',
-    envKey: 'OPENROUTER_API_KEY',
-    baseUrl: 'https://openrouter.ai/api/v1',
-    discovery: 'list',
-    requiresKey: true,
-  },
-  {
-    id: 'opencode-go',
-    label: 'OpenCode Go',
-    description: 'Models available through OpenCode Go',
-    envKey: 'OPENCODE_API_KEY',
-    baseUrl: 'https://opencode.ai/zen/go/v1',
-    discovery: 'list',
-    requiresKey: true,
-  },
-  {
-    id: 'opencode-zen',
-    label: 'OpenCode Zen',
-    description: 'Models available through OpenCode Zen',
-    envKey: 'OPENCODE_API_KEY',
-    baseUrl: 'https://opencode.ai/zen/v1',
-    discovery: 'list',
-    requiresKey: true,
-  },
-  {
-    id: 'vercel',
-    label: 'Vercel AI Gateway',
-    description: 'Models available through Vercel AI Gateway',
-    envKey: 'AI_GATEWAY_API_KEY',
-    baseUrl: 'https://ai-gateway.vercel.sh/v1',
-    discovery: 'list',
-    requiresKey: true,
-  },
-  {
-    id: 'compat',
-    label: 'OpenAI-compatible',
-    description: 'Enter an endpoint and model ID',
-    envKey: 'OPENAI_COMPAT_API_KEY',
-    discovery: 'manual',
-    requiresKey: false,
-  },
-  {
-    id: 'random',
-    label: 'Random baseline',
-    description: 'Choose legal moves at random',
-    discovery: 'none',
-    requiresKey: false,
-  },
-];
-
-export function providerOption(id: string): ProviderOption | undefined {
-  return PROVIDER_OPTIONS.find((provider) => provider.id === id);
-}
+import type { DiscoveredModel, ProviderOption } from './provider-registry.js';
+import { readCappedText, redactSecrets } from './sanitize.js';
+import { asStrings, isRecord } from './value.js';
 
 export async function discoverModels(
   provider: ProviderOption,
@@ -238,7 +83,7 @@ async function discoverGoogle(
     const body = await responseBody(response, 'Google', apiKey);
     const entries = recordArray(body, 'models', 'Google');
     for (const entry of entries) {
-      const methods = stringArray(entry.supportedGenerationMethods);
+      const methods = asStrings(entry.supportedGenerationMethods);
       if (!methods.includes('generateContent')) continue;
       const rawId = stringValue(entry.name);
       if (!rawId) continue;
@@ -333,12 +178,7 @@ function errorDetail(raw: string, apiKey: string | undefined): string {
       else detail = stringValue(parsed.error) ?? stringValue(parsed.message) ?? raw;
     }
   } catch {}
-  detail = detail
-    .replace(/[\p{Cc}\p{Cf}]/gu, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-  if (apiKey) detail = detail.split(apiKey).join('[redacted]');
-  return detail.slice(0, 500);
+  return redactSecrets(detail, apiKey ? [apiKey] : []).slice(0, 500);
 }
 
 function recordArray(record: UnknownRecord, key: string, provider: string): UnknownRecord[] {
@@ -417,7 +257,7 @@ function isGenerativeModel(record: UnknownRecord): boolean {
 function isOpenRouterTextModel(record: UnknownRecord): boolean {
   const architecture = record.architecture;
   if (!isRecord(architecture)) return isGenerativeModel(record);
-  const outputs = stringArray(architecture.output_modalities).map((value) => value.toLowerCase());
+  const outputs = asStrings(architecture.output_modalities).map((value) => value.toLowerCase());
   if (outputs.length > 0) return outputs.includes('text');
   const modality = stringValue(architecture.modality)?.toLowerCase();
   if (!modality) return isGenerativeModel(record);
@@ -426,14 +266,6 @@ function isOpenRouterTextModel(record: UnknownRecord): boolean {
   return output.includes('text');
 }
 
-function stringArray(value: unknown): string[] {
-  return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
-}
-
 function stringValue(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() ? value : undefined;
-}
-
-function isRecord(value: unknown): value is UnknownRecord {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
