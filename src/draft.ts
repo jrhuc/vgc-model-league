@@ -584,7 +584,7 @@ export async function runDraft(models: string[], board: DraftBoard, options: Run
       }
       if (!chosen) {
         chosen = legal[Math.floor(options.rng() * legal.length)]!;
-        reasoning = `fallback pick after failed attempts (${lastError})`;
+        reasoning = `random legal pick after ${DRAFT_PROMPT_POLICY.attempts} failed attempts (${lastError})`;
         fallback = true;
       }
     } else {

@@ -703,7 +703,7 @@ export class LLMEngine extends BaseEngine {
       parsed ??
       ({
         choices: BaseEngine.defaults(menus)[0],
-        rationale: 'Recorded legal fallback.',
+        rationale: `No valid decision (${error}); defaulted to the first legal option for each slot.`,
         notebook: this.notebook,
         threats: [],
         candidates: [],
@@ -1131,7 +1131,7 @@ export class LLMEngine extends BaseEngine {
     const review =
       parsed ??
       ({
-        summary: `Game ${result}; model reflection unavailable.`,
+        summary: `Game ${result}; model reflection unavailable (${failureSummary ?? error ?? 'unparseable review'}).`,
         adjustment: 'Retain the existing series plan and reassess from the next team preview.',
         notebook: this.notebook,
       } satisfies { summary: string; adjustment: string; notebook: string });
