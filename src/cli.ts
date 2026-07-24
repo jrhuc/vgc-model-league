@@ -12,6 +12,7 @@ import { loadRows, ratingGroups, scopeRows, TEST_POOL } from './records.js';
 import { writeReport } from './report.js';
 import { restartGui, stopGui } from './restart.js';
 import { runRotation } from './rotation.js';
+import { withRunStatus } from './run-status.js';
 import { parseTimerScale } from './timer.js';
 import type { TimerScale } from './types.js';
 
@@ -214,15 +215,13 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
     });
     const models = experimentModels(command, values.models, positionals);
     const execution = experimentExecution(values);
-    const rows = await runRotation(
-      models,
-      positiveInteger('series-per-pair', values['series-per-pair']),
-      makeRunDirectory(),
-      {
+    const runDir = makeRunDirectory();
+    const rows = await withRunStatus(runDir, () =>
+      runRotation(models, positiveInteger('series-per-pair', values['series-per-pair']), runDir, {
         pool: values.pool,
         concurrency: positiveInteger('concurrency', values.concurrency),
         ...execution,
-      },
+      }),
     );
     printResults(rows);
     return 0;
@@ -239,11 +238,14 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
     const models = experimentModels(command, values.models, positionals);
     const execution = experimentExecution(values);
     const { runTournament } = await import('./tournament.js');
-    const rows = await runTournament(models, makeRunDirectory(), {
-      pool: values.pool,
-      concurrency: positiveInteger('concurrency', values.concurrency),
-      ...execution,
-    });
+    const runDir = makeRunDirectory();
+    const rows = await withRunStatus(runDir, () =>
+      runTournament(models, runDir, {
+        pool: values.pool,
+        concurrency: positiveInteger('concurrency', values.concurrency),
+        ...execution,
+      }),
+    );
     printResults(rows);
     const champion = rows[rows.length - 1];
     if (champion) console.log(`Champion: ${String(champion.advanced ?? champion.winner)}`);
@@ -262,19 +264,21 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
     const execution = experimentExecution(values);
     const { runDraftLeague } = await import('./draftleague.js');
     const runDir = makeRunDirectory();
-    const rows = await runDraftLeague(models, runDir, {
-      board: values.board,
-      concurrency: positiveInteger('concurrency', values.concurrency),
-      ...execution,
-      onEvent: (event) => {
-        if (event.type === 'draft' && event.draft.phase === 'draft' && event.draft.picks.length > 0) {
-          const pick = event.draft.picks[event.draft.picks.length - 1]!;
-          console.log(
-            `pick ${pick.pick}: ${event.draft.entrants[pick.entrant]} takes ${pick.mon}${pick.fallback ? ' (fallback)' : ''}`,
-          );
-        }
-      },
-    });
+    const rows = await withRunStatus(runDir, () =>
+      runDraftLeague(models, runDir, {
+        board: values.board,
+        concurrency: positiveInteger('concurrency', values.concurrency),
+        ...execution,
+        onEvent: (event) => {
+          if (event.type === 'draft' && event.draft.phase === 'draft' && event.draft.picks.length > 0) {
+            const pick = event.draft.picks[event.draft.picks.length - 1]!;
+            console.log(
+              `pick ${pick.pick}: ${event.draft.entrants[pick.entrant]} takes ${pick.mon}${pick.fallback ? ' (fallback)' : ''}`,
+            );
+          }
+        },
+      }),
+    );
     printResults(rows);
     const champion = rows[rows.length - 1]?.advanced;
     if (typeof champion !== 'string' || !champion) throw new Error('draft final did not identify a champion');
@@ -298,26 +302,33 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
     });
     if (!values.opponent) throw new Error('exhibition requires --opponent <spec|random>');
     if (values.seat !== 'p1' && values.seat !== 'p2') throw new Error('--seat must be p1 or p2');
+    const opponent = values.opponent;
+    const seat = values.seat;
     const reasoning = reasoningLevel(values.reasoning);
     const seed = optionalInteger('seed', values.seed);
     const { runExhibition } = await import('./exhibition.js');
-    const row = await runExhibition(makeRunDirectory(), {
-      opponent: values.opponent,
-      seat: values.seat,
-      name: values.name,
-      pool: values.pool,
-      recordsPath: RESULTS_PATH,
-      ...(seed === undefined ? {} : { seed }),
-      ...(values.port === undefined ? {} : { port: positiveInteger('port', values.port) }),
-      ...(reasoning === undefined ? {} : { reasoning }),
-      ...(values['agent-dir'] === undefined ? {} : { agentDir: values['agent-dir'] }),
-      onNotice: (line) => console.log(line),
-      onReady: ({ url, agentDir }) => {
-        console.log(`Seat bridge listening at ${url}`);
-        console.log(`Agent workspace: ${agentDir}`);
-        console.log('Start the terminal agent with that directory as its working directory and have it read SEAT.md.');
-      },
-    });
+    const runDir = makeRunDirectory();
+    const row = await withRunStatus(runDir, () =>
+      runExhibition(runDir, {
+        opponent,
+        seat,
+        name: values.name,
+        pool: values.pool,
+        recordsPath: RESULTS_PATH,
+        ...(seed === undefined ? {} : { seed }),
+        ...(values.port === undefined ? {} : { port: positiveInteger('port', values.port) }),
+        ...(reasoning === undefined ? {} : { reasoning }),
+        ...(values['agent-dir'] === undefined ? {} : { agentDir: values['agent-dir'] }),
+        onNotice: (line) => console.log(line),
+        onReady: ({ url, agentDir }) => {
+          console.log(`Seat bridge listening at ${url}`);
+          console.log(`Agent workspace: ${agentDir}`);
+          console.log(
+            'Start the terminal agent with that directory as its working directory and have it read SEAT.md.',
+          );
+        },
+      }),
+    );
     printResults([row]);
     return 0;
   }

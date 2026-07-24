@@ -1,0 +1,300 @@
+import fs from 'node:fs';
+import path from 'node:path';
+
+import type { EvidenceResponse, LatencyPoint, ModelEvidence, SeriesLuckEntry, TournamentSummary } from './gui/api.js';
+import { modelKey, type SeriesRecord, scopeRows, TEST_POOL } from './records.js';
+import type { Pid } from './types.js';
+
+const SAFE_SEGMENT = /^[A-Za-z0-9._-]+$/;
+const MAX_POINTS_PER_MODEL = 600;
+
+const LUCK_FIELDS = ['misses', 'crits_taken', 'flinched_turns', 'full_paralysis'] as const;
+
+interface StatBucket {
+  providers: Set<string>;
+  series: number;
+  decisions: number;
+  reflections: number;
+  reflectionFallbacks: number;
+  fallbacks: number;
+  parseFailures: number;
+  providerRetries: number;
+  moveSelections: number;
+  switchSelections: number;
+  protectSelections: number;
+  toolLookups: number;
+  threatTurns: number;
+  threatHits: number;
+  points: LatencyPoint[];
+}
+
+function bucket(): StatBucket {
+  return {
+    providers: new Set(),
+    series: 0,
+    decisions: 0,
+    reflections: 0,
+    reflectionFallbacks: 0,
+    fallbacks: 0,
+    parseFailures: 0,
+    providerRetries: 0,
+    moveSelections: 0,
+    switchSelections: 0,
+    protectSelections: 0,
+    toolLookups: 0,
+    threatTurns: 0,
+    threatHits: 0,
+    points: [],
+  };
+}
+
+function count(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : 0;
+}
+
+function decisionLogPath(runsDir: string, runId: string, seriesId: string, pid: Pid): string | null {
+  if (!SAFE_SEGMENT.test(runId) || !SAFE_SEGMENT.test(seriesId)) return null;
+  return path.join(runsDir, runId, 'series', seriesId, `${pid}-decisions.jsonl`);
+}
+
+function readLatencyPoints(file: string, seriesId: string): LatencyPoint[] {
+  let raw: string;
+  try {
+    raw = fs.readFileSync(file, 'utf8');
+  } catch {
+    return [];
+  }
+  const points: LatencyPoint[] = [];
+  for (const line of raw.split('\n')) {
+    if (!line.trim()) continue;
+    let entry: Record<string, unknown>;
+    try {
+      entry = JSON.parse(line) as Record<string, unknown>;
+    } catch {
+      continue;
+    }
+    if (entry.kind !== 'decision' || entry.automatic === true) continue;
+    if (typeof entry.latency_ms !== 'number' || entry.latency_ms <= 0) continue;
+    const tokens = typeof entry.total_tokens === 'number' && entry.total_tokens > 0 ? entry.total_tokens : undefined;
+    points.push({
+      ms: entry.latency_ms,
+      ...(tokens === undefined ? {} : { tokens }),
+      seriesId,
+      game: count(entry.game_number),
+      turn: count(entry.turn),
+      phase: typeof entry.phase === 'string' ? entry.phase : 'turn',
+    });
+  }
+  return points;
+}
+
+function quantile(sorted: number[], q: number): number {
+  if (sorted.length === 0) return 0;
+  const position = (sorted.length - 1) * q;
+  const low = Math.floor(position);
+  const high = Math.ceil(position);
+  return sorted[low]! + (sorted[high]! - sorted[low]!) * (position - low);
+}
+
+function adverseLuck(row: SeriesRecord, pid: Pid): number {
+  const games = Array.isArray(row.games) ? row.games : [];
+  let total = 0;
+  for (const game of games) {
+    const luck = (game as Record<string, unknown>).luck as Record<string, Record<string, unknown>> | undefined;
+    for (const field of LUCK_FIELDS) total += count(luck?.[pid]?.[field]);
+  }
+  return total;
+}
+
+function luckEntry(row: SeriesRecord): SeriesLuckEntry {
+  const games = Array.isArray(row.games) ? row.games : [];
+  const score = row.score as Record<Pid, number> | undefined;
+  const p1 = modelKey(row.players.p1);
+  const p2 = modelKey(row.players.p2);
+  const winner = row.winner === row.players.p1 ? p1 : row.winner === row.players.p2 ? p2 : null;
+  const luck = { p1: adverseLuck(row, 'p1'), p2: adverseLuck(row, 'p2') };
+  const winnerSide = row.winner === row.players.p1 ? 'p1' : row.winner === row.players.p2 ? 'p2' : null;
+  return {
+    seriesId: String(row.series_id ?? ''),
+    runId: String(row.run_id ?? ''),
+    timestamp: String(row.timestamp ?? ''),
+    p1,
+    p2,
+    winner,
+    score: [count(score?.p1), count(score?.p2)],
+    games: games.length,
+    turns: count(row.turns),
+    luck,
+    winnerLuckDelta: winnerSide === null ? null : luck[winnerSide] - luck[winnerSide === 'p1' ? 'p2' : 'p1'],
+  };
+}
+
+function evenSample<T>(items: T[], cap: number): T[] {
+  if (items.length <= cap) return items;
+  const sampled: T[] = [];
+  for (let index = 0; index < cap; index += 1) {
+    sampled.push(items[Math.floor((index * items.length) / cap)]!);
+  }
+  return sampled;
+}
+
+interface TournamentBucket {
+  entered: number;
+  titles: number;
+  runnerUp: number;
+  semis: number;
+  earlier: number;
+  matchWins: number;
+  matchLosses: number;
+}
+
+/**
+ * Placement per bracket, normalized by distance from the final so different bracket sizes aggregate.
+ * Assumes a finished bracket: the single highest-round row is the final and its `advanced` the champion.
+ */
+function summarizeTournaments(rows: SeriesRecord[]): TournamentSummary {
+  const runs = new Map<string, SeriesRecord[]>();
+  for (const row of rows) {
+    if (!row.players?.p1 || !row.players?.p2) continue;
+    const runId = String(row.run_id ?? '');
+    const list = runs.get(runId) ?? [];
+    list.push(row);
+    runs.set(runId, list);
+  }
+  const buckets = new Map<string, TournamentBucket>();
+  const bucketFor = (spec: string) => {
+    const entry = buckets.get(spec) ?? {
+      entered: 0,
+      titles: 0,
+      runnerUp: 0,
+      semis: 0,
+      earlier: 0,
+      matchWins: 0,
+      matchLosses: 0,
+    };
+    buckets.set(spec, entry);
+    return entry;
+  };
+  let matches = 0;
+  for (const runRows of runs.values()) {
+    const maxRound = Math.max(...runRows.map((row) => count(row.round)));
+    const finalRows = runRows.filter((row) => count(row.round) === maxRound);
+    const champion = finalRows.length === 1 ? modelKey(String(finalRows[0]!.advanced ?? '')) : null;
+    const lastRound = new Map<string, number>();
+    for (const row of runRows) {
+      matches += 1;
+      for (const pid of ['p1', 'p2'] as const) {
+        const spec = modelKey(row.players[pid]);
+        lastRound.set(spec, Math.max(lastRound.get(spec) ?? 0, count(row.round)));
+      }
+      const winner = row.winner === row.players.p1 ? 'p1' : row.winner === row.players.p2 ? 'p2' : null;
+      if (winner) {
+        bucketFor(modelKey(row.players[winner])).matchWins += 1;
+        bucketFor(modelKey(row.players[winner === 'p1' ? 'p2' : 'p1'])).matchLosses += 1;
+      }
+    }
+    for (const [spec, round] of lastRound) {
+      const entry = bucketFor(spec);
+      entry.entered += 1;
+      if (spec === champion) entry.titles += 1;
+      else if (round === maxRound) entry.runnerUp += 1;
+      else if (round === maxRound - 1) entry.semis += 1;
+      else entry.earlier += 1;
+    }
+  }
+  return {
+    tournaments: runs.size,
+    matches,
+    standings: [...buckets.entries()]
+      .map(([spec, entry]) => ({ spec, ...entry }))
+      .sort(
+        (a, b) =>
+          b.titles - a.titles || b.runnerUp - a.runnerUp || b.matchWins - a.matchWins || a.spec.localeCompare(b.spec),
+      ),
+  };
+}
+
+/** Aggregates rated rotation rows, their on-disk decision logs, and tournament placements into evidence. */
+export function buildEvidence(allRows: SeriesRecord[], runsDir: string, pool: string | null): EvidenceResponse {
+  const rated = scopeRows(allRows, pool ?? undefined)
+    .filter((row) => (row.mode ?? 'rotation') === 'rotation' && row.players?.p1 && row.players?.p2)
+    .sort((a, b) => String(a.timestamp ?? '').localeCompare(String(b.timestamp ?? '')));
+  const tournamentRows = allRows.filter(
+    (row) => row.mode === 'tournament' && (pool === null ? row.pool !== TEST_POOL : row.pool === pool),
+  );
+  const buckets = new Map<string, StatBucket>();
+  for (const row of rated) {
+    const stats = row.decision_stats as Record<Pid, Record<string, unknown>> | undefined;
+    for (const pid of ['p1', 'p2'] as const) {
+      const spec = row.players[pid];
+      const sideStats = stats?.[pid];
+      if (!sideStats || count(sideStats.decisions) === 0) continue;
+      const key = modelKey(spec);
+      const entry = buckets.get(key) ?? bucket();
+      buckets.set(key, entry);
+      entry.providers.add(spec);
+      entry.series += 1;
+      entry.decisions += count(sideStats.decisions);
+      entry.reflections += count(sideStats.reflections);
+      entry.reflectionFallbacks += count(sideStats.reflection_fallbacks);
+      entry.fallbacks += count(sideStats.fallbacks);
+      entry.parseFailures += count(sideStats.parse_failures);
+      entry.providerRetries += count(sideStats.provider_retries);
+      entry.moveSelections += count(sideStats.move_selections);
+      entry.switchSelections += count(sideStats.switch_selections);
+      entry.protectSelections += count(sideStats.protect_selections);
+      entry.toolLookups += count(sideStats.tool_lookups);
+      entry.threatTurns += count(sideStats.threat_turns);
+      entry.threatHits += count(sideStats.threat_hits);
+      const file = decisionLogPath(runsDir, String(row.run_id ?? ''), String(row.series_id ?? ''), pid);
+      if (file) entry.points.push(...readLatencyPoints(file, String(row.series_id ?? '')));
+    }
+  }
+  const models: ModelEvidence[] = [...buckets.entries()]
+    .map(([spec, entry]) => {
+      const sorted = entry.points.map((point) => point.ms).sort((a, b) => a - b);
+      const tokenValues = entry.points
+        .map((point) => point.tokens)
+        .filter((tokens): tokens is number => tokens !== undefined)
+        .sort((a, b) => a - b);
+      const selections = entry.moveSelections + entry.switchSelections;
+      const summary = (values: number[]) =>
+        values.length === 0
+          ? null
+          : {
+              median: quantile(values, 0.5),
+              p25: quantile(values, 0.25),
+              p75: quantile(values, 0.75),
+              max: values[values.length - 1]!,
+            };
+      return {
+        spec,
+        providers: [...entry.providers].sort(),
+        series: entry.series,
+        decisions: entry.decisions,
+        reflections: entry.reflections,
+        latency: summary(sorted),
+        tokens: summary(tokenValues),
+        points: evenSample(entry.points, MAX_POINTS_PER_MODEL),
+        rates: {
+          fallback: entry.decisions ? entry.fallbacks / entry.decisions : 0,
+          parseFailure: entry.decisions ? entry.parseFailures / entry.decisions : 0,
+          providerRetry: entry.decisions ? entry.providerRetries / entry.decisions : 0,
+          switch: selections ? entry.switchSelections / selections : 0,
+          protect: selections ? entry.protectSelections / selections : 0,
+          toolLookups: entry.decisions ? entry.toolLookups / entry.decisions : 0,
+          threatConversion: entry.threatTurns ? entry.threatHits / entry.threatTurns : null,
+          reflectionFallback: entry.reflections ? entry.reflectionFallbacks / entry.reflections : null,
+        },
+      };
+    })
+    .sort((a, b) => a.spec.localeCompare(b.spec));
+  return {
+    pool,
+    count: rated.length,
+    decisions: models.reduce((total, model) => total + model.decisions, 0),
+    models,
+    series: rated.map(luckEntry),
+    tournaments: summarizeTournaments(tournamentRows),
+  };
+}

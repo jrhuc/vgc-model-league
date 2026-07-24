@@ -228,7 +228,11 @@ export function classifyProviderFailure(error: unknown, spec = 'provider'): Prov
       } as Record<string, string>
     )[provider] ?? provider.charAt(0).toUpperCase() + provider.slice(1);
   const suffix = status ? ` (${status})` : '';
-  if (/Connect error (?:unauthenticated|unavailable|resource[_ -]?exhausted|internal|aborted|deadline[_ -]?exceeded)/i.test(message)) {
+  if (
+    /Connect error (?:unauthenticated|unavailable|resource[_ -]?exhausted|internal|aborted|deadline[_ -]?exceeded)/i.test(
+      message,
+    )
+  ) {
     return {
       kind: 'upstream',
       summary: `${label} transport failed transiently.`,

@@ -11,8 +11,9 @@ import { AuthError } from '../auth.js';
 import { listBoards } from '../draft.js';
 import type { DraftLeagueEvent } from '../draftleague.js';
 import { DRAFT_PROTOCOL_VERSION, runDraftLeague } from '../draftleague.js';
+import { buildEvidence } from '../evidence.js';
 import { discoverModels } from '../model-catalog.js';
-import { DATA_DIR, makeRunDirectory, prepareDataDirectories, RESULTS_PATH, TEAMS_DIR } from '../paths.js';
+import { DATA_DIR, makeRunDirectory, prepareDataDirectories, RESULTS_PATH, RUNS_DIR, TEAMS_DIR } from '../paths.js';
 import { PROVIDER_OPTIONS, providerOption } from '../provider-registry.js';
 import type { ModelReasoningConfig, ReasoningLevel } from '../providers.js';
 import {
@@ -26,6 +27,7 @@ import { loadRows, ratingGroups, scopeRows } from '../records.js';
 import type { RecoveryPause } from '../recovery.js';
 import { RecoveryGate } from '../recovery.js';
 import { ROTATION_PROTOCOL_VERSION, runRotation } from '../rotation.js';
+import { writeRunStatus } from '../run-status.js';
 import { redactSecrets } from '../sanitize.js';
 import { loadShowdown } from '../showdown.js';
 import type { MonState } from '../state.js';
@@ -43,6 +45,7 @@ import type {
   BracketView,
   DecisionView,
   DraftView,
+  EvidenceResponse,
   FormatInfo,
   ModelInfo,
   ModelsResponse,
@@ -556,6 +559,7 @@ export class GuiServer {
     if (method === 'GET' && !url.pathname.startsWith('/api/') && this.serveStatic(url.pathname, response)) return;
     if (key === 'GET /api/state') this.json(response, 200, this.stateBody(session));
     else if (key === 'GET /api/records') this.json(response, 200, this.recordsBody(url.searchParams.get('pool')));
+    else if (key === 'GET /api/evidence') this.json(response, 200, this.evidenceBody(url.searchParams.get('pool')));
     else if (key === 'GET /api/pool/teams') {
       this.json(response, 200, this.poolTeamsBody(url.searchParams.get('name') ?? ''));
     } else if (key === 'GET /api/reasoning') {
@@ -842,6 +846,12 @@ export class GuiServer {
     return { count: rows.length, pool, pools, groups, records: rows };
   }
 
+  private evidenceBody(poolParam: string | null): EvidenceResponse {
+    const all = loadRows(this.options.recordsPath ?? RESULTS_PATH);
+    const pool = poolParam?.trim() || null;
+    return buildEvidence(all, this.options.runsDir ?? RUNS_DIR, pool);
+  }
+
   private runBody(publicView = false): RunSnapshot | null {
     const run = this.run;
     if (!run) return null;
@@ -1055,6 +1065,14 @@ export class GuiServer {
       }
     }
     this.run = run;
+    writeRunStatus(run.runDir, {
+      state: 'running',
+      error: null,
+      notices: [],
+      start_time: new Date(run.startTime).toISOString(),
+      end_time: null,
+      pid: process.pid,
+    });
     run.timeoutRemainingMs = this.maxRunMs;
     this.armRunTimeout(run);
     this.runTask = this.launch(run);
@@ -1249,23 +1267,13 @@ export class GuiServer {
 
   private persistStatus(run: ActiveRun): void {
     run.endTime ??= Date.now();
-    try {
-      fs.writeFileSync(
-        path.join(run.runDir, 'status.json'),
-        `${JSON.stringify(
-          {
-            state: run.state,
-            error: run.error || null,
-            notices: run.notices,
-            start_time: new Date(run.startTime).toISOString(),
-            end_time: new Date(run.endTime ?? Date.now()).toISOString(),
-          },
-          null,
-          1,
-        )}\n`,
-        'utf8',
-      );
-    } catch {}
+    writeRunStatus(run.runDir, {
+      state: run.state,
+      error: run.error || null,
+      notices: run.notices,
+      start_time: new Date(run.startTime).toISOString(),
+      end_time: new Date(run.endTime ?? Date.now()).toISOString(),
+    });
   }
 
   /**

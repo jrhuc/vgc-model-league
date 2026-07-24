@@ -244,7 +244,7 @@ export interface BattleMessage {
 
 export type ServerEvent = { type: 'run'; run: RunSnapshot | null } | ({ type: 'battle' } & BattleMessage);
 
-interface StandingView {
+export interface StandingView {
   spec: string;
   series: number;
   w: number;
@@ -254,12 +254,19 @@ interface StandingView {
   elo: number;
 }
 
+export interface TrajectoryPointView {
+  series: number;
+  spec: string;
+  elo: number;
+}
+
 interface SpeedGroupView {
   scale: number | 'off';
   label: string;
   count: number;
   standings: StandingView[];
   h2h: Record<string, Record<string, [number, number, number]>>;
+  trajectory: TrajectoryPointView[];
 }
 
 export interface RecordsResponse {
@@ -270,6 +277,86 @@ export interface RecordsResponse {
   /** Rated rotation rows split by battle speed; untimed first, then ascending clock scales. */
   groups: SpeedGroupView[];
   records: unknown[];
+}
+
+export interface LatencyPoint {
+  ms: number;
+  /** Absent when the provider reports no usage (CLI-subprocess engines). */
+  tokens?: number;
+  seriesId: string;
+  game: number;
+  turn: number;
+  phase: string;
+}
+
+export interface ModelEvidence {
+  /** Normalized model key; matches standings specs. */
+  spec: string;
+  /** Raw provider specs merged into this key. */
+  providers: string[];
+  series: number;
+  decisions: number;
+  reflections: number;
+  latency: { median: number; p25: number; p75: number; max: number } | null;
+  /** Output-token quantiles for decisions with reported usage; null when the provider reports none. */
+  tokens: { median: number; p25: number; p75: number; max: number } | null;
+  points: LatencyPoint[];
+  /**
+   * fallback, parseFailure, providerRetry, toolLookups are per decision; switch and protect are shares of
+   * action selections; threatConversion is threat hits over threat turns.
+   */
+  rates: {
+    fallback: number;
+    parseFailure: number;
+    providerRetry: number;
+    switch: number;
+    protect: number;
+    toolLookups: number;
+    threatConversion: number | null;
+    reflectionFallback: number | null;
+  };
+}
+
+export interface SeriesLuckEntry {
+  seriesId: string;
+  runId: string;
+  timestamp: string;
+  p1: string;
+  p2: string;
+  winner: string | null;
+  score: [number, number];
+  games: number;
+  turns: number;
+  /** Adverse luck events suffered per side: misses, crits taken, flinched turns, full paralysis. */
+  luck: Record<Pid, number>;
+  /** Luck suffered by the winner minus the loser; positive means the winner overcame worse luck. Null for ties. */
+  winnerLuckDelta: number | null;
+}
+
+export interface TournamentStanding {
+  spec: string;
+  entered: number;
+  titles: number;
+  runnerUp: number;
+  semis: number;
+  earlier: number;
+  matchWins: number;
+  matchLosses: number;
+}
+
+export interface TournamentSummary {
+  tournaments: number;
+  matches: number;
+  standings: TournamentStanding[];
+}
+
+export interface EvidenceResponse {
+  pool: string | null;
+  count: number;
+  decisions: number;
+  models: ModelEvidence[];
+  series: SeriesLuckEntry[];
+  tournaments: TournamentSummary;
 }
 
 export interface ModelsResponse {

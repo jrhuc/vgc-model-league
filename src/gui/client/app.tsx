@@ -4,16 +4,21 @@ import type { AppState, AuthView, BattleMessage, PoolInfo, RunSnapshot, ServerEv
 import { api, configureCsrf } from './http';
 import type { StoredBattle } from './views/arena';
 import { ArenaView } from './views/arena';
+import { DataRoomView } from './views/dataroom';
 import { FixturesView } from './views/fixtures';
-import { ResultsView } from './views/results';
 
 const NAV = [
   { id: 'fixtures', label: 'New run' },
   { id: 'arena', label: 'Live run' },
-  { id: 'results', label: 'Record book' },
+  { id: 'results', label: 'Data room' },
 ] as const;
 
 export type ViewId = (typeof NAV)[number]['id'];
+
+function viewFromHash(): ViewId {
+  const hash = window.location.hash.slice(1);
+  return NAV.some((item) => item.id === hash) ? (hash as ViewId) : 'fixtures';
+}
 
 function isFresherBattle(candidate: BattleMessage, current: BattleMessage | undefined): boolean {
   if (!candidate.snapshot) return false;
@@ -72,7 +77,7 @@ export function App() {
   const [run, setRun] = useState<RunSnapshot | null>(null);
   const [battles, setBattles] = useState<Record<number, StoredBattle>>({});
   const [selected, setSelected] = useState<number | null>(null);
-  const [view, setView] = useState<ViewId>('fixtures');
+  const [view, setView] = useState<ViewId>(viewFromHash);
   const [recordsEpoch, setRecordsEpoch] = useState(0);
   const [, setClockTick] = useState(0);
   const runWasLive = useRef(false);
@@ -129,8 +134,15 @@ export function App() {
     return () => clearInterval(timer);
   }, [run?.state]);
 
+  useEffect(() => {
+    const onHashChange = () => setView(viewFromHash());
+    window.addEventListener('hashchange', onHashChange);
+    return () => window.removeEventListener('hashchange', onHashChange);
+  }, []);
+
   const navigate = (next: ViewId) => {
     setView(next);
+    history.replaceState(null, '', next === 'fixtures' ? '#' : `#${next}`);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
@@ -260,7 +272,7 @@ export function App() {
           />
         </section>
         <section class={`view ${view === 'results' ? 'on' : ''}`}>
-          <ResultsView active={view === 'results'} epoch={recordsEpoch} />
+          <DataRoomView active={view === 'results'} epoch={recordsEpoch} />
         </section>
       </main>
     </>

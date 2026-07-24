@@ -105,6 +105,11 @@ is off because agent turns take minutes. Rows use `mode: "exhibition"` and
 include the seat side. They are not rated. Decision, trace, and bridge tool
 logs make later audits possible.
 
+Every run directory carries a `status.json` marker: `running` with the owning
+pid at start, then a terminal state (`done`, `failed`, `stopped`) written by
+the CLI wrapper or the GUI server on exit, failure, or SIGINT/SIGTERM. A stale
+`running` marker whose pid is dead means the run was killed outright.
+
 Run failure semantics are part of the protocol. The first failed series aborts
 the shared signal of the scheduler. Queued series do not start, and in-flight
 series stop the use of provider credits. The league reports the failure only
