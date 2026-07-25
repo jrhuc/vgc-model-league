@@ -4,14 +4,16 @@ import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { AuthService } from './auth.js';
 import { GuiServer } from './gui/server.js';
-import { AUTH_DB_PATH, makeRunDirectory, prepareDataDirectories, RESULTS_PATH } from './paths.js';
+import { AUTH_DB_PATH, makeRunDirectory, prepareDataDirectories, RESULTS_PATH, RUNS_DIR, TEAMS_DIR } from './paths.js';
 import type { ReasoningLevel } from './providers.js';
 import { REASONING_LEVELS } from './providers.js';
 import type { SeriesRecord } from './records.js';
 import { loadRows, ratingGroups, scopeRows, TEST_POOL } from './records.js';
+import { RecoveryGate } from './recovery.js';
 import { writeReport } from './report.js';
 import { restartGui, stopGui } from './restart.js';
 import { runRotation } from './rotation.js';
+import { withRunStatus } from './run-status.js';
 import { parseTimerScale } from './timer.js';
 import type { TimerScale } from './types.js';
 
@@ -21,6 +23,7 @@ const EXPERIMENT_CLI_OPTIONS = {
   concurrency: { type: 'string', default: '2' },
   reasoning: { type: 'string' },
   'timer-scale': { type: 'string' },
+  'auto-resume': { type: 'boolean', default: false },
 } as const;
 
 interface ExperimentCliValues {
@@ -28,6 +31,7 @@ interface ExperimentCliValues {
   concurrency: string;
   reasoning?: string;
   'timer-scale'?: string;
+  'auto-resume': boolean;
 }
 
 const HELP = `Usage: vgcleague <command>
@@ -40,16 +44,28 @@ Commands:
   selfcheck                           run one random-vs-random series through the simulator
   rotation --models <spec> <spec>...  run the controlled team-rotation protocol
       [--series-per-pair <n>] [--pool <name>] [--seed <n>] [--concurrency <n>] [--reasoning <level>]
-      [--timer-scale <n|off>]
+      [--timer-scale <n|off>] [--auto-resume]
   tournament --models <spec> <spec>...  play a single-elimination BO3 bracket; each model keeps one team
       [--pool <name>] [--seed <n>] [--concurrency <n>] [--reasoning <level>] [--timer-scale <n|off>]
+      [--auto-resume]
   draft --models <spec> <spec>...     snake-draft rosters from a board, then round robin and playoffs
       [--board <name>] [--seed <n>] [--concurrency <n>] [--reasoning <level>] [--timer-scale <n|off>]
+      [--auto-resume]
   exhibition --opponent <spec>        host one bo3 where a terminal agent plays a seat over a local bridge
       [--seat p1|p2] [--name <label>] [--pool <name>] [--seed <n>] [--port <n>] [--reasoning <level>]
       [--agent-dir <path>]
   standings [--pool <name>]           print standings and head-to-head from recorded results
   report [--out <path>] [--pool <name>]  write an HTML report
+  publish [--to <origin>] [--pool <name>] [--include-test] [--dry-run]
+      send completed local series, their decision logs, and any missing team pool to a deployment
+
+--auto-resume keeps a run alive through transient provider failures (rate limits,
+upstream outages, exhausted quotas): the run pauses, then retries with backoff
+instead of failing. Credential and request errors still fail fast.
+
+publish needs VGC_LEAGUE_PUBLISH_ORIGIN (or --to) and VGC_LEAGUE_IMPORT_TOKEN, which must
+match the token the deployment runs with. It is idempotent: series the deployment already
+holds are reported and skipped.
 
 Without --pool, standings and report cover every pool except the disposable "test" pool
 and keep only rotation rows; pass --pool <name> to inspect everything in one pool.
@@ -101,7 +117,28 @@ function experimentExecution(values: ExperimentCliValues) {
     ...(seed === undefined ? {} : { seed }),
     ...(reasoning === undefined ? {} : { reasoning }),
     ...(timerScale === undefined ? {} : { timerScale }),
+    ...(values['auto-resume'] ? { recovery: autoResumeGate() } : {}),
   };
+}
+
+function autoResumeGate(): RecoveryGate {
+  const gate = new RecoveryGate();
+  let streak = 0;
+  let lastPause = 0;
+  gate.onChange((pause) => {
+    if (!pause) return;
+    const now = Date.now();
+    if (now - lastPause > 10 * 60_000) streak = 0;
+    lastPause = now;
+    const ceiling = pause.kind === 'rate_limit' ? 60_000 : 5 * 60_000;
+    const delay = Math.min(ceiling, 30_000 * 2 ** streak);
+    streak += 1;
+    console.error(
+      `run paused on ${pause.model} (${pause.kind}): ${pause.message} auto-resume in ${Math.round(delay / 1000)}s`,
+    );
+    setTimeout(() => gate.resume(), delay);
+  });
+  return gate;
 }
 
 function environmentInteger(name: string, fallback: number, minimum: number, maximum: number): number {
@@ -164,9 +201,11 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
               .filter(Boolean),
           })
         : undefined;
+    const importToken = process.env.VGC_LEAGUE_IMPORT_TOKEN?.trim();
     const gui = new GuiServer({
       ...(host ? { host } : {}),
       ...(publicOrigin ? { publicOrigin } : {}),
+      ...(importToken ? { importToken } : {}),
       mutationsEnabled: !publicOrigin || process.env.VGC_LEAGUE_ENABLE_MUTATIONS === 'true',
       ...(logger ? { logger } : {}),
       ...(auth ? { auth } : {}),
@@ -214,15 +253,13 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
     });
     const models = experimentModels(command, values.models, positionals);
     const execution = experimentExecution(values);
-    const rows = await runRotation(
-      models,
-      positiveInteger('series-per-pair', values['series-per-pair']),
-      makeRunDirectory(),
-      {
+    const runDir = makeRunDirectory();
+    const rows = await withRunStatus(runDir, () =>
+      runRotation(models, positiveInteger('series-per-pair', values['series-per-pair']), runDir, {
         pool: values.pool,
         concurrency: positiveInteger('concurrency', values.concurrency),
         ...execution,
-      },
+      }),
     );
     printResults(rows);
     return 0;
@@ -239,11 +276,14 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
     const models = experimentModels(command, values.models, positionals);
     const execution = experimentExecution(values);
     const { runTournament } = await import('./tournament.js');
-    const rows = await runTournament(models, makeRunDirectory(), {
-      pool: values.pool,
-      concurrency: positiveInteger('concurrency', values.concurrency),
-      ...execution,
-    });
+    const runDir = makeRunDirectory();
+    const rows = await withRunStatus(runDir, () =>
+      runTournament(models, runDir, {
+        pool: values.pool,
+        concurrency: positiveInteger('concurrency', values.concurrency),
+        ...execution,
+      }),
+    );
     printResults(rows);
     const champion = rows[rows.length - 1];
     if (champion) console.log(`Champion: ${String(champion.advanced ?? champion.winner)}`);
@@ -262,19 +302,21 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
     const execution = experimentExecution(values);
     const { runDraftLeague } = await import('./draftleague.js');
     const runDir = makeRunDirectory();
-    const rows = await runDraftLeague(models, runDir, {
-      board: values.board,
-      concurrency: positiveInteger('concurrency', values.concurrency),
-      ...execution,
-      onEvent: (event) => {
-        if (event.type === 'draft' && event.draft.phase === 'draft' && event.draft.picks.length > 0) {
-          const pick = event.draft.picks[event.draft.picks.length - 1]!;
-          console.log(
-            `pick ${pick.pick}: ${event.draft.entrants[pick.entrant]} takes ${pick.mon}${pick.fallback ? ' (fallback)' : ''}`,
-          );
-        }
-      },
-    });
+    const rows = await withRunStatus(runDir, () =>
+      runDraftLeague(models, runDir, {
+        board: values.board,
+        concurrency: positiveInteger('concurrency', values.concurrency),
+        ...execution,
+        onEvent: (event) => {
+          if (event.type === 'draft' && event.draft.phase === 'draft' && event.draft.picks.length > 0) {
+            const pick = event.draft.picks[event.draft.picks.length - 1]!;
+            console.log(
+              `pick ${pick.pick}: ${event.draft.entrants[pick.entrant]} takes ${pick.mon}${pick.fallback ? ' (fallback)' : ''}`,
+            );
+          }
+        },
+      }),
+    );
     printResults(rows);
     const champion = rows[rows.length - 1]?.advanced;
     if (typeof champion !== 'string' || !champion) throw new Error('draft final did not identify a champion');
@@ -298,27 +340,67 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
     });
     if (!values.opponent) throw new Error('exhibition requires --opponent <spec|random>');
     if (values.seat !== 'p1' && values.seat !== 'p2') throw new Error('--seat must be p1 or p2');
+    const opponent = values.opponent;
+    const seat = values.seat;
     const reasoning = reasoningLevel(values.reasoning);
     const seed = optionalInteger('seed', values.seed);
     const { runExhibition } = await import('./exhibition.js');
-    const row = await runExhibition(makeRunDirectory(), {
-      opponent: values.opponent,
-      seat: values.seat,
-      name: values.name,
-      pool: values.pool,
-      recordsPath: RESULTS_PATH,
-      ...(seed === undefined ? {} : { seed }),
-      ...(values.port === undefined ? {} : { port: positiveInteger('port', values.port) }),
-      ...(reasoning === undefined ? {} : { reasoning }),
-      ...(values['agent-dir'] === undefined ? {} : { agentDir: values['agent-dir'] }),
-      onNotice: (line) => console.log(line),
-      onReady: ({ url, agentDir }) => {
-        console.log(`Seat bridge listening at ${url}`);
-        console.log(`Agent workspace: ${agentDir}`);
-        console.log('Start the terminal agent with that directory as its working directory and have it read SEAT.md.');
+    const runDir = makeRunDirectory();
+    const row = await withRunStatus(runDir, () =>
+      runExhibition(runDir, {
+        opponent,
+        seat,
+        name: values.name,
+        pool: values.pool,
+        recordsPath: RESULTS_PATH,
+        ...(seed === undefined ? {} : { seed }),
+        ...(values.port === undefined ? {} : { port: positiveInteger('port', values.port) }),
+        ...(reasoning === undefined ? {} : { reasoning }),
+        ...(values['agent-dir'] === undefined ? {} : { agentDir: values['agent-dir'] }),
+        onNotice: (line) => console.log(line),
+        onReady: ({ url, agentDir }) => {
+          console.log(`Seat bridge listening at ${url}`);
+          console.log(`Agent workspace: ${agentDir}`);
+          console.log(
+            'Start the terminal agent with that directory as its working directory and have it read SEAT.md.',
+          );
+        },
+      }),
+    );
+    printResults([row]);
+    return 0;
+  }
+  if (command === 'publish') {
+    const { values } = parseArgs({
+      args: rest,
+      options: {
+        to: { type: 'string' },
+        pool: { type: 'string' },
+        'include-test': { type: 'boolean', default: false },
+        'dry-run': { type: 'boolean', default: false },
       },
     });
-    printResults([row]);
+    const origin = (values.to ?? process.env.VGC_LEAGUE_PUBLISH_ORIGIN ?? '').trim();
+    const token = (process.env.VGC_LEAGUE_IMPORT_TOKEN ?? '').trim();
+    if (!origin) throw new Error('publish needs --to <origin> or VGC_LEAGUE_PUBLISH_ORIGIN');
+    if (!token && !values['dry-run']) throw new Error('publish needs VGC_LEAGUE_IMPORT_TOKEN');
+    const { publishRecords } = await import('./publish.js');
+    const summary = await publishRecords({
+      origin,
+      token,
+      recordsPath: RESULTS_PATH,
+      runsDir: RUNS_DIR,
+      teamsDir: TEAMS_DIR,
+      ...(values.pool === undefined ? {} : { pool: values.pool }),
+      includeTest: values['include-test'],
+      dryRun: values['dry-run'],
+      log: (line) => console.log(line),
+    });
+    if (!values['dry-run']) {
+      console.log(
+        `${summary.published} published, ${summary.duplicates} already present${summary.poolsCreated.length ? `, pools created: ${summary.poolsCreated.join(', ')}` : ''}`,
+      );
+    }
     return 0;
   }
   if (command === 'standings' || command === 'report') {

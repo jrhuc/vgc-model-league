@@ -322,6 +322,8 @@ async function playMatch(
     scaffold: context.scaffold,
     series_index: index,
     round: match.round + 1,
+    entrant_count: entrants.length,
+    seeds: { p1: match.slots[0], p2: match.slots[1] },
     ...(context.poolId === null ? {} : { pool: context.poolId }),
     ...(context.contributor === undefined ? {} : { contributor: context.contributor }),
     advanced: entrants[match.winner]!.model,

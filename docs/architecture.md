@@ -12,9 +12,9 @@ code in the same change. Deletion is as important as addition.
 
 - **CLI** (`src/cli.ts`): headless commands for `gui`, `restart`, `stop`,
   `selfcheck`, `rotation`, `tournament`, `draft`, `exhibition`, `standings`,
-  and `report`. `restart` rebuilds and swaps the detached GUI process in one
-  step; both it and `stop` refuse to interrupt an active run without
-  `--force`.
+  `report`, and `publish`. `restart` rebuilds and swaps the detached GUI
+  process in one step; both it and `stop` refuse to interrupt an active run
+  without `--force`.
 - **GUI** (`src/gui/`): a `node:http` server (`server.ts`) exposes a JSON API,
   serves a Preact single-page client, and streams live run state over SSE.
 
@@ -29,9 +29,16 @@ src/gui/
   server.ts     node:http server: JSON API, SSE, static assets, security gate
   client/       Preact + TSX app, built by Vite into dist/gui
     app.tsx     state root: /api/state boot, SSE subscription, navigation
-    views/      one file per nav view (fixtures, arena, results, pools)
-    components/ shared widgets (dropdown)
+    views/      one file per nav view (fixtures, arena, dataroom, pools)
+    components/ shared widgets (dropdown, chartkit)
 ```
+
+The nav has three views: run setup, the live run, and the data room. Every
+recorded result reads from the data room, which splits into a ladder section
+(Elo, head to head, trajectory), a play section (deliberation, action mix,
+luck), and a brackets section (tournament archives and placements). Sections
+are hash routes (`#results`, `#results/play`, `#results/brackets`), and the
+older `#tournaments` link opens the brackets section.
 
 Constraints:
 
@@ -104,6 +111,11 @@ token. The bridge exposes only the view of that seat. The Showdown move timer
 is off because agent turns take minutes. Rows use `mode: "exhibition"` and
 include the seat side. They are not rated. Decision, trace, and bridge tool
 logs make later audits possible.
+
+Every run directory carries a `status.json` marker: `running` with the owning
+pid at start, then a terminal state (`done`, `failed`, `stopped`) written by
+the CLI wrapper or the GUI server on exit, failure, or SIGINT/SIGTERM. A stale
+`running` marker whose pid is dead means the run was killed outright.
 
 Run failure semantics are part of the protocol. The first failed series aborts
 the shared signal of the scheduler. Queued series do not start, and in-flight
@@ -215,11 +227,15 @@ requires the operational work in [`deployment.md`](deployment.md).
    pass through the normal validators before admission.
 5. **Transport and headers:** hosted mode accepts one exact origin. HTTPS is a
    deployment requirement.
-6. **Evidence admission:** only server-produced evidence enters public
-   ratings. The server can keep client-submitted result rows as unverified
-   exhibits. Replay can make sure only that the recorded choices reproduce the
-   outcome. It cannot make sure which model produced those choices. Thus
-   replayed exhibits do not enter ratings.
+6. **Evidence admission:** evidence enters public ratings from two channels
+   only: runs the deployment executed itself, and imports through
+   `POST /api/import`, which requires the operator secret in
+   `VGC_LEAGUE_IMPORT_TOKEN` and does not exist without it. Imported rows
+   carry `origin`, so every view can separate them, and they rate because the
+   operator holds the same trust as the server process. Unauthenticated
+   submissions never rate. Replay can make sure only that the recorded choices
+   reproduce the outcome. It cannot make sure which model produced those
+   choices, so replayed exhibits stay exhibits.
 7. **Public spectating:** `/api/events/public` and `/api/battle/public` use
    the public split-log branch of Showdown. Exact HP and player-private
    protocol lines are available only to the owner or an operator. A stream
@@ -298,7 +314,14 @@ model. It is not a prerequisite for public deployment.
 ## Records
 
 `records/results.jsonl` is append-only and backward compatible. Readers
-accept unknown fields and missing optional fields. Ratings skip malformed
+accept unknown fields and missing optional fields. `vgcleague publish`
+(`src/publish.ts`) sends completed local series to a deployment's import
+route, one series per request, with the decision logs, the run configuration,
+and the team pool when it is missing there. `src/import.ts` validates each
+bundle, refuses path-unsafe identifiers, writes the pool and the evidence
+before the row, and skips series the deployment already holds, keyed on
+`run_id` and `series_id`. Prompts and raw provider responses stay on the
+machine that ran the battle. Ratings skip malformed
 rows without players. New rows record `mode`, `protocol_version`, and
 `scaffold`. The TypeScript reader keeps these fields optional for older rows.
 Legacy rows without `pool` stay in unscoped views. The league records

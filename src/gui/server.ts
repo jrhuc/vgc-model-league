@@ -1,5 +1,5 @@
 import { fork } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
 import fs from 'node:fs';
 import type http from 'node:http';
 import { createServer } from 'node:http';
@@ -11,8 +11,10 @@ import { AuthError } from '../auth.js';
 import { listBoards } from '../draft.js';
 import type { DraftLeagueEvent } from '../draftleague.js';
 import { DRAFT_PROTOCOL_VERSION, runDraftLeague } from '../draftleague.js';
+import { buildEvidence, buildTournaments } from '../evidence.js';
+import { ImportError, importSeries, isImported } from '../import.js';
 import { discoverModels } from '../model-catalog.js';
-import { DATA_DIR, makeRunDirectory, prepareDataDirectories, RESULTS_PATH, TEAMS_DIR } from '../paths.js';
+import { DATA_DIR, makeRunDirectory, prepareDataDirectories, RESULTS_PATH, RUNS_DIR, TEAMS_DIR } from '../paths.js';
 import { PROVIDER_OPTIONS, providerOption } from '../provider-registry.js';
 import type { ModelReasoningConfig, ReasoningLevel } from '../providers.js';
 import {
@@ -26,6 +28,7 @@ import { loadRows, ratingGroups, scopeRows } from '../records.js';
 import type { RecoveryPause } from '../recovery.js';
 import { RecoveryGate } from '../recovery.js';
 import { ROTATION_PROTOCOL_VERSION, runRotation } from '../rotation.js';
+import { writeRunStatus } from '../run-status.js';
 import { redactSecrets } from '../sanitize.js';
 import { loadShowdown } from '../showdown.js';
 import type { MonState } from '../state.js';
@@ -43,7 +46,9 @@ import type {
   BracketView,
   DecisionView,
   DraftView,
+  EvidenceResponse,
   FormatInfo,
+  ImportRequest,
   ModelInfo,
   ModelsResponse,
   MonView,
@@ -54,6 +59,7 @@ import type {
   SampleTeam,
   SeriesRowView,
   ServerEvent,
+  TournamentsResponse,
 } from './api.js';
 import { BattleLog } from './battlelog.js';
 import type { RunWorkerInput, RunWorkerOutput, RunWorkerStart } from './run-worker-protocol.js';
@@ -96,6 +102,7 @@ interface GuiServerOptions {
   publicOrigin?: string;
   mutationsEnabled?: boolean;
   auth?: AuthService;
+  importToken?: string;
   logger?: (entry: Record<string, unknown>) => void;
   maxRunMs?: number;
   workerPath?: string;
@@ -516,6 +523,13 @@ export class GuiServer {
       return;
     }
 
+    if (key === 'POST /api/import') {
+      this.authorizeImport(request);
+      this.consumeRateLimit('import', 'operator', 600, 60 * 60_000);
+      this.json(response, 200, this.importBody(await this.readJson(request)));
+      return;
+    }
+
     let actor: AuthUser | undefined;
     if (MUTATING_METHODS[method]) {
       const origin = request.headers.origin;
@@ -556,6 +570,9 @@ export class GuiServer {
     if (method === 'GET' && !url.pathname.startsWith('/api/') && this.serveStatic(url.pathname, response)) return;
     if (key === 'GET /api/state') this.json(response, 200, this.stateBody(session));
     else if (key === 'GET /api/records') this.json(response, 200, this.recordsBody(url.searchParams.get('pool')));
+    else if (key === 'GET /api/evidence') this.json(response, 200, this.evidenceBody(url.searchParams.get('pool')));
+    else if (key === 'GET /api/tournaments')
+      this.json(response, 200, this.tournamentsBody(url.searchParams.get('pool')));
     else if (key === 'GET /api/pool/teams') {
       this.json(response, 200, this.poolTeamsBody(url.searchParams.get('name') ?? ''));
     } else if (key === 'GET /api/reasoning') {
@@ -839,7 +856,51 @@ export class GuiServer {
     const rated = rows.filter((row) => (row.mode ?? 'rotation') === 'rotation');
     const pools = [...new Set(all.map((row) => (typeof row.pool === 'string' ? row.pool : '')))].filter(Boolean).sort();
     const groups = ratingGroups(rated);
-    return { count: rows.length, pool, pools, groups, records: rows };
+    return { count: rows.length, pool, pools, groups, imported: rows.filter(isImported).length, records: rows };
+  }
+
+  private authorizeImport(request: http.IncomingMessage): void {
+    const configured = this.options.importToken;
+    if (!configured) throw new HttpError(404, 'this deployment does not accept imports');
+    const header = request.headers.authorization ?? '';
+    const offered = header.toLowerCase().startsWith('bearer ') ? header.slice(7).trim() : '';
+    const expected = createHash('sha256').update(configured).digest();
+    const received = createHash('sha256').update(offered).digest();
+    if (!offered || !timingSafeEqual(expected, received)) throw new HttpError(401, 'invalid import token');
+  }
+
+  private importBody(body: Record<string, unknown>): JsonObject {
+    try {
+      const result = importSeries(body as unknown as ImportRequest, {
+        recordsPath: this.options.recordsPath ?? RESULTS_PATH,
+        runsDir: this.options.runsDir ?? RUNS_DIR,
+        teamsDir: this.options.teamsDir ?? TEAMS_DIR,
+      });
+      this.options.logger?.({
+        timestamp: new Date().toISOString(),
+        level: 'info',
+        event: 'series_imported',
+        run: result.runId,
+        series: result.seriesId,
+        imported: result.imported,
+      });
+      return result as unknown as JsonObject;
+    } catch (error) {
+      if (error instanceof ImportError) throw new HttpError(400, error.message);
+      throw error;
+    }
+  }
+
+  private evidenceBody(poolParam: string | null): EvidenceResponse {
+    const all = loadRows(this.options.recordsPath ?? RESULTS_PATH);
+    const pool = poolParam?.trim() || null;
+    return buildEvidence(all, this.options.runsDir ?? RUNS_DIR, pool);
+  }
+
+  private tournamentsBody(poolParam: string | null): TournamentsResponse {
+    const all = loadRows(this.options.recordsPath ?? RESULTS_PATH);
+    const pool = poolParam?.trim() || null;
+    return buildTournaments(all, this.options.runsDir ?? RUNS_DIR, pool);
   }
 
   private runBody(publicView = false): RunSnapshot | null {
@@ -1055,6 +1116,14 @@ export class GuiServer {
       }
     }
     this.run = run;
+    writeRunStatus(run.runDir, {
+      state: 'running',
+      error: null,
+      notices: [],
+      start_time: new Date(run.startTime).toISOString(),
+      end_time: null,
+      pid: process.pid,
+    });
     run.timeoutRemainingMs = this.maxRunMs;
     this.armRunTimeout(run);
     this.runTask = this.launch(run);
@@ -1249,23 +1318,13 @@ export class GuiServer {
 
   private persistStatus(run: ActiveRun): void {
     run.endTime ??= Date.now();
-    try {
-      fs.writeFileSync(
-        path.join(run.runDir, 'status.json'),
-        `${JSON.stringify(
-          {
-            state: run.state,
-            error: run.error || null,
-            notices: run.notices,
-            start_time: new Date(run.startTime).toISOString(),
-            end_time: new Date(run.endTime ?? Date.now()).toISOString(),
-          },
-          null,
-          1,
-        )}\n`,
-        'utf8',
-      );
-    } catch {}
+    writeRunStatus(run.runDir, {
+      state: run.state,
+      error: run.error || null,
+      notices: run.notices,
+      start_time: new Date(run.startTime).toISOString(),
+      end_time: new Date(run.endTime ?? Date.now()).toISOString(),
+    });
   }
 
   /**

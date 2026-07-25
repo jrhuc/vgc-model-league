@@ -1,0 +1,136 @@
+import fs from 'node:fs';
+import path from 'node:path';
+
+import type { AppState, ImportRequest, ImportResponse } from './gui/api.js';
+import { isImported } from './import.js';
+import { loadRows, type SeriesRecord, TEST_POOL } from './records.js';
+import { loadPool } from './teams.js';
+import type { Pid } from './types.js';
+
+const SEATS: Pid[] = ['p1', 'p2'];
+const REQUEST_TIMEOUT_MS = 120_000;
+
+export interface PublishOptions {
+  origin: string;
+  token: string;
+  recordsPath: string;
+  runsDir: string;
+  teamsDir: string;
+  pool?: string;
+  includeTest?: boolean;
+  dryRun?: boolean;
+  log?: (line: string) => void;
+}
+
+export interface PublishSummary {
+  published: number;
+  duplicates: number;
+  poolsCreated: string[];
+}
+
+function selectable(rows: SeriesRecord[], options: PublishOptions): SeriesRecord[] {
+  return rows.filter((row) => {
+    if (isImported(row)) return false;
+    if (options.pool !== undefined) return row.pool === options.pool;
+    return options.includeTest === true || row.pool !== TEST_POOL;
+  });
+}
+
+function readLog(runsDir: string, row: SeriesRecord, pid: Pid): string | undefined {
+  const file = path.join(
+    runsDir,
+    String(row.run_id ?? ''),
+    'series',
+    String(row.series_id ?? ''),
+    `${pid}-decisions.jsonl`,
+  );
+  try {
+    return fs.readFileSync(file, 'utf8');
+  } catch {
+    return undefined;
+  }
+}
+
+function readRunConfig(runsDir: string, runId: string): Record<string, unknown> | undefined {
+  try {
+    return JSON.parse(fs.readFileSync(path.join(runsDir, runId, 'config.json'), 'utf8')) as Record<string, unknown>;
+  } catch {
+    return undefined;
+  }
+}
+
+async function exportPool(name: string, teamsDir: string): Promise<NonNullable<ImportRequest['pool']>> {
+  const { loadShowdown } = await import('./showdown.js');
+  const { Teams } = loadShowdown();
+  const pool = loadPool(name, teamsDir);
+  return {
+    name: pool.id,
+    format: pool.format,
+    teams: pool.teams.map((team) => {
+      const unpacked = Teams.unpack(team.packed);
+      if (!unpacked) throw new Error(`team ${JSON.stringify(team.id)} in pool ${JSON.stringify(name)} is invalid`);
+      return { id: team.id, paste: Teams.export(unpacked) };
+    }),
+  };
+}
+
+async function get<T>(origin: string, route: string): Promise<T> {
+  const response = await fetch(new URL(route, origin), { signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
+  if (!response.ok) throw new Error(`${route} answered ${response.status}`);
+  return (await response.json()) as T;
+}
+
+async function post(origin: string, token: string, bundle: ImportRequest): Promise<ImportResponse> {
+  const response = await fetch(new URL('/api/import', origin), {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+    body: JSON.stringify(bundle),
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+  });
+  const text = await response.text();
+  if (!response.ok) throw new Error(`import rejected with ${response.status}: ${text.slice(0, 400)}`);
+  return JSON.parse(text) as ImportResponse;
+}
+
+export async function publishRecords(options: PublishOptions): Promise<PublishSummary> {
+  const log = options.log ?? (() => {});
+  const rows = selectable(loadRows(options.recordsPath), options);
+  if (rows.length === 0) throw new Error('no local series match the selection');
+  const remote = await get<AppState>(options.origin, '/api/state');
+  const remotePools = new Set(remote.pools.map((entry) => entry.name));
+  const summary: PublishSummary = { published: 0, duplicates: 0, poolsCreated: [] };
+  const sentConfigs = new Set<string>();
+  for (const row of rows) {
+    const runId = String(row.run_id ?? '');
+    const label = `${row.players.p1} vs ${row.players.p2} (${String(row.mode ?? 'rotation')}, ${runId.slice(0, 15)})`;
+    const bundle: ImportRequest = { row: row as Record<string, unknown> };
+    const logs: Partial<Record<Pid, string>> = {};
+    for (const pid of SEATS) {
+      const text = readLog(options.runsDir, row, pid);
+      if (text !== undefined) logs[pid] = text;
+    }
+    if (Object.keys(logs).length > 0) bundle.logs = logs;
+    if (!sentConfigs.has(runId)) {
+      const config = readRunConfig(options.runsDir, runId);
+      if (config) bundle.runConfig = config;
+      sentConfigs.add(runId);
+    }
+    const pool = typeof row.pool === 'string' ? row.pool : '';
+    if (pool && !remotePools.has(pool)) bundle.pool = await exportPool(pool, options.teamsDir);
+    if (options.dryRun) {
+      log(`would publish ${label}${bundle.pool ? ` with pool ${pool}` : ''}`);
+      if (bundle.pool) remotePools.add(pool);
+      continue;
+    }
+    const result = await post(options.origin, options.token, bundle);
+    if (result.pool === 'created') {
+      remotePools.add(pool);
+      summary.poolsCreated.push(pool);
+    }
+    if (result.imported) summary.published += 1;
+    else summary.duplicates += 1;
+    log(`${result.imported ? 'published' : 'already there'}: ${label}`);
+  }
+  if (options.dryRun) log(`${rows.length} series selected; nothing sent`);
+  return summary;
+}

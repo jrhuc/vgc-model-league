@@ -906,6 +906,18 @@ test('gui runs a random-vs-random series and streams live battle state', async (
     const h2h = groups[0]!.h2h as Record<string, Record<string, [number, number, number]>>;
     assert.ok(h2h.random!.random);
 
+    const evidence = await apiJson(`${base}api/evidence?pool=test`);
+    assert.equal(evidence.status, 200);
+    assert.equal(evidence.data.pool, 'test');
+    assert.equal(evidence.data.count, 1);
+    assert.deepEqual(evidence.data.models, [], 'reference agents leave no engine evidence');
+    const luckSeries = evidence.data.series as Array<Record<string, unknown>>;
+    assert.equal(luckSeries.length, 1);
+    assert.equal(luckSeries[0]!.p1, 'random');
+    assert.ok(typeof (luckSeries[0]!.luck as Record<string, number>).p1 === 'number');
+    const emptyEvidence = await apiJson(`${base}api/evidence`);
+    assert.equal(emptyEvidence.data.count, 0, 'the test pool stays out of overall evidence');
+
     for (let attempt = 0; attempt < 40; attempt += 1) {
       if (/"type":"battle"/.test(stream) && /"type":"run"/.test(stream)) break;
       await new Promise((resolve) => setTimeout(resolve, 50));

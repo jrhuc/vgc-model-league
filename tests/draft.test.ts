@@ -294,7 +294,7 @@ test('a drafter that never answers falls back to a random legal pick', async (t)
   );
   const llmPicks = outcome.picks.filter((pick) => pick.entrant === 0);
   assert.ok(llmPicks.every((pick) => pick.fallback));
-  assert.match(llmPicks[0]!.rationale, /fallback pick/);
+  assert.match(llmPicks[0]!.rationale, /random legal pick after \d+ failed attempts/);
 });
 
 test('a hard quota failure stops the draft instead of making random picks', async (t) => {

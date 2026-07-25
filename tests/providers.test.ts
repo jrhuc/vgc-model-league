@@ -118,6 +118,28 @@ test('provider failures distinguish terminal capacity from recoverable upstream 
       pausable: true,
     },
   );
+  assert.deepEqual(
+    classifyProviderFailure(
+      new ApiError(
+        429,
+        'You exceeded your current quota. Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 5. quotaId: GenerateRequestsPerMinutePerProjectPerModel-FreeTier. Please retry in 34.025085268s.',
+      ),
+      'google:gemini-3.6-flash',
+    ),
+    {
+      kind: 'rate_limit',
+      summary: 'Google API rate limit was reached (429).',
+      terminal: false,
+      pausable: true,
+    },
+  );
+  assert.equal(
+    classifyProviderFailure(
+      new ApiError(429, 'You exceeded your current quota: GenerateRequestsPerDayPerProjectPerModel-FreeTier'),
+      'google:gemini-3.6-flash',
+    ).terminal,
+    true,
+  );
   assert.equal(classifyProviderFailure(new ApiError(401, 'invalid key'), 'anthropic:claude').terminal, true);
   assert.equal(classifyProviderFailure(new ApiError(503, 'overloaded'), 'anthropic:claude').terminal, false);
   assert.equal(classifyProviderFailure(new ApiError(501, 'not implemented'), 'compat:model').terminal, true);
@@ -331,6 +353,35 @@ test('temperature is dropped after a 400 response', async () => {
     });
   }) as typeof globalThis.fetch;
   const provider = makeProvider(parseSpec('kimi:kimi-k3'), { apiKey: 'moonshot-key', fetch });
+
+  const completion = await provider.complete('system', [{ role: 'user', content: 'hello' }]);
+
+  assert.equal(bodies.length, 2);
+  assert.equal('temperature' in bodies[0]!, true);
+  assert.equal('temperature' in bodies[1]!, false);
+  assert.equal(completion.text, 'ok');
+});
+
+test('a masked OpenCode upstream 400 retries without temperature', async () => {
+  const bodies: Record<string, unknown>[] = [];
+  const fetch = (async (_input, init) => {
+    bodies.push(JSON.parse(String(init?.body)));
+    if (bodies.length === 1)
+      return jsonResponse(
+        {
+          error: {
+            message: 'Error from provider (Console Go): Upstream request failed',
+            type: 'invalid_request_error',
+          },
+        },
+        400,
+      );
+    return jsonResponse({
+      choices: [{ message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' }],
+      usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+    });
+  }) as typeof globalThis.fetch;
+  const provider = makeProvider(parseSpec('opencode-go:kimi-k3'), { apiKey: 'zen-key', fetch });
 
   const completion = await provider.complete('system', [{ role: 'user', content: 'hello' }]);
 

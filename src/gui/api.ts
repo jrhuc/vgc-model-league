@@ -100,7 +100,7 @@ export interface DraftView {
   phase: 'draft' | 'roundrobin' | 'playoffs' | 'done';
 }
 
-interface BracketEntrantView {
+export interface BracketEntrantView {
   model: string;
   team: string;
 }
@@ -244,7 +244,7 @@ export interface BattleMessage {
 
 export type ServerEvent = { type: 'run'; run: RunSnapshot | null } | ({ type: 'battle' } & BattleMessage);
 
-interface StandingView {
+export interface StandingView {
   spec: string;
   series: number;
   w: number;
@@ -254,12 +254,19 @@ interface StandingView {
   elo: number;
 }
 
+export interface TrajectoryPointView {
+  series: number;
+  spec: string;
+  elo: number;
+}
+
 interface SpeedGroupView {
   scale: number | 'off';
   label: string;
   count: number;
   standings: StandingView[];
   h2h: Record<string, Record<string, [number, number, number]>>;
+  trajectory: TrajectoryPointView[];
 }
 
 export interface RecordsResponse {
@@ -269,7 +276,117 @@ export interface RecordsResponse {
   pools: string[];
   /** Rated rotation rows split by battle speed; untimed first, then ascending clock scales. */
   groups: SpeedGroupView[];
+  imported: number;
   records: unknown[];
+}
+
+export interface LatencyPoint {
+  ms: number;
+  tokens?: number;
+  seriesId: string;
+  game: number;
+  turn: number;
+  phase: string;
+}
+
+export interface ModelEvidence {
+  spec: string;
+  providers: string[];
+  series: number;
+  decisions: number;
+  reflections: number;
+  latency: { median: number; p25: number; p75: number; max: number } | null;
+  tokens: { median: number; p25: number; p75: number; max: number } | null;
+  points: LatencyPoint[];
+  rates: {
+    fallback: number;
+    parseFailure: number;
+    providerRetry: number;
+    switch: number;
+    protect: number;
+    toolLookups: number;
+    threatConversion: number | null;
+    reflectionFallback: number | null;
+  };
+}
+
+export interface SeriesLuckEntry {
+  seriesId: string;
+  runId: string;
+  timestamp: string;
+  p1: string;
+  p2: string;
+  winner: string | null;
+  score: [number, number];
+  games: number;
+  turns: number;
+  luck: Record<Pid, number>;
+  winnerLuckDelta: number | null;
+}
+
+export interface TournamentStanding {
+  spec: string;
+  entered: number;
+  titles: number;
+  runnerUp: number;
+  semis: number;
+  earlier: number;
+  matchWins: number;
+  matchLosses: number;
+}
+
+export interface TournamentSummary {
+  tournaments: number;
+  matches: number;
+  standings: TournamentStanding[];
+}
+
+export interface EvidenceResponse {
+  pool: string | null;
+  count: number;
+  decisions: number;
+  models: ModelEvidence[];
+  series: SeriesLuckEntry[];
+}
+
+export interface ArchivedMatchView {
+  slots: [number | null, number | null];
+  winner: number | null;
+  score: [number, number] | null;
+  turns: number | null;
+}
+
+export interface TournamentArchiveView {
+  runId: string;
+  when: string;
+  pool: string | null;
+  entrants: BracketEntrantView[];
+  rounds: ArchivedMatchView[][];
+  champion: number | null;
+  complete: boolean;
+}
+
+export interface TournamentsResponse {
+  pool: string | null;
+  pools: string[];
+  summary: TournamentSummary;
+  tournaments: TournamentArchiveView[];
+}
+
+export interface ImportRequest {
+  row: Record<string, unknown>;
+  logs?: Partial<Record<Pid, string>>;
+  runConfig?: Record<string, unknown>;
+  pool?: { name: string; format: string; teams: Array<{ id: string; paste: string }> };
+}
+
+export interface ImportResponse {
+  imported: boolean;
+  duplicate?: boolean;
+  runId: string;
+  seriesId: string;
+  logs: Pid[];
+  pool: 'created' | 'present' | null;
 }
 
 export interface ModelsResponse {

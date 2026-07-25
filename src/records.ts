@@ -74,12 +74,19 @@ export interface Standing {
 
 export type HeadToHead = Record<string, Record<string, [number, number, number]>>;
 
+export interface RatingPoint {
+  series: number;
+  spec: string;
+  elo: number;
+}
+
 export interface RatingGroup {
   scale: TimerScale;
   label: string;
   count: number;
   standings: Standing[];
   h2h: HeadToHead;
+  trajectory: RatingPoint[];
 }
 
 export function appendRow(file: string, row: JsonObject): void {
@@ -115,14 +122,15 @@ function normalizedPlayers(row: SeriesRecord): { p1: string; p2: string; winner:
   return { p1: modelKey(p1), p2: modelKey(p2), winner };
 }
 
-export function standings(rows: SeriesRecord[]): Standing[] {
+function computeRatings(rows: SeriesRecord[]): { standings: Standing[]; trajectory: RatingPoint[] } {
   const ordered = scheduled(playedRows(rows)).map(normalizedPlayers);
   const specs = [...new Set(ordered.flatMap(({ p1, p2 }) => [p1, p2]))].sort();
   const ratings: Record<string, number> = Object.fromEntries(specs.map((spec) => [spec, 1000]));
   const totals: Record<string, { series: number; w: number; l: number; t: number }> = Object.fromEntries(
     specs.map((spec) => [spec, { series: 0, w: 0, l: 0, t: 0 }]),
   );
-  for (const { p1, p2, winner } of ordered) {
+  const trajectory: RatingPoint[] = [];
+  for (const [index, { p1, p2, winner }] of ordered.entries()) {
     const score1 = winner === null ? 0.5 : Number(winner === p1);
     if (p1 !== p2) {
       const expected1 = 1 / (1 + 10 ** ((ratings[p2]! - ratings[p1]!) / 400));
@@ -131,6 +139,8 @@ export function standings(rows: SeriesRecord[]): Standing[] {
       ratings[p1] = old1 + 24 * (score1 - expected1);
       ratings[p2] = old2 + 24 * (1 - score1 - (1 - expected1));
     }
+    trajectory.push({ series: index + 1, spec: p1, elo: ratings[p1]! });
+    if (p2 !== p1) trajectory.push({ series: index + 1, spec: p2, elo: ratings[p2]! });
     totals[p1]!.series += 1;
     totals[p2]!.series += 1;
     if (winner === null) {
@@ -141,7 +151,7 @@ export function standings(rows: SeriesRecord[]): Standing[] {
       totals[winner === p1 ? p2 : p1]!.l += 1;
     }
   }
-  return specs
+  const table = specs
     .map((spec) => {
       const total = totals[spec]!;
       return {
@@ -152,6 +162,11 @@ export function standings(rows: SeriesRecord[]): Standing[] {
       };
     })
     .sort((a, b) => b.elo - a.elo || a.spec.localeCompare(b.spec));
+  return { standings: table, trajectory };
+}
+
+export function standings(rows: SeriesRecord[]): Standing[] {
+  return computeRatings(rows).standings;
 }
 
 export function h2h(input: SeriesRecord[]): HeadToHead {
@@ -183,11 +198,15 @@ export function h2h(input: SeriesRecord[]): HeadToHead {
 }
 
 export function ratingGroups(rows: SeriesRecord[]): RatingGroup[] {
-  return speedGroups(rows).map(({ scale, rows: grouped }) => ({
-    scale,
-    label: speedLabel(scale),
-    count: grouped.length,
-    standings: standings(grouped),
-    h2h: h2h(grouped),
-  }));
+  return speedGroups(rows).map(({ scale, rows: grouped }) => {
+    const { standings: table, trajectory } = computeRatings(grouped);
+    return {
+      scale,
+      label: speedLabel(scale),
+      count: grouped.length,
+      standings: table,
+      h2h: h2h(grouped),
+      trajectory,
+    };
+  });
 }

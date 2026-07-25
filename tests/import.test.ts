@@ -1,0 +1,145 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import test from 'node:test';
+
+import { GuiServer } from '../src/gui/server.js';
+import { importSeries } from '../src/import.js';
+import { loadRows } from '../src/records.js';
+
+const TOKEN = 'test-import-token';
+
+interface Scratch {
+  paths: { recordsPath: string; runsDir: string; teamsDir: string };
+  dispose: () => void;
+}
+
+function scratch(): Scratch {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-import-'));
+  const teamsDir = path.join(root, 'teams');
+  fs.mkdirSync(teamsDir, { recursive: true });
+  return {
+    paths: { recordsPath: path.join(root, 'records', 'results.jsonl'), runsDir: path.join(root, 'runs'), teamsDir },
+    dispose: () => fs.rmSync(root, { recursive: true, force: true }),
+  };
+}
+
+function bundleRow(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    mode: 'rotation',
+    run_id: '20260725T000000.000000Z-abcd1234',
+    series_id: 'aaaabbbbcccc',
+    series_index: 0,
+    pool: 'majors',
+    timestamp: '2026-07-25T00:10:00.000Z',
+    players: { p1: 'google:gemini-3.5-flash-lite', p2: 'random' },
+    winner: 'google:gemini-3.5-flash-lite',
+    score: { p1: 2, p2: 0 },
+    turns: 21,
+    ...overrides,
+  };
+}
+
+test('importSeries stores a row with its decision logs and stamps provenance', () => {
+  const store = scratch();
+  try {
+    const result = importSeries(
+      {
+        row: bundleRow(),
+        logs: { p1: '{"kind":"decision","latency_ms":1200}\n{"kind":"decision","latency_ms":900}' },
+        runConfig: { mode: 'rotation', models: ['google:gemini-3.5-flash-lite', 'random'] },
+      },
+      store.paths,
+    );
+    assert.equal(result.imported, true);
+    assert.deepEqual(result.logs, ['p1']);
+    assert.equal(result.pool, null);
+
+    const rows = loadRows(store.paths.recordsPath);
+    assert.equal(rows.length, 1);
+    const origin = rows[0]!.origin as { source: string; at: string };
+    assert.equal(origin.source, 'import');
+    assert.ok(Date.parse(origin.at) > 0, 'the row records when the deployment accepted it');
+    assert.equal(rows[0]!.players.p1, 'google:gemini-3.5-flash-lite', 'the row survives the trip unchanged');
+
+    const logFile = path.join(
+      store.paths.runsDir,
+      String(rows[0]!.run_id),
+      'series',
+      'aaaabbbbcccc',
+      'p1-decisions.jsonl',
+    );
+    assert.match(fs.readFileSync(logFile, 'utf8'), /latency_ms":1200/);
+    assert.ok(fs.existsSync(path.join(store.paths.runsDir, String(rows[0]!.run_id), 'config.json')));
+
+    const repeat = importSeries({ row: bundleRow() }, store.paths);
+    assert.deepEqual(
+      { imported: repeat.imported, duplicate: repeat.duplicate },
+      { imported: false, duplicate: true },
+      'a series already held is reported, not appended twice',
+    );
+    assert.equal(loadRows(store.paths.recordsPath).length, 1);
+  } finally {
+    store.dispose();
+  }
+});
+
+test('importSeries rejects rows it cannot place on disk', () => {
+  const store = scratch();
+  try {
+    assert.throws(() => importSeries({ row: bundleRow({ run_id: '../escape' }) }, store.paths), /path-safe/);
+    assert.throws(() => importSeries({ row: bundleRow({ players: { p1: 'a' } }) }, store.paths), /both seats/);
+    assert.throws(() => importSeries({ row: bundleRow({ mode: 'ladder' }) }, store.paths), /unknown mode/);
+    assert.throws(() => importSeries({ row: bundleRow(), logs: { p1: 'not json' } }, store.paths), /not JSON/);
+    assert.equal(loadRows(store.paths.recordsPath).length, 0, 'a rejected bundle writes nothing');
+    assert.equal(fs.existsSync(store.paths.runsDir), false);
+  } finally {
+    store.dispose();
+  }
+});
+
+test('the import route answers only to the configured operator token', async () => {
+  const store = scratch();
+  const gui = new GuiServer({ ...store.paths, importToken: TOKEN });
+  const base = await gui.listen(0);
+  const post = (headers: Record<string, string>, body: unknown) =>
+    fetch(`${base}api/import`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...headers },
+      body: JSON.stringify(body),
+    });
+  try {
+    assert.equal((await post({}, { row: bundleRow() })).status, 401);
+    assert.equal((await post({ authorization: 'Bearer wrong' }, { row: bundleRow() })).status, 401);
+    const rejected = await post({ authorization: `Bearer ${TOKEN}` }, { row: { players: {} } });
+    assert.equal(rejected.status, 400);
+    const accepted = await post({ authorization: `Bearer ${TOKEN}` }, { row: bundleRow() });
+    assert.equal(accepted.status, 200);
+    assert.equal(((await accepted.json()) as { imported: boolean }).imported, true);
+
+    const records = (await (await fetch(`${base}api/records?pool=majors`)).json()) as Record<string, unknown>;
+    assert.equal(records.count, 1);
+    assert.equal(records.imported, 1, 'the record book separates imported evidence from local runs');
+  } finally {
+    gui.close();
+    store.dispose();
+  }
+});
+
+test('a deployment without an import token has no import route', async () => {
+  const store = scratch();
+  const gui = new GuiServer(store.paths);
+  const base = await gui.listen(0);
+  try {
+    const response = await fetch(`${base}api/import`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${TOKEN}` },
+      body: JSON.stringify({ row: bundleRow() }),
+    });
+    assert.equal(response.status, 404);
+  } finally {
+    gui.close();
+    store.dispose();
+  }
+});

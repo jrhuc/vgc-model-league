@@ -33,6 +33,12 @@ GITHUB_CLIENT_SECRET=<oauth-app-client-secret>
 list of numeric GitHub subjects to operator. `VGC_LEAGUE_MAX_RUN_MINUTES` sets
 the run deadline. The range is 1 to 1,440 minutes, and the default is 240.
 
+`VGC_LEAGUE_IMPORT_TOKEN` is optional. It is a shared operator secret that
+enables `POST /api/import`, the route `vgcleague publish` uses to send
+completed local series to the deployment. Without the variable the route
+answers 404. Set the same value in the shell that runs `publish`. Rotate it by
+changing the variable; nothing else stores it.
+
 The OAuth flow requests no scopes and uses state and PKCE. SQLite stores the
 session hashes, roles, ownership, audit events, and experiment status.
 Cookies are `HttpOnly`, `Secure`, and `SameSite=Lax`. Mutations also require

@@ -70,7 +70,12 @@ test('built client bundle boots and renders the app against the live server', as
     assert.match(text, /Control sheet/);
     assert.match(text, /No models selected/);
     const navButtons = window.document.querySelectorAll('.nav-button');
-    assert.equal(navButtons.length, 3, 'pool management lives inside run setup, not the top nav');
+    assert.equal(navButtons.length, 3, 'setup, the live run, and one data room; pools live inside run setup');
+    assert.deepEqual(
+      [...navButtons].map((button) => button.textContent),
+      ['New run', 'Live run', 'Data room'],
+      'every recorded result reads from one data room',
+    );
 
     const modeTabs = window.document.querySelectorAll('.mode-tab');
     assert.equal(modeTabs.length, 4, 'match, tournament, draft, and rotation modes are offered');
@@ -184,6 +189,71 @@ test('built client bundle boots and renders the app against the live server', as
   } finally {
     await window.happyDOM.close();
     gui.close();
+  }
+});
+
+test('the data room archives a bracket and expands it on demand', async () => {
+  const recordsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-gui-records-'));
+  const recordsPath = path.join(recordsDir, 'results.jsonl');
+  const match = (
+    seriesIndex: number,
+    round: number,
+    seeds: [number, number],
+    p1: string,
+    p2: string,
+    winnerSide: 'p1' | 'p2',
+  ) => ({
+    mode: 'tournament',
+    run_id: 'cup-dom',
+    timestamp: `2026-07-25T0${seriesIndex}:00:00.000Z`,
+    series_index: seriesIndex,
+    round,
+    entrant_count: 3,
+    seeds: { p1: seeds[0], p2: seeds[1] },
+    pool: 'majors',
+    players: { p1, p2 },
+    teams: { p1: `team-${seeds[0]}`, p2: `team-${seeds[1]}` },
+    winner: winnerSide === 'p1' ? p1 : p2,
+    winner_side: winnerSide,
+    score: { p1: 2, p2: winnerSide === 'p1' ? 0 : 3 },
+    turns: 12,
+    advanced: winnerSide === 'p1' ? p1 : p2,
+  });
+  const rows = [
+    match(0, 1, [1, 2], 'openai:beta', 'openai:gamma', 'p2'),
+    match(1, 2, [0, 2], 'openai:alpha', 'openai:gamma', 'p1'),
+  ];
+  fs.writeFileSync(recordsPath, `${rows.map((row) => JSON.stringify(row)).join('\n')}\n`, 'utf8');
+  const gui = new GuiServer({ runsDir: RUNS_SCRATCH, recordsPath });
+  const base = await gui.listen(0);
+  const window = new Window({ url: `${base}#tournaments` });
+  try {
+    const shell = await (await fetch(base)).text();
+    const asset = /src="(\.\/assets\/[^"]+\.js)"/.exec(shell)?.[1];
+    assert.ok(asset);
+    const bundle = await (await fetch(new URL(asset, base))).text();
+    window.document.body.innerHTML = '<div id="app"></div>';
+    if (!('EventSource' in window)) {
+      (window as unknown as Record<string, unknown>).EventSource = class {
+        onmessage: unknown = null;
+        close(): void {}
+      };
+    }
+    window.eval(bundle);
+    const rendered = () => window.document.body.textContent ?? '';
+    await waitFor(() => rendered().includes('Reigning champion'));
+    assert.match(rendered(), /openai:alpha/);
+    assert.match(rendered(), /1 finished/);
+    const head = asButton(window.document.querySelector('.tournament-card-head'));
+    head.click();
+    await waitFor(() => window.document.querySelectorAll('.bracket-match').length > 0);
+    assert.equal(window.document.querySelectorAll('.bracket-match').length, 3, 'two semis (one a bye) and a final');
+    assert.match(rendered(), /Bye/);
+    assert.match(rendered(), /Final/);
+  } finally {
+    await window.happyDOM.close();
+    gui.close();
+    fs.rmSync(recordsDir, { recursive: true, force: true });
   }
 });
 

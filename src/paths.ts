@@ -10,7 +10,7 @@ export const AUTH_DB_PATH = path.resolve(process.env.VGC_LEAGUE_DB_PATH ?? path.
 export const PINNED_PS_DIR = path.join(REPO_ROOT, 'pokemon-showdown');
 export const TEAMS_DIR = path.join(DATA_DIR, 'teams');
 export const BOARDS_DIR = path.join(REPO_ROOT, 'boards');
-const RUNS_DIR = path.join(DATA_DIR, 'runs');
+export const RUNS_DIR = path.join(DATA_DIR, 'runs');
 export const RESULTS_PATH = path.join(DATA_DIR, 'records', 'results.jsonl');
 
 export function prepareDataDirectories(): void {

@@ -4,16 +4,32 @@ import type { AppState, AuthView, BattleMessage, PoolInfo, RunSnapshot, ServerEv
 import { api, configureCsrf } from './http';
 import type { StoredBattle } from './views/arena';
 import { ArenaView } from './views/arena';
+import type { DataRoomSection } from './views/dataroom';
+import { DataRoomView, isDataRoomSection } from './views/dataroom';
 import { FixturesView } from './views/fixtures';
-import { ResultsView } from './views/results';
 
 const NAV = [
   { id: 'fixtures', label: 'New run' },
   { id: 'arena', label: 'Live run' },
-  { id: 'results', label: 'Record book' },
+  { id: 'results', label: 'Data room' },
 ] as const;
 
 export type ViewId = (typeof NAV)[number]['id'];
+
+interface Route {
+  view: ViewId;
+  section: DataRoomSection;
+}
+
+function routeFromHash(): Route {
+  const hash = window.location.hash.slice(1);
+  if (hash === 'tournaments') return { view: 'results', section: 'brackets' };
+  const [head, tail = ''] = hash.split('/');
+  return {
+    view: NAV.some((item) => item.id === head) ? (head as ViewId) : 'fixtures',
+    section: isDataRoomSection(tail) ? tail : 'ladder',
+  };
+}
 
 function isFresherBattle(candidate: BattleMessage, current: BattleMessage | undefined): boolean {
   if (!candidate.snapshot) return false;
@@ -72,7 +88,7 @@ export function App() {
   const [run, setRun] = useState<RunSnapshot | null>(null);
   const [battles, setBattles] = useState<Record<number, StoredBattle>>({});
   const [selected, setSelected] = useState<number | null>(null);
-  const [view, setView] = useState<ViewId>('fixtures');
+  const [route, setRoute] = useState<Route>(routeFromHash);
   const [recordsEpoch, setRecordsEpoch] = useState(0);
   const [, setClockTick] = useState(0);
   const runWasLive = useRef(false);
@@ -129,8 +145,18 @@ export function App() {
     return () => clearInterval(timer);
   }, [run?.state]);
 
-  const navigate = (next: ViewId) => {
-    setView(next);
+  useEffect(() => {
+    const onHashChange = () => setRoute(routeFromHash());
+    window.addEventListener('hashchange', onHashChange);
+    return () => window.removeEventListener('hashchange', onHashChange);
+  }, []);
+
+  const view = route.view;
+
+  const navigate = (next: ViewId, section: DataRoomSection = 'ladder') => {
+    setRoute({ view: next, section });
+    const hash = next === 'fixtures' ? '#' : section === 'ladder' ? `#${next}` : `#${next}/${section}`;
+    history.replaceState(null, '', hash);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
@@ -260,7 +286,12 @@ export function App() {
           />
         </section>
         <section class={`view ${view === 'results' ? 'on' : ''}`}>
-          <ResultsView active={view === 'results'} epoch={recordsEpoch} />
+          <DataRoomView
+            active={view === 'results'}
+            epoch={recordsEpoch}
+            section={route.section}
+            onSection={(next) => navigate('results', next)}
+          />
         </section>
       </main>
     </>
