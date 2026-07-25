@@ -6,10 +6,12 @@ import type { StoredBattle } from './views/arena';
 import { ArenaView } from './views/arena';
 import { DataRoomView } from './views/dataroom';
 import { FixturesView } from './views/fixtures';
+import { TournamentsView } from './views/tournaments';
 
 const NAV = [
   { id: 'fixtures', label: 'New run' },
   { id: 'arena', label: 'Live run' },
+  { id: 'tournaments', label: 'Tournaments' },
   { id: 'results', label: 'Data room' },
 ] as const;
 
@@ -270,6 +272,9 @@ export function App() {
             onFetchBattle={fetchBattle}
             onGoFixtures={() => navigate('fixtures')}
           />
+        </section>
+        <section class={`view ${view === 'tournaments' ? 'on' : ''}`}>
+          <TournamentsView active={view === 'tournaments'} epoch={recordsEpoch} />
         </section>
         <section class={`view ${view === 'results' ? 'on' : ''}`}>
           <DataRoomView active={view === 'results'} epoch={recordsEpoch} />

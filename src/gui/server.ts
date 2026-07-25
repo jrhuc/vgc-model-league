@@ -11,7 +11,7 @@ import { AuthError } from '../auth.js';
 import { listBoards } from '../draft.js';
 import type { DraftLeagueEvent } from '../draftleague.js';
 import { DRAFT_PROTOCOL_VERSION, runDraftLeague } from '../draftleague.js';
-import { buildEvidence } from '../evidence.js';
+import { buildEvidence, buildTournaments } from '../evidence.js';
 import { discoverModels } from '../model-catalog.js';
 import { DATA_DIR, makeRunDirectory, prepareDataDirectories, RESULTS_PATH, RUNS_DIR, TEAMS_DIR } from '../paths.js';
 import { PROVIDER_OPTIONS, providerOption } from '../provider-registry.js';
@@ -57,6 +57,7 @@ import type {
   SampleTeam,
   SeriesRowView,
   ServerEvent,
+  TournamentsResponse,
 } from './api.js';
 import { BattleLog } from './battlelog.js';
 import type { RunWorkerInput, RunWorkerOutput, RunWorkerStart } from './run-worker-protocol.js';
@@ -560,6 +561,8 @@ export class GuiServer {
     if (key === 'GET /api/state') this.json(response, 200, this.stateBody(session));
     else if (key === 'GET /api/records') this.json(response, 200, this.recordsBody(url.searchParams.get('pool')));
     else if (key === 'GET /api/evidence') this.json(response, 200, this.evidenceBody(url.searchParams.get('pool')));
+    else if (key === 'GET /api/tournaments')
+      this.json(response, 200, this.tournamentsBody(url.searchParams.get('pool')));
     else if (key === 'GET /api/pool/teams') {
       this.json(response, 200, this.poolTeamsBody(url.searchParams.get('name') ?? ''));
     } else if (key === 'GET /api/reasoning') {
@@ -850,6 +853,12 @@ export class GuiServer {
     const all = loadRows(this.options.recordsPath ?? RESULTS_PATH);
     const pool = poolParam?.trim() || null;
     return buildEvidence(all, this.options.runsDir ?? RUNS_DIR, pool);
+  }
+
+  private tournamentsBody(poolParam: string | null): TournamentsResponse {
+    const all = loadRows(this.options.recordsPath ?? RESULTS_PATH);
+    const pool = poolParam?.trim() || null;
+    return buildTournaments(all, this.options.runsDir ?? RUNS_DIR, pool);
   }
 
   private runBody(publicView = false): RunSnapshot | null {

@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { buildEvidence } from '../src/evidence.js';
+import { buildEvidence, buildTournaments } from '../src/evidence.js';
 import type { SeriesRecord } from '../src/records.js';
 
 function decisionLine(latency: number, turn: number, extra: Record<string, unknown> = {}): string {
@@ -110,4 +110,52 @@ test('buildEvidence counts tournament placements by distance from the final', ()
   assert.equal(summary.standings[0]!.spec, 'alpha', 'titles lead the sort');
   const scoped = buildEvidence(rows, '/nonexistent', 'other-pool').tournaments;
   assert.equal(scoped.tournaments, 0, 'pool scoping applies to tournament rows');
+});
+
+test('buildTournaments reconstructs a bracket with byes from row seeds', () => {
+  const match = (
+    seriesIndex: number,
+    round: number,
+    seeds: [number, number],
+    p1: string,
+    p2: string,
+    winnerSide: 'p1' | 'p2',
+  ): SeriesRecord =>
+    ({
+      mode: 'tournament',
+      run_id: 'cup-2',
+      timestamp: `2026-07-25T0${seriesIndex}:00:00.000Z`,
+      series_index: seriesIndex,
+      round,
+      entrant_count: 3,
+      seeds: { p1: seeds[0], p2: seeds[1] },
+      pool: 'majors',
+      players: { p1, p2 },
+      teams: { p1: `team-${seeds[0]}`, p2: `team-${seeds[1]}` },
+      winner: winnerSide === 'p1' ? p1 : p2,
+      winner_side: winnerSide,
+      score: winnerSide === 'p1' ? { p1: 2, p2: 0 } : { p1: 1, p2: 2 },
+      turns: 12,
+      advanced: winnerSide === 'p1' ? p1 : p2,
+    }) as SeriesRecord;
+  // Three entrants: seed 0 has a first-round bye; seeds 1 and 2 play in, the winner meets seed 0.
+  const rows = [
+    match(0, 1, [1, 2], 'openai:beta', 'openai:gamma', 'p2'),
+    match(1, 2, [0, 2], 'openai:alpha', 'openai:gamma', 'p1'),
+  ];
+  const response = buildTournaments(rows, '/nonexistent', null);
+  assert.equal(response.tournaments.length, 1);
+  const archive = response.tournaments[0]!;
+  assert.equal(archive.complete, true);
+  assert.equal(archive.champion, 0);
+  assert.equal(archive.entrants[0]!.model, 'openai:alpha');
+  assert.equal(archive.entrants[2]!.team, 'team-2');
+  assert.equal(archive.rounds.length, 2);
+  const bye = archive.rounds[0]!.find((view) => view.score === null);
+  assert.ok(bye, 'the bye survives reconstruction');
+  assert.equal(bye!.winner, 0, 'the bye advances seed 0');
+  const final = archive.rounds[1]![0]!;
+  assert.deepEqual(final.slots, [0, 2]);
+  assert.deepEqual(final.score, [2, 0]);
+  assert.equal(buildTournaments(rows, '/nonexistent', 'other-pool').tournaments.length, 0);
 });

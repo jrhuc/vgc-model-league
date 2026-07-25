@@ -1,3 +1,4 @@
+import { appendFileSync } from 'node:fs';
 import { createAnthropic } from '@ai-sdk/anthropic';
 import { createDeepSeek } from '@ai-sdk/deepseek';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
@@ -248,8 +249,22 @@ export function classifyProviderFailure(error: unknown, spec = 'provider'): Prov
       pausable: true,
     };
   }
+  if (status === 429 && /per[_ -]?minute/i.test(message)) {
+    return {
+      kind: 'rate_limit',
+      summary: `${label} API rate limit was reached (429).`,
+      terminal: false,
+      pausable: true,
+    };
+  }
   if (HARD_QUOTA_ERROR.test(message)) {
-    return { kind: 'quota', summary: `${label} API quota is exhausted${suffix}.`, terminal: true, pausable: true };
+    const quotaId = /"quotaId"\s*:\s*"([^"]+)"/.exec(message)?.[1];
+    return {
+      kind: 'quota',
+      summary: `${label} API quota is exhausted${quotaId ? ` (${status || 429}; ${quotaId})` : suffix}.`,
+      terminal: true,
+      pausable: true,
+    };
   }
   if ((status === 0 || status === 408) && /(?:timed? ?out|timeout|time exhausted)/i.test(message)) {
     return { kind: 'timeout', summary: `${label} API request timed out.`, terminal: false, pausable: true };
@@ -522,7 +537,15 @@ export class SdkProvider implements Provider {
           throw new ApiError(0, `request to ${this.spec.provider}:${this.model} timed out after ${seconds}s`);
         if (APICallError.isInstance(error)) {
           const errorText = `${error.message} ${error.responseBody ?? ''}`;
-          if (error.statusCode === 400 && sendTemperature && /temperature/i.test(errorText)) {
+          // OpenCode masks upstream parameter rejections as a generic 400 (kimi
+          // models refuse temperature below 1), so treat that 400 as
+          // possibly-temperature: one retry without it either fixes the call or
+          // fails identically and propagates.
+          if (
+            error.statusCode === 400 &&
+            sendTemperature &&
+            (/temperature/i.test(errorText) || /Upstream request failed/i.test(errorText))
+          ) {
             this.supportsTemperature = false;
             sendTemperature = false;
             continue;
@@ -531,6 +554,14 @@ export class SdkProvider implements Provider {
           const inBandStatus =
             this.spec.provider === 'openrouter' ? openRouterErrorStatus(error.responseBody) : undefined;
           const status = inBandStatus ?? error.statusCode ?? 0;
+          const debugTarget = process.env.VGC_DEBUG_PROVIDER_ERRORS;
+          if (debugTarget) {
+            const body = error.requestBodyValues === undefined ? undefined : JSON.stringify(error.requestBodyValues);
+            // redactSecrets caps output at 2000 chars; the dump needs the full body.
+            const line = `[provider-debug] ${this.spec.provider}:${this.model} ${status} request=${(body ?? '(unavailable)').replaceAll(apiKey, '[redacted]')}`;
+            if (debugTarget === '1') console.error(line);
+            else appendFileSync(debugTarget, `${line}\n`);
+          }
           throw new ApiError(status, `${this.spec.provider}:${this.model} ${status}: ${detail}`);
         }
         throw error;

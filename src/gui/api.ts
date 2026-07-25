@@ -100,7 +100,7 @@ export interface DraftView {
   phase: 'draft' | 'roundrobin' | 'playoffs' | 'done';
 }
 
-interface BracketEntrantView {
+export interface BracketEntrantView {
   model: string;
   team: string;
 }
@@ -357,6 +357,34 @@ export interface EvidenceResponse {
   models: ModelEvidence[];
   series: SeriesLuckEntry[];
   tournaments: TournamentSummary;
+}
+
+export interface ArchivedMatchView {
+  /** Entrant indices; null marks a bye slot or an unresolved feed. */
+  slots: [number | null, number | null];
+  /** Winning entrant index; set for byes and completed matches. */
+  winner: number | null;
+  /** Best-of-three game score; null when the match never played (bye or unfinished run). */
+  score: [number, number] | null;
+  turns: number | null;
+}
+
+export interface TournamentArchiveView {
+  runId: string;
+  /** Timestamp of the bracket's first recorded series. */
+  when: string;
+  pool: string | null;
+  entrants: BracketEntrantView[];
+  rounds: ArchivedMatchView[][];
+  champion: number | null;
+  complete: boolean;
+}
+
+export interface TournamentsResponse {
+  pool: string | null;
+  pools: string[];
+  summary: TournamentSummary;
+  tournaments: TournamentArchiveView[];
 }
 
 export interface ModelsResponse {

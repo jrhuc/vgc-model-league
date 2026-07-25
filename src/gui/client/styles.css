@@ -471,3 +471,15 @@ textarea { min-height: 170px; resize: vertical; font: 12px/1.5 var(--mono); }
   .draft-rosters, .draft-board { grid-template-columns: 1fr 1fr; }
   .team-source { flex-direction: column; align-items: stretch; }
 }
+
+.tournament-card { margin: 0 0 14px; padding: 0; }
+.tournament-card-head { display: flex; justify-content: space-between; align-items: center; gap: 16px; width: 100%; padding: 16px 22px; background: none; border: 0; cursor: pointer; text-align: left; font: inherit; color: inherit; }
+.tournament-card-head:hover { background: var(--paper); }
+.tournament-card-title { display: flex; flex-direction: column; gap: 2px; }
+.tournament-card-title b { font: 800 17px/1.2 var(--display); letter-spacing: .04em; }
+.tournament-card-title small { color: var(--ink-soft); font: 700 10px/1 var(--mono); text-transform: uppercase; }
+.tournament-card-meta { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; color: var(--ink-soft); font: 700 11px/1 var(--mono); }
+.tournament-card-toggle { color: var(--blue); }
+.tournament-card .bracket-scroll { padding: 0 22px 20px; }
+.bracket-match.archived { cursor: default; }
+.bracket-match.archived:hover { border-color: var(--line-strong); }

@@ -1,8 +1,19 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-import type { EvidenceResponse, LatencyPoint, ModelEvidence, SeriesLuckEntry, TournamentSummary } from './gui/api.js';
+import type {
+  ArchivedMatchView,
+  BracketEntrantView,
+  EvidenceResponse,
+  LatencyPoint,
+  ModelEvidence,
+  SeriesLuckEntry,
+  TournamentArchiveView,
+  TournamentSummary,
+  TournamentsResponse,
+} from './gui/api.js';
 import { modelKey, type SeriesRecord, scopeRows, TEST_POOL } from './records.js';
+import { buildBracket } from './tournament.js';
 import type { Pid } from './types.js';
 
 const SAFE_SEGMENT = /^[A-Za-z0-9._-]+$/;
@@ -297,4 +308,114 @@ export function buildEvidence(allRows: SeriesRecord[], runsDir: string, pool: st
     series: rated.map(luckEntry),
     tournaments: summarizeTournaments(tournamentRows),
   };
+}
+
+function configEntrants(runsDir: string, runId: string): BracketEntrantView[] | null {
+  if (!SAFE_SEGMENT.test(runId)) return null;
+  try {
+    const config = JSON.parse(fs.readFileSync(path.join(runsDir, runId, 'config.json'), 'utf8'));
+    if (!Array.isArray(config.entrants)) return null;
+    const entrants = config.entrants.map((entry: Record<string, unknown>) => ({
+      model: String(entry.model ?? ''),
+      team: String(entry.team ?? ''),
+    }));
+    return entrants.every((entry: BracketEntrantView) => entry.model) ? entrants : null;
+  } catch {
+    return null;
+  }
+}
+
+function rowEntrants(rows: SeriesRecord[]): BracketEntrantView[] | null {
+  const size = rows.map((row) => count(row.entrant_count)).find((value) => value >= 2);
+  if (!size) return null;
+  const bySeed = new Map<number, BracketEntrantView>();
+  for (const row of rows) {
+    const seeds = row.seeds as Record<Pid, unknown> | undefined;
+    for (const pid of ['p1', 'p2'] as const) {
+      const seed = seeds?.[pid];
+      if (typeof seed !== 'number' || seed < 0 || seed >= size) return null;
+      bySeed.set(seed, {
+        model: row.players[pid],
+        team: String((row.teams as Record<Pid, unknown> | undefined)?.[pid] ?? ''),
+      });
+    }
+  }
+  if (bySeed.size !== size) return null;
+  return Array.from({ length: size }, (_, seed) => bySeed.get(seed)!);
+}
+
+function archiveTournament(runId: string, rows: SeriesRecord[], runsDir: string): TournamentArchiveView | null {
+  const entrants = rowEntrants(rows) ?? configEntrants(runsDir, runId);
+  if (!entrants || entrants.length < 2) return null;
+  const bySeries = new Map<number, SeriesRecord>();
+  for (const row of rows) bySeries.set(count(row.series_index), row);
+  const rounds: ArchivedMatchView[][] = [];
+  const winners = new Map<number, number | null>();
+  for (const [roundIndex, round] of buildBracket(entrants.length).entries()) {
+    const views: ArchivedMatchView[] = [];
+    for (const [matchIndex, match] of round.entries()) {
+      const slots: [number | null, number | null] =
+        roundIndex === 0
+          ? [...match.slots]
+          : [winners.get(matchIndex * 2) ?? null, winners.get(matchIndex * 2 + 1) ?? null];
+      let winner = match.seriesIndex === null ? (slots[0] ?? slots[1]) : null;
+      let score: [number, number] | null = null;
+      let turns: number | null = null;
+      const row = match.seriesIndex === null ? undefined : bySeries.get(match.seriesIndex);
+      if (row) {
+        const sideScore = row.score as Record<Pid, number> | undefined;
+        score = [count(sideScore?.p1), count(sideScore?.p2)];
+        turns = count(row.turns);
+        if (row.winner_side === 'p1') winner = slots[0];
+        else if (row.winner_side === 'p2') winner = slots[1];
+      }
+      views.push({ slots, winner, score, turns });
+    }
+    for (const [matchIndex, view] of views.entries()) winners.set(matchIndex, view.winner);
+    rounds.push(views);
+  }
+  const champion = rounds[rounds.length - 1]![0]!.winner;
+  const timestamps = rows.map((row) => String(row.timestamp ?? '')).filter(Boolean);
+  const poolField = rows.find((row) => typeof row.pool === 'string')?.pool;
+  return {
+    runId,
+    when: timestamps.sort()[0] ?? '',
+    pool: typeof poolField === 'string' ? poolField : null,
+    entrants,
+    rounds,
+    champion,
+    complete: champion !== null,
+  };
+}
+
+/** Reconstructs every recorded bracket, newest first, alongside aggregate placements. */
+export function buildTournaments(allRows: SeriesRecord[], runsDir: string, pool: string | null): TournamentsResponse {
+  const tournamentRows = allRows.filter(
+    (row) =>
+      row.mode === 'tournament' &&
+      typeof row.players?.p1 === 'string' &&
+      typeof row.players?.p2 === 'string' &&
+      (pool === null ? row.pool !== TEST_POOL : row.pool === pool),
+  );
+  const pools = [
+    ...new Set(
+      allRows
+        .filter((row) => row.mode === 'tournament')
+        .map((row) => (typeof row.pool === 'string' ? row.pool : ''))
+        .filter(Boolean),
+    ),
+  ].sort();
+  const runs = new Map<string, SeriesRecord[]>();
+  for (const row of tournamentRows) {
+    const runId = String(row.run_id ?? '');
+    if (!runId) continue;
+    const list = runs.get(runId) ?? [];
+    list.push(row);
+    runs.set(runId, list);
+  }
+  const tournaments = [...runs.entries()]
+    .map(([runId, rows]) => archiveTournament(runId, rows, runsDir))
+    .filter((archive): archive is TournamentArchiveView => archive !== null)
+    .sort((a, b) => b.when.localeCompare(a.when));
+  return { pool, pools, summary: summarizeTournaments(tournamentRows), tournaments };
 }

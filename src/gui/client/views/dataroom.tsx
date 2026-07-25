@@ -6,9 +6,9 @@ import type {
   RecordsResponse,
   SeriesLuckEntry,
   StandingView,
-  TournamentSummary,
   TrajectoryPointView,
 } from '../../api';
+import { barPath, StatTile, Tooltip, useTip } from '../components/chartkit';
 import { Dropdown } from '../components/dropdown';
 import { api } from '../http';
 
@@ -35,34 +35,6 @@ function pct(value: number | null): string {
 
 function perDecision(value: number | null): string {
   return value === null ? '–' : value.toFixed(2);
-}
-
-interface Tip {
-  x: number;
-  y: number;
-  lines: string[];
-}
-
-function Tooltip({ tip }: { tip: Tip | null }) {
-  if (!tip) return null;
-  return (
-    <div class="chart-tip" style={{ left: `${tip.x}px`, top: `${tip.y}px` }}>
-      {tip.lines.map((line) => (
-        <span key={line}>{line}</span>
-      ))}
-    </div>
-  );
-}
-
-function useTip(): [Tip | null, (event: MouseEvent, lines: string[]) => void, () => void] {
-  const [tip, setTip] = useState<Tip | null>(null);
-  const show = (event: MouseEvent, lines: string[]) => {
-    const host = (event.currentTarget as Element).closest('.chart-host');
-    if (!host) return;
-    const box = host.getBoundingClientRect();
-    setTip({ x: event.clientX - box.left + 14, y: event.clientY - box.top + 6, lines });
-  };
-  return [tip, show, () => setTip(null)];
 }
 
 const TRAJ = { left: 52, plot: 610, gutter: 190, height: 250, top: 20, bottom: 30 };
@@ -178,93 +150,6 @@ function TrajectoryChart({ trajectory, count }: { trajectory: TrajectoryPointVie
               {label.spec}
             </text>
           ))}
-        </svg>
-      </div>
-      <Tooltip tip={tip} />
-    </div>
-  );
-}
-
-const PLACEMENTS = [
-  { key: 'titles', label: 'Champion', color: '#0d3da5' },
-  { key: 'runnerUp', label: 'Lost the final', color: '#1458e6' },
-  { key: 'semis', label: 'Lost a semi', color: '#7da3f0' },
-  { key: 'earlier', label: 'Earlier exit', color: '#cfdcf8' },
-] as const;
-
-const LANES = { label: 220, plot: 470, tail: 110, row: 27, top: 8, bottom: 26 };
-
-function TournamentLanes({ summary }: { summary: TournamentSummary }) {
-  const [tip, showTip, hideTip] = useTip();
-  if (summary.tournaments === 0) {
-    return (
-      <div class="results-empty">
-        No finished brackets yet. Tournament runs land here as placement lanes: titles, finals, and how deep each model
-        survives.
-      </div>
-    );
-  }
-  const rows = summary.standings;
-  const maxEntered = Math.max(1, ...rows.map((row) => row.entered));
-  const unit = LANES.plot / maxEntered;
-  const height = LANES.top + rows.length * LANES.row + LANES.bottom;
-  const width = LANES.label + LANES.plot + LANES.tail;
-  return (
-    <div class="chart-host">
-      <div class="chart-legend">
-        {PLACEMENTS.map((placement) => (
-          <span key={placement.key}>
-            <i style={{ background: placement.color }} /> {placement.label}
-          </span>
-        ))}
-      </div>
-      <div class="table-scroll">
-        <svg width={width} height={height} role="img" aria-label="Tournament placements by model">
-          {rows.map((row, index) => {
-            const y = LANES.top + index * LANES.row;
-            let cursor = LANES.label;
-            const lines = [
-              row.spec,
-              `${row.entered} bracket${row.entered === 1 ? '' : 's'}: ${row.titles} title${row.titles === 1 ? '' : 's'}, ${row.runnerUp} final, ${row.semis} semi, ${row.earlier} earlier`,
-              `matches ${row.matchWins}-${row.matchLosses}`,
-            ];
-            return (
-              /* biome-ignore lint/a11y/noStaticElementInteractions: hover tooltip supplements the visible counts */
-              <g
-                key={row.spec}
-                onMouseMove={(event) => showTip(event as unknown as MouseEvent, lines)}
-                onMouseLeave={hideTip}
-              >
-                <rect x={0} y={y} width={width} height={LANES.row} fill="transparent" />
-                <text x={LANES.label - 12} y={y + LANES.row / 2 + 3.5} text-anchor="end" class="chart-label">
-                  {row.spec}
-                </text>
-                {PLACEMENTS.map((placement) => {
-                  const value = row[placement.key];
-                  if (!value) return null;
-                  const segment = (
-                    <rect
-                      key={placement.key}
-                      x={cursor}
-                      y={y + LANES.row / 2 - 7}
-                      width={Math.max(0, value * unit - 2)}
-                      height={14}
-                      fill={placement.color}
-                    />
-                  );
-                  cursor += value * unit;
-                  return segment;
-                })}
-                <text x={cursor + 8} y={y + LANES.row / 2 + 3.5} class="chart-value">
-                  {row.titles > 0 ? `${row.titles}×🏆 ` : ''}
-                  {row.matchWins}-{row.matchLosses}
-                </text>
-              </g>
-            );
-          })}
-          <text x={LANES.label} y={height - 7} class="chart-tick">
-            {summary.tournaments} bracket{summary.tournaments === 1 ? '' : 's'} · {summary.matches} matches
-          </text>
         </svg>
       </div>
       <Tooltip tip={tip} />
@@ -607,14 +492,6 @@ function RatesTable({
 
 const LUCK = { label: 345, plot: 420, row: 27, top: 30, bottom: 22 };
 
-function barPath(x0: number, x1: number, y: number, height: number): string {
-  const r = Math.min(4, Math.abs(x1 - x0));
-  if (x1 >= x0) {
-    return `M${x0},${y} H${x1 - r} Q${x1},${y} ${x1},${y + r} V${y + height - r} Q${x1},${y + height} ${x1 - r},${y + height} H${x0} Z`;
-  }
-  return `M${x0},${y} H${x1 + r} Q${x1},${y} ${x1},${y + r} V${y + height - r} Q${x1},${y + height} ${x1 + r},${y + height} H${x0} Z`;
-}
-
 function LuckLedger({ series }: { series: SeriesLuckEntry[] }) {
   const [tip, showTip, hideTip] = useTip();
   const decided = series.filter((entry) => entry.winner !== null);
@@ -693,16 +570,6 @@ function LuckLedger({ series }: { series: SeriesLuckEntry[] }) {
   );
 }
 
-function StatTile({ label, value, note }: { label: string; value: string; note: string }) {
-  return (
-    <div class="stat-tile">
-      <span class="stat-label">{label}</span>
-      <span class="stat-value">{value}</span>
-      <span class="stat-note">{note}</span>
-    </div>
-  );
-}
-
 export function DataRoomView({ active, epoch }: { active: boolean; epoch: number }) {
   const [data, setData] = useState<RecordsResponse | null>(null);
   const [evidence, setEvidence] = useState<EvidenceResponse | null>(null);
@@ -766,8 +633,8 @@ export function DataRoomView({ active, epoch }: { active: boolean; epoch: number
         </div>
         <p class="lede">
           Every series leaves structured evidence. Rated rotation series drive the standings, trajectory, and behavior
-          panels; tournaments count placements, not ratings. Same model merged across providers, battle speeds rated
-          separately, test pool excluded from the overall view.
+          panels; brackets and titles live in the Tournaments tab. Same model merged across providers, battle speeds
+          rated separately, test pool excluded from the overall view.
         </p>
       </div>
       <div class="filter-row">
@@ -899,20 +766,6 @@ export function DataRoomView({ active, epoch }: { active: boolean; epoch: number
         </div>
         <div class="chart-body">
           <TrajectoryChart trajectory={group?.trajectory ?? []} count={group?.count ?? 0} />
-        </div>
-      </section>
-      <section class="panel chart-panel">
-        <div class="section-head">
-          <div>
-            <h2>Tournament placements</h2>
-            <p>
-              Single-elimination brackets, placement per entry normalized by distance from the final. Tournaments are
-              unrated; this is where they count.
-            </p>
-          </div>
-        </div>
-        <div class="chart-body">
-          <TournamentLanes summary={evidence?.tournaments ?? { tournaments: 0, matches: 0, standings: [] }} />
         </div>
       </section>
       <section class="panel chart-panel">

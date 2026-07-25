@@ -9,6 +9,7 @@ import type { ReasoningLevel } from './providers.js';
 import { REASONING_LEVELS } from './providers.js';
 import type { SeriesRecord } from './records.js';
 import { loadRows, ratingGroups, scopeRows, TEST_POOL } from './records.js';
+import { RecoveryGate } from './recovery.js';
 import { writeReport } from './report.js';
 import { restartGui, stopGui } from './restart.js';
 import { runRotation } from './rotation.js';
@@ -22,6 +23,7 @@ const EXPERIMENT_CLI_OPTIONS = {
   concurrency: { type: 'string', default: '2' },
   reasoning: { type: 'string' },
   'timer-scale': { type: 'string' },
+  'auto-resume': { type: 'boolean', default: false },
 } as const;
 
 interface ExperimentCliValues {
@@ -29,6 +31,7 @@ interface ExperimentCliValues {
   concurrency: string;
   reasoning?: string;
   'timer-scale'?: string;
+  'auto-resume': boolean;
 }
 
 const HELP = `Usage: vgcleague <command>
@@ -41,16 +44,22 @@ Commands:
   selfcheck                           run one random-vs-random series through the simulator
   rotation --models <spec> <spec>...  run the controlled team-rotation protocol
       [--series-per-pair <n>] [--pool <name>] [--seed <n>] [--concurrency <n>] [--reasoning <level>]
-      [--timer-scale <n|off>]
+      [--timer-scale <n|off>] [--auto-resume]
   tournament --models <spec> <spec>...  play a single-elimination BO3 bracket; each model keeps one team
       [--pool <name>] [--seed <n>] [--concurrency <n>] [--reasoning <level>] [--timer-scale <n|off>]
+      [--auto-resume]
   draft --models <spec> <spec>...     snake-draft rosters from a board, then round robin and playoffs
       [--board <name>] [--seed <n>] [--concurrency <n>] [--reasoning <level>] [--timer-scale <n|off>]
+      [--auto-resume]
   exhibition --opponent <spec>        host one bo3 where a terminal agent plays a seat over a local bridge
       [--seat p1|p2] [--name <label>] [--pool <name>] [--seed <n>] [--port <n>] [--reasoning <level>]
       [--agent-dir <path>]
   standings [--pool <name>]           print standings and head-to-head from recorded results
   report [--out <path>] [--pool <name>]  write an HTML report
+
+--auto-resume keeps a run alive through transient provider failures (rate limits,
+upstream outages, exhausted quotas): the run pauses, then retries with backoff
+instead of failing. Credential and request errors still fail fast.
 
 Without --pool, standings and report cover every pool except the disposable "test" pool
 and keep only rotation rows; pass --pool <name> to inspect everything in one pool.
@@ -102,7 +111,28 @@ function experimentExecution(values: ExperimentCliValues) {
     ...(seed === undefined ? {} : { seed }),
     ...(reasoning === undefined ? {} : { reasoning }),
     ...(timerScale === undefined ? {} : { timerScale }),
+    ...(values['auto-resume'] ? { recovery: autoResumeGate() } : {}),
   };
+}
+
+function autoResumeGate(): RecoveryGate {
+  const gate = new RecoveryGate();
+  let streak = 0;
+  let lastPause = 0;
+  gate.onChange((pause) => {
+    if (!pause) return;
+    const now = Date.now();
+    if (now - lastPause > 10 * 60_000) streak = 0;
+    lastPause = now;
+    const ceiling = pause.kind === 'rate_limit' ? 60_000 : 5 * 60_000;
+    const delay = Math.min(ceiling, 30_000 * 2 ** streak);
+    streak += 1;
+    console.error(
+      `run paused on ${pause.model} (${pause.kind}): ${pause.message} auto-resume in ${Math.round(delay / 1000)}s`,
+    );
+    setTimeout(() => gate.resume(), delay);
+  });
+  return gate;
 }
 
 function environmentInteger(name: string, fallback: number, minimum: number, maximum: number): number {

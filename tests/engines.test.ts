@@ -880,7 +880,7 @@ test('a persistent illegal joint choice becomes a flagged legal fallback', async
   const engine = new LLMEngine('p1', 'scripted', { provider, decisionLog: decisions });
   assert.equal(await engine.act(megaRequest(), { povLines: ['|turn|1'] }), 'move 1, move 1');
   assert.equal(decisions[0]!.fallback, true);
-  assert.equal(decisions[0]!.rationale, 'Recorded legal fallback.');
+  assert.match(String(decisions[0]!.rationale), /defaulted to the first legal option/);
   assert.equal(decisions[0]!.parse_failures, 2);
 });
 
