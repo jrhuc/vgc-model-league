@@ -277,7 +277,6 @@ export interface RecordsResponse {
   /** Rated rotation rows split by battle speed; untimed first, then ascending clock scales. */
   groups: SpeedGroupView[];
   imported: number;
-  records: unknown[];
 }
 
 export interface LatencyPoint {

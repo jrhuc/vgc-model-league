@@ -856,7 +856,7 @@ export class GuiServer {
     const rated = rows.filter((row) => (row.mode ?? 'rotation') === 'rotation');
     const pools = [...new Set(all.map((row) => (typeof row.pool === 'string' ? row.pool : '')))].filter(Boolean).sort();
     const groups = ratingGroups(rated);
-    return { count: rows.length, pool, pools, groups, imported: rows.filter(isImported).length, records: rows };
+    return { count: rows.length, pool, pools, groups, imported: rows.filter(isImported).length };
   }
 
   private authorizeImport(request: http.IncomingMessage): void {
