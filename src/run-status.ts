@@ -7,7 +7,6 @@ export interface RunStatus {
   notices: string[];
   start_time: string;
   end_time: string | null;
-  /** Present only while running; a stale running marker with a dead pid means the run was killed. */
   pid?: number;
 }
 
@@ -17,10 +16,6 @@ export function writeRunStatus(runDir: string, status: RunStatus): void {
   } catch {}
 }
 
-/**
- * Brackets a CLI run with status.json markers: `running` (with pid) at start, then a terminal
- * state on completion, failure, or SIGINT/SIGTERM. SIGKILL leaves the running marker behind.
- */
 export async function withRunStatus<T>(runDir: string, task: () => Promise<T>): Promise<T> {
   const startTime = new Date().toISOString();
   const write = (state: RunStatus['state'], error: string | null) =>

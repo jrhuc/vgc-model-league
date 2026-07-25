@@ -68,6 +68,7 @@ npm run vgcleague -- exhibition --opponent <spec>
 
 npm run vgcleague -- standings --pool regmb-202607
 npm run vgcleague -- report    --pool regmb-202607
+npm run vgcleague -- publish   --to https://<deployment> --dry-run
 ```
 
 All experiment commands accept `--seed` for reproducible runs. They accept
@@ -163,6 +164,29 @@ Showdown commit, and per-player decision statistics. Each row also records
 parameters. Thus longitudinal comparisons can find scaffold drift.
 
 The two directories are local, and git ignores them.
+
+## Publishing local runs
+
+Local runs cost provider credits, so their evidence should not stay on one
+laptop. `vgcleague publish` sends completed series to a deployment: the result
+row, the per-seat decision logs that the data room reads, the run
+configuration a bracket needs, and the team pool when the deployment does not
+already have it. Prompts and raw model responses stay local.
+
+```sh
+export VGC_LEAGUE_PUBLISH_ORIGIN=https://<deployment>
+export VGC_LEAGUE_IMPORT_TOKEN=<operator secret from the deployment>
+npm run vgcleague -- publish --dry-run     # list what would go
+npm run vgcleague -- publish               # send it
+npm run vgcleague -- publish --pool regmb-202607
+```
+
+Publishing is idempotent: a deployment reports series it already holds and
+appends nothing. Without `--pool` it sends every pool except the disposable
+`test` pool; `--include-test` adds that pool too. Imported rows carry
+`origin`, and the record book shows how many rows in scope arrived that way.
+The deployment accepts the upload only when it runs with the matching
+`VGC_LEAGUE_IMPORT_TOKEN`; without that variable the route does not exist.
 
 ## Deployment
 

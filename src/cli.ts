@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { AuthService } from './auth.js';
 import { GuiServer } from './gui/server.js';
-import { AUTH_DB_PATH, makeRunDirectory, prepareDataDirectories, RESULTS_PATH } from './paths.js';
+import { AUTH_DB_PATH, makeRunDirectory, prepareDataDirectories, RESULTS_PATH, RUNS_DIR, TEAMS_DIR } from './paths.js';
 import type { ReasoningLevel } from './providers.js';
 import { REASONING_LEVELS } from './providers.js';
 import type { SeriesRecord } from './records.js';
@@ -56,10 +56,16 @@ Commands:
       [--agent-dir <path>]
   standings [--pool <name>]           print standings and head-to-head from recorded results
   report [--out <path>] [--pool <name>]  write an HTML report
+  publish [--to <origin>] [--pool <name>] [--include-test] [--dry-run]
+      send completed local series, their decision logs, and any missing team pool to a deployment
 
 --auto-resume keeps a run alive through transient provider failures (rate limits,
 upstream outages, exhausted quotas): the run pauses, then retries with backoff
 instead of failing. Credential and request errors still fail fast.
+
+publish needs VGC_LEAGUE_PUBLISH_ORIGIN (or --to) and VGC_LEAGUE_IMPORT_TOKEN, which must
+match the token the deployment runs with. It is idempotent: series the deployment already
+holds are reported and skipped.
 
 Without --pool, standings and report cover every pool except the disposable "test" pool
 and keep only rotation rows; pass --pool <name> to inspect everything in one pool.
@@ -195,9 +201,11 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
               .filter(Boolean),
           })
         : undefined;
+    const importToken = process.env.VGC_LEAGUE_IMPORT_TOKEN?.trim();
     const gui = new GuiServer({
       ...(host ? { host } : {}),
       ...(publicOrigin ? { publicOrigin } : {}),
+      ...(importToken ? { importToken } : {}),
       mutationsEnabled: !publicOrigin || process.env.VGC_LEAGUE_ENABLE_MUTATIONS === 'true',
       ...(logger ? { logger } : {}),
       ...(auth ? { auth } : {}),
@@ -360,6 +368,39 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
       }),
     );
     printResults([row]);
+    return 0;
+  }
+  if (command === 'publish') {
+    const { values } = parseArgs({
+      args: rest,
+      options: {
+        to: { type: 'string' },
+        pool: { type: 'string' },
+        'include-test': { type: 'boolean', default: false },
+        'dry-run': { type: 'boolean', default: false },
+      },
+    });
+    const origin = (values.to ?? process.env.VGC_LEAGUE_PUBLISH_ORIGIN ?? '').trim();
+    const token = (process.env.VGC_LEAGUE_IMPORT_TOKEN ?? '').trim();
+    if (!origin) throw new Error('publish needs --to <origin> or VGC_LEAGUE_PUBLISH_ORIGIN');
+    if (!token && !values['dry-run']) throw new Error('publish needs VGC_LEAGUE_IMPORT_TOKEN');
+    const { publishRecords } = await import('./publish.js');
+    const summary = await publishRecords({
+      origin,
+      token,
+      recordsPath: RESULTS_PATH,
+      runsDir: RUNS_DIR,
+      teamsDir: TEAMS_DIR,
+      ...(values.pool === undefined ? {} : { pool: values.pool }),
+      includeTest: values['include-test'],
+      dryRun: values['dry-run'],
+      log: (line) => console.log(line),
+    });
+    if (!values['dry-run']) {
+      console.log(
+        `${summary.published} published, ${summary.duplicates} already present${summary.poolsCreated.length ? `, pools created: ${summary.poolsCreated.join(', ')}` : ''}`,
+      );
+    }
     return 0;
   }
   if (command === 'standings' || command === 'report') {

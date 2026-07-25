@@ -276,12 +276,12 @@ export interface RecordsResponse {
   pools: string[];
   /** Rated rotation rows split by battle speed; untimed first, then ascending clock scales. */
   groups: SpeedGroupView[];
+  imported: number;
   records: unknown[];
 }
 
 export interface LatencyPoint {
   ms: number;
-  /** Absent when the provider reports no usage (CLI-subprocess engines). */
   tokens?: number;
   seriesId: string;
   game: number;
@@ -290,21 +290,14 @@ export interface LatencyPoint {
 }
 
 export interface ModelEvidence {
-  /** Normalized model key; matches standings specs. */
   spec: string;
-  /** Raw provider specs merged into this key. */
   providers: string[];
   series: number;
   decisions: number;
   reflections: number;
   latency: { median: number; p25: number; p75: number; max: number } | null;
-  /** Output-token quantiles for decisions with reported usage; null when the provider reports none. */
   tokens: { median: number; p25: number; p75: number; max: number } | null;
   points: LatencyPoint[];
-  /**
-   * fallback, parseFailure, providerRetry, toolLookups are per decision; switch and protect are shares of
-   * action selections; threatConversion is threat hits over threat turns.
-   */
   rates: {
     fallback: number;
     parseFailure: number;
@@ -327,9 +320,7 @@ export interface SeriesLuckEntry {
   score: [number, number];
   games: number;
   turns: number;
-  /** Adverse luck events suffered per side: misses, crits taken, flinched turns, full paralysis. */
   luck: Record<Pid, number>;
-  /** Luck suffered by the winner minus the loser; positive means the winner overcame worse luck. Null for ties. */
   winnerLuckDelta: number | null;
 }
 
@@ -356,22 +347,17 @@ export interface EvidenceResponse {
   decisions: number;
   models: ModelEvidence[];
   series: SeriesLuckEntry[];
-  tournaments: TournamentSummary;
 }
 
 export interface ArchivedMatchView {
-  /** Entrant indices; null marks a bye slot or an unresolved feed. */
   slots: [number | null, number | null];
-  /** Winning entrant index; set for byes and completed matches. */
   winner: number | null;
-  /** Best-of-three game score; null when the match never played (bye or unfinished run). */
   score: [number, number] | null;
   turns: number | null;
 }
 
 export interface TournamentArchiveView {
   runId: string;
-  /** Timestamp of the bracket's first recorded series. */
   when: string;
   pool: string | null;
   entrants: BracketEntrantView[];
@@ -385,6 +371,22 @@ export interface TournamentsResponse {
   pools: string[];
   summary: TournamentSummary;
   tournaments: TournamentArchiveView[];
+}
+
+export interface ImportRequest {
+  row: Record<string, unknown>;
+  logs?: Partial<Record<Pid, string>>;
+  runConfig?: Record<string, unknown>;
+  pool?: { name: string; format: string; teams: Array<{ id: string; paste: string }> };
+}
+
+export interface ImportResponse {
+  imported: boolean;
+  duplicate?: boolean;
+  runId: string;
+  seriesId: string;
+  logs: Pid[];
+  pool: 'created' | 'present' | null;
 }
 
 export interface ModelsResponse {

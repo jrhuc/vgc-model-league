@@ -537,10 +537,6 @@ export class SdkProvider implements Provider {
           throw new ApiError(0, `request to ${this.spec.provider}:${this.model} timed out after ${seconds}s`);
         if (APICallError.isInstance(error)) {
           const errorText = `${error.message} ${error.responseBody ?? ''}`;
-          // OpenCode masks upstream parameter rejections as a generic 400 (kimi
-          // models refuse temperature below 1), so treat that 400 as
-          // possibly-temperature: one retry without it either fixes the call or
-          // fails identically and propagates.
           if (
             error.statusCode === 400 &&
             sendTemperature &&
@@ -557,7 +553,6 @@ export class SdkProvider implements Provider {
           const debugTarget = process.env.VGC_DEBUG_PROVIDER_ERRORS;
           if (debugTarget) {
             const body = error.requestBodyValues === undefined ? undefined : JSON.stringify(error.requestBodyValues);
-            // redactSecrets caps output at 2000 chars; the dump needs the full body.
             const line = `[provider-debug] ${this.spec.provider}:${this.model} ${status} request=${(body ?? '(unavailable)').replaceAll(apiKey, '[redacted]')}`;
             if (debugTarget === '1') console.error(line);
             else appendFileSync(debugTarget, `${line}\n`);

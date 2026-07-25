@@ -75,7 +75,6 @@ export interface Standing {
 export type HeadToHead = Record<string, Record<string, [number, number, number]>>;
 
 export interface RatingPoint {
-  /** 1-based position in the group's scheduled order. */
   series: number;
   spec: string;
   elo: number;
@@ -87,7 +86,6 @@ export interface RatingGroup {
   count: number;
   standings: Standing[];
   h2h: HeadToHead;
-  /** Post-series ratings for both participants, in scheduled order. */
   trajectory: RatingPoint[];
 }
 

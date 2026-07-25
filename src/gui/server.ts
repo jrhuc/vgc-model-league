@@ -1,5 +1,5 @@
 import { fork } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
 import fs from 'node:fs';
 import type http from 'node:http';
 import { createServer } from 'node:http';
@@ -12,6 +12,7 @@ import { listBoards } from '../draft.js';
 import type { DraftLeagueEvent } from '../draftleague.js';
 import { DRAFT_PROTOCOL_VERSION, runDraftLeague } from '../draftleague.js';
 import { buildEvidence, buildTournaments } from '../evidence.js';
+import { ImportError, importSeries, isImported } from '../import.js';
 import { discoverModels } from '../model-catalog.js';
 import { DATA_DIR, makeRunDirectory, prepareDataDirectories, RESULTS_PATH, RUNS_DIR, TEAMS_DIR } from '../paths.js';
 import { PROVIDER_OPTIONS, providerOption } from '../provider-registry.js';
@@ -47,6 +48,7 @@ import type {
   DraftView,
   EvidenceResponse,
   FormatInfo,
+  ImportRequest,
   ModelInfo,
   ModelsResponse,
   MonView,
@@ -100,6 +102,7 @@ interface GuiServerOptions {
   publicOrigin?: string;
   mutationsEnabled?: boolean;
   auth?: AuthService;
+  importToken?: string;
   logger?: (entry: Record<string, unknown>) => void;
   maxRunMs?: number;
   workerPath?: string;
@@ -520,6 +523,13 @@ export class GuiServer {
       return;
     }
 
+    if (key === 'POST /api/import') {
+      this.authorizeImport(request);
+      this.consumeRateLimit('import', 'operator', 600, 60 * 60_000);
+      this.json(response, 200, this.importBody(await this.readJson(request)));
+      return;
+    }
+
     let actor: AuthUser | undefined;
     if (MUTATING_METHODS[method]) {
       const origin = request.headers.origin;
@@ -846,7 +856,39 @@ export class GuiServer {
     const rated = rows.filter((row) => (row.mode ?? 'rotation') === 'rotation');
     const pools = [...new Set(all.map((row) => (typeof row.pool === 'string' ? row.pool : '')))].filter(Boolean).sort();
     const groups = ratingGroups(rated);
-    return { count: rows.length, pool, pools, groups, records: rows };
+    return { count: rows.length, pool, pools, groups, imported: rows.filter(isImported).length, records: rows };
+  }
+
+  private authorizeImport(request: http.IncomingMessage): void {
+    const configured = this.options.importToken;
+    if (!configured) throw new HttpError(404, 'this deployment does not accept imports');
+    const header = request.headers.authorization ?? '';
+    const offered = header.toLowerCase().startsWith('bearer ') ? header.slice(7).trim() : '';
+    const expected = createHash('sha256').update(configured).digest();
+    const received = createHash('sha256').update(offered).digest();
+    if (!offered || !timingSafeEqual(expected, received)) throw new HttpError(401, 'invalid import token');
+  }
+
+  private importBody(body: Record<string, unknown>): JsonObject {
+    try {
+      const result = importSeries(body as unknown as ImportRequest, {
+        recordsPath: this.options.recordsPath ?? RESULTS_PATH,
+        runsDir: this.options.runsDir ?? RUNS_DIR,
+        teamsDir: this.options.teamsDir ?? TEAMS_DIR,
+      });
+      this.options.logger?.({
+        timestamp: new Date().toISOString(),
+        level: 'info',
+        event: 'series_imported',
+        run: result.runId,
+        series: result.seriesId,
+        imported: result.imported,
+      });
+      return result as unknown as JsonObject;
+    } catch (error) {
+      if (error instanceof ImportError) throw new HttpError(400, error.message);
+      throw error;
+    }
   }
 
   private evidenceBody(poolParam: string | null): EvidenceResponse {

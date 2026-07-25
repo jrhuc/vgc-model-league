@@ -83,7 +83,7 @@ test('buildEvidence aggregates decision logs, rates, and luck', () => {
   fs.rmSync(runsDir, { recursive: true, force: true });
 });
 
-test('buildEvidence counts tournament placements by distance from the final', () => {
+test('buildTournaments counts placements by distance from the final', () => {
   const match = (round: number, p1: string, p2: string, winner: string): SeriesRecord =>
     ({
       mode: 'tournament',
@@ -99,7 +99,7 @@ test('buildEvidence counts tournament placements by distance from the final', ()
     match(1, 'openai:gamma', 'openai:delta', 'openai:delta'),
     match(2, 'openai:alpha', 'openai:delta', 'openai:alpha'),
   ];
-  const summary = buildEvidence(rows, '/nonexistent', null).tournaments;
+  const summary = buildTournaments(rows, '/nonexistent', null).summary;
   assert.equal(summary.tournaments, 1);
   assert.equal(summary.matches, 3);
   const bySpec = Object.fromEntries(summary.standings.map((entry) => [entry.spec, entry]));
@@ -108,7 +108,7 @@ test('buildEvidence counts tournament placements by distance from the final', ()
   assert.equal(bySpec.beta!.semis, 1);
   assert.equal(bySpec.gamma!.semis, 1);
   assert.equal(summary.standings[0]!.spec, 'alpha', 'titles lead the sort');
-  const scoped = buildEvidence(rows, '/nonexistent', 'other-pool').tournaments;
+  const scoped = buildTournaments(rows, '/nonexistent', 'other-pool').summary;
   assert.equal(scoped.tournaments, 0, 'pool scoping applies to tournament rows');
 });
 
@@ -138,7 +138,6 @@ test('buildTournaments reconstructs a bracket with byes from row seeds', () => {
       turns: 12,
       advanced: winnerSide === 'p1' ? p1 : p2,
     }) as SeriesRecord;
-  // Three entrants: seed 0 has a first-round bye; seeds 1 and 2 play in, the winner meets seed 0.
   const rows = [
     match(0, 1, [1, 2], 'openai:beta', 'openai:gamma', 'p2'),
     match(1, 2, [0, 2], 'openai:alpha', 'openai:gamma', 'p1'),

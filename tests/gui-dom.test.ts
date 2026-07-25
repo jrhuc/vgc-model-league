@@ -70,10 +70,11 @@ test('built client bundle boots and renders the app against the live server', as
     assert.match(text, /Control sheet/);
     assert.match(text, /No models selected/);
     const navButtons = window.document.querySelectorAll('.nav-button');
-    assert.equal(navButtons.length, 4, 'pool management lives inside run setup, not the top nav');
-    assert.ok(
-      [...navButtons].some((button) => button.textContent === 'Tournaments'),
-      'archived brackets get their own tab',
+    assert.equal(navButtons.length, 3, 'setup, the live run, and one data room; pools live inside run setup');
+    assert.deepEqual(
+      [...navButtons].map((button) => button.textContent),
+      ['New run', 'Live run', 'Data room'],
+      'every recorded result reads from one data room',
     );
 
     const modeTabs = window.document.querySelectorAll('.mode-tab');
@@ -191,7 +192,7 @@ test('built client bundle boots and renders the app against the live server', as
   }
 });
 
-test('the tournaments tab archives a bracket and expands it on demand', async () => {
+test('the data room archives a bracket and expands it on demand', async () => {
   const recordsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-gui-records-'));
   const recordsPath = path.join(recordsDir, 'results.jsonl');
   const match = (

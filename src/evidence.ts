@@ -159,10 +159,6 @@ interface TournamentBucket {
   matchLosses: number;
 }
 
-/**
- * Placement per bracket, normalized by distance from the final so different bracket sizes aggregate.
- * Assumes a finished bracket: the single highest-round row is the final and its `advanced` the champion.
- */
 function summarizeTournaments(rows: SeriesRecord[]): TournamentSummary {
   const runs = new Map<string, SeriesRecord[]>();
   for (const row of rows) {
@@ -225,14 +221,10 @@ function summarizeTournaments(rows: SeriesRecord[]): TournamentSummary {
   };
 }
 
-/** Aggregates rated rotation rows, their on-disk decision logs, and tournament placements into evidence. */
 export function buildEvidence(allRows: SeriesRecord[], runsDir: string, pool: string | null): EvidenceResponse {
   const rated = scopeRows(allRows, pool ?? undefined)
     .filter((row) => (row.mode ?? 'rotation') === 'rotation' && row.players?.p1 && row.players?.p2)
     .sort((a, b) => String(a.timestamp ?? '').localeCompare(String(b.timestamp ?? '')));
-  const tournamentRows = allRows.filter(
-    (row) => row.mode === 'tournament' && (pool === null ? row.pool !== TEST_POOL : row.pool === pool),
-  );
   const buckets = new Map<string, StatBucket>();
   for (const row of rated) {
     const stats = row.decision_stats as Record<Pid, Record<string, unknown>> | undefined;
@@ -306,7 +298,6 @@ export function buildEvidence(allRows: SeriesRecord[], runsDir: string, pool: st
     decisions: models.reduce((total, model) => total + model.decisions, 0),
     models,
     series: rated.map(luckEntry),
-    tournaments: summarizeTournaments(tournamentRows),
   };
 }
 
@@ -388,7 +379,6 @@ function archiveTournament(runId: string, rows: SeriesRecord[], runsDir: string)
   };
 }
 
-/** Reconstructs every recorded bracket, newest first, alongside aggregate placements. */
 export function buildTournaments(allRows: SeriesRecord[], runsDir: string, pool: string | null): TournamentsResponse {
   const tournamentRows = allRows.filter(
     (row) =>

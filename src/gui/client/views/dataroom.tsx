@@ -6,6 +6,9 @@ import type {
   RecordsResponse,
   SeriesLuckEntry,
   StandingView,
+  TournamentArchiveView,
+  TournamentSummary,
+  TournamentsResponse,
   TrajectoryPointView,
 } from '../../api';
 import { barPath, StatTile, Tooltip, useTip } from '../components/chartkit';
@@ -570,20 +573,225 @@ function LuckLedger({ series }: { series: SeriesLuckEntry[] }) {
   );
 }
 
-export function DataRoomView({ active, epoch }: { active: boolean; epoch: number }) {
+const PLACEMENTS = [
+  { key: 'titles', label: 'Champion', color: '#08245f' },
+  { key: 'runnerUp', label: 'Lost the final', color: BLUE },
+  { key: 'semis', label: 'Lost a semi', color: '#7da3f0' },
+  { key: 'earlier', label: 'Earlier exit', color: '#cfdcf8' },
+] as const;
+
+const LANES = { label: 220, plot: 470, tail: 110, row: 27, top: 8, bottom: 26 };
+
+function TournamentLanes({ summary }: { summary: TournamentSummary }) {
+  const [tip, showTip, hideTip] = useTip();
+  if (summary.tournaments === 0) {
+    return (
+      <div class="results-empty">
+        No finished brackets yet. Tournament runs land here as placement lanes: titles, finals, and how deep each model
+        survives.
+      </div>
+    );
+  }
+  const rows = summary.standings;
+  const maxEntered = Math.max(1, ...rows.map((row) => row.entered));
+  const unit = LANES.plot / maxEntered;
+  const height = LANES.top + rows.length * LANES.row + LANES.bottom;
+  const width = LANES.label + LANES.plot + LANES.tail;
+  return (
+    <div class="chart-host">
+      <div class="chart-legend">
+        {PLACEMENTS.map((placement) => (
+          <span key={placement.key}>
+            <i style={{ background: placement.color }} /> {placement.label}
+          </span>
+        ))}
+      </div>
+      <div class="table-scroll">
+        <svg width={width} height={height} role="img" aria-label="Tournament placements by model">
+          {rows.map((row, index) => {
+            const y = LANES.top + index * LANES.row;
+            let cursor = LANES.label;
+            const lines = [
+              row.spec,
+              `${row.entered} bracket${row.entered === 1 ? '' : 's'}: ${row.titles} title${row.titles === 1 ? '' : 's'}, ${row.runnerUp} final, ${row.semis} semi, ${row.earlier} earlier`,
+              `matches ${row.matchWins}-${row.matchLosses}`,
+            ];
+            return (
+              /* biome-ignore lint/a11y/noStaticElementInteractions: hover tooltip supplements the visible counts */
+              <g
+                key={row.spec}
+                onMouseMove={(event) => showTip(event as unknown as MouseEvent, lines)}
+                onMouseLeave={hideTip}
+              >
+                <rect x={0} y={y} width={width} height={LANES.row} fill="transparent" />
+                <text x={LANES.label - 12} y={y + LANES.row / 2 + 3.5} text-anchor="end" class="chart-label">
+                  {row.spec}
+                </text>
+                {PLACEMENTS.map((placement) => {
+                  const value = row[placement.key];
+                  if (!value) return null;
+                  const segment = (
+                    <rect
+                      key={placement.key}
+                      x={cursor}
+                      y={y + LANES.row / 2 - 7}
+                      width={Math.max(0, value * unit - 2)}
+                      height={14}
+                      fill={placement.color}
+                    />
+                  );
+                  cursor += value * unit;
+                  return segment;
+                })}
+                <text x={cursor + 8} y={y + LANES.row / 2 + 3.5} class="chart-value">
+                  {row.titles > 0 ? `${row.titles}×🏆 ` : ''}
+                  {row.matchWins}-{row.matchLosses}
+                </text>
+              </g>
+            );
+          })}
+          <text x={LANES.label} y={height - 7} class="chart-tick">
+            {summary.tournaments} bracket{summary.tournaments === 1 ? '' : 's'} · {summary.matches} matches
+          </text>
+        </svg>
+      </div>
+      <Tooltip tip={tip} />
+    </div>
+  );
+}
+
+function roundName(index: number, count: number): string {
+  const fromEnd = count - 1 - index;
+  if (fromEnd === 0) return 'Final';
+  if (fromEnd === 1) return 'Semifinals';
+  if (fromEnd === 2) return 'Quarterfinals';
+  return `Round ${index + 1}`;
+}
+
+function ArchivedBracket({ archive }: { archive: TournamentArchiveView }) {
+  const name = (slot: number | null) => (slot === null ? 'TBD' : (archive.entrants[slot]?.model ?? 'TBD'));
+  const team = (slot: number | null) => (slot === null ? '' : (archive.entrants[slot]?.team ?? ''));
+  return (
+    <div class="bracket-scroll">
+      <div class="bracket">
+        {archive.rounds.map((round, roundIndex) => (
+          <div class="bracket-round" key={roundIndex}>
+            <h3>{roundName(roundIndex, archive.rounds.length)}</h3>
+            {round.map((match, matchIndex) => {
+              const bye = match.score === null && match.winner !== null && roundIndex === 0;
+              return (
+                <div key={matchIndex} class={`bracket-match archived ${bye ? 'bye' : ''}`}>
+                  {([0, 1] as const).map((side) => (
+                    <span
+                      class={`bracket-slot ${match.winner !== null && match.slots[side] === match.winner ? 'winner' : ''}`}
+                      key={side}
+                    >
+                      <span class="bracket-name">
+                        {bye && match.slots[side] === null ? 'Bye' : name(match.slots[side])}
+                      </span>
+                      {team(match.slots[side]) && <small>{team(match.slots[side])}</small>}
+                      <span class="bracket-score">{match.score ? match.score[side] : ''}</span>
+                    </span>
+                  ))}
+                </div>
+              );
+            })}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function when(iso: string): string {
+  const date = new Date(iso);
+  return Number.isNaN(date.getTime()) ? iso : date.toLocaleDateString(undefined, { dateStyle: 'medium' });
+}
+
+function TournamentCard({
+  archive,
+  open,
+  onToggle,
+}: {
+  archive: TournamentArchiveView;
+  open: boolean;
+  onToggle: () => void;
+}) {
+  const champion = archive.champion === null ? null : archive.entrants[archive.champion];
+  return (
+    <section class="panel tournament-card">
+      <button type="button" class="tournament-card-head" onClick={onToggle} aria-expanded={open}>
+        <div class="tournament-card-title">
+          {champion ? (
+            <>
+              <span class="eyebrow">Champion</span>
+              <b>{champion.model}</b>
+              <small>{champion.team}</small>
+            </>
+          ) : (
+            <>
+              <span class="eyebrow">In progress</span>
+              <b>Bracket unresolved</b>
+            </>
+          )}
+        </div>
+        <div class="tournament-card-meta">
+          <span>{when(archive.when)}</span>
+          <span>
+            {archive.entrants.length} entrant{archive.entrants.length === 1 ? '' : 's'}
+          </span>
+          {archive.pool && <span>{archive.pool}</span>}
+          <span class="tournament-card-toggle">{open ? 'Hide bracket' : 'View bracket'}</span>
+        </div>
+      </button>
+      {open && <ArchivedBracket archive={archive} />}
+    </section>
+  );
+}
+
+const SECTIONS = [
+  { id: 'ladder', label: 'Ladder', blurb: 'Rated rotation series: Elo, head to head, and how the ratings moved.' },
+  { id: 'play', label: 'Play', blurb: 'How each model plays and how long it thinks, decision by decision.' },
+  { id: 'brackets', label: 'Brackets', blurb: 'Single-elimination archives, titles, and match records.' },
+] as const;
+
+export type DataRoomSection = (typeof SECTIONS)[number]['id'];
+
+export function isDataRoomSection(value: string): value is DataRoomSection {
+  return SECTIONS.some((section) => section.id === value);
+}
+
+export function DataRoomView({
+  active,
+  epoch,
+  section,
+  onSection,
+}: {
+  active: boolean;
+  epoch: number;
+  section: DataRoomSection;
+  onSection: (next: DataRoomSection) => void;
+}) {
   const [data, setData] = useState<RecordsResponse | null>(null);
   const [evidence, setEvidence] = useState<EvidenceResponse | null>(null);
+  const [brackets, setBrackets] = useState<TournamentsResponse | null>(null);
   const [pool, setPool] = useState('');
   const [speed, setSpeed] = useState('');
+  const [openRun, setOpenRun] = useState('');
   const [error, setError] = useState('');
 
   useEffect(() => {
     if (!active) return;
     const query = pool ? `?pool=${encodeURIComponent(pool)}` : '';
-    Promise.all([api<RecordsResponse>(`/api/records${query}`), api<EvidenceResponse>(`/api/evidence${query}`)])
-      .then(([records, nextEvidence]) => {
+    Promise.all([
+      api<RecordsResponse>(`/api/records${query}`),
+      api<EvidenceResponse>(`/api/evidence${query}`),
+      api<TournamentsResponse>(`/api/tournaments${query}`),
+    ])
+      .then(([records, nextEvidence, nextBrackets]) => {
         setData(records);
         setEvidence(nextEvidence);
+        setBrackets(nextBrackets);
         setError('');
       })
       .catch((failure: Error) => setError(failure.message));
@@ -615,16 +823,28 @@ export function DataRoomView({ active, epoch }: { active: boolean; epoch: number
     label: entry.label,
     description: `${entry.count} rated series`,
   }));
+  const summary = brackets?.summary ?? { tournaments: 0, matches: 0, standings: [] };
+  const archives = brackets?.tournaments ?? [];
+  const finished = archives.filter((archive) => archive.complete);
+  const latest = finished[0];
+  const reigning = latest && latest.champion !== null ? latest.entrants[latest.champion] : null;
+  const titleLeader = summary.standings[0];
+  const provenance = data && data.imported > 0 ? ` ${data.imported} imported.` : '';
   const scopeText = data
     ? data.pool
-      ? `${data.count} recorded series in pool ${data.pool}.`
-      : `${data.count} recorded series across all pools except the test pool.`
+      ? `${data.count} recorded series in pool ${data.pool}.${provenance}`
+      : `${data.count} recorded series across all pools except the test pool.${provenance}`
     : 'Loading records...';
+  const bracketText = brackets
+    ? `${summary.tournaments} bracket${summary.tournaments === 1 ? '' : 's'} · ${summary.matches} match${summary.matches === 1 ? '' : 'es'} recorded.`
+    : 'Loading brackets...';
   return (
     <>
       <div class="page-heading">
         <div>
-          <p class="eyebrow">Data room / {pool || 'overall'}</p>
+          <p class="eyebrow">
+            Data room / {SECTIONS.find((entry) => entry.id === section)?.label.toLowerCase()} / {pool || 'overall'}
+          </p>
           <h1>
             How well do
             <br />
@@ -632,16 +852,28 @@ export function DataRoomView({ active, epoch }: { active: boolean; epoch: number
           </h1>
         </div>
         <p class="lede">
-          Every series leaves structured evidence. Rated rotation series drive the standings, trajectory, and behavior
-          panels; brackets and titles live in the Tournaments tab. Same model merged across providers, battle speeds
+          Every series leaves structured evidence, and all of it lives here.{' '}
+          {SECTIONS.find((entry) => entry.id === section)?.blurb} Same model merged across providers, battle speeds
           rated separately, test pool excluded from the overall view.
         </p>
       </div>
+      <nav class="section-nav" aria-label="Data room sections">
+        {SECTIONS.map((entry) => (
+          <button
+            key={entry.id}
+            type="button"
+            class={`section-tab ${section === entry.id ? 'on' : ''}`}
+            onClick={() => onSection(entry.id)}
+          >
+            {entry.label}
+          </button>
+        ))}
+      </nav>
       <div class="filter-row">
         <div style="min-width:220px">
           <Dropdown id="recordsPool" label="Scope" options={poolOptions} value={pool} onChange={setPool} />
         </div>
-        {speedOptions.length > 1 && (
+        {section === 'ladder' && speedOptions.length > 1 && (
           <div style="min-width:220px">
             <Dropdown
               id="recordsSpeed"
@@ -652,189 +884,297 @@ export function DataRoomView({ active, epoch }: { active: boolean; epoch: number
             />
           </div>
         )}
-        <p class="kicker">{error || scopeText}</p>
+        <p class="kicker">{error || (section === 'brackets' ? bracketText : scopeText)}</p>
       </div>
-      <div class="stat-row">
-        <StatTile label="Rated series" value={String(evidence?.count ?? 0)} note={pool || 'overall scope'} />
-        <StatTile label="Decisions logged" value={String(totals.decisions)} note="engine decisions with evidence" />
-        <StatTile
-          label="Median decision"
-          value={totals.medianMs === null ? '–' : seconds(totals.medianMs)}
-          note="wall-clock latency, untimed play"
-        />
-        <StatTile
-          label="Median series"
-          value={totals.medianTurns === null ? '–' : `${totals.medianTurns} turns`}
-          note="across a best-of-three"
-        />
-      </div>
-      <div class="results-grid">
-        <section class="panel">
-          <div class="section-head">
-            <div>
-              <h2>Standings</h2>
-              <p>Rotation series rated by sequential Elo.</p>
-            </div>
-          </div>
-          <div class="table-scroll">
-            {rows.length === 0 ? (
-              <div class="results-empty">No completed series. Standings appear after the first recorded run.</div>
-            ) : (
-              <table class="data-table">
-                <thead>
-                  <tr>
-                    <th />
-                    <th>Model</th>
-                    <th class="num">Elo</th>
-                    <th class="num">Series</th>
-                    <th class="num">W-L-T</th>
-                    <th class="num">Win %</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {rows.map((standing, index) => (
-                    <tr key={standing.spec}>
-                      <td>{code(index)}</td>
-                      <td class="spec-cell" title={standing.spec}>
-                        {standing.spec}
-                      </td>
-                      <td class="num">{Math.round(standing.elo)}</td>
-                      <td class="num">{standing.series}</td>
-                      <td class="num">
-                        {standing.w}-{standing.l}-{standing.t}
-                      </td>
-                      <td class="num">{Math.round(standing.winrate * 100)}%</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-          </div>
-        </section>
-        <section class="panel">
-          <div class="section-head">
-            <div>
-              <h2>Head to head</h2>
-              <p>Series W-L-T, row vs column.</p>
-            </div>
-          </div>
-          <div class="table-scroll">
-            {rows.length === 0 ? (
-              <div class="results-empty">The matrix fills in as pairings resolve.</div>
-            ) : (
-              <table class="data-table">
-                <thead>
-                  <tr>
-                    <th />
-                    {rows.map((standing, index) => (
-                      <th key={standing.spec} class="num" title={standing.spec}>
-                        {code(index)}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {rows.map((rowStanding, rowIndex) => (
-                    <tr key={rowStanding.spec}>
-                      <td title={rowStanding.spec}>{code(rowIndex)}</td>
-                      {rows.map((colStanding) => {
-                        const cell = group?.h2h[rowStanding.spec]?.[colStanding.spec] ?? [0, 0, 0];
-                        const played = cell[0] || cell[1] || cell[2];
-                        return (
-                          <td key={colStanding.spec} class="num">
-                            {played ? `${cell[0]}-${cell[1]}-${cell[2]}` : <span class="muted">·</span>}
+      {section === 'brackets' ? (
+        <div class="stat-row">
+          <StatTile
+            label="Brackets"
+            value={String(summary.tournaments)}
+            note={`${finished.length} finished, ${summary.tournaments - finished.length} unresolved`}
+          />
+          <StatTile label="Matches" value={String(summary.matches)} note="best-of-three series" />
+          <StatTile
+            label="Reigning champion"
+            value={reigning ? reigning.model : '–'}
+            note={reigning ? reigning.team : 'no finished bracket yet'}
+          />
+          <StatTile
+            label="Most titles"
+            value={titleLeader && titleLeader.titles > 0 ? titleLeader.spec : '–'}
+            note={
+              titleLeader && titleLeader.titles > 0
+                ? `${titleLeader.titles} title${titleLeader.titles === 1 ? '' : 's'}`
+                : 'trophy case is open'
+            }
+          />
+        </div>
+      ) : (
+        <div class="stat-row">
+          <StatTile label="Rated series" value={String(evidence?.count ?? 0)} note={pool || 'overall scope'} />
+          <StatTile label="Decisions logged" value={String(totals.decisions)} note="engine decisions with evidence" />
+          <StatTile
+            label="Median decision"
+            value={totals.medianMs === null ? '–' : seconds(totals.medianMs)}
+            note="wall-clock latency, untimed play"
+          />
+          <StatTile
+            label="Median series"
+            value={totals.medianTurns === null ? '–' : `${totals.medianTurns} turns`}
+            note="across a best-of-three"
+          />
+        </div>
+      )}
+      {section === 'ladder' && (
+        <>
+          <div class="results-grid">
+            <section class="panel">
+              <div class="section-head">
+                <div>
+                  <h2>Standings</h2>
+                  <p>Rotation series rated by sequential Elo.</p>
+                </div>
+              </div>
+              <div class="table-scroll">
+                {rows.length === 0 ? (
+                  <div class="results-empty">No completed series. Standings appear after the first recorded run.</div>
+                ) : (
+                  <table class="data-table">
+                    <thead>
+                      <tr>
+                        <th />
+                        <th>Model</th>
+                        <th class="num">Elo</th>
+                        <th class="num">Series</th>
+                        <th class="num">W-L-T</th>
+                        <th class="num">Win %</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {rows.map((standing, index) => (
+                        <tr key={standing.spec}>
+                          <td>{code(index)}</td>
+                          <td class="spec-cell" title={standing.spec}>
+                            {standing.spec}
                           </td>
-                        );
-                      })}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
+                          <td class="num">{Math.round(standing.elo)}</td>
+                          <td class="num">{standing.series}</td>
+                          <td class="num">
+                            {standing.w}-{standing.l}-{standing.t}
+                          </td>
+                          <td class="num">{Math.round(standing.winrate * 100)}%</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+            </section>
+            <section class="panel">
+              <div class="section-head">
+                <div>
+                  <h2>Head to head</h2>
+                  <p>Series W-L-T, row vs column.</p>
+                </div>
+              </div>
+              <div class="table-scroll">
+                {rows.length === 0 ? (
+                  <div class="results-empty">The matrix fills in as pairings resolve.</div>
+                ) : (
+                  <table class="data-table">
+                    <thead>
+                      <tr>
+                        <th />
+                        {rows.map((standing, index) => (
+                          <th key={standing.spec} class="num" title={standing.spec}>
+                            {code(index)}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {rows.map((rowStanding, rowIndex) => (
+                        <tr key={rowStanding.spec}>
+                          <td title={rowStanding.spec}>{code(rowIndex)}</td>
+                          {rows.map((colStanding) => {
+                            const cell = group?.h2h[rowStanding.spec]?.[colStanding.spec] ?? [0, 0, 0];
+                            const played = cell[0] || cell[1] || cell[2];
+                            return (
+                              <td key={colStanding.spec} class="num">
+                                {played ? `${cell[0]}-${cell[1]}-${cell[2]}` : <span class="muted">·</span>}
+                              </td>
+                            );
+                          })}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+            </section>
           </div>
-        </section>
-      </div>
-      <section class="panel chart-panel">
-        <div class="section-head">
-          <div>
-            <h2>Rating trajectory</h2>
-            <p>
-              Sequential Elo over rated series, everyone starting at 1000. The top three carry color; hover any line for
-              the rest of the field.
-            </p>
-          </div>
-        </div>
-        <div class="chart-body">
-          <TrajectoryChart trajectory={group?.trajectory ?? []} count={group?.count ?? 0} />
-        </div>
-      </section>
-      <section class="panel chart-panel">
-        <div class="section-head">
-          <div>
-            <h2>Does thinking buy wins?</h2>
-            <p>
-              Median deliberation per decision against series win rate, one dot per model. Small samples wobble — read
-              alongside the series counts in the tooltip.
-            </p>
-          </div>
-        </div>
-        <div class="chart-body">
-          <SkillScatter models={models} standings={rows} />
-        </div>
-      </section>
-      <section class="panel chart-panel">
-        <div class="section-head">
-          <div>
-            <h2>Deliberation</h2>
-            <p>
-              Wall-clock seconds per decision, log scale. One dot per decision; the band is the interquartile range, the
-              tick the median. Slowest thinkers first.
-            </p>
-          </div>
-        </div>
-        <div class="chart-body">
-          <LatencyStrip models={models} />
-        </div>
-      </section>
-      <section class="panel chart-panel">
-        <div class="section-head">
-          <div>
-            <h2>Play profile</h2>
-            <p>
-              How each model plays, not how well: action mix and threat conversion, shaded against the column maximum.
-              Ordered by Elo.
-            </p>
-          </div>
-        </div>
-        <RatesTable
-          models={models}
-          order={eloOrder}
-          columns={PROFILE_COLUMNS.filter(
-            (column) => column.label !== 'Tools' || models.some((model) => model.rates.toolLookups > 0),
+          <section class="panel chart-panel">
+            <div class="section-head">
+              <div>
+                <h2>Rating trajectory</h2>
+                <p>
+                  Sequential Elo over rated series, everyone starting at 1000. The top three carry color; hover any line
+                  for the rest of the field.
+                </p>
+              </div>
+            </div>
+            <div class="chart-body">
+              <TrajectoryChart trajectory={group?.trajectory ?? []} count={group?.count ?? 0} />
+            </div>
+          </section>
+        </>
+      )}
+      {section === 'play' && (
+        <>
+          <section class="panel chart-panel">
+            <div class="section-head">
+              <div>
+                <h2>Does thinking buy wins?</h2>
+                <p>
+                  Median deliberation per decision against series win rate, one dot per model. Small samples wobble —
+                  read alongside the series counts in the tooltip.
+                </p>
+              </div>
+            </div>
+            <div class="chart-body">
+              <SkillScatter models={models} standings={rows} />
+            </div>
+          </section>
+          <section class="panel chart-panel">
+            <div class="section-head">
+              <div>
+                <h2>Deliberation</h2>
+                <p>
+                  Wall-clock seconds per decision, log scale. One dot per decision; the band is the interquartile range,
+                  the tick the median. Slowest thinkers first.
+                </p>
+              </div>
+            </div>
+            <div class="chart-body">
+              <LatencyStrip models={models} />
+            </div>
+          </section>
+          <section class="panel chart-panel">
+            <div class="section-head">
+              <div>
+                <h2>Play profile</h2>
+                <p>
+                  How each model plays, not how well: action mix and threat conversion, shaded against the column
+                  maximum. Ordered by Elo.
+                </p>
+              </div>
+            </div>
+            <RatesTable
+              models={models}
+              order={eloOrder}
+              columns={PROFILE_COLUMNS.filter(
+                (column) => column.label !== 'Tools' || models.some((model) => model.rates.toolLookups > 0),
+              )}
+              rgb="20, 88, 230"
+            />
+          </section>
+          <section class="panel chart-panel">
+            <div class="section-head">
+              <div>
+                <h2>Luck ledger</h2>
+                <p>
+                  Adverse luck events suffered by the winner minus the loser, per decided series. Bars right of zero are
+                  wins earned against the run of luck.
+                </p>
+              </div>
+            </div>
+            <div class="chart-body">
+              <LuckLedger series={evidence?.series ?? []} />
+            </div>
+          </section>
+          <details class="audit-details">
+            <summary>Scaffold health — fallbacks, parse failures, retries (audit data, not play quality)</summary>
+            <section class="panel chart-panel">
+              <RatesTable models={models} order={eloOrder} columns={RELIABILITY_COLUMNS} rgb="232, 75, 79" />
+            </section>
+          </details>
+        </>
+      )}
+      {section === 'brackets' && (
+        <>
+          {archives.length === 0 ? (
+            <section class="panel">
+              <div class="results-empty">
+                No tournaments recorded yet. Start one from the New run tab — the whole bracket lands here when it ends.
+              </div>
+            </section>
+          ) : (
+            archives.map((archive) => (
+              <TournamentCard
+                key={archive.runId}
+                archive={archive}
+                open={openRun === archive.runId}
+                onToggle={() => setOpenRun(openRun === archive.runId ? '' : archive.runId)}
+              />
+            ))
           )}
-          rgb="20, 88, 230"
-        />
-      </section>
-      <section class="panel chart-panel">
-        <div class="section-head">
-          <div>
-            <h2>Luck ledger</h2>
-            <p>
-              Adverse luck events suffered by the winner minus the loser, per decided series. Bars right of zero are
-              wins earned against the run of luck.
-            </p>
-          </div>
-        </div>
-        <div class="chart-body">
-          <LuckLedger series={evidence?.series ?? []} />
-        </div>
-      </section>
-      <details class="audit-details">
-        <summary>Scaffold health — fallbacks, parse failures, retries (audit data, not play quality)</summary>
-        <section class="panel chart-panel">
-          <RatesTable models={models} order={eloOrder} columns={RELIABILITY_COLUMNS} rgb="232, 75, 79" />
-        </section>
-      </details>
+          <section class="panel chart-panel">
+            <div class="section-head">
+              <div>
+                <h2>Tournament placements</h2>
+                <p>Placement per entry, normalized by distance from the final so bracket sizes aggregate.</p>
+              </div>
+            </div>
+            <div class="chart-body">
+              <TournamentLanes summary={summary} />
+            </div>
+          </section>
+          <section class="panel">
+            <div class="section-head">
+              <div>
+                <h2>Tournament record</h2>
+                <p>Every entry, deepest run, and match record per model. Brackets never touch the controlled Elo.</p>
+              </div>
+            </div>
+            <div class="table-scroll">
+              {summary.standings.length === 0 ? (
+                <div class="results-empty">The record book opens with the first completed bracket.</div>
+              ) : (
+                <table class="data-table">
+                  <thead>
+                    <tr>
+                      <th>Model</th>
+                      <th class="num">Entered</th>
+                      <th class="num">Titles</th>
+                      <th class="num">Finals</th>
+                      <th class="num">Semis</th>
+                      <th class="num">Earlier</th>
+                      <th class="num">Matches</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {summary.standings.map((row) => (
+                      <tr key={row.spec}>
+                        <td class="spec-cell" title={row.spec}>
+                          {row.spec}
+                        </td>
+                        <td class="num">{row.entered}</td>
+                        <td class="num">{row.titles}</td>
+                        <td class="num">{row.runnerUp}</td>
+                        <td class="num">{row.semis}</td>
+                        <td class="num">{row.earlier}</td>
+                        <td class="num">
+                          {row.matchWins}-{row.matchLosses}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </section>
+        </>
+      )}
     </>
   );
 }
