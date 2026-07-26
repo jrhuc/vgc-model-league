@@ -48,7 +48,8 @@ Commands:
   tournament --models <spec> <spec>...  play a single-elimination BO3 bracket; each model keeps one team
       [--pool <name>] [--seed <n>] [--concurrency <n>] [--reasoning <level>] [--timer-scale <n|off>]
       [--auto-resume]
-  draft --models <spec> <spec>...     snake-draft rosters from a board, then round robin and playoffs
+  draft --models <spec> <spec>...     snake-draft rosters from a board, then a weekly round robin and playoffs
+      each coach drafts 10 within a 100-point budget, then picks 6 and builds every set before each match
       [--board <name>] [--seed <n>] [--concurrency <n>] [--reasoning <level>] [--timer-scale <n|off>]
       [--auto-resume]
   exhibition --opponent <spec>        host one bo3 where a terminal agent plays a seat over a local bridge
@@ -302,16 +303,27 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
     const execution = experimentExecution(values);
     const { runDraftLeague } = await import('./draftleague.js');
     const runDir = makeRunDirectory();
+    let lastTeambuilds = 0;
     const rows = await withRunStatus(runDir, () =>
       runDraftLeague(models, runDir, {
         board: values.board,
         concurrency: positiveInteger('concurrency', values.concurrency),
         ...execution,
         onEvent: (event) => {
-          if (event.type === 'draft' && event.draft.phase === 'draft' && event.draft.picks.length > 0) {
+          if (event.type !== 'draft') return;
+          if (event.draft.phase === 'draft' && event.draft.picks.length > 0) {
             const pick = event.draft.picks[event.draft.picks.length - 1]!;
+            const coach = event.draft.teamNames[pick.entrant] || event.draft.entrants[pick.entrant];
+            console.log(`pick ${pick.pick}: ${coach} takes ${pick.mon}${pick.fallback ? ' (fallback)' : ''}`);
+          }
+          if (event.draft.teambuilds.length > lastTeambuilds) {
+            lastTeambuilds = event.draft.teambuilds.length;
+            const build = event.draft.teambuilds[lastTeambuilds - 1]!;
+            const repaired = build.sets.filter((set) => set.repaired).length;
             console.log(
-              `pick ${pick.pick}: ${event.draft.entrants[pick.entrant]} takes ${pick.mon}${pick.fallback ? ' (fallback)' : ''}`,
+              `teambuild: ${event.draft.teamNames[build.entrant] || event.draft.entrants[build.entrant]} vs ` +
+                `${event.draft.teamNames[build.opponent] || event.draft.entrants[build.opponent]} — ` +
+                `${build.brought.join(', ')}${repaired ? ` (${repaired} repaired)` : ''}`,
             );
           }
         },
@@ -322,6 +334,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
     if (typeof champion !== 'string' || !champion) throw new Error('draft final did not identify a champion');
     console.log(`Champion: ${champion}`);
     console.log(`Draft logs: ${path.join(runDir, 'draft')}`);
+    console.log(`Teambuild logs: ${path.join(runDir, 'teambuild')}`);
     return 0;
   }
   if (command === 'exhibition') {

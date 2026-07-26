@@ -1,313 +1,3920 @@
 {
   "id": "regmb-202607",
   "format": "gen9championsvgc2026regmbbo3",
-  "budget": 70,
-  "picks": 6,
-  "source": "Sets from the regmb-202607 tournament-team pool; tiers from Smogon's 'VGC Regulation M-B Viability Rankings' (smogon.com/forums/threads/3785289), unranked species default to C-.",
+  "budget": 100,
+  "picks": 10,
+  "source": "Costs 1-20 from a prior Regulation M-A draft board. Reg M-B additions are priced against comparable entries; each carries its anchor.",
   "mons": [
     {
-      "id": "basculegion",
-      "name": "Basculegion",
-      "species": "Basculegion",
-      "tier": "S",
-      "cost": 20,
-      "packed": "Basculegion||SitrusBerry|Adaptability|Protect,WaveCrash,LastRespects,AquaJet|Adamant|24,18,18,,6,|M|||50|"
-    },
-    {
       "id": "charizard-mega-y",
-      "name": "Charizard-Mega-Y",
+      "name": "Mega Charizard Y",
       "species": "Charizard",
-      "tier": "S",
+      "forme": "Charizard-Mega-Y",
+      "item": "Charizardite Y",
+      "base": "Charizard",
+      "types": [
+        "Fire",
+        "Flying"
+      ],
       "cost": 20,
-      "packed": "Charizard||CharizarditeY|Blaze|WeatherBall,HeatWave,SolarBeam,Protect|Modest|23,,18,1,,24||||50|"
-    },
-    {
-      "id": "garchomp",
-      "name": "Garchomp",
-      "species": "Garchomp",
-      "tier": "S",
-      "cost": 20,
-      "packed": "Garchomp||LifeOrb|RoughSkin|DragonClaw,RockSlide,Earthquake,Protect|Jolly|2,32,,,,32||||50|"
-    },
-    {
-      "id": "kingambit",
-      "name": "Kingambit",
-      "species": "Kingambit",
-      "tier": "S",
-      "cost": 20,
-      "packed": "Kingambit||LifeOrb|Defiant|KowtowCleave,IronHead,Protect,SuckerPunch|Brave|32,32,1,,1,||||50|"
+      "origin": "base"
     },
     {
       "id": "floette-mega",
-      "name": "Floette-Mega",
+      "name": "Mega Floette",
       "species": "Floette-Eternal",
-      "tier": "A+",
-      "cost": 17,
-      "packed": "Floette-Eternal||Floettite|FlowerVeil|Moonblast,DazzlingGleam,LightofRuin,Protect|Timid|2,,,32,,32|F|||50|"
-    },
-    {
-      "id": "incineroar",
-      "name": "Incineroar",
-      "species": "Incineroar",
-      "tier": "A+",
-      "cost": 17,
-      "packed": "Incineroar||SitrusBerry|Intimidate|DarkestLariat,FlareBlitz,FakeOut,PartingShot|Impish|32,,32,,2,||||50|"
-    },
-    {
-      "id": "aerodactyl-mega",
-      "name": "Aerodactyl-Mega",
-      "species": "Aerodactyl",
-      "tier": "A",
-      "cost": 15,
-      "packed": "Aerodactyl||Aerodactylite|Unnerve|RockSlide,IceFang,Tailwind,WideGuard|Jolly|28,11,9,,1,17||||50|"
-    },
-    {
-      "id": "sinistcha",
-      "name": "Sinistcha",
-      "species": "Sinistcha",
-      "tier": "A",
-      "cost": 15,
-      "packed": "Sinistcha||CobaBerry|Hospitality|Protect,TrickRoom,MatchaGotcha,RagePowder|Relaxed|32,,4,,30,|||||"
-    },
-    {
-      "id": "whimsicott",
-      "name": "Whimsicott",
-      "species": "Whimsicott",
-      "tier": "A",
-      "cost": 15,
-      "packed": "Whimsicott||FocusSash|Prankster|Moonblast,Tailwind,Encore,Protect|Timid|2,,,32,,32||||50|"
-    },
-    {
-      "id": "delphox-mega",
-      "name": "Delphox-Mega",
-      "species": "Delphox",
-      "tier": "A-",
-      "cost": 13,
-      "packed": "Delphox||Delphoxite|Blaze|HeatWave,Psychic,NastyPlot,Protect|Timid|15,,25,7,,19|||||"
-    },
-    {
-      "id": "farigiraf",
-      "name": "Farigiraf",
-      "species": "Farigiraf",
-      "tier": "A-",
-      "cost": 13,
-      "packed": "Farigiraf||SitrusBerry|ArmorTail|PsychicFangs,HyperVoice,HelpingHand,TrickRoom|Relaxed|29,,20,,17,||||50|"
-    },
-    {
-      "id": "sneasler",
-      "name": "Sneasler",
-      "species": "Sneasler",
-      "tier": "A-",
-      "cost": 13,
-      "packed": "Sneasler||WhiteHerb|Unburden|Protect,CloseCombat,FakeOut,GunkShot|Adamant|18,,31,,,17||||50|"
-    },
-    {
-      "id": "sylveon",
-      "name": "Sylveon",
-      "species": "Sylveon",
-      "tier": "A-",
-      "cost": 13,
-      "packed": "Sylveon||FairyFeather|Pixilate|Detect,HyperVoice,HyperBeam,QuickAttack|Modest|18,,10,21,,17||||50|"
-    },
-    {
-      "id": "blastoise-mega",
-      "name": "Blastoise-Mega",
-      "species": "Blastoise",
-      "tier": "B+",
-      "cost": 11,
-      "packed": "Blastoise||Blastoisinite|RainDish|FakeOut,WaterSpout,AuraSphere,DarkPulse|Quiet|32,,,32,2,||||50|"
-    },
-    {
-      "id": "grimmsnarl",
-      "name": "Grimmsnarl",
-      "species": "Grimmsnarl",
-      "tier": "B+",
-      "cost": 11,
-      "packed": "Grimmsnarl||LightClay|Prankster|FoulPlay,PartingShot,LightScreen,Reflect|Calm|32,,20,,14,|||||"
-    },
-    {
-      "id": "pelipper",
-      "name": "Pelipper",
-      "species": "Pelipper",
-      "tier": "B+",
-      "cost": 11,
-      "packed": "Pelipper||QuickClaw|Drizzle|WeatherBall,Hurricane,Tailwind,Protect|Timid|1,,,32,1,32||||50|"
-    },
-    {
-      "id": "venusaur",
-      "name": "Venusaur",
-      "species": "Venusaur",
-      "tier": "B+",
-      "cost": 11,
-      "packed": "Venusaur||LifeOrb|Chlorophyll|LeafStorm,SludgeBomb,EarthPower,Protect|Modest|2,,,32,,32||||50|"
+      "forme": "Floette-Mega",
+      "item": "Floettite",
+      "base": "Floette",
+      "types": [
+        "Fairy"
+      ],
+      "cost": 20,
+      "origin": "base"
     },
     {
       "id": "archaludon",
       "name": "Archaludon",
       "species": "Archaludon",
-      "tier": "B",
-      "cost": 9,
-      "packed": "Archaludon||Leftovers|Stamina|DracoMeteor,FlashCannon,ElectroShot,Protect|Modest|27,,2,5,32,||||50|"
+      "base": "Archaludon",
+      "types": [
+        "Steel",
+        "Dragon"
+      ],
+      "cost": 19,
+      "origin": "base"
+    },
+    {
+      "id": "basculegion",
+      "name": "Basculegion-Male",
+      "species": "Basculegion",
+      "base": "Basculegion",
+      "types": [
+        "Water",
+        "Ghost"
+      ],
+      "cost": 19,
+      "origin": "base"
+    },
+    {
+      "id": "sneasler",
+      "name": "Sneasler",
+      "species": "Sneasler",
+      "base": "Sneasler",
+      "types": [
+        "Fighting",
+        "Poison"
+      ],
+      "cost": 19,
+      "origin": "base"
+    },
+    {
+      "id": "whimsicott",
+      "name": "Whimsicott",
+      "species": "Whimsicott",
+      "base": "Whimsicott",
+      "types": [
+        "Grass",
+        "Fairy"
+      ],
+      "cost": 19,
+      "origin": "base"
+    },
+    {
+      "id": "farigiraf",
+      "name": "Farigiraf",
+      "species": "Farigiraf",
+      "base": "Farigiraf",
+      "types": [
+        "Normal",
+        "Psychic"
+      ],
+      "cost": 18,
+      "origin": "base",
+      "listed": 16,
+      "usage": "#7 at 20.72%"
+    },
+    {
+      "id": "garchomp",
+      "name": "Garchomp",
+      "species": "Garchomp",
+      "base": "Garchomp",
+      "types": [
+        "Dragon",
+        "Ground"
+      ],
+      "cost": 18,
+      "origin": "base"
+    },
+    {
+      "id": "incineroar",
+      "name": "Incineroar",
+      "species": "Incineroar",
+      "base": "Incineroar",
+      "types": [
+        "Fire",
+        "Dark"
+      ],
+      "cost": 18,
+      "origin": "base"
+    },
+    {
+      "id": "gengar-mega",
+      "name": "Mega Gengar",
+      "species": "Gengar",
+      "forme": "Gengar-Mega",
+      "item": "Gengarite",
+      "base": "Gengar",
+      "types": [
+        "Ghost",
+        "Poison"
+      ],
+      "cost": 18,
+      "origin": "base",
+      "listed": 20,
+      "usage": "#35 at 3.35%"
+    },
+    {
+      "id": "pelipper",
+      "name": "Pelipper",
+      "species": "Pelipper",
+      "base": "Pelipper",
+      "types": [
+        "Water",
+        "Flying"
+      ],
+      "cost": 18,
+      "origin": "base",
+      "listed": 16,
+      "usage": "#8 at 18.58%"
+    },
+    {
+      "id": "sinistcha",
+      "name": "Sinistcha",
+      "species": "Sinistcha",
+      "base": "Sinistcha",
+      "types": [
+        "Grass",
+        "Ghost"
+      ],
+      "cost": 18,
+      "origin": "base"
+    },
+    {
+      "id": "aerodactyl",
+      "name": "Aerodactyl",
+      "species": "Aerodactyl",
+      "base": "Aerodactyl",
+      "types": [
+        "Rock",
+        "Flying"
+      ],
+      "cost": 17,
+      "origin": "base"
+    },
+    {
+      "id": "kingambit",
+      "name": "Kingambit",
+      "species": "Kingambit",
+      "base": "Kingambit",
+      "types": [
+        "Dark",
+        "Steel"
+      ],
+      "cost": 17,
+      "origin": "base"
+    },
+    {
+      "id": "aerodactyl-mega",
+      "name": "Mega Aerodactyl",
+      "species": "Aerodactyl",
+      "forme": "Aerodactyl-Mega",
+      "item": "Aerodactylite",
+      "base": "Aerodactyl",
+      "types": [
+        "Rock",
+        "Flying"
+      ],
+      "cost": 17,
+      "origin": "base"
+    },
+    {
+      "id": "blastoise-mega",
+      "name": "Mega Blastoise",
+      "species": "Blastoise",
+      "forme": "Blastoise-Mega",
+      "item": "Blastoisinite",
+      "base": "Blastoise",
+      "types": [
+        "Water"
+      ],
+      "cost": 17,
+      "origin": "base"
+    },
+    {
+      "id": "delphox-mega",
+      "name": "Mega Delphox",
+      "species": "Delphox",
+      "forme": "Delphox-Mega",
+      "item": "Delphoxite",
+      "base": "Delphox",
+      "types": [
+        "Fire",
+        "Psychic"
+      ],
+      "cost": 17,
+      "origin": "base"
+    },
+    {
+      "id": "froslass-mega",
+      "name": "Mega Froslass",
+      "species": "Froslass",
+      "forme": "Froslass-Mega",
+      "item": "Froslassite",
+      "base": "Froslass",
+      "types": [
+        "Ice",
+        "Ghost"
+      ],
+      "cost": 17,
+      "origin": "base",
+      "listed": 19,
+      "usage": "#33 at 3.87%"
+    },
+    {
+      "id": "metagross-mega",
+      "name": "Mega Metagross",
+      "species": "Metagross",
+      "forme": "Metagross-Mega",
+      "item": "Metagrossite",
+      "base": "Metagross",
+      "types": [
+        "Steel",
+        "Psychic"
+      ],
+      "cost": 17,
+      "origin": "regmb",
+      "anchor": "Smogon B; BST 700 matches Mega Tyranitar (17)"
     },
     {
       "id": "gholdengo",
       "name": "Gholdengo",
       "species": "Gholdengo",
-      "tier": "B",
-      "cost": 9,
-      "packed": "Gholdengo||FocusSash|GoodasGold|MakeItRain,ShadowBall,PowerGem,Protect|Timid|2,,,32,,32||||50|"
+      "base": "Gholdengo",
+      "types": [
+        "Steel",
+        "Ghost"
+      ],
+      "cost": 16,
+      "origin": "regmb",
+      "anchor": "Smogon B; blocks Prankster status, cf. Corviknight (13)",
+      "listed": 14,
+      "usage": "#18 at 11.61%"
     },
     {
-      "id": "metagross-mega",
-      "name": "Metagross-Mega",
-      "species": "Metagross",
-      "tier": "B",
-      "cost": 9,
-      "packed": "Metagross||Metagrossite|ClearBody|Protect,BodyPress,PsychicFangs,IronHead|Jolly|14,27,,,,25|||||"
+      "id": "grimmsnarl",
+      "name": "Grimmsnarl",
+      "species": "Grimmsnarl",
+      "base": "Grimmsnarl",
+      "types": [
+        "Dark",
+        "Fairy"
+      ],
+      "cost": 16,
+      "origin": "regmb",
+      "anchor": "Smogon B+; Prankster screens, under Whimsicott (19)",
+      "listed": 15,
+      "usage": "#13 at 14.74%"
+    },
+    {
+      "id": "maushold",
+      "name": "Maushold",
+      "species": "Maushold",
+      "base": "Maushold",
+      "types": [
+        "Normal"
+      ],
+      "cost": 16,
+      "origin": "base"
+    },
+    {
+      "id": "gardevoir-mega",
+      "name": "Mega Gardevoir",
+      "species": "Gardevoir",
+      "forme": "Gardevoir-Mega",
+      "item": "Gardevoirite",
+      "base": "Gardevoir",
+      "types": [
+        "Psychic",
+        "Fairy"
+      ],
+      "cost": 16,
+      "origin": "base",
+      "listed": 18,
+      "usage": "#60 at 1.67%"
+    },
+    {
+      "id": "tyranitar-mega",
+      "name": "Mega Tyranitar",
+      "species": "Tyranitar",
+      "forme": "Tyranitar-Mega",
+      "item": "Tyranitarite",
+      "base": "Tyranitar",
+      "types": [
+        "Rock",
+        "Dark"
+      ],
+      "cost": 16,
+      "origin": "base",
+      "listed": 17,
+      "usage": "#47 at 2.45%"
+    },
+    {
+      "id": "clefable",
+      "name": "Clefable",
+      "species": "Clefable",
+      "base": "Clefable",
+      "types": [
+        "Fairy"
+      ],
+      "cost": 15,
+      "origin": "base"
+    },
+    {
+      "id": "dragonite-mega",
+      "name": "Mega Dragonite",
+      "species": "Dragonite",
+      "forme": "Dragonite-Mega",
+      "item": "Dragoninite",
+      "base": "Dragonite",
+      "types": [
+        "Dragon",
+        "Flying"
+      ],
+      "cost": 15,
+      "origin": "base"
+    },
+    {
+      "id": "kangaskhan-mega",
+      "name": "Mega Kangaskhan",
+      "species": "Kangaskhan",
+      "forme": "Kangaskhan-Mega",
+      "item": "Kangaskhanite",
+      "base": "Kangaskhan",
+      "types": [
+        "Normal"
+      ],
+      "cost": 15,
+      "origin": "base",
+      "listed": 18,
+      "usage": "#72 at 1.46%"
     },
     {
       "id": "swampert-mega",
-      "name": "Swampert-Mega",
+      "name": "Mega Swampert",
       "species": "Swampert",
-      "tier": "B",
-      "cost": 9,
-      "packed": "Swampert||Swampertite|Damp|Protect,IcePunch,WaveCrash,Earthquake|Adamant|18,30,,,,18|||||"
+      "forme": "Swampert-Mega",
+      "item": "Swampertite",
+      "base": "Swampert",
+      "types": [
+        "Water",
+        "Ground"
+      ],
+      "cost": 15,
+      "origin": "regmb",
+      "anchor": "Smogon B; rain sweeper above Mega Gyarados (14)"
     },
     {
-      "id": "toxapex",
-      "name": "Toxapex",
-      "species": "Toxapex",
-      "tier": "B",
-      "cost": 9,
-      "packed": "Toxapex||Leftovers|Regenerator|Toxic,Infestation,WideGuard,BanefulBunker|Bold|32,,21,,13,||||50|"
+      "id": "primarina",
+      "name": "Primarina",
+      "species": "Primarina",
+      "base": "Primarina",
+      "types": [
+        "Water",
+        "Fairy"
+      ],
+      "cost": 15,
+      "origin": "base"
     },
     {
-      "id": "froslass-mega",
-      "name": "Froslass-Mega",
-      "species": "Froslass",
-      "tier": "B-",
-      "cost": 7,
-      "packed": "Froslass||Froslassite|CursedBody|Protect,Blizzard,AuroraVeil,ShadowBall|Modest|24,,,6,4,32|F|||50|"
+      "id": "sylveon",
+      "name": "Sylveon",
+      "species": "Sylveon",
+      "base": "Sylveon",
+      "types": [
+        "Fairy"
+      ],
+      "cost": 15,
+      "origin": "base"
     },
     {
-      "id": "maushold-four",
-      "name": "Maushold-Four",
-      "species": "Maushold-Four",
-      "tier": "B-",
-      "cost": 7,
-      "packed": "Maushold-Four||ChopleBerry|FriendGuard|Feint,HelpingHand,Protect,FollowMe|Impish|32,,20,,14,|||||"
+      "id": "talonflame",
+      "name": "Talonflame",
+      "species": "Talonflame",
+      "base": "Talonflame",
+      "types": [
+        "Fire",
+        "Flying"
+      ],
+      "cost": 15,
+      "origin": "base"
     },
     {
       "id": "torkoal",
       "name": "Torkoal",
       "species": "Torkoal",
-      "tier": "B-",
-      "cost": 7,
-      "packed": "Krakatoa|Torkoal|Charcoal|Drought|Eruption,WeatherBall,HelpingHand,Protect|Quiet|32,,,32,2,||||50|"
+      "base": "Torkoal",
+      "types": [
+        "Fire"
+      ],
+      "cost": 15,
+      "origin": "base"
     },
     {
-      "id": "dragonite-mega",
-      "name": "Dragonite-Mega",
+      "id": "aegislash",
+      "name": "Aegislash",
+      "species": "Aegislash",
+      "base": "Aegislash",
+      "types": [
+        "Steel",
+        "Ghost"
+      ],
+      "cost": 14,
+      "origin": "base",
+      "listed": 16,
+      "usage": "#76 at 1.36%"
+    },
+    {
+      "id": "ninetales-alola",
+      "name": "Alolan Ninetales",
+      "species": "Ninetales-Alola",
+      "base": "Ninetales",
+      "types": [
+        "Ice",
+        "Fairy"
+      ],
+      "cost": 14,
+      "origin": "base"
+    },
+    {
+      "id": "annihilape",
+      "name": "Annihilape",
+      "species": "Annihilape",
+      "base": "Annihilape",
+      "types": [
+        "Fighting",
+        "Ghost"
+      ],
+      "cost": 14,
+      "origin": "regmb",
+      "anchor": "Smogon C+; Rage Fist, above Krookodile (9)",
+      "listed": 11,
+      "usage": "#28 at 4.97%"
+    },
+    {
+      "id": "dragapult",
+      "name": "Dragapult",
+      "species": "Dragapult",
+      "base": "Dragapult",
+      "types": [
+        "Dragon",
+        "Ghost"
+      ],
+      "cost": 14,
+      "origin": "base",
+      "listed": 15,
+      "usage": "#70 at 1.50%"
+    },
+    {
+      "id": "dragonite",
+      "name": "Dragonite",
       "species": "Dragonite",
-      "tier": "C+",
-      "cost": 5,
-      "packed": "Dragonite||Dragoninite|InnerFocus|DracoMeteor,AirSlash,Tailwind,Haze|Timid|11,,,32,,23||||50|"
+      "base": "Dragonite",
+      "types": [
+        "Dragon",
+        "Flying"
+      ],
+      "cost": 14,
+      "origin": "base",
+      "listed": 16,
+      "usage": "#68 at 1.55%"
     },
     {
-      "id": "lycanroc-dusk",
-      "name": "Lycanroc-Dusk",
-      "species": "Lycanroc-Dusk",
-      "tier": "C+",
-      "cost": 5,
-      "packed": "Lycanroc-Dusk||FocusSash|ToughClaws|Protect,Accelerock,RockSlide,CloseCombat|Adamant|1,32,,,1,32||||50|"
+      "id": "hydreigon",
+      "name": "Hydreigon",
+      "species": "Hydreigon",
+      "base": "Hydreigon",
+      "types": [
+        "Dark",
+        "Dragon"
+      ],
+      "cost": 14,
+      "origin": "base"
     },
     {
-      "id": "mamoswine",
-      "name": "Mamoswine",
-      "species": "Mamoswine",
-      "tier": "C+",
-      "cost": 5,
-      "packed": "Mamoswine||FocusSash|Oblivious|HighHorsepower,RockTomb,IceShard,Protect|Jolly|2,32,,,,32||||50|"
+      "id": "kommo-o",
+      "name": "Kommo-o",
+      "species": "Kommo-o",
+      "base": "Kommo-o",
+      "types": [
+        "Dragon",
+        "Fighting"
+      ],
+      "cost": 14,
+      "origin": "base"
+    },
+    {
+      "id": "glimmora-mega",
+      "name": "Mega Glimmora",
+      "species": "Glimmora",
+      "forme": "Glimmora-Mega",
+      "item": "Glimmoranite",
+      "base": "Glimmora",
+      "types": [
+        "Rock",
+        "Poison"
+      ],
+      "cost": 14,
+      "origin": "base",
+      "listed": 16,
+      "usage": "#71 at 1.48%"
+    },
+    {
+      "id": "lopunny-mega",
+      "name": "Mega Lopunny",
+      "species": "Lopunny",
+      "forme": "Lopunny-Mega",
+      "item": "Lopunnite",
+      "base": "Lopunny",
+      "types": [
+        "Normal",
+        "Fighting"
+      ],
+      "cost": 14,
+      "origin": "base",
+      "listed": 16,
+      "usage": "#87 at 0.75%"
     },
     {
       "id": "mawile-mega",
-      "name": "Mawile-Mega",
+      "name": "Mega Mawile",
       "species": "Mawile",
-      "tier": "C+",
-      "cost": 5,
-      "packed": "Claire Densmore|Mawile|Mawilite|HyperCutter|PlayRough,RockSlide,SuckerPunch,SwordsDance|Brave|32,,22,,12,||||50|"
+      "forme": "Mawile-Mega",
+      "item": "Mawilite",
+      "base": "Mawile",
+      "types": [
+        "Steel",
+        "Fairy"
+      ],
+      "cost": 14,
+      "origin": "regmb",
+      "anchor": "Smogon C+; Huge Power mirrors Mega Medicham (12)",
+      "listed": 12,
+      "usage": "#19 at 10.03%"
     },
     {
-      "id": "pyroar-mega",
-      "name": "Pyroar-Mega",
-      "species": "Pyroar",
-      "tier": "C+",
-      "cost": 5,
-      "packed": "Mufasa|Pyroar|Pyroarite|Unnerve|HeatWave,Overheat,SolarBeam,Protect|Timid|2,,,32,,32|F|||50|"
+      "id": "raichu-mega-y",
+      "name": "Mega Raichu Y",
+      "species": "Raichu",
+      "forme": "Raichu-Mega-Y",
+      "item": "Raichunite Y",
+      "base": "Raichu",
+      "types": [
+        "Electric"
+      ],
+      "cost": 14,
+      "origin": "regmb",
+      "anchor": "Smogon B-; fast electric above Mega Manectric (10)",
+      "listed": 12,
+      "usage": "#21 at 9.54%"
     },
     {
       "id": "scovillain-mega",
-      "name": "Scovillain-Mega",
+      "name": "Mega Scovillain",
       "species": "Scovillain",
-      "tier": "C+",
-      "cost": 5,
-      "packed": "Scovillain||Scovillainite|Moody|Protect,GigaDrain,Overheat,RagePowder|Bold|32,,15,,15,4||||50|"
+      "forme": "Scovillain-Mega",
+      "item": "Scovillainite",
+      "base": "Scovillain",
+      "types": [
+        "Grass",
+        "Fire"
+      ],
+      "cost": 14,
+      "origin": "base"
+    },
+    {
+      "id": "staraptor-mega",
+      "name": "Mega Staraptor",
+      "species": "Staraptor",
+      "forme": "Staraptor-Mega",
+      "item": "Staraptite",
+      "base": "Staraptor",
+      "types": [
+        "Fighting",
+        "Flying"
+      ],
+      "cost": 14,
+      "origin": "regmb",
+      "anchor": "Smogon B-; flying attacker above Mega Pidgeot (7)",
+      "listed": 12,
+      "usage": "#14 at 14.65%"
+    },
+    {
+      "id": "venusaur-mega",
+      "name": "Mega Venusaur",
+      "species": "Venusaur",
+      "forme": "Venusaur-Mega",
+      "item": "Venusaurite",
+      "base": "Venusaur",
+      "types": [
+        "Grass",
+        "Poison"
+      ],
+      "cost": 14,
+      "origin": "base"
+    },
+    {
+      "id": "milotic",
+      "name": "Milotic",
+      "species": "Milotic",
+      "base": "Milotic",
+      "types": [
+        "Water"
+      ],
+      "cost": 14,
+      "origin": "base"
+    },
+    {
+      "id": "rotom-wash",
+      "name": "Rotom-Wash",
+      "species": "Rotom-Wash",
+      "base": "Rotom",
+      "types": [
+        "Electric",
+        "Water"
+      ],
+      "cost": 14,
+      "origin": "base"
+    },
+    {
+      "id": "sableye",
+      "name": "Sableye",
+      "species": "Sableye",
+      "base": "Sableye",
+      "types": [
+        "Dark",
+        "Ghost"
+      ],
+      "cost": 14,
+      "origin": "base",
+      "listed": 11,
+      "usage": "#24 at 5.87%"
+    },
+    {
+      "id": "tyranitar",
+      "name": "Tyranitar",
+      "species": "Tyranitar",
+      "base": "Tyranitar",
+      "types": [
+        "Rock",
+        "Dark"
+      ],
+      "cost": 14,
+      "origin": "base",
+      "listed": 16,
+      "usage": "#79 at 1.21%"
     },
     {
       "id": "volcarona",
       "name": "Volcarona",
       "species": "Volcarona",
-      "tier": "C",
-      "cost": 4,
-      "packed": "Volcarona||Leftovers|FlameBody|HeatWave,GigaDrain,QuiverDance,Protect|Modest|32,,11,5,,18||||50|"
+      "base": "Volcarona",
+      "types": [
+        "Bug",
+        "Fire"
+      ],
+      "cost": 14,
+      "origin": "base",
+      "listed": 16,
+      "usage": "#77 at 1.33%"
     },
     {
-      "id": "camerupt-mega",
-      "name": "Camerupt-Mega",
-      "species": "Camerupt",
-      "tier": "C-",
-      "cost": 3,
-      "packed": "Camerupt||Cameruptite|SolidRock|HeatWave,EarthPower,Protect,AncientPower|Quiet|32,,,32,2,||||50|"
+      "id": "corviknight",
+      "name": "Corviknight",
+      "species": "Corviknight",
+      "base": "Corviknight",
+      "types": [
+        "Flying",
+        "Steel"
+      ],
+      "cost": 13,
+      "origin": "base"
     },
     {
-      "id": "decidueye-hisui",
-      "name": "Decidueye-Hisui",
-      "species": "Decidueye-Hisui",
-      "tier": "C-",
-      "cost": 3,
-      "packed": "Legowlas|DecidueyeHisui|LifeOrb|Scrappy|CloseCombat,LeafBlade,BraveBird,Protect|Brave|32,32,,,2,||||50|"
+      "id": "excadrill",
+      "name": "Excadrill",
+      "species": "Excadrill",
+      "base": "Excadrill",
+      "types": [
+        "Ground",
+        "Steel"
+      ],
+      "cost": 13,
+      "origin": "base"
+    },
+    {
+      "id": "glimmora",
+      "name": "Glimmora",
+      "species": "Glimmora",
+      "base": "Glimmora",
+      "types": [
+        "Rock",
+        "Poison"
+      ],
+      "cost": 13,
+      "origin": "base"
+    },
+    {
+      "id": "arcanine-hisui",
+      "name": "Hisuian Arcanine",
+      "species": "Arcanine-Hisui",
+      "base": "Arcanine",
+      "types": [
+        "Fire",
+        "Rock"
+      ],
+      "cost": 13,
+      "origin": "base",
+      "listed": 15,
+      "usage": "#78 at 1.21%"
+    },
+    {
+      "id": "pyroar-mega",
+      "name": "Mega Pyroar",
+      "species": "Pyroar",
+      "forme": "Pyroar-Mega",
+      "item": "Pyroarite",
+      "base": "Pyroar",
+      "types": [
+        "Fire",
+        "Normal"
+      ],
+      "cost": 13,
+      "origin": "regmb",
+      "anchor": "Smogon C+; special fire above Mega Chandelure (9)",
+      "listed": 11,
+      "usage": "#31 at 4.67%"
+    },
+    {
+      "id": "scizor-mega",
+      "name": "Mega Scizor",
+      "species": "Scizor",
+      "forme": "Scizor-Mega",
+      "item": "Scizorite",
+      "base": "Scizor",
+      "types": [
+        "Bug",
+        "Steel"
+      ],
+      "cost": 13,
+      "origin": "base",
+      "listed": 15,
+      "usage": "#86 at 0.84%"
+    },
+    {
+      "id": "politoed",
+      "name": "Politoed",
+      "species": "Politoed",
+      "base": "Politoed",
+      "types": [
+        "Water"
+      ],
+      "cost": 13,
+      "origin": "base"
+    },
+    {
+      "id": "venusaur",
+      "name": "Venusaur",
+      "species": "Venusaur",
+      "base": "Venusaur",
+      "types": [
+        "Grass",
+        "Poison"
+      ],
+      "cost": 13,
+      "origin": "base"
+    },
+    {
+      "id": "azumarill",
+      "name": "Azumarill",
+      "species": "Azumarill",
+      "base": "Azumarill",
+      "types": [
+        "Water",
+        "Fairy"
+      ],
+      "cost": 12,
+      "origin": "base"
+    },
+    {
+      "id": "basculegion-f",
+      "name": "Basculegion-Female",
+      "species": "Basculegion-F",
+      "base": "Basculegion",
+      "types": [
+        "Water",
+        "Ghost"
+      ],
+      "cost": 12,
+      "origin": "base"
+    },
+    {
+      "id": "ceruledge",
+      "name": "Ceruledge",
+      "species": "Ceruledge",
+      "base": "Ceruledge",
+      "types": [
+        "Fire",
+        "Ghost"
+      ],
+      "cost": 12,
+      "origin": "base",
+      "listed": 8,
+      "usage": "#42 at 2.66%"
+    },
+    {
+      "id": "mamoswine",
+      "name": "Mamoswine",
+      "species": "Mamoswine",
+      "base": "Mamoswine",
+      "types": [
+        "Ice",
+        "Ground"
+      ],
+      "cost": 12,
+      "origin": "base"
+    },
+    {
+      "id": "blaziken-mega",
+      "name": "Mega Blaziken",
+      "species": "Blaziken",
+      "forme": "Blaziken-Mega",
+      "item": "Blazikenite",
+      "base": "Blaziken",
+      "types": [
+        "Fire",
+        "Fighting"
+      ],
+      "cost": 12,
+      "origin": "regmb",
+      "anchor": "Smogon C+; Speed Boost, between Mega Medicham (12) and Mega Lucario (15)"
+    },
+    {
+      "id": "charizard-mega-x",
+      "name": "Mega Charizard X",
+      "species": "Charizard",
+      "forme": "Charizard-Mega-X",
+      "item": "Charizardite X",
+      "base": "Charizard",
+      "types": [
+        "Fire",
+        "Dragon"
+      ],
+      "cost": 12,
+      "origin": "base",
+      "listed": 15,
+      "usage": "#107 at 0.46%"
+    },
+    {
+      "id": "eelektross-mega",
+      "name": "Mega Eelektross",
+      "species": "Eelektross",
+      "forme": "Eelektross-Mega",
+      "item": "Eelektrossite",
+      "base": "Eelektross",
+      "types": [
+        "Electric"
+      ],
+      "cost": 12,
+      "origin": "regmb",
+      "anchor": "unranked; cf. Mega Manectric (10)",
+      "listed": 10,
+      "usage": "#48 at 2.41%"
+    },
+    {
+      "id": "garchomp-mega",
+      "name": "Mega Garchomp",
+      "species": "Garchomp",
+      "forme": "Garchomp-Mega",
+      "item": "Garchompite",
+      "base": "Garchomp",
+      "types": [
+        "Dragon",
+        "Ground"
+      ],
+      "cost": 12,
+      "origin": "base",
+      "listed": 14,
+      "usage": "#110 at 0.42%"
     },
     {
       "id": "gyarados-mega",
-      "name": "Gyarados-Mega",
+      "name": "Mega Gyarados",
       "species": "Gyarados",
-      "tier": "C-",
-      "cost": 3,
-      "packed": "Gyarados||Gyaradosite|Intimidate|Waterfall,LashOut,DragonDance,Protect|Adamant|11,25,,,,30||||50|"
+      "forme": "Gyarados-Mega",
+      "item": "Gyaradosite",
+      "base": "Gyarados",
+      "types": [
+        "Water",
+        "Dark"
+      ],
+      "cost": 12,
+      "origin": "base",
+      "listed": 14,
+      "usage": "#99 at 0.51%"
+    },
+    {
+      "id": "meganium-mega",
+      "name": "Mega Meganium",
+      "species": "Meganium",
+      "forme": "Meganium-Mega",
+      "item": "Meganiumite",
+      "base": "Meganium",
+      "types": [
+        "Grass",
+        "Fairy"
+      ],
+      "cost": 12,
+      "origin": "base",
+      "listed": 14,
+      "usage": "#82 at 1.06%"
+    },
+    {
+      "id": "sceptile-mega",
+      "name": "Mega Sceptile",
+      "species": "Sceptile",
+      "forme": "Sceptile-Mega",
+      "item": "Sceptilite",
+      "base": "Sceptile",
+      "types": [
+        "Grass",
+        "Dragon"
+      ],
+      "cost": 12,
+      "origin": "regmb",
+      "anchor": "unranked; fast frail special, cf. Mega Alakazam (12)",
+      "listed": 10,
+      "usage": "#46 at 2.46%"
+    },
+    {
+      "id": "starmie-mega",
+      "name": "Mega Starmie",
+      "species": "Starmie",
+      "forme": "Starmie-Mega",
+      "item": "Starminite",
+      "base": "Starmie",
+      "types": [
+        "Water",
+        "Psychic"
+      ],
+      "cost": 12,
+      "origin": "base",
+      "listed": 15,
+      "usage": "#116 at 0.37%"
+    },
+    {
+      "id": "meowscarada",
+      "name": "Meowscarada",
+      "species": "Meowscarada",
+      "base": "Meowscarada",
+      "types": [
+        "Grass",
+        "Dark"
+      ],
+      "cost": 12,
+      "origin": "base"
+    },
+    {
+      "id": "palafin",
+      "name": "Palafin",
+      "species": "Palafin",
+      "base": "Palafin",
+      "types": [
+        "Water"
+      ],
+      "cost": 12,
+      "origin": "base"
+    },
+    {
+      "id": "rotom-heat",
+      "name": "Rotom-Heat",
+      "species": "Rotom-Heat",
+      "base": "Rotom",
+      "types": [
+        "Electric",
+        "Fire"
+      ],
+      "cost": 12,
+      "origin": "base"
+    },
+    {
+      "id": "vivillon",
+      "name": "Vivillon",
+      "species": "Vivillon",
+      "base": "Vivillon",
+      "types": [
+        "Bug",
+        "Flying"
+      ],
+      "cost": 12,
+      "origin": "base",
+      "listed": 10,
+      "usage": "#56 at 1.82%"
+    },
+    {
+      "id": "araquanid",
+      "name": "Araquanid",
+      "species": "Araquanid",
+      "base": "Araquanid",
+      "types": [
+        "Water",
+        "Bug"
+      ],
+      "cost": 11,
+      "origin": "base"
+    },
+    {
+      "id": "arcanine",
+      "name": "Arcanine",
+      "species": "Arcanine",
+      "base": "Arcanine",
+      "types": [
+        "Fire"
+      ],
+      "cost": 11,
+      "origin": "base",
+      "listed": 14,
+      "usage": "#131 at 0.27%"
+    },
+    {
+      "id": "gyarados",
+      "name": "Gyarados",
+      "species": "Gyarados",
+      "base": "Gyarados",
+      "types": [
+        "Water",
+        "Flying"
+      ],
+      "cost": 11,
+      "origin": "base",
+      "listed": 13,
+      "usage": "#109 at 0.44%"
+    },
+    {
+      "id": "typhlosion-hisui",
+      "name": "Hisuian Typhlosion",
+      "species": "Typhlosion-Hisui",
+      "base": "Typhlosion",
+      "types": [
+        "Fire",
+        "Ghost"
+      ],
+      "cost": 11,
+      "origin": "base",
+      "listed": 8,
+      "usage": "#55 at 1.89%"
+    },
+    {
+      "id": "klefki",
+      "name": "Klefki",
+      "species": "Klefki",
+      "base": "Klefki",
+      "types": [
+        "Steel",
+        "Fairy"
+      ],
+      "cost": 11,
+      "origin": "base"
+    },
+    {
+      "id": "lucario-mega",
+      "name": "Mega Lucario",
+      "species": "Lucario",
+      "forme": "Lucario-Mega",
+      "item": "Lucarionite",
+      "base": "Lucario",
+      "types": [
+        "Fighting",
+        "Steel"
+      ],
+      "cost": 11,
+      "origin": "base",
+      "listed": 15,
+      "usage": "#147 at 0.22%"
+    },
+    {
+      "id": "raichu-mega-x",
+      "name": "Mega Raichu X",
+      "species": "Raichu",
+      "forme": "Raichu-Mega-X",
+      "item": "Raichunite X",
+      "base": "Raichu",
+      "types": [
+        "Electric"
+      ],
+      "cost": 11,
+      "origin": "regmb",
+      "anchor": "unranked, unlike its Y forme; cf. Mega Altaria (9)",
+      "listed": 9,
+      "usage": "#59 at 1.68%"
+    },
+    {
+      "id": "scrafty-mega",
+      "name": "Mega Scrafty",
+      "species": "Scrafty",
+      "forme": "Scrafty-Mega",
+      "item": "Scraftinite",
+      "base": "Scrafty",
+      "types": [
+        "Dark",
+        "Fighting"
+      ],
+      "cost": 11,
+      "origin": "regmb",
+      "anchor": "Smogon C-; cf. Mega Heracross (7)",
+      "listed": 7,
+      "usage": "#39 at 2.99%"
+    },
+    {
+      "id": "meowstic",
+      "name": "Meowstic-Male",
+      "species": "Meowstic",
+      "base": "Meowstic",
+      "types": [
+        "Psychic"
+      ],
+      "cost": 11,
+      "origin": "base"
+    },
+    {
+      "id": "mimikyu",
+      "name": "Mimikyu",
+      "species": "Mimikyu",
+      "base": "Mimikyu",
+      "types": [
+        "Ghost",
+        "Fairy"
+      ],
+      "cost": 11,
+      "origin": "base"
+    },
+    {
+      "id": "ninetales",
+      "name": "Ninetales",
+      "species": "Ninetales",
+      "base": "Ninetales",
+      "types": [
+        "Fire"
+      ],
+      "cost": 11,
+      "origin": "base"
+    },
+    {
+      "id": "scizor",
+      "name": "Scizor",
+      "species": "Scizor",
+      "base": "Scizor",
+      "types": [
+        "Bug",
+        "Steel"
+      ],
+      "cost": 11,
+      "origin": "base"
+    },
+    {
+      "id": "tinkaton",
+      "name": "Tinkaton",
+      "species": "Tinkaton",
+      "base": "Tinkaton",
+      "types": [
+        "Fairy",
+        "Steel"
+      ],
+      "cost": 11,
+      "origin": "base"
+    },
+    {
+      "id": "tsareena",
+      "name": "Tsareena",
+      "species": "Tsareena",
+      "base": "Tsareena",
+      "types": [
+        "Grass"
+      ],
+      "cost": 11,
+      "origin": "base",
+      "listed": 8,
+      "usage": "#54 at 1.97%"
+    },
+    {
+      "id": "gallade",
+      "name": "Gallade",
+      "species": "Gallade",
+      "base": "Gallade",
+      "types": [
+        "Psychic",
+        "Fighting"
+      ],
+      "cost": 10,
+      "origin": "base",
+      "listed": 8,
+      "usage": "#74 at 1.42%"
+    },
+    {
+      "id": "gardevoir",
+      "name": "Gardevoir",
+      "species": "Gardevoir",
+      "base": "Gardevoir",
+      "types": [
+        "Psychic",
+        "Fairy"
+      ],
+      "cost": 10,
+      "origin": "base"
     },
     {
       "id": "kangaskhan",
       "name": "Kangaskhan",
       "species": "Kangaskhan",
-      "tier": "C-",
-      "cost": 3,
-      "packed": "Checkmate|Kangaskhan|SilkScarf|Scrappy|LastResort,FakeOut|Brave|32,32,2,,,|F|||50|"
+      "base": "Kangaskhan",
+      "types": [
+        "Normal"
+      ],
+      "cost": 10,
+      "origin": "base",
+      "listed": 7,
+      "usage": "#53 at 1.97%"
+    },
+    {
+      "id": "camerupt-mega",
+      "name": "Mega Camerupt",
+      "species": "Camerupt",
+      "forme": "Camerupt-Mega",
+      "item": "Cameruptite",
+      "base": "Camerupt",
+      "types": [
+        "Fire",
+        "Ground"
+      ],
+      "cost": 10,
+      "origin": "base"
+    },
+    {
+      "id": "clefable-mega",
+      "name": "Mega Clefable",
+      "species": "Clefable",
+      "forme": "Clefable-Mega",
+      "item": "Clefablite",
+      "base": "Clefable",
+      "types": [
+        "Fairy",
+        "Flying"
+      ],
+      "cost": 10,
+      "origin": "base",
+      "listed": 14,
+      "usage": "#154 at 0.19%"
+    },
+    {
+      "id": "dragalge-mega",
+      "name": "Mega Dragalge",
+      "species": "Dragalge",
+      "forme": "Dragalge-Mega",
+      "item": "Dragalgite",
+      "base": "Dragalge",
+      "types": [
+        "Poison",
+        "Dragon"
+      ],
+      "cost": 10,
+      "origin": "regmb",
+      "anchor": "unranked; cf. Mega Drampa (8)",
+      "listed": 8,
+      "usage": "#65 at 1.60%"
+    },
+    {
+      "id": "greninja-mega",
+      "name": "Mega Greninja",
+      "species": "Greninja",
+      "forme": "Greninja-Mega",
+      "item": "Greninjite",
+      "base": "Greninja",
+      "types": [
+        "Water",
+        "Dark"
+      ],
+      "cost": 10,
+      "origin": "base",
+      "listed": 12,
+      "usage": "#155 at 0.19%"
+    },
+    {
+      "id": "oranguru",
+      "name": "Oranguru",
+      "species": "Oranguru",
+      "base": "Oranguru",
+      "types": [
+        "Normal",
+        "Psychic"
+      ],
+      "cost": 10,
+      "origin": "base"
+    },
+    {
+      "id": "raichu",
+      "name": "Raichu",
+      "species": "Raichu",
+      "base": "Raichu",
+      "types": [
+        "Electric"
+      ],
+      "cost": 10,
+      "origin": "base"
+    },
+    {
+      "id": "rotom-mow",
+      "name": "Rotom-Mow",
+      "species": "Rotom-Mow",
+      "base": "Rotom",
+      "types": [
+        "Electric",
+        "Grass"
+      ],
+      "cost": 10,
+      "origin": "base",
+      "listed": 11,
+      "usage": "#122 at 0.34%"
     },
     {
       "id": "staraptor",
       "name": "Staraptor",
       "species": "Staraptor",
-      "tier": "C-",
-      "cost": 3,
-      "packed": "Staraptor||ChoiceScarf|Intimidate|FinalGambit,BraveBird,CloseCombat,Uturn|Jolly|32,14,,,,20||||50|"
+      "base": "Staraptor",
+      "types": [
+        "Normal",
+        "Flying"
+      ],
+      "cost": 10,
+      "origin": "regmb",
+      "anchor": "Smogon C-; Intimidate/Final Gambit utility, cf. Starmie (4)",
+      "listed": 4,
+      "usage": "#37 at 3.07%"
+    },
+    {
+      "id": "blastoise",
+      "name": "Blastoise",
+      "species": "Blastoise",
+      "base": "Blastoise",
+      "types": [
+        "Water"
+      ],
+      "cost": 9,
+      "origin": "base"
+    },
+    {
+      "id": "hatterene",
+      "name": "Hatterene",
+      "species": "Hatterene",
+      "base": "Hatterene",
+      "types": [
+        "Psychic",
+        "Fairy"
+      ],
+      "cost": 9,
+      "origin": "base"
+    },
+    {
+      "id": "zoroark-hisui",
+      "name": "Hisuian Zoroark",
+      "species": "Zoroark-Hisui",
+      "base": "Zoroark",
+      "types": [
+        "Normal",
+        "Ghost"
+      ],
+      "cost": 9,
+      "origin": "base"
+    },
+    {
+      "id": "krookodile",
+      "name": "Krookodile",
+      "species": "Krookodile",
+      "base": "Krookodile",
+      "types": [
+        "Ground",
+        "Dark"
+      ],
+      "cost": 9,
+      "origin": "base"
+    },
+    {
+      "id": "altaria-mega",
+      "name": "Mega Altaria",
+      "species": "Altaria",
+      "forme": "Altaria-Mega",
+      "item": "Altarianite",
+      "base": "Altaria",
+      "types": [
+        "Dragon",
+        "Fairy"
+      ],
+      "cost": 9,
+      "origin": "base"
+    },
+    {
+      "id": "chandelure-mega",
+      "name": "Mega Chandelure",
+      "species": "Chandelure",
+      "forme": "Chandelure-Mega",
+      "item": "Chandelurite",
+      "base": "Chandelure",
+      "types": [
+        "Ghost",
+        "Fire"
+      ],
+      "cost": 9,
+      "origin": "base"
+    },
+    {
+      "id": "chimecho-mega",
+      "name": "Mega Chimecho",
+      "species": "Chimecho",
+      "forme": "Chimecho-Mega",
+      "item": "Chimechite",
+      "base": "Chimecho",
+      "types": [
+        "Psychic",
+        "Steel"
+      ],
+      "cost": 9,
+      "origin": "base"
+    },
+    {
+      "id": "excadrill-mega",
+      "name": "Mega Excadrill",
+      "species": "Excadrill",
+      "forme": "Excadrill-Mega",
+      "item": "Excadrite",
+      "base": "Excadrill",
+      "types": [
+        "Ground",
+        "Steel"
+      ],
+      "cost": 9,
+      "origin": "base",
+      "listed": 13,
+      "usage": "#188 at 0.09%"
+    },
+    {
+      "id": "feraligatr-mega",
+      "name": "Mega Feraligatr",
+      "species": "Feraligatr",
+      "forme": "Feraligatr-Mega",
+      "item": "Feraligite",
+      "base": "Feraligatr",
+      "types": [
+        "Water",
+        "Dragon"
+      ],
+      "cost": 9,
+      "origin": "base"
+    },
+    {
+      "id": "meowstic-m-mega",
+      "name": "Mega Meowstic",
+      "species": "Meowstic",
+      "forme": "Meowstic-M-Mega",
+      "item": "Meowsticite",
+      "base": "Meowstic",
+      "types": [
+        "Psychic"
+      ],
+      "cost": 9,
+      "origin": "base"
+    },
+    {
+      "id": "sableye-mega",
+      "name": "Mega Sableye",
+      "species": "Sableye",
+      "forme": "Sableye-Mega",
+      "item": "Sablenite",
+      "base": "Sableye",
+      "types": [
+        "Dark",
+        "Ghost"
+      ],
+      "cost": 9,
+      "origin": "base"
+    },
+    {
+      "id": "skarmory-mega",
+      "name": "Mega Skarmory",
+      "species": "Skarmory",
+      "forme": "Skarmory-Mega",
+      "item": "Skarmorite",
+      "base": "Skarmory",
+      "types": [
+        "Steel",
+        "Flying"
+      ],
+      "cost": 9,
+      "origin": "base",
+      "listed": 11,
+      "usage": "#157 at 0.19%"
+    },
+    {
+      "id": "noivern",
+      "name": "Noivern",
+      "species": "Noivern",
+      "base": "Noivern",
+      "types": [
+        "Flying",
+        "Dragon"
+      ],
+      "cost": 9,
+      "origin": "base"
+    },
+    {
+      "id": "tauros-paldea-aqua",
+      "name": "Paldean Tauros Aqua",
+      "species": "Tauros-Paldea-Aqua",
+      "base": "Tauros",
+      "types": [
+        "Fighting",
+        "Water"
+      ],
+      "cost": 9,
+      "origin": "base",
+      "listed": 11,
+      "usage": "#140 at 0.23%"
+    },
+    {
+      "id": "tauros-paldea-blaze",
+      "name": "Paldean Tauros Blaze",
+      "species": "Tauros-Paldea-Blaze",
+      "base": "Tauros",
+      "types": [
+        "Fighting",
+        "Fire"
+      ],
+      "cost": 9,
+      "origin": "base"
+    },
+    {
+      "id": "rhyperior",
+      "name": "Rhyperior",
+      "species": "Rhyperior",
+      "base": "Rhyperior",
+      "types": [
+        "Ground",
+        "Rock"
+      ],
+      "cost": 9,
+      "origin": "base"
+    },
+    {
+      "id": "weavile",
+      "name": "Weavile",
+      "species": "Weavile",
+      "base": "Weavile",
+      "types": [
+        "Dark",
+        "Ice"
+      ],
+      "cost": 9,
+      "origin": "base"
+    },
+    {
+      "id": "armarouge",
+      "name": "Armarouge",
+      "species": "Armarouge",
+      "base": "Armarouge",
+      "types": [
+        "Fire",
+        "Psychic"
+      ],
+      "cost": 8,
+      "origin": "base"
+    },
+    {
+      "id": "floette-eternal",
+      "name": "Floette-Eternal",
+      "species": "Floette-Eternal",
+      "base": "Floette",
+      "types": [
+        "Fairy"
+      ],
+      "cost": 8,
+      "origin": "base",
+      "listed": 11,
+      "usage": "#206 at 0.06%"
+    },
+    {
+      "id": "gengar",
+      "name": "Gengar",
+      "species": "Gengar",
+      "base": "Gengar",
+      "types": [
+        "Ghost",
+        "Poison"
+      ],
+      "cost": 8,
+      "origin": "base"
+    },
+    {
+      "id": "liepard",
+      "name": "Liepard",
+      "species": "Liepard",
+      "base": "Liepard",
+      "types": [
+        "Dark"
+      ],
+      "cost": 8,
+      "origin": "base",
+      "listed": 10,
+      "usage": "#159 at 0.18%"
+    },
+    {
+      "id": "lycanroc-dusk",
+      "name": "Lycanroc-Dusk",
+      "species": "Lycanroc-Dusk",
+      "base": "Lycanroc",
+      "types": [
+        "Rock"
+      ],
+      "cost": 8,
+      "origin": "base",
+      "listed": 5,
+      "usage": "#69 at 1.50%"
+    },
+    {
+      "id": "aggron-mega",
+      "name": "Mega Aggron",
+      "species": "Aggron",
+      "forme": "Aggron-Mega",
+      "item": "Aggronite",
+      "base": "Aggron",
+      "types": [
+        "Steel"
+      ],
+      "cost": 8,
+      "origin": "base"
+    },
+    {
+      "id": "alakazam-mega",
+      "name": "Mega Alakazam",
+      "species": "Alakazam",
+      "forme": "Alakazam-Mega",
+      "item": "Alakazite",
+      "base": "Alakazam",
+      "types": [
+        "Psychic"
+      ],
+      "cost": 8,
+      "origin": "base",
+      "listed": 12,
+      "usage": "#190 at 0.09%"
+    },
+    {
+      "id": "barbaracle-mega",
+      "name": "Mega Barbaracle",
+      "species": "Barbaracle",
+      "forme": "Barbaracle-Mega",
+      "item": "Barbaracite",
+      "base": "Barbaracle",
+      "types": [
+        "Rock",
+        "Fighting"
+      ],
+      "cost": 8,
+      "origin": "regmb",
+      "anchor": "unranked; cf. Mega Crabominable (8)"
+    },
+    {
+      "id": "chesnaught-mega",
+      "name": "Mega Chesnaught",
+      "species": "Chesnaught",
+      "forme": "Chesnaught-Mega",
+      "item": "Chesnaughtite",
+      "base": "Chesnaught",
+      "types": [
+        "Grass",
+        "Fighting"
+      ],
+      "cost": 8,
+      "origin": "base"
+    },
+    {
+      "id": "crabominable-mega",
+      "name": "Mega Crabominable",
+      "species": "Crabominable",
+      "forme": "Crabominable-Mega",
+      "item": "Crabominite",
+      "base": "Crabominable",
+      "types": [
+        "Fighting",
+        "Ice"
+      ],
+      "cost": 8,
+      "origin": "base"
+    },
+    {
+      "id": "drampa-mega",
+      "name": "Mega Drampa",
+      "species": "Drampa",
+      "forme": "Drampa-Mega",
+      "item": "Drampanite",
+      "base": "Drampa",
+      "types": [
+        "Normal",
+        "Dragon"
+      ],
+      "cost": 8,
+      "origin": "base"
+    },
+    {
+      "id": "emboar-mega",
+      "name": "Mega Emboar",
+      "species": "Emboar",
+      "forme": "Emboar-Mega",
+      "item": "Emboarite",
+      "base": "Emboar",
+      "types": [
+        "Fire",
+        "Fighting"
+      ],
+      "cost": 8,
+      "origin": "base"
+    },
+    {
+      "id": "gallade-mega",
+      "name": "Mega Gallade",
+      "species": "Gallade",
+      "forme": "Gallade-Mega",
+      "item": "Galladite",
+      "base": "Gallade",
+      "types": [
+        "Psychic",
+        "Fighting"
+      ],
+      "cost": 8,
+      "origin": "base",
+      "listed": 12,
+      "usage": "#192 at 0.08%"
+    },
+    {
+      "id": "golurk-mega",
+      "name": "Mega Golurk",
+      "species": "Golurk",
+      "forme": "Golurk-Mega",
+      "item": "Golurkite",
+      "base": "Golurk",
+      "types": [
+        "Ground",
+        "Ghost"
+      ],
+      "cost": 8,
+      "origin": "base",
+      "listed": 10,
+      "usage": "#144 at 0.23%"
+    },
+    {
+      "id": "hawlucha-mega",
+      "name": "Mega Hawlucha",
+      "species": "Hawlucha",
+      "forme": "Hawlucha-Mega",
+      "item": "Hawluchanite",
+      "base": "Hawlucha",
+      "types": [
+        "Fighting",
+        "Flying"
+      ],
+      "cost": 8,
+      "origin": "base",
+      "listed": 10,
+      "usage": "#164 at 0.15%"
+    },
+    {
+      "id": "manectric-mega",
+      "name": "Mega Manectric",
+      "species": "Manectric",
+      "forme": "Manectric-Mega",
+      "item": "Manectite",
+      "base": "Manectric",
+      "types": [
+        "Electric"
+      ],
+      "cost": 8,
+      "origin": "base",
+      "listed": 10,
+      "usage": "#186 at 0.10%"
+    },
+    {
+      "id": "medicham-mega",
+      "name": "Mega Medicham",
+      "species": "Medicham",
+      "forme": "Medicham-Mega",
+      "item": "Medichamite",
+      "base": "Medicham",
+      "types": [
+        "Fighting",
+        "Psychic"
+      ],
+      "cost": 8,
+      "origin": "base",
+      "listed": 12,
+      "usage": "#209 at 0.06%"
+    },
+    {
+      "id": "meowstic-f-mega",
+      "name": "Mega Meowstic-F",
+      "species": "Meowstic-F",
+      "forme": "Meowstic-F-Mega",
+      "item": "Meowsticite",
+      "base": "Meowstic",
+      "types": [
+        "Psychic"
+      ],
+      "cost": 8,
+      "origin": "regmb",
+      "anchor": "unranked; just under Mega Meowstic (9)"
+    },
+    {
+      "id": "scolipede-mega",
+      "name": "Mega Scolipede",
+      "species": "Scolipede",
+      "forme": "Scolipede-Mega",
+      "item": "Scolipite",
+      "base": "Scolipede",
+      "types": [
+        "Bug",
+        "Poison"
+      ],
+      "cost": 8,
+      "origin": "regmb",
+      "anchor": "unranked; Speed Boost, cf. Mega Sharpedo (7)"
+    },
+    {
+      "id": "slowbro-mega",
+      "name": "Mega Slowbro",
+      "species": "Slowbro",
+      "forme": "Slowbro-Mega",
+      "item": "Slowbronite",
+      "base": "Slowbro",
+      "types": [
+        "Water",
+        "Psychic"
+      ],
+      "cost": 8,
+      "origin": "base"
+    },
+    {
+      "id": "reuniclus",
+      "name": "Reuniclus",
+      "species": "Reuniclus",
+      "base": "Reuniclus",
+      "types": [
+        "Psychic"
+      ],
+      "cost": 8,
+      "origin": "base"
+    },
+    {
+      "id": "snorlax",
+      "name": "Snorlax",
+      "species": "Snorlax",
+      "base": "Snorlax",
+      "types": [
+        "Normal"
+      ],
+      "cost": 8,
+      "origin": "base"
+    },
+    {
+      "id": "toxapex",
+      "name": "Toxapex",
+      "species": "Toxapex",
+      "base": "Toxapex",
+      "types": [
+        "Poison",
+        "Water"
+      ],
+      "cost": 8,
+      "origin": "base",
+      "listed": 3,
+      "usage": "#50 at 2.25%"
     },
     {
       "id": "vanilluxe",
       "name": "Vanilluxe",
       "species": "Vanilluxe",
-      "tier": "C-",
+      "base": "Vanilluxe",
+      "types": [
+        "Ice"
+      ],
+      "cost": 8,
+      "origin": "base"
+    },
+    {
+      "id": "vileplume",
+      "name": "Vileplume",
+      "species": "Vileplume",
+      "base": "Vileplume",
+      "types": [
+        "Grass",
+        "Poison"
+      ],
+      "cost": 8,
+      "origin": "regmb",
+      "anchor": "Smogon C-; cf. Roserade (4)",
+      "listed": 4,
+      "usage": "#57 at 1.79%"
+    },
+    {
+      "id": "conkeldurr",
+      "name": "Conkeldurr",
+      "species": "Conkeldurr",
+      "base": "Conkeldurr",
+      "types": [
+        "Fighting"
+      ],
+      "cost": 7,
+      "origin": "base"
+    },
+    {
+      "id": "empoleon",
+      "name": "Empoleon",
+      "species": "Empoleon",
+      "base": "Empoleon",
+      "types": [
+        "Water",
+        "Steel"
+      ],
+      "cost": 7,
+      "origin": "base"
+    },
+    {
+      "id": "espeon",
+      "name": "Espeon",
+      "species": "Espeon",
+      "base": "Espeon",
+      "types": [
+        "Psychic"
+      ],
+      "cost": 7,
+      "origin": "base"
+    },
+    {
+      "id": "florges",
+      "name": "Florges",
+      "species": "Florges",
+      "base": "Florges",
+      "types": [
+        "Fairy"
+      ],
+      "cost": 7,
+      "origin": "base"
+    },
+    {
+      "id": "slowbro-galar",
+      "name": "Galarian Slowbro",
+      "species": "Slowbro-Galar",
+      "base": "Slowbro",
+      "types": [
+        "Poison",
+        "Psychic"
+      ],
+      "cost": 7,
+      "origin": "base"
+    },
+    {
+      "id": "greninja",
+      "name": "Greninja",
+      "species": "Greninja",
+      "base": "Greninja",
+      "types": [
+        "Water",
+        "Dark"
+      ],
+      "cost": 7,
+      "origin": "base"
+    },
+    {
+      "id": "hawlucha",
+      "name": "Hawlucha",
+      "species": "Hawlucha",
+      "base": "Hawlucha",
+      "types": [
+        "Fighting",
+        "Flying"
+      ],
+      "cost": 7,
+      "origin": "base"
+    },
+    {
+      "id": "infernape",
+      "name": "Infernape",
+      "species": "Infernape",
+      "base": "Infernape",
+      "types": [
+        "Fire",
+        "Fighting"
+      ],
+      "cost": 7,
+      "origin": "base"
+    },
+    {
+      "id": "medicham",
+      "name": "Medicham",
+      "species": "Medicham",
+      "base": "Medicham",
+      "types": [
+        "Fighting",
+        "Psychic"
+      ],
+      "cost": 7,
+      "origin": "base"
+    },
+    {
+      "id": "falinks-mega",
+      "name": "Mega Falinks",
+      "species": "Falinks",
+      "forme": "Falinks-Mega",
+      "item": "Falinksite",
+      "base": "Falinks",
+      "types": [
+        "Fighting"
+      ],
+      "cost": 7,
+      "origin": "regmb",
+      "anchor": "unranked; cf. Mega Pinsir (7)"
+    },
+    {
+      "id": "heracross-mega",
+      "name": "Mega Heracross",
+      "species": "Heracross",
+      "forme": "Heracross-Mega",
+      "item": "Heracronite",
+      "base": "Heracross",
+      "types": [
+        "Bug",
+        "Fighting"
+      ],
+      "cost": 7,
+      "origin": "base"
+    },
+    {
+      "id": "malamar-mega",
+      "name": "Mega Malamar",
+      "species": "Malamar",
+      "forme": "Malamar-Mega",
+      "item": "Malamarite",
+      "base": "Malamar",
+      "types": [
+        "Dark",
+        "Psychic"
+      ],
+      "cost": 7,
+      "origin": "regmb",
+      "anchor": "unranked; cf. Mega Victreebel (7)"
+    },
+    {
+      "id": "pidgeot-mega",
+      "name": "Mega Pidgeot",
+      "species": "Pidgeot",
+      "forme": "Pidgeot-Mega",
+      "item": "Pidgeotite",
+      "base": "Pidgeot",
+      "types": [
+        "Normal",
+        "Flying"
+      ],
+      "cost": 7,
+      "origin": "base"
+    },
+    {
+      "id": "pinsir-mega",
+      "name": "Mega Pinsir",
+      "species": "Pinsir",
+      "forme": "Pinsir-Mega",
+      "item": "Pinsirite",
+      "base": "Pinsir",
+      "types": [
+        "Bug",
+        "Flying"
+      ],
+      "cost": 7,
+      "origin": "base"
+    },
+    {
+      "id": "sharpedo-mega",
+      "name": "Mega Sharpedo",
+      "species": "Sharpedo",
+      "forme": "Sharpedo-Mega",
+      "item": "Sharpedonite",
+      "base": "Sharpedo",
+      "types": [
+        "Water",
+        "Dark"
+      ],
+      "cost": 7,
+      "origin": "base"
+    },
+    {
+      "id": "victreebel-mega",
+      "name": "Mega Victreebel",
+      "species": "Victreebel",
+      "forme": "Victreebel-Mega",
+      "item": "Victreebelite",
+      "base": "Victreebel",
+      "types": [
+        "Grass",
+        "Poison"
+      ],
+      "cost": 7,
+      "origin": "base"
+    },
+    {
+      "id": "orthworm",
+      "name": "Orthworm",
+      "species": "Orthworm",
+      "base": "Orthworm",
+      "types": [
+        "Steel"
+      ],
+      "cost": 7,
+      "origin": "base"
+    },
+    {
+      "id": "salazzle",
+      "name": "Salazzle",
+      "species": "Salazzle",
+      "base": "Salazzle",
+      "types": [
+        "Poison",
+        "Fire"
+      ],
+      "cost": 7,
+      "origin": "base",
+      "listed": 10,
+      "usage": "#208 at 0.06%"
+    },
+    {
+      "id": "slowbro",
+      "name": "Slowbro",
+      "species": "Slowbro",
+      "base": "Slowbro",
+      "types": [
+        "Water",
+        "Psychic"
+      ],
+      "cost": 7,
+      "origin": "base"
+    },
+    {
+      "id": "slowking",
+      "name": "Slowking",
+      "species": "Slowking",
+      "base": "Slowking",
+      "types": [
+        "Water",
+        "Psychic"
+      ],
+      "cost": 7,
+      "origin": "base"
+    },
+    {
+      "id": "wyrdeer",
+      "name": "Wyrdeer",
+      "species": "Wyrdeer",
+      "base": "Wyrdeer",
+      "types": [
+        "Normal",
+        "Psychic"
+      ],
+      "cost": 7,
+      "origin": "base"
+    },
+    {
+      "id": "abomasnow",
+      "name": "Abomasnow",
+      "species": "Abomasnow",
+      "base": "Abomasnow",
+      "types": [
+        "Grass",
+        "Ice"
+      ],
+      "cost": 6,
+      "origin": "base"
+    },
+    {
+      "id": "aromatisse",
+      "name": "Aromatisse",
+      "species": "Aromatisse",
+      "base": "Aromatisse",
+      "types": [
+        "Fairy"
+      ],
+      "cost": 6,
+      "origin": "base"
+    },
+    {
+      "id": "blaziken",
+      "name": "Blaziken",
+      "species": "Blaziken",
+      "base": "Blaziken",
+      "types": [
+        "Fire",
+        "Fighting"
+      ],
+      "cost": 6,
+      "origin": "regmb",
+      "anchor": "Smogon C-; Speed Boost carries the unmegaed forme, cf. Blastoise (9)"
+    },
+    {
+      "id": "chandelure",
+      "name": "Chandelure",
+      "species": "Chandelure",
+      "base": "Chandelure",
+      "types": [
+        "Ghost",
+        "Fire"
+      ],
+      "cost": 6,
+      "origin": "base"
+    },
+    {
+      "id": "diggersby",
+      "name": "Diggersby",
+      "species": "Diggersby",
+      "base": "Diggersby",
+      "types": [
+        "Normal",
+        "Ground"
+      ],
+      "cost": 6,
+      "origin": "base"
+    },
+    {
+      "id": "slowking-galar",
+      "name": "Galarian Slowking",
+      "species": "Slowking-Galar",
+      "base": "Slowking",
+      "types": [
+        "Poison",
+        "Psychic"
+      ],
+      "cost": 6,
+      "origin": "base"
+    },
+    {
+      "id": "goodra-hisui",
+      "name": "Hisuian Goodra",
+      "species": "Goodra-Hisui",
+      "base": "Goodra",
+      "types": [
+        "Steel",
+        "Dragon"
+      ],
+      "cost": 6,
+      "origin": "base"
+    },
+    {
+      "id": "houndstone",
+      "name": "Houndstone",
+      "species": "Houndstone",
+      "base": "Houndstone",
+      "types": [
+        "Ghost"
+      ],
+      "cost": 6,
+      "origin": "regmb",
+      "anchor": "Smogon C; cf. Spiritomb (6)"
+    },
+    {
+      "id": "hydrapple",
+      "name": "Hydrapple",
+      "species": "Hydrapple",
+      "base": "Hydrapple",
+      "types": [
+        "Grass",
+        "Dragon"
+      ],
+      "cost": 6,
+      "origin": "base"
+    },
+    {
+      "id": "kleavor",
+      "name": "Kleavor",
+      "species": "Kleavor",
+      "base": "Kleavor",
+      "types": [
+        "Bug",
+        "Rock"
+      ],
+      "cost": 6,
+      "origin": "base"
+    },
+    {
+      "id": "lucario",
+      "name": "Lucario",
+      "species": "Lucario",
+      "base": "Lucario",
+      "types": [
+        "Fighting",
+        "Steel"
+      ],
+      "cost": 6,
+      "origin": "base"
+    },
+    {
+      "id": "abomasnow-mega",
+      "name": "Mega Abomasnow",
+      "species": "Abomasnow",
+      "forme": "Abomasnow-Mega",
+      "item": "Abomasite",
+      "base": "Abomasnow",
+      "types": [
+        "Grass",
+        "Ice"
+      ],
+      "cost": 6,
+      "origin": "base"
+    },
+    {
+      "id": "houndoom-mega",
+      "name": "Mega Houndoom",
+      "species": "Houndoom",
+      "forme": "Houndoom-Mega",
+      "item": "Houndoominite",
+      "base": "Houndoom",
+      "types": [
+        "Dark",
+        "Fire"
+      ],
+      "cost": 6,
+      "origin": "base"
+    },
+    {
+      "id": "steelix-mega",
+      "name": "Mega Steelix",
+      "species": "Steelix",
+      "forme": "Steelix-Mega",
+      "item": "Steelixite",
+      "base": "Steelix",
+      "types": [
+        "Steel",
+        "Ground"
+      ],
+      "cost": 6,
+      "origin": "base"
+    },
+    {
+      "id": "metagross",
+      "name": "Metagross",
+      "species": "Metagross",
+      "base": "Metagross",
+      "types": [
+        "Steel",
+        "Psychic"
+      ],
+      "cost": 6,
+      "origin": "regmb",
+      "anchor": "base of a 17-point mega, cf. Blastoise (9)"
+    },
+    {
+      "id": "pangoro",
+      "name": "Pangoro",
+      "species": "Pangoro",
+      "base": "Pangoro",
+      "types": [
+        "Fighting",
+        "Dark"
+      ],
+      "cost": 6,
+      "origin": "base"
+    },
+    {
+      "id": "spiritomb",
+      "name": "Spiritomb",
+      "species": "Spiritomb",
+      "base": "Spiritomb",
+      "types": [
+        "Ghost",
+        "Dark"
+      ],
+      "cost": 6,
+      "origin": "base"
+    },
+    {
+      "id": "swampert",
+      "name": "Swampert",
+      "species": "Swampert",
+      "base": "Swampert",
+      "types": [
+        "Water",
+        "Ground"
+      ],
+      "cost": 6,
+      "origin": "regmb",
+      "anchor": "base of a 15-point mega, cf. Blastoise (9)"
+    },
+    {
+      "id": "zoroark",
+      "name": "Zoroark",
+      "species": "Zoroark",
+      "base": "Zoroark",
+      "types": [
+        "Dark"
+      ],
+      "cost": 6,
+      "origin": "base"
+    },
+    {
+      "id": "alakazam",
+      "name": "Alakazam",
+      "species": "Alakazam",
+      "base": "Alakazam",
+      "types": [
+        "Psychic"
+      ],
+      "cost": 5,
+      "origin": "base"
+    },
+    {
+      "id": "raichu-alola",
+      "name": "Alolan Raichu",
+      "species": "Raichu-Alola",
+      "base": "Raichu",
+      "types": [
+        "Electric",
+        "Psychic"
+      ],
+      "cost": 5,
+      "origin": "base"
+    },
+    {
+      "id": "charizard",
+      "name": "Charizard",
+      "species": "Charizard",
+      "base": "Charizard",
+      "types": [
+        "Fire",
+        "Flying"
+      ],
+      "cost": 5,
+      "origin": "base"
+    },
+    {
+      "id": "cofagrigus",
+      "name": "Cofagrigus",
+      "species": "Cofagrigus",
+      "base": "Cofagrigus",
+      "types": [
+        "Ghost"
+      ],
+      "cost": 5,
+      "origin": "base"
+    },
+    {
+      "id": "delphox",
+      "name": "Delphox",
+      "species": "Delphox",
+      "base": "Delphox",
+      "types": [
+        "Fire",
+        "Psychic"
+      ],
+      "cost": 5,
+      "origin": "base"
+    },
+    {
+      "id": "espathra",
+      "name": "Espathra",
+      "species": "Espathra",
+      "base": "Espathra",
+      "types": [
+        "Psychic"
+      ],
+      "cost": 5,
+      "origin": "base"
+    },
+    {
+      "id": "garganacl",
+      "name": "Garganacl",
+      "species": "Garganacl",
+      "base": "Garganacl",
+      "types": [
+        "Rock"
+      ],
+      "cost": 5,
+      "origin": "base"
+    },
+    {
+      "id": "glaceon",
+      "name": "Glaceon",
+      "species": "Glaceon",
+      "base": "Glaceon",
+      "types": [
+        "Ice"
+      ],
+      "cost": 5,
+      "origin": "base"
+    },
+    {
+      "id": "gourgeist",
+      "name": "Gourgeist",
+      "species": "Gourgeist",
+      "base": "Gourgeist",
+      "types": [
+        "Ghost",
+        "Grass"
+      ],
+      "cost": 5,
+      "origin": "base"
+    },
+    {
+      "id": "hippowdon",
+      "name": "Hippowdon",
+      "species": "Hippowdon",
+      "base": "Hippowdon",
+      "types": [
+        "Ground"
+      ],
+      "cost": 5,
+      "origin": "base"
+    },
+    {
+      "id": "leafeon",
+      "name": "Leafeon",
+      "species": "Leafeon",
+      "base": "Leafeon",
+      "types": [
+        "Grass"
+      ],
+      "cost": 5,
+      "origin": "base"
+    },
+    {
+      "id": "banette-mega",
+      "name": "Mega Banette",
+      "species": "Banette",
+      "forme": "Banette-Mega",
+      "item": "Banettite",
+      "base": "Banette",
+      "types": [
+        "Ghost"
+      ],
+      "cost": 5,
+      "origin": "base"
+    },
+    {
+      "id": "beedrill-mega",
+      "name": "Mega Beedrill",
+      "species": "Beedrill",
+      "forme": "Beedrill-Mega",
+      "item": "Beedrillite",
+      "base": "Beedrill",
+      "types": [
+        "Bug",
+        "Poison"
+      ],
+      "cost": 5,
+      "origin": "base"
+    },
+    {
+      "id": "mudsdale",
+      "name": "Mudsdale",
+      "species": "Mudsdale",
+      "base": "Mudsdale",
+      "types": [
+        "Ground"
+      ],
+      "cost": 5,
+      "origin": "base"
+    },
+    {
+      "id": "polteageist",
+      "name": "Polteageist",
+      "species": "Polteageist",
+      "base": "Polteageist",
+      "types": [
+        "Ghost"
+      ],
+      "cost": 5,
+      "origin": "base"
+    },
+    {
+      "id": "quaquaval",
+      "name": "Quaquaval",
+      "species": "Quaquaval",
+      "base": "Quaquaval",
+      "types": [
+        "Water",
+        "Fighting"
+      ],
+      "cost": 5,
+      "origin": "base"
+    },
+    {
+      "id": "runerigus",
+      "name": "Runerigus",
+      "species": "Runerigus",
+      "base": "Runerigus",
+      "types": [
+        "Ground",
+        "Ghost"
+      ],
+      "cost": 5,
+      "origin": "base"
+    },
+    {
+      "id": "serperior",
+      "name": "Serperior",
+      "species": "Serperior",
+      "base": "Serperior",
+      "types": [
+        "Grass"
+      ],
+      "cost": 5,
+      "origin": "base"
+    },
+    {
+      "id": "skeledirge",
+      "name": "Skeledirge",
+      "species": "Skeledirge",
+      "base": "Skeledirge",
+      "types": [
+        "Fire",
+        "Ghost"
+      ],
+      "cost": 5,
+      "origin": "base"
+    },
+    {
+      "id": "typhlosion",
+      "name": "Typhlosion",
+      "species": "Typhlosion",
+      "base": "Typhlosion",
+      "types": [
+        "Fire"
+      ],
+      "cost": 5,
+      "origin": "base"
+    },
+    {
+      "id": "umbreon",
+      "name": "Umbreon",
+      "species": "Umbreon",
+      "base": "Umbreon",
+      "types": [
+        "Dark"
+      ],
+      "cost": 5,
+      "origin": "base"
+    },
+    {
+      "id": "vaporeon",
+      "name": "Vaporeon",
+      "species": "Vaporeon",
+      "base": "Vaporeon",
+      "types": [
+        "Water"
+      ],
+      "cost": 5,
+      "origin": "base"
+    },
+    {
+      "id": "alcremie",
+      "name": "Alcremie",
+      "species": "Alcremie",
+      "base": "Alcremie",
+      "types": [
+        "Fairy"
+      ],
+      "cost": 4,
+      "origin": "base"
+    },
+    {
+      "id": "bellibolt",
+      "name": "Bellibolt",
+      "species": "Bellibolt",
+      "base": "Bellibolt",
+      "types": [
+        "Electric"
+      ],
+      "cost": 4,
+      "origin": "base"
+    },
+    {
+      "id": "chesnaught",
+      "name": "Chesnaught",
+      "species": "Chesnaught",
+      "base": "Chesnaught",
+      "types": [
+        "Grass",
+        "Fighting"
+      ],
+      "cost": 4,
+      "origin": "base"
+    },
+    {
+      "id": "clawitzer",
+      "name": "Clawitzer",
+      "species": "Clawitzer",
+      "base": "Clawitzer",
+      "types": [
+        "Water"
+      ],
+      "cost": 4,
+      "origin": "base"
+    },
+    {
+      "id": "ditto",
+      "name": "Ditto",
+      "species": "Ditto",
+      "base": "Ditto",
+      "types": [
+        "Normal"
+      ],
+      "cost": 4,
+      "origin": "base"
+    },
+    {
+      "id": "froslass",
+      "name": "Froslass",
+      "species": "Froslass",
+      "base": "Froslass",
+      "types": [
+        "Ice",
+        "Ghost"
+      ],
+      "cost": 4,
+      "origin": "base"
+    },
+    {
+      "id": "golurk",
+      "name": "Golurk",
+      "species": "Golurk",
+      "base": "Golurk",
+      "types": [
+        "Ground",
+        "Ghost"
+      ],
+      "cost": 4,
+      "origin": "base"
+    },
+    {
+      "id": "goodra",
+      "name": "Goodra",
+      "species": "Goodra",
+      "base": "Goodra",
+      "types": [
+        "Dragon"
+      ],
+      "cost": 4,
+      "origin": "base"
+    },
+    {
+      "id": "heliolisk",
+      "name": "Heliolisk",
+      "species": "Heliolisk",
+      "base": "Heliolisk",
+      "types": [
+        "Electric",
+        "Normal"
+      ],
+      "cost": 4,
+      "origin": "base"
+    },
+    {
+      "id": "decidueye-hisui",
+      "name": "Hisuian Decidueye",
+      "species": "Decidueye-Hisui",
+      "base": "Decidueye",
+      "types": [
+        "Grass",
+        "Fighting"
+      ],
+      "cost": 4,
+      "origin": "base"
+    },
+    {
+      "id": "samurott-hisui",
+      "name": "Hisuian Samurott",
+      "species": "Samurott-Hisui",
+      "base": "Samurott",
+      "types": [
+        "Water",
+        "Dark"
+      ],
+      "cost": 4,
+      "origin": "base"
+    },
+    {
+      "id": "jolteon",
+      "name": "Jolteon",
+      "species": "Jolteon",
+      "base": "Jolteon",
+      "types": [
+        "Electric"
+      ],
+      "cost": 4,
+      "origin": "base"
+    },
+    {
+      "id": "luxray",
+      "name": "Luxray",
+      "species": "Luxray",
+      "base": "Luxray",
+      "types": [
+        "Electric"
+      ],
+      "cost": 4,
+      "origin": "base"
+    },
+    {
+      "id": "machamp",
+      "name": "Machamp",
+      "species": "Machamp",
+      "base": "Machamp",
+      "types": [
+        "Fighting"
+      ],
+      "cost": 4,
+      "origin": "base"
+    },
+    {
+      "id": "absol-mega",
+      "name": "Mega Absol",
+      "species": "Absol",
+      "forme": "Absol-Mega",
+      "item": "Absolite",
+      "base": "Absol",
+      "types": [
+        "Dark"
+      ],
+      "cost": 4,
+      "origin": "base"
+    },
+    {
+      "id": "ampharos-mega",
+      "name": "Mega Ampharos",
+      "species": "Ampharos",
+      "forme": "Ampharos-Mega",
+      "item": "Ampharosite",
+      "base": "Ampharos",
+      "types": [
+        "Electric",
+        "Dragon"
+      ],
+      "cost": 4,
+      "origin": "base"
+    },
+    {
+      "id": "glalie-mega",
+      "name": "Mega Glalie",
+      "species": "Glalie",
+      "forme": "Glalie-Mega",
+      "item": "Glalitite",
+      "base": "Glalie",
+      "types": [
+        "Ice"
+      ],
+      "cost": 4,
+      "origin": "base"
+    },
+    {
+      "id": "overqwil",
+      "name": "Overqwil",
+      "species": "Overqwil",
+      "base": "Overqwil",
+      "types": [
+        "Dark",
+        "Poison"
+      ],
+      "cost": 4,
+      "origin": "regmb",
+      "anchor": "unranked; cf. Toxicroak (4)"
+    },
+    {
+      "id": "rampardos",
+      "name": "Rampardos",
+      "species": "Rampardos",
+      "base": "Rampardos",
+      "types": [
+        "Rock"
+      ],
+      "cost": 4,
+      "origin": "base"
+    },
+    {
+      "id": "roserade",
+      "name": "Roserade",
+      "species": "Roserade",
+      "base": "Roserade",
+      "types": [
+        "Grass",
+        "Poison"
+      ],
+      "cost": 4,
+      "origin": "base"
+    },
+    {
+      "id": "rotom-frost",
+      "name": "Rotom-Frost",
+      "species": "Rotom-Frost",
+      "base": "Rotom",
+      "types": [
+        "Electric",
+        "Ice"
+      ],
+      "cost": 4,
+      "origin": "base"
+    },
+    {
+      "id": "starmie",
+      "name": "Starmie",
+      "species": "Starmie",
+      "base": "Starmie",
+      "types": [
+        "Water",
+        "Psychic"
+      ],
+      "cost": 4,
+      "origin": "base"
+    },
+    {
+      "id": "torterra",
+      "name": "Torterra",
+      "species": "Torterra",
+      "base": "Torterra",
+      "types": [
+        "Grass",
+        "Ground"
+      ],
+      "cost": 4,
+      "origin": "base"
+    },
+    {
+      "id": "toxicroak",
+      "name": "Toxicroak",
+      "species": "Toxicroak",
+      "base": "Toxicroak",
+      "types": [
+        "Poison",
+        "Fighting"
+      ],
+      "cost": 4,
+      "origin": "base"
+    },
+    {
+      "id": "tyrantrum",
+      "name": "Tyrantrum",
+      "species": "Tyrantrum",
+      "base": "Tyrantrum",
+      "types": [
+        "Rock",
+        "Dragon"
+      ],
+      "cost": 4,
+      "origin": "base"
+    },
+    {
+      "id": "audino",
+      "name": "Audino",
+      "species": "Audino",
+      "base": "Audino",
+      "types": [
+        "Normal"
+      ],
       "cost": 3,
-      "packed": "Vanilluxe||NeverMeltIce|SnowWarning|Blizzard,FreezeDry,Protect,IceShard|Quiet|32,,,32,2,||||50|"
+      "origin": "base"
+    },
+    {
+      "id": "aurorus",
+      "name": "Aurorus",
+      "species": "Aurorus",
+      "base": "Aurorus",
+      "types": [
+        "Rock",
+        "Ice"
+      ],
+      "cost": 3,
+      "origin": "base"
+    },
+    {
+      "id": "barbaracle",
+      "name": "Barbaracle",
+      "species": "Barbaracle",
+      "base": "Barbaracle",
+      "types": [
+        "Rock",
+        "Water"
+      ],
+      "cost": 3,
+      "origin": "regmb",
+      "anchor": "unranked; cf. Crabominable (3)"
+    },
+    {
+      "id": "beartic",
+      "name": "Beartic",
+      "species": "Beartic",
+      "base": "Beartic",
+      "types": [
+        "Ice"
+      ],
+      "cost": 3,
+      "origin": "base"
+    },
+    {
+      "id": "crabominable",
+      "name": "Crabominable",
+      "species": "Crabominable",
+      "base": "Crabominable",
+      "types": [
+        "Fighting",
+        "Ice"
+      ],
+      "cost": 3,
+      "origin": "base"
+    },
+    {
+      "id": "decidueye",
+      "name": "Decidueye",
+      "species": "Decidueye",
+      "base": "Decidueye",
+      "types": [
+        "Grass",
+        "Ghost"
+      ],
+      "cost": 3,
+      "origin": "base"
+    },
+    {
+      "id": "dragalge",
+      "name": "Dragalge",
+      "species": "Dragalge",
+      "base": "Dragalge",
+      "types": [
+        "Poison",
+        "Dragon"
+      ],
+      "cost": 3,
+      "origin": "regmb",
+      "anchor": "unranked; cf. Toxapex (3)"
+    },
+    {
+      "id": "drampa",
+      "name": "Drampa",
+      "species": "Drampa",
+      "base": "Drampa",
+      "types": [
+        "Normal",
+        "Dragon"
+      ],
+      "cost": 3,
+      "origin": "base"
+    },
+    {
+      "id": "eelektross",
+      "name": "Eelektross",
+      "species": "Eelektross",
+      "base": "Eelektross",
+      "types": [
+        "Electric"
+      ],
+      "cost": 3,
+      "origin": "regmb",
+      "anchor": "unranked; cf. Flapple (3)"
+    },
+    {
+      "id": "emboar",
+      "name": "Emboar",
+      "species": "Emboar",
+      "base": "Emboar",
+      "types": [
+        "Fire",
+        "Fighting"
+      ],
+      "cost": 3,
+      "origin": "base"
+    },
+    {
+      "id": "feraligatr",
+      "name": "Feraligatr",
+      "species": "Feraligatr",
+      "base": "Feraligatr",
+      "types": [
+        "Water"
+      ],
+      "cost": 3,
+      "origin": "base"
+    },
+    {
+      "id": "flapple",
+      "name": "Flapple",
+      "species": "Flapple",
+      "base": "Flapple",
+      "types": [
+        "Grass",
+        "Dragon"
+      ],
+      "cost": 3,
+      "origin": "base"
+    },
+    {
+      "id": "flareon",
+      "name": "Flareon",
+      "species": "Flareon",
+      "base": "Flareon",
+      "types": [
+        "Fire"
+      ],
+      "cost": 3,
+      "origin": "base"
+    },
+    {
+      "id": "gliscor",
+      "name": "Gliscor",
+      "species": "Gliscor",
+      "base": "Gliscor",
+      "types": [
+        "Ground",
+        "Flying"
+      ],
+      "cost": 3,
+      "origin": "base"
+    },
+    {
+      "id": "heracross",
+      "name": "Heracross",
+      "species": "Heracross",
+      "base": "Heracross",
+      "types": [
+        "Bug",
+        "Fighting"
+      ],
+      "cost": 3,
+      "origin": "base"
+    },
+    {
+      "id": "lycanroc",
+      "name": "Lycanroc-Midday",
+      "species": "Lycanroc",
+      "base": "Lycanroc",
+      "types": [
+        "Rock"
+      ],
+      "cost": 3,
+      "origin": "base"
+    },
+    {
+      "id": "malamar",
+      "name": "Malamar",
+      "species": "Malamar",
+      "base": "Malamar",
+      "types": [
+        "Dark",
+        "Psychic"
+      ],
+      "cost": 3,
+      "origin": "regmb",
+      "anchor": "unranked; cf. Trevenant (3)"
+    },
+    {
+      "id": "audino-mega",
+      "name": "Mega Audino",
+      "species": "Audino",
+      "forme": "Audino-Mega",
+      "item": "Audinite",
+      "base": "Audino",
+      "types": [
+        "Normal",
+        "Fairy"
+      ],
+      "cost": 3,
+      "origin": "base"
+    },
+    {
+      "id": "mr-rime",
+      "name": "Mr. Rime",
+      "species": "Mr. Rime",
+      "base": "Mr. Rime",
+      "types": [
+        "Ice",
+        "Psychic"
+      ],
+      "cost": 3,
+      "origin": "base"
+    },
+    {
+      "id": "musharna",
+      "name": "Musharna",
+      "species": "Musharna",
+      "base": "Musharna",
+      "types": [
+        "Psychic"
+      ],
+      "cost": 3,
+      "origin": "regmb",
+      "anchor": "unranked; cf. Audino (3)"
+    },
+    {
+      "id": "tauros-paldea-combat",
+      "name": "Paldean Tauros",
+      "species": "Tauros-Paldea-Combat",
+      "base": "Tauros",
+      "types": [
+        "Fighting"
+      ],
+      "cost": 3,
+      "origin": "base"
+    },
+    {
+      "id": "passimian",
+      "name": "Passimian",
+      "species": "Passimian",
+      "base": "Passimian",
+      "types": [
+        "Fighting"
+      ],
+      "cost": 3,
+      "origin": "base"
+    },
+    {
+      "id": "sceptile",
+      "name": "Sceptile",
+      "species": "Sceptile",
+      "base": "Sceptile",
+      "types": [
+        "Grass"
+      ],
+      "cost": 3,
+      "origin": "regmb",
+      "anchor": "base of a 10-point mega, cf. Decidueye (3)"
+    },
+    {
+      "id": "scolipede",
+      "name": "Scolipede",
+      "species": "Scolipede",
+      "base": "Scolipede",
+      "types": [
+        "Bug",
+        "Poison"
+      ],
+      "cost": 3,
+      "origin": "regmb",
+      "anchor": "unranked base of an 8-point mega, cf. Ariados (2)"
+    },
+    {
+      "id": "scovillain",
+      "name": "Scovillain",
+      "species": "Scovillain",
+      "base": "Scovillain",
+      "types": [
+        "Grass",
+        "Fire"
+      ],
+      "cost": 3,
+      "origin": "base"
+    },
+    {
+      "id": "scrafty",
+      "name": "Scrafty",
+      "species": "Scrafty",
+      "base": "Scrafty",
+      "types": [
+        "Dark",
+        "Fighting"
+      ],
+      "cost": 3,
+      "origin": "regmb",
+      "anchor": "unranked base of a 7-point mega, cf. Passimian (3)"
+    },
+    {
+      "id": "skarmory",
+      "name": "Skarmory",
+      "species": "Skarmory",
+      "base": "Skarmory",
+      "types": [
+        "Steel",
+        "Flying"
+      ],
+      "cost": 3,
+      "origin": "base"
+    },
+    {
+      "id": "trevenant",
+      "name": "Trevenant",
+      "species": "Trevenant",
+      "base": "Trevenant",
+      "types": [
+        "Ghost",
+        "Grass"
+      ],
+      "cost": 3,
+      "origin": "base"
+    },
+    {
+      "id": "victreebel",
+      "name": "Victreebel",
+      "species": "Victreebel",
+      "base": "Victreebel",
+      "types": [
+        "Grass",
+        "Poison"
+      ],
+      "cost": 3,
+      "origin": "base"
+    },
+    {
+      "id": "aggron",
+      "name": "Aggron",
+      "species": "Aggron",
+      "base": "Aggron",
+      "types": [
+        "Steel",
+        "Rock"
+      ],
+      "cost": 2,
+      "origin": "base"
+    },
+    {
+      "id": "arbok",
+      "name": "Arbok",
+      "species": "Arbok",
+      "base": "Arbok",
+      "types": [
+        "Poison"
+      ],
+      "cost": 2,
+      "origin": "base"
+    },
+    {
+      "id": "ariados",
+      "name": "Ariados",
+      "species": "Ariados",
+      "base": "Ariados",
+      "types": [
+        "Bug",
+        "Poison"
+      ],
+      "cost": 2,
+      "origin": "base"
+    },
+    {
+      "id": "bastiodon",
+      "name": "Bastiodon",
+      "species": "Bastiodon",
+      "base": "Bastiodon",
+      "types": [
+        "Rock",
+        "Steel"
+      ],
+      "cost": 2,
+      "origin": "base"
+    },
+    {
+      "id": "falinks",
+      "name": "Falinks",
+      "species": "Falinks",
+      "base": "Falinks",
+      "types": [
+        "Fighting"
+      ],
+      "cost": 2,
+      "origin": "regmb",
+      "anchor": "unranked base of a 7-point mega, cf. Morpeko (2)"
+    },
+    {
+      "id": "mawile",
+      "name": "Mawile",
+      "species": "Mawile",
+      "base": "Mawile",
+      "types": [
+        "Steel",
+        "Fairy"
+      ],
+      "cost": 2,
+      "origin": "regmb",
+      "anchor": "the Huge Power mega is the draw, cf. Aggron (2)"
+    },
+    {
+      "id": "meowstic-f",
+      "name": "Meowstic-Female",
+      "species": "Meowstic-F",
+      "base": "Meowstic",
+      "types": [
+        "Psychic"
+      ],
+      "cost": 2,
+      "origin": "base"
+    },
+    {
+      "id": "morpeko",
+      "name": "Morpeko",
+      "species": "Morpeko",
+      "base": "Morpeko",
+      "types": [
+        "Electric",
+        "Dark"
+      ],
+      "cost": 2,
+      "origin": "base"
+    },
+    {
+      "id": "pyroar",
+      "name": "Pyroar",
+      "species": "Pyroar",
+      "base": "Pyroar",
+      "types": [
+        "Fire",
+        "Normal"
+      ],
+      "cost": 2,
+      "origin": "regmb",
+      "anchor": "base of an 11-point mega, cf. Tauros (2)"
+    },
+    {
+      "id": "qwilfish",
+      "name": "Qwilfish",
+      "species": "Qwilfish",
+      "base": "Qwilfish",
+      "types": [
+        "Water",
+        "Poison"
+      ],
+      "cost": 2,
+      "origin": "regmb",
+      "anchor": "unranked; cf. Sandaconda (2)"
+    },
+    {
+      "id": "rotom",
+      "name": "Rotom",
+      "species": "Rotom",
+      "base": "Rotom",
+      "types": [
+        "Electric",
+        "Ghost"
+      ],
+      "cost": 2,
+      "origin": "base"
+    },
+    {
+      "id": "rotom-fan",
+      "name": "Rotom-Fan",
+      "species": "Rotom-Fan",
+      "base": "Rotom",
+      "types": [
+        "Electric",
+        "Flying"
+      ],
+      "cost": 2,
+      "origin": "base"
+    },
+    {
+      "id": "sandaconda",
+      "name": "Sandaconda",
+      "species": "Sandaconda",
+      "base": "Sandaconda",
+      "types": [
+        "Ground"
+      ],
+      "cost": 2,
+      "origin": "base"
+    },
+    {
+      "id": "sharpedo",
+      "name": "Sharpedo",
+      "species": "Sharpedo",
+      "base": "Sharpedo",
+      "types": [
+        "Water",
+        "Dark"
+      ],
+      "cost": 2,
+      "origin": "base"
+    },
+    {
+      "id": "slurpuff",
+      "name": "Slurpuff",
+      "species": "Slurpuff",
+      "base": "Slurpuff",
+      "types": [
+        "Fairy"
+      ],
+      "cost": 2,
+      "origin": "base"
+    },
+    {
+      "id": "steelix",
+      "name": "Steelix",
+      "species": "Steelix",
+      "base": "Steelix",
+      "types": [
+        "Steel",
+        "Ground"
+      ],
+      "cost": 2,
+      "origin": "base"
+    },
+    {
+      "id": "tauros",
+      "name": "Tauros",
+      "species": "Tauros",
+      "base": "Tauros",
+      "types": [
+        "Normal"
+      ],
+      "cost": 2,
+      "origin": "base"
+    },
+    {
+      "id": "absol",
+      "name": "Absol",
+      "species": "Absol",
+      "base": "Absol",
+      "types": [
+        "Dark"
+      ],
+      "cost": 1,
+      "origin": "base"
+    },
+    {
+      "id": "altaria",
+      "name": "Altaria",
+      "species": "Altaria",
+      "base": "Altaria",
+      "types": [
+        "Dragon",
+        "Flying"
+      ],
+      "cost": 1,
+      "origin": "base"
+    },
+    {
+      "id": "ampharos",
+      "name": "Ampharos",
+      "species": "Ampharos",
+      "base": "Ampharos",
+      "types": [
+        "Electric"
+      ],
+      "cost": 1,
+      "origin": "base"
+    },
+    {
+      "id": "appletun",
+      "name": "Appletun",
+      "species": "Appletun",
+      "base": "Appletun",
+      "types": [
+        "Grass",
+        "Dragon"
+      ],
+      "cost": 1,
+      "origin": "base"
+    },
+    {
+      "id": "avalugg",
+      "name": "Avalugg",
+      "species": "Avalugg",
+      "base": "Avalugg",
+      "types": [
+        "Ice"
+      ],
+      "cost": 1,
+      "origin": "base"
+    },
+    {
+      "id": "banette",
+      "name": "Banette",
+      "species": "Banette",
+      "base": "Banette",
+      "types": [
+        "Ghost"
+      ],
+      "cost": 1,
+      "origin": "base"
+    },
+    {
+      "id": "beedrill",
+      "name": "Beedrill",
+      "species": "Beedrill",
+      "base": "Beedrill",
+      "types": [
+        "Bug",
+        "Poison"
+      ],
+      "cost": 1,
+      "origin": "base"
+    },
+    {
+      "id": "camerupt",
+      "name": "Camerupt",
+      "species": "Camerupt",
+      "base": "Camerupt",
+      "types": [
+        "Fire",
+        "Ground"
+      ],
+      "cost": 1,
+      "origin": "base"
+    },
+    {
+      "id": "castform",
+      "name": "Castform",
+      "species": "Castform",
+      "base": "Castform",
+      "types": [
+        "Normal"
+      ],
+      "cost": 1,
+      "origin": "base"
+    },
+    {
+      "id": "chimecho",
+      "name": "Chimecho",
+      "species": "Chimecho",
+      "base": "Chimecho",
+      "types": [
+        "Psychic"
+      ],
+      "cost": 1,
+      "origin": "base"
+    },
+    {
+      "id": "dedenne",
+      "name": "Dedenne",
+      "species": "Dedenne",
+      "base": "Dedenne",
+      "types": [
+        "Electric",
+        "Fairy"
+      ],
+      "cost": 1,
+      "origin": "base"
+    },
+    {
+      "id": "emolga",
+      "name": "Emolga",
+      "species": "Emolga",
+      "base": "Emolga",
+      "types": [
+        "Electric",
+        "Flying"
+      ],
+      "cost": 1,
+      "origin": "base"
+    },
+    {
+      "id": "forretress",
+      "name": "Forretress",
+      "species": "Forretress",
+      "base": "Forretress",
+      "types": [
+        "Bug",
+        "Steel"
+      ],
+      "cost": 1,
+      "origin": "base"
+    },
+    {
+      "id": "furfrou",
+      "name": "Furfrou",
+      "species": "Furfrou",
+      "base": "Furfrou",
+      "types": [
+        "Normal"
+      ],
+      "cost": 1,
+      "origin": "base"
+    },
+    {
+      "id": "stunfisk-galar",
+      "name": "Galarian Stunfisk",
+      "species": "Stunfisk-Galar",
+      "base": "Stunfisk",
+      "types": [
+        "Ground",
+        "Steel"
+      ],
+      "cost": 1,
+      "origin": "base"
+    },
+    {
+      "id": "garbodor",
+      "name": "Garbodor",
+      "species": "Garbodor",
+      "base": "Garbodor",
+      "types": [
+        "Poison"
+      ],
+      "cost": 1,
+      "origin": "base"
+    },
+    {
+      "id": "glalie",
+      "name": "Glalie",
+      "species": "Glalie",
+      "base": "Glalie",
+      "types": [
+        "Ice"
+      ],
+      "cost": 1,
+      "origin": "base"
+    },
+    {
+      "id": "avalugg-hisui",
+      "name": "Hisuian Avalugg",
+      "species": "Avalugg-Hisui",
+      "base": "Avalugg",
+      "types": [
+        "Ice",
+        "Rock"
+      ],
+      "cost": 1,
+      "origin": "base"
+    },
+    {
+      "id": "houndoom",
+      "name": "Houndoom",
+      "species": "Houndoom",
+      "base": "Houndoom",
+      "types": [
+        "Dark",
+        "Fire"
+      ],
+      "cost": 1,
+      "origin": "base"
+    },
+    {
+      "id": "lopunny",
+      "name": "Lopunny",
+      "species": "Lopunny",
+      "base": "Lopunny",
+      "types": [
+        "Normal"
+      ],
+      "cost": 1,
+      "origin": "base"
+    },
+    {
+      "id": "lycanroc-midnight",
+      "name": "Lycanroc-Midnight",
+      "species": "Lycanroc-Midnight",
+      "base": "Lycanroc",
+      "types": [
+        "Rock"
+      ],
+      "cost": 1,
+      "origin": "base"
+    },
+    {
+      "id": "manectric",
+      "name": "Manectric",
+      "species": "Manectric",
+      "base": "Manectric",
+      "types": [
+        "Electric"
+      ],
+      "cost": 1,
+      "origin": "base"
+    },
+    {
+      "id": "meganium",
+      "name": "Meganium",
+      "species": "Meganium",
+      "base": "Meganium",
+      "types": [
+        "Grass"
+      ],
+      "cost": 1,
+      "origin": "base"
+    },
+    {
+      "id": "pidgeot",
+      "name": "Pidgeot",
+      "species": "Pidgeot",
+      "base": "Pidgeot",
+      "types": [
+        "Normal",
+        "Flying"
+      ],
+      "cost": 1,
+      "origin": "base"
+    },
+    {
+      "id": "pikachu",
+      "name": "Pikachu",
+      "species": "Pikachu",
+      "base": "Pikachu",
+      "types": [
+        "Electric"
+      ],
+      "cost": 1,
+      "origin": "base"
+    },
+    {
+      "id": "pinsir",
+      "name": "Pinsir",
+      "species": "Pinsir",
+      "base": "Pinsir",
+      "types": [
+        "Bug"
+      ],
+      "cost": 1,
+      "origin": "base"
+    },
+    {
+      "id": "samurott",
+      "name": "Samurott",
+      "species": "Samurott",
+      "base": "Samurott",
+      "types": [
+        "Water"
+      ],
+      "cost": 1,
+      "origin": "base"
+    },
+    {
+      "id": "simipour",
+      "name": "Simipour",
+      "species": "Simipour",
+      "base": "Simipour",
+      "types": [
+        "Water"
+      ],
+      "cost": 1,
+      "origin": "base"
+    },
+    {
+      "id": "simisage",
+      "name": "Simisage",
+      "species": "Simisage",
+      "base": "Simisage",
+      "types": [
+        "Grass"
+      ],
+      "cost": 1,
+      "origin": "base"
+    },
+    {
+      "id": "simisear",
+      "name": "Simisear",
+      "species": "Simisear",
+      "base": "Simisear",
+      "types": [
+        "Fire"
+      ],
+      "cost": 1,
+      "origin": "base"
+    },
+    {
+      "id": "stunfisk",
+      "name": "Stunfisk",
+      "species": "Stunfisk",
+      "base": "Stunfisk",
+      "types": [
+        "Ground",
+        "Electric"
+      ],
+      "cost": 1,
+      "origin": "base"
+    },
+    {
+      "id": "toucannon",
+      "name": "Toucannon",
+      "species": "Toucannon",
+      "base": "Toucannon",
+      "types": [
+        "Normal",
+        "Flying"
+      ],
+      "cost": 1,
+      "origin": "base"
+    },
+    {
+      "id": "watchog",
+      "name": "Watchog",
+      "species": "Watchog",
+      "base": "Watchog",
+      "types": [
+        "Normal"
+      ],
+      "cost": 1,
+      "origin": "base"
     }
   ]
 }

@@ -23,7 +23,7 @@ The league asks these questions:
 | --- | --- | --- |
 | **Match** | Two models and two teams (pasted or sampled) play one best-of-three. This is the default flow in the GUI. | No |
 | **Tournament** | Models play a single-elimination best-of-three bracket. Each model keeps one assigned team through the bracket. Byes fill incomplete brackets. | No |
-| **Draft League** | Models snake-draft rosters from a fixed board. They then play a round robin and playoffs. The league logs each draft rationale. | No |
+| **Draft League** | Coaches snake-draft ten Pokémon each inside a 100-point budget, name a franchise, then before every match pick six and build each set themselves. A weekly round robin, then playoffs. The league logs every draft rationale and team plan. | No |
 | **Rotation** | Models rotate through immutable team pools with mirrored assignments. This cancels side bias and team bias, and produces the controlled league Elo. | Yes |
 | **Exhibition** | One best-of-three where an external terminal agent plays one seat through a local bridge in place of a provider API. | No |
 

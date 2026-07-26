@@ -609,13 +609,22 @@ export class LLMEngine extends BaseEngine {
     while (!parsed && parseFailures < DECISION_PARSE_ATTEMPTS) {
       if (generation !== this.generation) throw new DecisionAbandonedError();
       if (parseFailures) {
-        messages.push({ role: 'assistant', content: rawResponse });
+        // Replaying a truncated ramble verbatim spends the retry's input budget
+        // on the reasoning that already overran, making the retry likelier to
+        // overrun too. Summarise it instead and ask for the answer first.
+        messages.push({
+          role: 'assistant',
+          content: truncatedBudget ? '[response cut off before a choice was submitted]' : rawResponse,
+        });
         messages.push({
           role: 'user',
-          content: `Your previous response was invalid. Error: ${error}. Reply again following the required JSON format.`,
+          content: truncatedBudget
+            ? `Your previous response ran past its ${truncatedBudget}-token budget before submitting a choice. Reply with the required JSON immediately, keeping reasoning brief enough to finish inside the budget.`
+            : `Your previous response was invalid. Error: ${error}. Reply again following the required JSON format.`,
         });
       }
       rawResponse = '';
+      truncatedBudget = 0;
       const maxToolRounds = deadline === undefined ? UNTIMED_MAX_TOOL_ROUNDS : DECISION_MAX_TOOL_ROUNDS;
       for (let round = 0; round <= maxToolRounds; round += 1) {
         if (generation !== this.generation) throw new DecisionAbandonedError();
@@ -677,10 +686,13 @@ export class LLMEngine extends BaseEngine {
           }
           continue;
         }
-        if (!completion.text && !completion.toolCalls.length && completion.finishReason === 'length') {
+        // A model cut off mid-reasoning still returns text, so finishReason alone
+        // misses it and the run blames the model's formatting for a budget it
+        // never got to spend. Token count is the signal providers agree on.
+        if (completion.finishReason === 'length' || (completion.usage.output_tokens ?? 0) >= maxTokens) {
           truncatedBudget = maxTokens;
-          break;
         }
+        if (!completion.text && !completion.toolCalls.length && truncatedBudget) break;
         rawResponse = completion.text;
         break;
       }
@@ -694,7 +706,11 @@ export class LLMEngine extends BaseEngine {
         BaseEngine.parts(menus, parsed.choices);
       } catch (caught) {
         parsed = undefined;
-        error = caught instanceof Error ? caught.message : String(caught);
+        error = truncatedBudget
+          ? `reasoning exhausted the ${truncatedBudget}-token response budget before a choice was submitted`
+          : caught instanceof Error
+            ? caught.message
+            : String(caught);
         parseFailures += 1;
       }
     }

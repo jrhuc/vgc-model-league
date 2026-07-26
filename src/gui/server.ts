@@ -8,7 +8,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { AuthService, AuthSession, AuthUser } from '../auth.js';
 import { AuthError } from '../auth.js';
-import { listBoards } from '../draft.js';
+import { describeBoardMon, listBoards, loadBoard } from '../draft.js';
 import type { DraftLeagueEvent } from '../draftleague.js';
 import { DRAFT_PROTOCOL_VERSION, runDraftLeague } from '../draftleague.js';
 import { buildEvidence, buildTournaments } from '../evidence.js';
@@ -43,6 +43,7 @@ import type {
   AppState,
   BattleMessage,
   BattleSnapshot,
+  BoardResponse,
   BracketView,
   DecisionView,
   DraftView,
@@ -69,6 +70,7 @@ type SeriesRow = Omit<SeriesRowView, 'turn'>;
 const ASSETS_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'gui');
 const RUN_WORKER_PATH = fileURLToPath(new URL('./run-worker.js', import.meta.url));
 const ASSET_TYPES: Record<string, string> = {
+  '.png': 'image/png',
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
@@ -250,6 +252,18 @@ class HttpError extends Error {
   }
 }
 
+const spriteIds = new Map<string, string>();
+
+function spriteIdFor(species: string): string {
+  const cached = spriteIds.get(species);
+  if (cached !== undefined) return cached;
+  const { Dex } = loadShowdown();
+  const resolved = Dex.mod('champions').species.get(species);
+  const id = resolved.exists ? resolved.spriteid : '';
+  spriteIds.set(species, id);
+  return id;
+}
+
 function snapshotMon(battle: BattleState, pid: Pid, mon: MonState): MonView {
   const boosts = Object.entries(mon.boosts)
     .filter(([, value]) => value)
@@ -263,6 +277,7 @@ function snapshotMon(battle: BattleState, pid: Pid, mon: MonState): MonView {
     .join(', ');
   return {
     species: mon.species,
+    spriteId: spriteIdFor(mon.species),
     slot: battle.activeSlot(pid, mon)?.toUpperCase() ?? '',
     hp: mon.fainted ? 'fainted' : (mon.hp ?? ''),
     status: mon.fainted ? '' : (mon.status ?? ''),
@@ -573,7 +588,9 @@ export class GuiServer {
     else if (key === 'GET /api/evidence') this.json(response, 200, this.evidenceBody(url.searchParams.get('pool')));
     else if (key === 'GET /api/tournaments')
       this.json(response, 200, this.tournamentsBody(url.searchParams.get('pool')));
-    else if (key === 'GET /api/pool/teams') {
+    else if (key === 'GET /api/board') {
+      this.json(response, 200, this.boardBody(url.searchParams.get('id') ?? ''));
+    } else if (key === 'GET /api/pool/teams') {
       this.json(response, 200, this.poolTeamsBody(url.searchParams.get('name') ?? ''));
     } else if (key === 'GET /api/reasoning') {
       this.json(response, 200, this.reasoningBody(url.searchParams.get('spec') ?? ''));
@@ -730,7 +747,11 @@ export class GuiServer {
     if (!file.startsWith(ASSETS_DIR + path.sep)) return false;
     const type = ASSET_TYPES[path.extname(file)];
     if (!type || !fs.existsSync(file) || !fs.statSync(file).isFile()) return false;
-    response.writeHead(200, { 'cache-control': 'no-cache', 'content-type': type });
+    const immutable = pathname.startsWith('/sprites/');
+    response.writeHead(200, {
+      'cache-control': immutable ? 'public, max-age=31536000, immutable' : 'no-cache',
+      'content-type': type,
+    });
     response.end(fs.readFileSync(file));
     return true;
   }
@@ -831,6 +852,21 @@ export class GuiServer {
     };
   }
 
+  private boardBody(id: string): BoardResponse {
+    if (!listBoards().some((entry) => entry.id === id)) {
+      throw new HttpError(400, `unknown draft board ${JSON.stringify(id)}`);
+    }
+    const board = loadBoard(id);
+    return {
+      id: board.id,
+      format: board.format,
+      budget: board.budget,
+      picks: board.picks,
+      source: board.source,
+      mons: board.mons.map((mon) => describeBoardMon(mon, undefined, board.format)),
+    };
+  }
+
   private poolTeamsBody(name: string): PoolTeamsResponse {
     const teamsDir = this.options.teamsDir ?? TEAMS_DIR;
     if (!listPools(teamsDir).some((entry) => entry.name === name)) {
@@ -856,7 +892,7 @@ export class GuiServer {
     const rated = rows.filter((row) => (row.mode ?? 'rotation') === 'rotation');
     const pools = [...new Set(all.map((row) => (typeof row.pool === 'string' ? row.pool : '')))].filter(Boolean).sort();
     const groups = ratingGroups(rated);
-    return { count: rows.length, pool, pools, groups, imported: rows.filter(isImported).length, records: rows };
+    return { count: rows.length, pool, pools, groups, imported: rows.filter(isImported).length };
   }
 
   private authorizeImport(request: http.IncomingMessage): void {

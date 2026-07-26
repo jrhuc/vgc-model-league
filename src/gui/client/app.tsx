@@ -7,10 +7,12 @@ import { ArenaView } from './views/arena';
 import type { DataRoomSection } from './views/dataroom';
 import { DataRoomView, isDataRoomSection } from './views/dataroom';
 import { FixturesView } from './views/fixtures';
+import { LeagueView } from './views/league';
 
 const NAV = [
   { id: 'fixtures', label: 'New run' },
   { id: 'arena', label: 'Live run' },
+  { id: 'league', label: 'Draft league' },
   { id: 'results', label: 'Data room' },
 ] as const;
 
@@ -181,7 +183,7 @@ export function App() {
 
   const onStarted = (startedRun: RunSnapshot) => {
     acceptRun(startedRun);
-    navigate('arena');
+    navigate(startedRun.mode === 'draft' ? 'league' : 'arena');
   };
 
   const onPools = (pools: PoolInfo[]) => {
@@ -284,6 +286,9 @@ export function App() {
             onFetchBattle={fetchBattle}
             onGoFixtures={() => navigate('fixtures')}
           />
+        </section>
+        <section class={`view ${view === 'league' ? 'on' : ''}`}>
+          <LeagueView app={app} run={run} active={view === 'league'} />
         </section>
         <section class={`view ${view === 'results' ? 'on' : ''}`}>
           <DataRoomView

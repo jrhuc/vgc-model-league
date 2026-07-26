@@ -55,19 +55,22 @@ export interface BoardInfo {
   monCount: number;
   budget: number;
   picks: number;
-  /** Largest entrant count the board can support with one spare roster of slack. */
   maxEntrants: number;
 }
 
 export interface DraftBoardMonView {
   id: string;
   name: string;
-  tier: string;
+  spriteId: string;
   cost: number;
+  types: string[];
   item: string;
-  ability: string;
-  moves: string[];
-  teraType: string;
+  abilities: string[];
+  baseStats: Record<string, number>;
+  origin: string;
+  anchor: string;
+  usage: string;
+  listed: number | null;
 }
 
 export interface DraftPickView {
@@ -86,17 +89,41 @@ export interface DraftTableRow {
   gl: number;
 }
 
+export interface TeambuildSetView {
+  species: string;
+  spriteId: string;
+  item: string;
+  ability: string;
+  nature: string;
+  moves: string[];
+  evs: Record<string, number>;
+  repaired: boolean;
+  repairs: string[];
+}
+
+export interface TeambuildView {
+  seriesIndex: number;
+  entrant: number;
+  opponent: number;
+  brought: string[];
+  sets: TeambuildSetView[];
+  rationale: string;
+  attempts: number;
+}
+
 export interface DraftView {
   boardId: string;
   budget: number;
   picksPerEntrant: number;
   entrants: string[];
-  board: DraftBoardMonView[];
+  teamNames: string[];
   picks: DraftPickView[];
   rosters: string[][];
   budgets: number[];
-  /** Round-robin table, present once battles begin; sorted by rank. */
   table: DraftTableRow[] | null;
+  teambuilds: TeambuildView[];
+  week: number;
+  weeks: number;
   phase: 'draft' | 'roundrobin' | 'playoffs' | 'done';
 }
 
@@ -106,9 +133,7 @@ export interface BracketEntrantView {
 }
 
 interface BracketMatchView {
-  /** Index into RunSnapshot.rows; null for byes, which play no series. */
   seriesIndex: number | null;
-  /** Entrant indices; null until the feeding match resolves. */
   slots: [number | null, number | null];
   winner: number | null;
 }
@@ -158,6 +183,15 @@ export interface PoolTeamsResponse {
   teams: SampleTeam[];
 }
 
+export interface BoardResponse {
+  id: string;
+  format: string;
+  budget: number;
+  picks: number;
+  source: string;
+  mons: DraftBoardMonView[];
+}
+
 export interface AppState {
   pools: PoolInfo[];
   reasoningLevels: string[];
@@ -172,6 +206,7 @@ export interface AppState {
 
 export interface MonView {
   species: string;
+  spriteId: string;
   slot: string;
   hp: string;
   status: string;
@@ -277,7 +312,6 @@ export interface RecordsResponse {
   /** Rated rotation rows split by battle speed; untimed first, then ascending clock scales. */
   groups: SpeedGroupView[];
   imported: number;
-  records: unknown[];
 }
 
 export interface LatencyPoint {

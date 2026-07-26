@@ -493,26 +493,45 @@ function RatesTable({
   );
 }
 
-const LUCK = { label: 345, plot: 420, row: 27, top: 30, bottom: 22 };
+const LUCK = { label: 330, plot: 400, tail: 108, row: 27, top: 34, bottom: 40 };
 
 function LuckLedger({ series }: { series: SeriesLuckEntry[] }) {
   const [tip, showTip, hideTip] = useTip();
-  const decided = series.filter((entry) => entry.winner !== null);
+  const decided = series
+    .filter((entry) => entry.winner !== null)
+    .map((entry) => {
+      const winnerFirst = entry.winner === entry.p1;
+      return {
+        entry,
+        delta: entry.winnerLuckDelta ?? 0,
+        loser: winnerFirst ? entry.p2 : entry.p1,
+        winnerLuck: winnerFirst ? entry.luck.p1 : entry.luck.p2,
+        loserLuck: winnerFirst ? entry.luck.p2 : entry.luck.p1,
+      };
+    })
+    .sort((a, b) => b.delta - a.delta || a.entry.timestamp.localeCompare(b.entry.timestamp));
   if (decided.length === 0) return <div class="results-empty">The ledger fills in as series resolve.</div>;
-  const span = Math.max(2, ...decided.map((entry) => Math.abs(entry.winnerLuckDelta ?? 0)));
+  const earned = decided.filter((row) => row.delta > 0).length;
+  const favored = decided.filter((row) => row.delta < 0).length;
+  const quiet = decided.filter((row) => row.winnerLuck === 0 && row.loserLuck === 0).length;
+  const span = Math.max(2, ...decided.map((row) => Math.abs(row.delta)));
   const center = LUCK.label + LUCK.plot / 2;
   const scale = LUCK.plot / 2 / (span + 1);
-  const width = LUCK.label + LUCK.plot;
+  const width = LUCK.label + LUCK.plot + LUCK.tail;
   const height = LUCK.top + decided.length * LUCK.row + LUCK.bottom;
   const ticks = [-span, -Math.ceil(span / 2), 0, Math.ceil(span / 2), span];
+  const tailX = LUCK.label + LUCK.plot + LUCK.tail - 6;
   return (
     <div class="chart-host">
       <div class="chart-legend">
         <span>
+          <i style={{ background: BLUE }} /> won despite worse luck
+        </span>
+        <span>
           <i style={{ background: RED }} /> luck-favored win
         </span>
         <span>
-          <i style={{ background: BLUE }} /> won despite worse luck
+          <i style={{ background: GRAY }} /> even
         </span>
       </div>
       <div class="table-scroll">
@@ -522,25 +541,28 @@ function LuckLedger({ series }: { series: SeriesLuckEntry[] }) {
               key={tick}
               x1={center + tick * scale}
               x2={center + tick * scale}
-              y1={LUCK.top - 6}
+              y1={LUCK.top - 8}
               y2={height - LUCK.bottom}
               stroke={tick === 0 ? '#aebbd0' : LINE}
             />
           ))}
           {ticks.map((tick) => (
-            <text key={tick} x={center + tick * scale} y={height - 7} text-anchor="middle" class="chart-tick">
+            <text key={tick} x={center + tick * scale} y={height - 22} text-anchor="middle" class="chart-tick">
               {tick > 0 ? `+${tick}` : tick}
             </text>
           ))}
-          {decided.map((entry, index) => {
+          <text x={tailX} y={LUCK.top - 13} text-anchor="end" class="chart-tick">
+            events W–L
+          </text>
+          <text x={0} y={height - 6} class="chart-tick">
+            {earned} earned against the luck · {favored} luck-favored · {decided.length - earned - favored} even, of
+            which {quiet} saw no adverse event at all
+          </text>
+          {decided.map(({ entry, delta, loser, winnerLuck, loserLuck }, index) => {
             const y = LUCK.top + index * LUCK.row;
-            const delta = entry.winnerLuckDelta ?? 0;
-            const loser = entry.winner === entry.p1 ? entry.p2 : entry.p1;
-            const winnerLuck = entry.winner === entry.p1 ? entry.luck.p1 : entry.luck.p2;
-            const loserLuck = entry.winner === entry.p1 ? entry.luck.p2 : entry.luck.p1;
             const lines = [
               `${entry.winner} beat ${loser} ${Math.max(...entry.score)}-${Math.min(...entry.score)}`,
-              `adverse events (misses, crits, flinches, full para)`,
+              `adverse events (misses, crits taken, flinches, full para)`,
               `winner suffered ${winnerLuck}, loser ${loserLuck}`,
             ];
             return (
@@ -556,13 +578,16 @@ function LuckLedger({ series }: { series: SeriesLuckEntry[] }) {
                   {entry.winner} · {loser}
                 </text>
                 {delta === 0 ? (
-                  <circle cx={center} cy={y + LUCK.row / 2} r={4} fill="#aebbd0" stroke="#ffffff" stroke-width={1} />
+                  <circle cx={center} cy={y + LUCK.row / 2} r={4} fill={GRAY} stroke="#ffffff" stroke-width={1} />
                 ) : (
                   <path
                     d={barPath(center, center + delta * scale, y + LUCK.row / 2 - 6, 12)}
                     fill={delta > 0 ? BLUE : RED}
                   />
                 )}
+                <text x={tailX} y={y + LUCK.row / 2 + 3.5} text-anchor="end" class="chart-value">
+                  {winnerLuck}–{loserLuck}
+                </text>
               </g>
             );
           })}
@@ -909,14 +934,33 @@ export function DataRoomView({
             }
           />
         </div>
+      ) : section === 'ladder' ? (
+        <div class="stat-row">
+          <StatTile
+            label="Rated series"
+            value={String(group?.count ?? 0)}
+            note={group ? `${group.label.toLowerCase()} · ${pool || 'overall'}` : pool || 'overall scope'}
+          />
+          <StatTile label="Models rated" value={String(rows.length)} note="merged across providers" />
+          <StatTile
+            label="Elo spread"
+            value={rows.length < 2 ? '–' : `${Math.round(rows[0]!.elo - rows[rows.length - 1]!.elo)} pts`}
+            note="top to bottom of the table"
+          />
+          <StatTile
+            label="Median series"
+            value={totals.medianTurns === null ? '–' : `${totals.medianTurns} turns`}
+            note="across a best-of-three"
+          />
+        </div>
       ) : (
         <div class="stat-row">
-          <StatTile label="Rated series" value={String(evidence?.count ?? 0)} note={pool || 'overall scope'} />
+          <StatTile label="Rated series" value={String(evidence?.count ?? 0)} note="every battle speed in scope" />
           <StatTile label="Decisions logged" value={String(totals.decisions)} note="engine decisions with evidence" />
           <StatTile
             label="Median decision"
             value={totals.medianMs === null ? '–' : seconds(totals.medianMs)}
-            note="wall-clock latency, untimed play"
+            note="wall-clock latency per decision"
           />
           <StatTile
             label="Median series"
@@ -1083,8 +1127,9 @@ export function DataRoomView({
               <div>
                 <h2>Luck ledger</h2>
                 <p>
-                  Adverse luck events suffered by the winner minus the loser, per decided series. Bars right of zero are
-                  wins earned against the run of luck.
+                  Misses, crits taken, flinches, and full paralysis suffered by the winner minus the loser, per decided
+                  series, sorted by that difference. Bars right of zero are wins earned against the run of luck; the
+                  right column is what each side actually suffered, so an even series reads apart from a quiet one.
                 </p>
               </div>
             </div>

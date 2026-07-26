@@ -487,6 +487,64 @@ test('untimed truncation records a legal fallback with the truncation summary', 
   );
 });
 
+test('a decision cut off mid-reasoning blames the budget, not the model formatting', async () => {
+  // What an over-reasoning model actually returns: pages of deliberation, no
+  // closing JSON, and a provider that never sets finishReason: 'length'.
+  const rambled = (): Completion => ({
+    text: 'Turn 6. I need to weigh Garchomp and Whimsicott. "choices" will follow once I finish',
+    usage: { input_tokens: 10, output_tokens: 32_768 },
+    toolCalls: [],
+  });
+  const decisions: Record<string, unknown>[] = [];
+  const engine = new LLMEngine('p1', 'openrouter:qwen/qwen3.5-flash-02-23', {
+    provider: new ScriptedProvider([rambled(), rambled(), rambled()]),
+    decisionLog: decisions,
+  });
+
+  assert.equal(await engine.act(request(), { povLines: [] }), 'move 1');
+  assert.equal(decisions[0]!.fallback, true);
+  assert.equal(
+    decisions[0]!.error,
+    'reasoning exhausted the 32768-token response budget before a choice was submitted',
+    'a truncated ramble must not be logged as a JSON format failure',
+  );
+});
+
+test('a truncated retry is not fed its own overrun reasoning', async () => {
+  const long = 'x'.repeat(5_000);
+  const rambled = (): Completion => ({
+    text: `Turn 6 deliberation ${long}`,
+    usage: { input_tokens: 10, output_tokens: 32_768 },
+    toolCalls: [],
+  });
+  const provider = new ScriptedProvider([rambled(), rambled(), rambled()]);
+  const engine = new LLMEngine('p1', 'fake:model', { provider, decisionLog: [] });
+  await engine.act(request(), { povLines: [] });
+
+  const retry = provider.calls[1]!.messages;
+  const replayed = retry.map((message) => String(message.content ?? '')).join('\n');
+  assert.ok(!replayed.includes(long), 'the overrun reasoning must not be replayed into the retry');
+  assert.match(replayed, /cut off before a choice was submitted/);
+  assert.match(replayed, /ran past its 32768-token budget/, 'the retry names the real problem');
+});
+
+test('a genuine format failure is still reported as one', async () => {
+  const malformed = (): Completion => ({
+    text: 'I choose to attack the left one.',
+    usage: { input_tokens: 10, output_tokens: 200 },
+    toolCalls: [],
+  });
+  const decisions: Record<string, unknown>[] = [];
+  const engine = new LLMEngine('p1', 'scripted', {
+    provider: new ScriptedProvider([malformed(), malformed(), malformed()]),
+    decisionLog: decisions,
+  });
+
+  assert.equal(await engine.act(request(), { povLines: [] }), 'move 1');
+  assert.equal(decisions[0]!.fallback, true);
+  assert.doesNotMatch(String(decisions[0]!.error), /response budget/, 'well inside the budget is a real parse failure');
+});
+
 test('reflections use a reasoning-safe token budget', async () => {
   const provider = new ScriptedProvider([
     JSON.stringify({ summary: 'Lost the rain matchup.', adjustment: 'Lead differently.', notebook: 'notes' }),
