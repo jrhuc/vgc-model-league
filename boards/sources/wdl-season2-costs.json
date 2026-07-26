@@ -1,0 +1,2064 @@
+[
+ {
+  "name": "Mega Charizard Y",
+  "cost": 20,
+  "types": [
+   "Fire",
+   "Flying"
+  ]
+ },
+ {
+  "name": "Mega Floette",
+  "cost": 20,
+  "types": [
+   "Fairy"
+  ]
+ },
+ {
+  "name": "Mega Gengar",
+  "cost": 20,
+  "types": [
+   "Ghost",
+   "Poison"
+  ]
+ },
+ {
+  "name": "Archaludon",
+  "cost": 19,
+  "types": [
+   "Steel",
+   "Dragon"
+  ]
+ },
+ {
+  "name": "Basculegion-Male",
+  "cost": 19,
+  "types": [
+   "Water",
+   "Ghost"
+  ]
+ },
+ {
+  "name": "Mega Froslass",
+  "cost": 19,
+  "types": [
+   "Ice",
+   "Ghost"
+  ]
+ },
+ {
+  "name": "Sneasler",
+  "cost": 19,
+  "types": [
+   "Fighting",
+   "Poison"
+  ]
+ },
+ {
+  "name": "Whimsicott",
+  "cost": 19,
+  "types": [
+   "Grass",
+   "Fairy"
+  ]
+ },
+ {
+  "name": "Garchomp",
+  "cost": 18,
+  "types": [
+   "Dragon",
+   "Ground"
+  ]
+ },
+ {
+  "name": "Incineroar",
+  "cost": 18,
+  "types": [
+   "Fire",
+   "Dark"
+  ]
+ },
+ {
+  "name": "Mega Gardevoir",
+  "cost": 18,
+  "types": [
+   "Psychic",
+   "Fairy"
+  ]
+ },
+ {
+  "name": "Mega Kangaskhan",
+  "cost": 18,
+  "types": [
+   "Normal"
+  ]
+ },
+ {
+  "name": "Sinistcha",
+  "cost": 18,
+  "types": [
+   "Grass",
+   "Ghost"
+  ]
+ },
+ {
+  "name": "Aerodactyl",
+  "cost": 17,
+  "types": [
+   "Rock",
+   "Flying"
+  ]
+ },
+ {
+  "name": "Kingambit",
+  "cost": 17,
+  "types": [
+   "Dark",
+   "Steel"
+  ]
+ },
+ {
+  "name": "Mega Aerodactyl",
+  "cost": 17,
+  "types": [
+   "Rock",
+   "Flying"
+  ]
+ },
+ {
+  "name": "Mega Blastoise",
+  "cost": 17,
+  "types": [
+   "Water"
+  ]
+ },
+ {
+  "name": "Mega Delphox",
+  "cost": 17,
+  "types": [
+   "Fire",
+   "Psychic"
+  ]
+ },
+ {
+  "name": "Mega Tyranitar",
+  "cost": 17,
+  "types": [
+   "Rock",
+   "Dark"
+  ]
+ },
+ {
+  "name": "Aegislash",
+  "cost": 16,
+  "types": [
+   "Steel",
+   "Ghost"
+  ]
+ },
+ {
+  "name": "Dragonite",
+  "cost": 16,
+  "types": [
+   "Dragon",
+   "Flying"
+  ]
+ },
+ {
+  "name": "Farigiraf",
+  "cost": 16,
+  "types": [
+   "Normal",
+   "Psychic"
+  ]
+ },
+ {
+  "name": "Maushold",
+  "cost": 16,
+  "types": [
+   "Normal"
+  ]
+ },
+ {
+  "name": "Mega Glimmora",
+  "cost": 16,
+  "types": [
+   "Rock",
+   "Poison"
+  ]
+ },
+ {
+  "name": "Mega Lopunny",
+  "cost": 16,
+  "types": [
+   "Normal",
+   "Fighting"
+  ]
+ },
+ {
+  "name": "Pelipper",
+  "cost": 16,
+  "types": [
+   "Water",
+   "Flying"
+  ]
+ },
+ {
+  "name": "Tyranitar",
+  "cost": 16,
+  "types": [
+   "Rock",
+   "Dark"
+  ]
+ },
+ {
+  "name": "Volcarona",
+  "cost": 16,
+  "types": [
+   "Bug",
+   "Fire"
+  ]
+ },
+ {
+  "name": "Clefable",
+  "cost": 15,
+  "types": [
+   "Fairy"
+  ]
+ },
+ {
+  "name": "Dragapult",
+  "cost": 15,
+  "types": [
+   "Dragon",
+   "Ghost"
+  ]
+ },
+ {
+  "name": "Hisuian Arcanine",
+  "cost": 15,
+  "types": [
+   "Fire",
+   "Rock"
+  ]
+ },
+ {
+  "name": "Mega Charizard X",
+  "cost": 15,
+  "types": [
+   "Fire",
+   "Dragon"
+  ]
+ },
+ {
+  "name": "Mega Dragonite",
+  "cost": 15,
+  "types": [
+   "Dragon",
+   "Flying"
+  ]
+ },
+ {
+  "name": "Mega Lucario",
+  "cost": 15,
+  "types": [
+   "Fighting",
+   "Steel"
+  ]
+ },
+ {
+  "name": "Mega Scizor",
+  "cost": 15,
+  "types": [
+   "Bug",
+   "Steel"
+  ]
+ },
+ {
+  "name": "Mega Starmie",
+  "cost": 15,
+  "types": [
+   "Water",
+   "Psychic"
+  ]
+ },
+ {
+  "name": "Primarina",
+  "cost": 15,
+  "types": [
+   "Water",
+   "Fairy"
+  ]
+ },
+ {
+  "name": "Sylveon",
+  "cost": 15,
+  "types": [
+   "Fairy"
+  ]
+ },
+ {
+  "name": "Talonflame",
+  "cost": 15,
+  "types": [
+   "Fire",
+   "Flying"
+  ]
+ },
+ {
+  "name": "Torkoal",
+  "cost": 15,
+  "types": [
+   "Fire"
+  ]
+ },
+ {
+  "name": "Alolan Ninetales",
+  "cost": 14,
+  "types": [
+   "Ice",
+   "Fairy"
+  ]
+ },
+ {
+  "name": "Arcanine",
+  "cost": 14,
+  "types": [
+   "Fire"
+  ]
+ },
+ {
+  "name": "Hydreigon",
+  "cost": 14,
+  "types": [
+   "Dark",
+   "Dragon"
+  ]
+ },
+ {
+  "name": "Kommo-o",
+  "cost": 14,
+  "types": [
+   "Dragon",
+   "Fighting"
+  ]
+ },
+ {
+  "name": "Mega Clefable",
+  "cost": 14,
+  "types": [
+   "Fairy",
+   "Flying"
+  ]
+ },
+ {
+  "name": "Mega Garchomp",
+  "cost": 14,
+  "types": [
+   "Dragon",
+   "Ground"
+  ]
+ },
+ {
+  "name": "Mega Gyarados",
+  "cost": 14,
+  "types": [
+   "Water",
+   "Dark"
+  ]
+ },
+ {
+  "name": "Mega Meganium",
+  "cost": 14,
+  "types": [
+   "Grass",
+   "Fairy"
+  ]
+ },
+ {
+  "name": "Mega Scovillain",
+  "cost": 14,
+  "types": [
+   "Grass",
+   "Fire"
+  ]
+ },
+ {
+  "name": "Mega Venusaur",
+  "cost": 14,
+  "types": [
+   "Grass",
+   "Poison"
+  ]
+ },
+ {
+  "name": "Milotic",
+  "cost": 14,
+  "types": [
+   "Water"
+  ]
+ },
+ {
+  "name": "Rotom-Wash",
+  "cost": 14,
+  "types": [
+   "Electric",
+   "Water"
+  ]
+ },
+ {
+  "name": "Corviknight",
+  "cost": 13,
+  "types": [
+   "Flying",
+   "Steel"
+  ]
+ },
+ {
+  "name": "Excadrill",
+  "cost": 13,
+  "types": [
+   "Ground",
+   "Steel"
+  ]
+ },
+ {
+  "name": "Glimmora",
+  "cost": 13,
+  "types": [
+   "Rock",
+   "Poison"
+  ]
+ },
+ {
+  "name": "Gyarados",
+  "cost": 13,
+  "types": [
+   "Water",
+   "Flying"
+  ]
+ },
+ {
+  "name": "Mega Excadrill",
+  "cost": 13,
+  "types": [
+   "Ground",
+   "Steel"
+  ]
+ },
+ {
+  "name": "Politoed",
+  "cost": 13,
+  "types": [
+   "Water"
+  ]
+ },
+ {
+  "name": "Venusaur",
+  "cost": 13,
+  "types": [
+   "Grass",
+   "Poison"
+  ]
+ },
+ {
+  "name": "Azumarill",
+  "cost": 12,
+  "types": [
+   "Water",
+   "Fairy"
+  ]
+ },
+ {
+  "name": "Basculegion-Female",
+  "cost": 12,
+  "types": [
+   "Water",
+   "Ghost"
+  ]
+ },
+ {
+  "name": "Mamoswine",
+  "cost": 12,
+  "types": [
+   "Ice",
+   "Ground"
+  ]
+ },
+ {
+  "name": "Mega Alakazam",
+  "cost": 12,
+  "types": [
+   "Psychic"
+  ]
+ },
+ {
+  "name": "Mega Gallade",
+  "cost": 12,
+  "types": [
+   "Psychic",
+   "Fighting"
+  ]
+ },
+ {
+  "name": "Mega Greninja",
+  "cost": 12,
+  "types": [
+   "Water",
+   "Dark"
+  ]
+ },
+ {
+  "name": "Mega Medicham",
+  "cost": 12,
+  "types": [
+   "Fighting",
+   "Psychic"
+  ]
+ },
+ {
+  "name": "Meowscarada",
+  "cost": 12,
+  "types": [
+   "Grass",
+   "Dark"
+  ]
+ },
+ {
+  "name": "Palafin",
+  "cost": 12,
+  "types": [
+   "Water"
+  ]
+ },
+ {
+  "name": "Rotom-Heat",
+  "cost": 12,
+  "types": [
+   "Electric",
+   "Fire"
+  ]
+ },
+ {
+  "name": "Araquanid",
+  "cost": 11,
+  "types": [
+   "Water",
+   "Bug"
+  ]
+ },
+ {
+  "name": "Floette-Eternal",
+  "cost": 11,
+  "types": [
+   "Fairy"
+  ]
+ },
+ {
+  "name": "Klefki",
+  "cost": 11,
+  "types": [
+   "Steel",
+   "Fairy"
+  ]
+ },
+ {
+  "name": "Mega Skarmory",
+  "cost": 11,
+  "types": [
+   "Steel",
+   "Flying"
+  ]
+ },
+ {
+  "name": "Meowstic-Male",
+  "cost": 11,
+  "types": [
+   "Psychic"
+  ]
+ },
+ {
+  "name": "Mimikyu",
+  "cost": 11,
+  "types": [
+   "Ghost",
+   "Fairy"
+  ]
+ },
+ {
+  "name": "Ninetales",
+  "cost": 11,
+  "types": [
+   "Fire"
+  ]
+ },
+ {
+  "name": "Paldean Tauros Aqua",
+  "cost": 11,
+  "types": [
+   "Fighting",
+   "Water"
+  ]
+ },
+ {
+  "name": "Rotom-Mow",
+  "cost": 11,
+  "types": [
+   "Electric",
+   "Grass"
+  ]
+ },
+ {
+  "name": "Sableye",
+  "cost": 11,
+  "types": [
+   "Dark",
+   "Ghost"
+  ]
+ },
+ {
+  "name": "Scizor",
+  "cost": 11,
+  "types": [
+   "Bug",
+   "Steel"
+  ]
+ },
+ {
+  "name": "Tinkaton",
+  "cost": 11,
+  "types": [
+   "Fairy",
+   "Steel"
+  ]
+ },
+ {
+  "name": "Gardevoir",
+  "cost": 10,
+  "types": [
+   "Psychic",
+   "Fairy"
+  ]
+ },
+ {
+  "name": "Liepard",
+  "cost": 10,
+  "types": [
+   "Dark"
+  ]
+ },
+ {
+  "name": "Mega Camerupt",
+  "cost": 10,
+  "types": [
+   "Fire",
+   "Ground"
+  ]
+ },
+ {
+  "name": "Mega Golurk",
+  "cost": 10,
+  "types": [
+   "Ground",
+   "Ghost"
+  ]
+ },
+ {
+  "name": "Mega Hawlucha",
+  "cost": 10,
+  "types": [
+   "Fighting",
+   "Flying"
+  ]
+ },
+ {
+  "name": "Mega Manectric",
+  "cost": 10,
+  "types": [
+   "Electric"
+  ]
+ },
+ {
+  "name": "Oranguru",
+  "cost": 10,
+  "types": [
+   "Normal",
+   "Psychic"
+  ]
+ },
+ {
+  "name": "Raichu",
+  "cost": 10,
+  "types": [
+   "Electric"
+  ]
+ },
+ {
+  "name": "Salazzle",
+  "cost": 10,
+  "types": [
+   "Poison",
+   "Fire"
+  ]
+ },
+ {
+  "name": "Vivillon",
+  "cost": 10,
+  "types": [
+   "Bug",
+   "Flying"
+  ]
+ },
+ {
+  "name": "Blastoise",
+  "cost": 9,
+  "types": [
+   "Water"
+  ]
+ },
+ {
+  "name": "Hatterene",
+  "cost": 9,
+  "types": [
+   "Psychic",
+   "Fairy"
+  ]
+ },
+ {
+  "name": "Hisuian Zoroark",
+  "cost": 9,
+  "types": [
+   "Normal",
+   "Ghost"
+  ]
+ },
+ {
+  "name": "Krookodile",
+  "cost": 9,
+  "types": [
+   "Ground",
+   "Dark"
+  ]
+ },
+ {
+  "name": "Mega Altaria",
+  "cost": 9,
+  "types": [
+   "Dragon",
+   "Fairy"
+  ]
+ },
+ {
+  "name": "Mega Chandelure",
+  "cost": 9,
+  "types": [
+   "Ghost",
+   "Fire"
+  ]
+ },
+ {
+  "name": "Mega Chimecho",
+  "cost": 9,
+  "types": [
+   "Psychic",
+   "Steel"
+  ]
+ },
+ {
+  "name": "Mega Feraligatr",
+  "cost": 9,
+  "types": [
+   "Water",
+   "Dragon"
+  ]
+ },
+ {
+  "name": "Mega Meowstic",
+  "cost": 9,
+  "types": [
+   "Psychic"
+  ]
+ },
+ {
+  "name": "Mega Sableye",
+  "cost": 9,
+  "types": [
+   "Dark",
+   "Ghost"
+  ]
+ },
+ {
+  "name": "Noivern",
+  "cost": 9,
+  "types": [
+   "Flying",
+   "Dragon"
+  ]
+ },
+ {
+  "name": "Paldean Tauros Blaze",
+  "cost": 9,
+  "types": [
+   "Fighting",
+   "Fire"
+  ]
+ },
+ {
+  "name": "Rhyperior",
+  "cost": 9,
+  "types": [
+   "Ground",
+   "Rock"
+  ]
+ },
+ {
+  "name": "Weavile",
+  "cost": 9,
+  "types": [
+   "Dark",
+   "Ice"
+  ]
+ },
+ {
+  "name": "Armarouge",
+  "cost": 8,
+  "types": [
+   "Fire",
+   "Psychic"
+  ]
+ },
+ {
+  "name": "Ceruledge",
+  "cost": 8,
+  "types": [
+   "Fire",
+   "Ghost"
+  ]
+ },
+ {
+  "name": "Gallade",
+  "cost": 8,
+  "types": [
+   "Psychic",
+   "Fighting"
+  ]
+ },
+ {
+  "name": "Gengar",
+  "cost": 8,
+  "types": [
+   "Ghost",
+   "Poison"
+  ]
+ },
+ {
+  "name": "Hisuian Typhlosion",
+  "cost": 8,
+  "types": [
+   "Fire",
+   "Ghost"
+  ]
+ },
+ {
+  "name": "Mega Aggron",
+  "cost": 8,
+  "types": [
+   "Steel"
+  ]
+ },
+ {
+  "name": "Mega Chesnaught",
+  "cost": 8,
+  "types": [
+   "Grass",
+   "Fighting"
+  ]
+ },
+ {
+  "name": "Mega Crabominable",
+  "cost": 8,
+  "types": [
+   "Fighting",
+   "Ice"
+  ]
+ },
+ {
+  "name": "Mega Drampa",
+  "cost": 8,
+  "types": [
+   "Normal",
+   "Dragon"
+  ]
+ },
+ {
+  "name": "Mega Emboar",
+  "cost": 8,
+  "types": [
+   "Fire",
+   "Fighting"
+  ]
+ },
+ {
+  "name": "Mega Slowbro",
+  "cost": 8,
+  "types": [
+   "Water",
+   "Psychic"
+  ]
+ },
+ {
+  "name": "Reuniclus",
+  "cost": 8,
+  "types": [
+   "Psychic"
+  ]
+ },
+ {
+  "name": "Snorlax",
+  "cost": 8,
+  "types": [
+   "Normal"
+  ]
+ },
+ {
+  "name": "Tsareena",
+  "cost": 8,
+  "types": [
+   "Grass"
+  ]
+ },
+ {
+  "name": "Vanilluxe",
+  "cost": 8,
+  "types": [
+   "Ice"
+  ]
+ },
+ {
+  "name": "Conkeldurr",
+  "cost": 7,
+  "types": [
+   "Fighting"
+  ]
+ },
+ {
+  "name": "Empoleon",
+  "cost": 7,
+  "types": [
+   "Water",
+   "Steel"
+  ]
+ },
+ {
+  "name": "Espeon",
+  "cost": 7,
+  "types": [
+   "Psychic"
+  ]
+ },
+ {
+  "name": "Florges",
+  "cost": 7,
+  "types": [
+   "Fairy"
+  ]
+ },
+ {
+  "name": "Galarian Slowbro",
+  "cost": 7,
+  "types": [
+   "Poison",
+   "Psychic"
+  ]
+ },
+ {
+  "name": "Greninja",
+  "cost": 7,
+  "types": [
+   "Water",
+   "Dark"
+  ]
+ },
+ {
+  "name": "Hawlucha",
+  "cost": 7,
+  "types": [
+   "Fighting",
+   "Flying"
+  ]
+ },
+ {
+  "name": "Infernape",
+  "cost": 7,
+  "types": [
+   "Fire",
+   "Fighting"
+  ]
+ },
+ {
+  "name": "Kangaskhan",
+  "cost": 7,
+  "types": [
+   "Normal"
+  ]
+ },
+ {
+  "name": "Medicham",
+  "cost": 7,
+  "types": [
+   "Fighting",
+   "Psychic"
+  ]
+ },
+ {
+  "name": "Mega Heracross",
+  "cost": 7,
+  "types": [
+   "Bug",
+   "Fighting"
+  ]
+ },
+ {
+  "name": "Mega Pidgeot",
+  "cost": 7,
+  "types": [
+   "Normal",
+   "Flying"
+  ]
+ },
+ {
+  "name": "Mega Pinsir",
+  "cost": 7,
+  "types": [
+   "Bug",
+   "Flying"
+  ]
+ },
+ {
+  "name": "Mega Sharpedo",
+  "cost": 7,
+  "types": [
+   "Water",
+   "Dark"
+  ]
+ },
+ {
+  "name": "Mega Victreebel",
+  "cost": 7,
+  "types": [
+   "Grass",
+   "Poison"
+  ]
+ },
+ {
+  "name": "Orthworm",
+  "cost": 7,
+  "types": [
+   "Steel"
+  ]
+ },
+ {
+  "name": "Slowbro",
+  "cost": 7,
+  "types": [
+   "Water",
+   "Psychic"
+  ]
+ },
+ {
+  "name": "Slowking",
+  "cost": 7,
+  "types": [
+   "Water",
+   "Psychic"
+  ]
+ },
+ {
+  "name": "Wyrdeer",
+  "cost": 7,
+  "types": [
+   "Normal",
+   "Psychic"
+  ]
+ },
+ {
+  "name": "Abomasnow",
+  "cost": 6,
+  "types": [
+   "Grass",
+   "Ice"
+  ]
+ },
+ {
+  "name": "Aromatisse",
+  "cost": 6,
+  "types": [
+   "Fairy"
+  ]
+ },
+ {
+  "name": "Chandelure",
+  "cost": 6,
+  "types": [
+   "Ghost",
+   "Fire"
+  ]
+ },
+ {
+  "name": "Diggersby",
+  "cost": 6,
+  "types": [
+   "Normal",
+   "Ground"
+  ]
+ },
+ {
+  "name": "Galarian Slowking",
+  "cost": 6,
+  "types": [
+   "Poison",
+   "Psychic"
+  ]
+ },
+ {
+  "name": "Hisuian Goodra",
+  "cost": 6,
+  "types": [
+   "Steel",
+   "Dragon"
+  ]
+ },
+ {
+  "name": "Hydrapple",
+  "cost": 6,
+  "types": [
+   "Grass",
+   "Dragon"
+  ]
+ },
+ {
+  "name": "Kleavor",
+  "cost": 6,
+  "types": [
+   "Bug",
+   "Rock"
+  ]
+ },
+ {
+  "name": "Lucario",
+  "cost": 6,
+  "types": [
+   "Fighting",
+   "Steel"
+  ]
+ },
+ {
+  "name": "Mega Abomasnow",
+  "cost": 6,
+  "types": [
+   "Grass",
+   "Ice"
+  ]
+ },
+ {
+  "name": "Mega Houndoom",
+  "cost": 6,
+  "types": [
+   "Dark",
+   "Fire"
+  ]
+ },
+ {
+  "name": "Mega Steelix",
+  "cost": 6,
+  "types": [
+   "Steel",
+   "Ground"
+  ]
+ },
+ {
+  "name": "Pangoro",
+  "cost": 6,
+  "types": [
+   "Fighting",
+   "Dark"
+  ]
+ },
+ {
+  "name": "Spiritomb",
+  "cost": 6,
+  "types": [
+   "Ghost",
+   "Dark"
+  ]
+ },
+ {
+  "name": "Zoroark",
+  "cost": 6,
+  "types": [
+   "Dark"
+  ]
+ },
+ {
+  "name": "Alakazam",
+  "cost": 5,
+  "types": [
+   "Psychic"
+  ]
+ },
+ {
+  "name": "Alolan Raichu",
+  "cost": 5,
+  "types": [
+   "Electric",
+   "Psychic"
+  ]
+ },
+ {
+  "name": "Charizard",
+  "cost": 5,
+  "types": [
+   "Fire",
+   "Flying"
+  ]
+ },
+ {
+  "name": "Cofagrigus",
+  "cost": 5,
+  "types": [
+   "Ghost"
+  ]
+ },
+ {
+  "name": "Delphox",
+  "cost": 5,
+  "types": [
+   "Fire",
+   "Psychic"
+  ]
+ },
+ {
+  "name": "Espathra",
+  "cost": 5,
+  "types": [
+   "Psychic"
+  ]
+ },
+ {
+  "name": "Garganacl",
+  "cost": 5,
+  "types": [
+   "Rock"
+  ]
+ },
+ {
+  "name": "Glaceon",
+  "cost": 5,
+  "types": [
+   "Ice"
+  ]
+ },
+ {
+  "name": "Gourgeist",
+  "cost": 5,
+  "types": [
+   "Ghost",
+   "Grass"
+  ]
+ },
+ {
+  "name": "Hippowdon",
+  "cost": 5,
+  "types": [
+   "Ground"
+  ]
+ },
+ {
+  "name": "Leafeon",
+  "cost": 5,
+  "types": [
+   "Grass"
+  ]
+ },
+ {
+  "name": "Lycanroc-Dusk",
+  "cost": 5,
+  "types": [
+   "Rock"
+  ]
+ },
+ {
+  "name": "Mega Banette",
+  "cost": 5,
+  "types": [
+   "Ghost"
+  ]
+ },
+ {
+  "name": "Mega Beedrill",
+  "cost": 5,
+  "types": [
+   "Bug",
+   "Poison"
+  ]
+ },
+ {
+  "name": "Mudsdale",
+  "cost": 5,
+  "types": [
+   "Ground"
+  ]
+ },
+ {
+  "name": "Polteageist",
+  "cost": 5,
+  "types": [
+   "Ghost"
+  ]
+ },
+ {
+  "name": "Quaquaval",
+  "cost": 5,
+  "types": [
+   "Water",
+   "Fighting"
+  ]
+ },
+ {
+  "name": "Runerigus",
+  "cost": 5,
+  "types": [
+   "Ground",
+   "Ghost"
+  ]
+ },
+ {
+  "name": "Serperior",
+  "cost": 5,
+  "types": [
+   "Grass"
+  ]
+ },
+ {
+  "name": "Skeledirge",
+  "cost": 5,
+  "types": [
+   "Fire",
+   "Ghost"
+  ]
+ },
+ {
+  "name": "Typhlosion",
+  "cost": 5,
+  "types": [
+   "Fire"
+  ]
+ },
+ {
+  "name": "Umbreon",
+  "cost": 5,
+  "types": [
+   "Dark"
+  ]
+ },
+ {
+  "name": "Vaporeon",
+  "cost": 5,
+  "types": [
+   "Water"
+  ]
+ },
+ {
+  "name": "Alcremie",
+  "cost": 4,
+  "types": [
+   "Fairy"
+  ]
+ },
+ {
+  "name": "Bellibolt",
+  "cost": 4,
+  "types": [
+   "Electric"
+  ]
+ },
+ {
+  "name": "Chesnaught",
+  "cost": 4,
+  "types": [
+   "Grass",
+   "Fighting"
+  ]
+ },
+ {
+  "name": "Clawitzer",
+  "cost": 4,
+  "types": [
+   "Water"
+  ]
+ },
+ {
+  "name": "Ditto",
+  "cost": 4,
+  "types": [
+   "Normal"
+  ]
+ },
+ {
+  "name": "Froslass",
+  "cost": 4,
+  "types": [
+   "Ice",
+   "Ghost"
+  ]
+ },
+ {
+  "name": "Golurk",
+  "cost": 4,
+  "types": [
+   "Ground",
+   "Ghost"
+  ]
+ },
+ {
+  "name": "Goodra",
+  "cost": 4,
+  "types": [
+   "Dragon"
+  ]
+ },
+ {
+  "name": "Heliolisk",
+  "cost": 4,
+  "types": [
+   "Electric",
+   "Normal"
+  ]
+ },
+ {
+  "name": "Hisuian Decidueye",
+  "cost": 4,
+  "types": [
+   "Grass",
+   "Fighting"
+  ]
+ },
+ {
+  "name": "Hisuian Samurott",
+  "cost": 4,
+  "types": [
+   "Water",
+   "Dark"
+  ]
+ },
+ {
+  "name": "Jolteon",
+  "cost": 4,
+  "types": [
+   "Electric"
+  ]
+ },
+ {
+  "name": "Luxray",
+  "cost": 4,
+  "types": [
+   "Electric"
+  ]
+ },
+ {
+  "name": "Machamp",
+  "cost": 4,
+  "types": [
+   "Fighting"
+  ]
+ },
+ {
+  "name": "Mega Absol",
+  "cost": 4,
+  "types": [
+   "Dark"
+  ]
+ },
+ {
+  "name": "Mega Ampharos",
+  "cost": 4,
+  "types": [
+   "Electric",
+   "Dragon"
+  ]
+ },
+ {
+  "name": "Mega Glalie",
+  "cost": 4,
+  "types": [
+   "Ice"
+  ]
+ },
+ {
+  "name": "Rampardos",
+  "cost": 4,
+  "types": [
+   "Rock"
+  ]
+ },
+ {
+  "name": "Roserade",
+  "cost": 4,
+  "types": [
+   "Grass",
+   "Poison"
+  ]
+ },
+ {
+  "name": "Rotom-Frost",
+  "cost": 4,
+  "types": [
+   "Electric",
+   "Ice"
+  ]
+ },
+ {
+  "name": "Starmie",
+  "cost": 4,
+  "types": [
+   "Water",
+   "Psychic"
+  ]
+ },
+ {
+  "name": "Torterra",
+  "cost": 4,
+  "types": [
+   "Grass",
+   "Ground"
+  ]
+ },
+ {
+  "name": "Toxicroak",
+  "cost": 4,
+  "types": [
+   "Poison",
+   "Fighting"
+  ]
+ },
+ {
+  "name": "Tyrantrum",
+  "cost": 4,
+  "types": [
+   "Rock",
+   "Dragon"
+  ]
+ },
+ {
+  "name": "Audino",
+  "cost": 3,
+  "types": [
+   "Normal"
+  ]
+ },
+ {
+  "name": "Aurorus",
+  "cost": 3,
+  "types": [
+   "Rock",
+   "Ice"
+  ]
+ },
+ {
+  "name": "Beartic",
+  "cost": 3,
+  "types": [
+   "Ice"
+  ]
+ },
+ {
+  "name": "Crabominable",
+  "cost": 3,
+  "types": [
+   "Fighting",
+   "Ice"
+  ]
+ },
+ {
+  "name": "Decidueye",
+  "cost": 3,
+  "types": [
+   "Grass",
+   "Ghost"
+  ]
+ },
+ {
+  "name": "Drampa",
+  "cost": 3,
+  "types": [
+   "Normal",
+   "Dragon"
+  ]
+ },
+ {
+  "name": "Emboar",
+  "cost": 3,
+  "types": [
+   "Fire",
+   "Fighting"
+  ]
+ },
+ {
+  "name": "Feraligatr",
+  "cost": 3,
+  "types": [
+   "Water"
+  ]
+ },
+ {
+  "name": "Flapple",
+  "cost": 3,
+  "types": [
+   "Grass",
+   "Dragon"
+  ]
+ },
+ {
+  "name": "Flareon",
+  "cost": 3,
+  "types": [
+   "Fire"
+  ]
+ },
+ {
+  "name": "Gliscor",
+  "cost": 3,
+  "types": [
+   "Ground",
+   "Flying"
+  ]
+ },
+ {
+  "name": "Heracross",
+  "cost": 3,
+  "types": [
+   "Bug",
+   "Fighting"
+  ]
+ },
+ {
+  "name": "Lycanroc-Midday",
+  "cost": 3,
+  "types": [
+   "Rock"
+  ]
+ },
+ {
+  "name": "Mega Audino",
+  "cost": 3,
+  "types": [
+   "Normal",
+   "Fairy"
+  ]
+ },
+ {
+  "name": "Mr. Rime",
+  "cost": 3,
+  "types": [
+   "Ice",
+   "Psychic"
+  ]
+ },
+ {
+  "name": "Paldean Tauros",
+  "cost": 3,
+  "types": [
+   "Fighting"
+  ]
+ },
+ {
+  "name": "Passimian",
+  "cost": 3,
+  "types": [
+   "Fighting"
+  ]
+ },
+ {
+  "name": "Scovillain",
+  "cost": 3,
+  "types": [
+   "Grass",
+   "Fire"
+  ]
+ },
+ {
+  "name": "Skarmory",
+  "cost": 3,
+  "types": [
+   "Steel",
+   "Flying"
+  ]
+ },
+ {
+  "name": "Toxapex",
+  "cost": 3,
+  "types": [
+   "Poison",
+   "Water"
+  ]
+ },
+ {
+  "name": "Trevenant",
+  "cost": 3,
+  "types": [
+   "Ghost",
+   "Grass"
+  ]
+ },
+ {
+  "name": "Victreebel",
+  "cost": 3,
+  "types": [
+   "Grass",
+   "Poison"
+  ]
+ },
+ {
+  "name": "Aggron",
+  "cost": 2,
+  "types": [
+   "Steel",
+   "Rock"
+  ]
+ },
+ {
+  "name": "Arbok",
+  "cost": 2,
+  "types": [
+   "Poison"
+  ]
+ },
+ {
+  "name": "Ariados",
+  "cost": 2,
+  "types": [
+   "Bug",
+   "Poison"
+  ]
+ },
+ {
+  "name": "Bastiodon",
+  "cost": 2,
+  "types": [
+   "Rock",
+   "Steel"
+  ]
+ },
+ {
+  "name": "Meowstic-Female",
+  "cost": 2,
+  "types": [
+   "Psychic"
+  ]
+ },
+ {
+  "name": "Morpeko",
+  "cost": 2,
+  "types": [
+   "Electric",
+   "Dark"
+  ]
+ },
+ {
+  "name": "Rotom",
+  "cost": 2,
+  "types": [
+   "Electric",
+   "Ghost"
+  ]
+ },
+ {
+  "name": "Rotom-Fan",
+  "cost": 2,
+  "types": [
+   "Electric",
+   "Flying"
+  ]
+ },
+ {
+  "name": "Sandaconda",
+  "cost": 2,
+  "types": [
+   "Ground"
+  ]
+ },
+ {
+  "name": "Sharpedo",
+  "cost": 2,
+  "types": [
+   "Water",
+   "Dark"
+  ]
+ },
+ {
+  "name": "Slurpuff",
+  "cost": 2,
+  "types": [
+   "Fairy"
+  ]
+ },
+ {
+  "name": "Steelix",
+  "cost": 2,
+  "types": [
+   "Steel",
+   "Ground"
+  ]
+ },
+ {
+  "name": "Tauros",
+  "cost": 2,
+  "types": [
+   "Normal"
+  ]
+ },
+ {
+  "name": "Absol",
+  "cost": 1,
+  "types": [
+   "Dark"
+  ]
+ },
+ {
+  "name": "Altaria",
+  "cost": 1,
+  "types": [
+   "Dragon",
+   "Flying"
+  ]
+ },
+ {
+  "name": "Ampharos",
+  "cost": 1,
+  "types": [
+   "Electric"
+  ]
+ },
+ {
+  "name": "Appletun",
+  "cost": 1,
+  "types": [
+   "Grass",
+   "Dragon"
+  ]
+ },
+ {
+  "name": "Avalugg",
+  "cost": 1,
+  "types": [
+   "Ice"
+  ]
+ },
+ {
+  "name": "Banette",
+  "cost": 1,
+  "types": [
+   "Ghost"
+  ]
+ },
+ {
+  "name": "Beedrill",
+  "cost": 1,
+  "types": [
+   "Bug",
+   "Poison"
+  ]
+ },
+ {
+  "name": "Camerupt",
+  "cost": 1,
+  "types": [
+   "Fire",
+   "Ground"
+  ]
+ },
+ {
+  "name": "Castform",
+  "cost": 1,
+  "types": [
+   "Normal"
+  ]
+ },
+ {
+  "name": "Chimecho",
+  "cost": 1,
+  "types": [
+   "Psychic"
+  ]
+ },
+ {
+  "name": "Dedenne",
+  "cost": 1,
+  "types": [
+   "Electric",
+   "Fairy"
+  ]
+ },
+ {
+  "name": "Emolga",
+  "cost": 1,
+  "types": [
+   "Electric",
+   "Flying"
+  ]
+ },
+ {
+  "name": "Forretress",
+  "cost": 1,
+  "types": [
+   "Bug",
+   "Steel"
+  ]
+ },
+ {
+  "name": "Furfrou",
+  "cost": 1,
+  "types": [
+   "Normal"
+  ]
+ },
+ {
+  "name": "Galarian Stunfisk",
+  "cost": 1,
+  "types": [
+   "Ground",
+   "Steel"
+  ]
+ },
+ {
+  "name": "Garbodor",
+  "cost": 1,
+  "types": [
+   "Poison"
+  ]
+ },
+ {
+  "name": "Glalie",
+  "cost": 1,
+  "types": [
+   "Ice"
+  ]
+ },
+ {
+  "name": "Hisuian Avalugg",
+  "cost": 1,
+  "types": [
+   "Ice",
+   "Rock"
+  ]
+ },
+ {
+  "name": "Houndoom",
+  "cost": 1,
+  "types": [
+   "Dark",
+   "Fire"
+  ]
+ },
+ {
+  "name": "Lopunny",
+  "cost": 1,
+  "types": [
+   "Normal"
+  ]
+ },
+ {
+  "name": "Lycanroc-Midnight",
+  "cost": 1,
+  "types": [
+   "Rock"
+  ]
+ },
+ {
+  "name": "Manectric",
+  "cost": 1,
+  "types": [
+   "Electric"
+  ]
+ },
+ {
+  "name": "Meganium",
+  "cost": 1,
+  "types": [
+   "Grass"
+  ]
+ },
+ {
+  "name": "Pidgeot",
+  "cost": 1,
+  "types": [
+   "Normal",
+   "Flying"
+  ]
+ },
+ {
+  "name": "Pikachu",
+  "cost": 1,
+  "types": [
+   "Electric"
+  ]
+ },
+ {
+  "name": "Pinsir",
+  "cost": 1,
+  "types": [
+   "Bug"
+  ]
+ },
+ {
+  "name": "Samurott",
+  "cost": 1,
+  "types": [
+   "Water"
+  ]
+ },
+ {
+  "name": "Simipour",
+  "cost": 1,
+  "types": [
+   "Water"
+  ]
+ },
+ {
+  "name": "Simisage",
+  "cost": 1,
+  "types": [
+   "Grass"
+  ]
+ },
+ {
+  "name": "Simisear",
+  "cost": 1,
+  "types": [
+   "Fire"
+  ]
+ },
+ {
+  "name": "Stunfisk",
+  "cost": 1,
+  "types": [
+   "Ground",
+   "Electric"
+  ]
+ },
+ {
+  "name": "Toucannon",
+  "cost": 1,
+  "types": [
+   "Normal",
+   "Flying"
+  ]
+ },
+ {
+  "name": "Watchog",
+  "cost": 1,
+  "types": [
+   "Normal"
+  ]
+ }
+]

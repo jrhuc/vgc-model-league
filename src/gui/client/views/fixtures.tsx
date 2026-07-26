@@ -78,7 +78,7 @@ const HEADINGS: Record<RunMode, { eyebrow: string; title: [string, string]; lede
   draft: {
     eyebrow: 'Draft league · protocol v1',
     title: ['Draft rosters.', 'Crown a champion.'],
-    lede: 'Models snake-draft six fixed sets each from a tiered board under a points budget. Rosters then play a round robin, and the top seeds meet in playoffs.',
+    lede: 'A Wolfey Draft League recreation. Coaches snake-draft ten Pokémon each inside a points budget, then before every match pick six and build each set themselves. A weekly round robin, then playoffs.',
   },
   rotation: {
     eyebrow: 'Rotation · protocol v1',
@@ -687,7 +687,7 @@ export function FixturesView({ app, run, onStarted, onPools }: FixturesProps) {
             ? boardOverflow
               ? `Board ${board?.id ?? ''} supports at most ${board?.maxEntrants ?? 0} coaches.`
               : models.length >= 2
-                ? `${models.length * (board?.picks ?? 6)} picks, then ${pairs.length} round-robin and ${models.length >= 4 ? 3 : 1} playoff series.`
+                ? `${models.length * (board?.picks ?? 10)} picks, then ${pairs.length} round-robin and ${models.length >= 4 ? 3 : 1} playoff series, each preceded by two teambuilds.`
                 : 'Add models to shape the draft.'
             : pairs.length
               ? `${total} best-of-three series, mirrored in pairs · up to ${concurrency} in parallel.`
@@ -980,9 +980,10 @@ export function FixturesView({ app, run, onStarted, onPools }: FixturesProps) {
                   <p class="muted">Add at least two models to plan the draft.</p>
                 ) : (
                   <p class="muted">
-                    Snake draft over {board?.monCount ?? '?'} tiered sets with a {board?.budget ?? '?'}-point budget. A
-                    full round robin then seeds the {models.length >= 4 ? 'top-four playoffs' : 'final'}. Pick notes
-                    appear live in the arena.
+                    Snake draft over {board?.monCount ?? '?'} priced species with a {board?.budget ?? '?'}-point budget.
+                    Coaches rebuild their six before every match. A weekly round robin then seeds the{' '}
+                    {models.length >= 4 ? 'top-four playoffs' : 'final'}. Picks, teambuilds and rationale appear live in
+                    the draft league view.
                   </p>
                 )
               ) : mode === 'tournament' ? (
@@ -1090,7 +1091,7 @@ export function FixturesView({ app, run, onStarted, onPools }: FixturesProps) {
                     <b>{board ? board.id : 'No board bundled'}</b>
                     <span>
                       {board
-                        ? `${board.monCount} tiered sets · ${board.budget} points · ${board.picks} picks each`
+                        ? `${board.monCount} priced species · ${board.budget} points · ${board.picks} picks each`
                         : 'Bundle a board file before starting a draft.'}
                     </span>
                   </div>

@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 
 import { BattleLog } from '../src/gui/battlelog.js';
 import { GuiServer } from '../src/gui/server.js';
-import { TEAMS_DIR } from '../src/paths.js';
+import { REPO_ROOT, TEAMS_DIR } from '../src/paths.js';
 import { loadShowdown } from '../src/showdown.js';
 import { loadPool } from '../src/teams.js';
 
@@ -874,9 +874,20 @@ test('gui runs a random-vs-random series and streams live battle state', async (
     const snapshot = battle.data.snapshot as Record<string, unknown>;
     assert.ok(snapshot, 'final battle snapshot should be retained');
     assert.ok(Number(snapshot.turn) >= 1);
-    const sides = snapshot.sides as Record<string, { player: string; mons: unknown[] }>;
+    const sides = snapshot.sides as Record<string, { player: string; mons: Array<Record<string, unknown>> }>;
     assert.equal(sides.p1!.player, 'random');
     assert.ok(sides.p1!.mons.length > 0);
+    for (const mon of sides.p1!.mons) {
+      assert.match(
+        String(mon.spriteId),
+        /^[a-z0-9-]+$/,
+        `the server resolves a sprite id for ${String(mon.species)} so the arena is not text-only`,
+      );
+      assert.ok(
+        fs.existsSync(path.join(REPO_ROOT, 'src', 'gui', 'client', 'public', 'sprites', `${String(mon.spriteId)}.png`)),
+        `sprite for ${String(mon.species)} must be vendored`,
+      );
+    }
     const games = battle.data.games as number[];
     assert.ok(games.length >= 2, 'a finished bo3 should retain each game');
     assert.equal(battle.data.game, games[games.length - 1], 'the default view is the latest game');
@@ -1145,10 +1156,13 @@ test('gui starts draft runs, validates the board, and mirrors draft state', asyn
         type: 'draft',
         draft: {
           boardId: options.board ?? '',
-          budget: 70,
-          picksPerEntrant: 6,
+          budget: 100,
+          picksPerEntrant: 10,
           entrants: ['random', 'random'],
-          board: [],
+          teamNames: ['Test Tauros', 'Rival Rotoms'],
+          teambuilds: [],
+          week: 1,
+          weeks: 1,
           picks: [{ pick: 1, entrant: 0, mon: 'garchomp', rationale: 'strong pick', fallback: false }],
           rosters: [['garchomp'], []],
           budgets: [50, 70],
@@ -1164,7 +1178,7 @@ test('gui starts draft runs, validates the board, and mirrors draft state', asyn
     const state = await apiJson(`${base}api/state`);
     const boards = state.data.boards as Array<Record<string, unknown>>;
     assert.ok(boards.length >= 1, 'the bundled draft board is advertised');
-    assert.equal(boards[0]!.id, 'regmb-202607');
+    assert.equal(boards[0]!.id, 'wdl-regmb-202607');
 
     const unknown = await apiJson(`${base}api/run`, {
       mode: 'draft',
@@ -1174,10 +1188,18 @@ test('gui starts draft runs, validates the board, and mirrors draft state', asyn
     assert.equal(unknown.status, 400);
     assert.match(String(unknown.data.error), /unknown draft board/);
 
+    const unknownBoard = await apiJson(`${base}api/run`, {
+      mode: 'draft',
+      models: ['random', 'random'],
+      board: 'not-a-board',
+    });
+    assert.equal(unknownBoard.status, 400);
+    assert.match(String(unknownBoard.data.error), /unknown draft board/);
+
     const tooMany = await apiJson(`${base}api/run`, {
       mode: 'draft',
-      models: ['random', 'random', 'random', 'random', 'random', 'random'],
-      board: 'regmb-202607',
+      models: Array.from({ length: 9 }, () => 'random'),
+      board: 'wdl-regmb-202607',
     });
     assert.equal(tooMany.status, 400);
     assert.match(String(tooMany.data.error), /supports at most/);
@@ -1185,7 +1207,7 @@ test('gui starts draft runs, validates the board, and mirrors draft state', asyn
     const started = await apiJson(`${base}api/run`, {
       mode: 'draft',
       models: ['random', 'random'],
-      board: 'regmb-202607',
+      board: 'wdl-regmb-202607',
     });
     assert.equal(started.status, 200, JSON.stringify(started.data));
     let run = (await apiJson(`${base}api/state`)).data.run as Record<string, unknown>;
@@ -1195,8 +1217,8 @@ test('gui starts draft runs, validates the board, and mirrors draft state', asyn
     }
     assert.equal(run.state, 'done', String(run.error ?? ''));
     assert.equal(run.mode, 'draft');
-    assert.equal(run.board, 'regmb-202607');
-    assert.equal(received?.board, 'regmb-202607');
+    assert.equal(run.board, 'wdl-regmb-202607');
+    assert.equal(received?.board, 'wdl-regmb-202607');
     const draft = run.draft as Record<string, unknown>;
     assert.equal(draft.phase, 'draft');
     const picks = draft.picks as Array<Record<string, unknown>>;
@@ -1233,7 +1255,7 @@ test('hosted draft runs execute in the worker and stream draft state', async (t)
         origin: 'http://league.example',
         'content-type': 'application/json',
       },
-      body: '{"mode":"draft","models":["random","random"],"board":"regmb-202607","concurrency":1,"seed":5}',
+      body: '{"mode":"draft","models":["random","random"],"board":"wdl-regmb-202607","concurrency":1,"seed":5}',
     });
     assert.equal(started.status, 200, JSON.stringify(started.data));
     const finished = await settled.promise;
@@ -1245,7 +1267,7 @@ test('hosted draft runs execute in the worker and stream draft state', async (t)
     assert.equal((run.rows as unknown[]).length, 2, 'one round-robin series and one playoff final');
     const draft = run.draft as Record<string, unknown>;
     assert.equal(draft.phase, 'done');
-    assert.equal((draft.picks as unknown[]).length, 12);
+    assert.equal((draft.picks as unknown[]).length, 20, 'two coaches draft ten each');
     const bracket = run.bracket as Record<string, unknown> | null;
     assert.ok(bracket && bracket.champion !== null, 'the playoff champion streams back from the worker');
   } finally {

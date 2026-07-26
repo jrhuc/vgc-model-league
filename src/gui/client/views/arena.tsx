@@ -1,11 +1,9 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
-
 import type {
   BattleLogEntryView,
   BattleMessage,
   BracketView,
   DecisionView,
-  DraftView,
   MonView,
   RunSnapshot,
   SeriesRowView,
@@ -13,6 +11,7 @@ import type {
   SideView,
   SpendView,
 } from '../../api';
+import { Sprite } from '../components/sprite';
 import { api } from '../http';
 
 export type StoredBattle = BattleMessage & { receivedAt: number };
@@ -38,108 +37,6 @@ function rowState(row: SeriesRowView): string {
   if (row.status === 'running') return `Game ${Math.max(1, row.game)} · turn ${row.turn || 'preview'}`;
   if (row.status === 'done') return row.winner ? `Winner · ${row.winner}` : 'Series tied';
   return 'Queued';
-}
-
-const PHASE_LABELS: Record<DraftView['phase'], string> = {
-  draft: 'Drafting',
-  roundrobin: 'Round robin',
-  playoffs: 'Playoffs',
-  done: 'Complete',
-};
-
-function DraftPanel({ draft }: { draft: DraftView }) {
-  const owners = new Map(draft.picks.map((pick) => [pick.mon, pick.entrant]));
-  const monName = (id: string) => draft.board.find((mon) => mon.id === id)?.name ?? id;
-  const recent = [...draft.picks].reverse();
-  return (
-    <section class="panel draft-panel">
-      <div class="section-head">
-        <div>
-          <h2>Draft league</h2>
-          <p>
-            Board {draft.boardId} · {draft.budget} points · {draft.picksPerEntrant} picks each
-          </p>
-        </div>
-        <span class="phase-pill">{PHASE_LABELS[draft.phase]}</span>
-      </div>
-      {draft.phase === 'draft' && (
-        <div class="draft-board">
-          {draft.board.map((mon) => {
-            const owner = owners.get(mon.id);
-            return (
-              <div
-                class={`board-chip ${owner !== undefined ? 'taken' : ''}`}
-                key={mon.id}
-                title={`${mon.item ? `@ ${mon.item} · ` : ''}${mon.ability} · ${mon.moves.join(' / ')}${mon.teraType ? ` · Tera ${mon.teraType}` : ''}`}
-              >
-                <b>{mon.name}</b>
-                <span>
-                  {mon.tier} · {mon.cost}
-                </span>
-                {owner !== undefined && <small>{String.fromCharCode(65 + owner)}</small>}
-              </div>
-            );
-          })}
-        </div>
-      )}
-      <div class="draft-rosters">
-        {draft.entrants.map((model, entrant) => (
-          <div class="draft-roster" key={entrant}>
-            <div class="draft-roster-head">
-              <span class="contender-code">{String.fromCharCode(65 + entrant)}</span>
-              <b>{model}</b>
-              <span class="muted">{draft.budgets[entrant]} pts left</span>
-            </div>
-            <ul>
-              {draft.rosters[entrant]?.map((id) => (
-                <li key={id}>{monName(id)}</li>
-              ))}
-            </ul>
-          </div>
-        ))}
-      </div>
-      {draft.table && (
-        <table class="draft-table">
-          <thead>
-            <tr>
-              <th>Seed</th>
-              <th>Coach</th>
-              <th>W-L</th>
-              <th>Games</th>
-            </tr>
-          </thead>
-          <tbody>
-            {draft.table.map((row, rank) => (
-              <tr key={row.entrant}>
-                <td>{rank + 1}</td>
-                <td>{draft.entrants[row.entrant]}</td>
-                <td>
-                  {row.w}-{row.l}
-                </td>
-                <td>
-                  {row.gw}-{row.gl}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
-      {recent.length > 0 && (
-        <div class="draft-feed">
-          <h3>Recent picks</h3>
-          {recent.map((pick) => (
-            <div class="draft-feed-item" key={pick.pick}>
-              <span class="draft-feed-head">
-                #{pick.pick} · {draft.entrants[pick.entrant]} → {monName(pick.mon)}
-                {pick.fallback ? ' · fallback' : ''}
-              </span>
-              <p>{pick.rationale}</p>
-            </div>
-          ))}
-        </div>
-      )}
-    </section>
-  );
 }
 
 function roundName(index: number, count: number): string {
@@ -242,6 +139,7 @@ function Mon({ mon }: { mon: MonView }) {
   return (
     <div class={`mon ${mon.slot ? 'active ' : ''}${mon.fainted ? 'fainted' : ''}`}>
       <div class="mon-top">
+        <Sprite id={mon.spriteId} name={mon.species} size={32} />
         <span class="mon-name">
           {mon.species}
           {mon.status && !mon.fainted && <span class={`status-chip ${mon.status}`}>{mon.status.toUpperCase()}</span>}
@@ -712,7 +610,6 @@ export function ArenaView({ run, battles, selected, onSelect, onLoadGame, onFetc
           {run.error || stopError || resumeError}
         </div>
       )}
-      {run.draft && <DraftPanel draft={run.draft} />}
       {run.bracket && run.bracket.entrants.length > 2 && (
         <Bracket bracket={run.bracket} rows={run.rows} selected={effective} onSelect={onSelect} />
       )}

@@ -29,14 +29,17 @@ src/gui/
   server.ts     node:http server: JSON API, SSE, static assets, security gate
   client/       Preact + TSX app, built by Vite into dist/gui
     app.tsx     state root: /api/state boot, SSE subscription, navigation
-    views/      one file per nav view (fixtures, arena, dataroom, pools)
+    views/      one file per nav view (fixtures, arena, league, dataroom, pools)
     components/ shared widgets (dropdown, chartkit)
 ```
 
-The nav has three views: run setup, the live run, and the data room. Every
-recorded result reads from the data room, which splits into a ladder section
-(Elo, head to head, trajectory), a play section (deliberation, action mix,
-luck), and a brackets section (tournament archives and placements). Sections
+The nav has four views: run setup, the live run, the draft league, and the
+data room. The draft league view owns the board browser, the franchises and
+their rosters, the weekly table, every teambuild with its repairs, and the
+pick feed. Every recorded result reads from the data room, which splits into
+a ladder section (Elo, head to head, trajectory), a play section
+(deliberation, action mix, luck), and a brackets section (tournament archives
+and placements). Sections
 are hash routes (`#results`, `#results/play`, `#results/brackets`), and the
 older `#tournaments` link opens the brackets section.
 
@@ -82,20 +85,63 @@ concurrency. A drawn series advances the higher seed, and its record keeps
 `winner: null`. Rows use `mode: "tournament"` and include the round.
 Inline-team rows have no pool. Tournament rows are not rated.
 
-Draft League mode (`src/draftleague.ts`, with drafting in `src/draft.ts`)
-starts with a snake draft from an immutable `boards/<id>.json` board. The
-board holds fixed sets with tier prices and a points budget. The format
-validator checks each partial roster. It ignores only the incomplete-team-size
-error.
+Draft League mode (`src/draftleague.ts`, drafting in `src/draft.ts`,
+teambuilding in `src/teambuild.ts`) recreates the Wolfey Draft League
+(wolfeydraftleague.com) on the current regulation. Eight coaches snake-draft
+ten Pokémon each from an immutable `boards/<id>.json` board inside a
+hundred-point budget, name a franchise, then keep that roster all season.
 
-Each model gets a maximum of three attempts for each pick, then a uniform
-random legal fallback. Per-model logs contain the prompts and responses.
-`draft/draft.jsonl` contains the shared pick transcript. Draft configurations
-and rows include `draft_scaffold`, a hash of the draft prompt and execution
-policy. Drafted rosters play a round robin, then top-four or top-two playoffs.
-Draft rows use `mode: "draft"` and include the stage and the board id. They
-are not rated. Rotation, tournament, and draft use `src/series.ts`. Exhibition
-uses the lower-level best-of-three loop with the external seat bridge.
+A board entry is a species, not a set: `{id, name, species, forme?, item?,
+base, types, cost}`. Megas are separate, separately priced entries from their
+base forme, following the tournament sheet convention — the entry registers
+the base forme and locks the Mega Stone, while drafting the base forme forbids
+any stone. `base` is the species-clause key, and a roster holds at most one
+entry per base species, so any six of the ten are a legal team. Board costs
+come from the Wolfey season 2 board, extended to the Reg M-B additions and
+re-fitted against Reg M-B ladder usage; `boards/sources/` holds both inputs and
+each adjusted entry keeps its `listed` price and the `usage` that moved it.
+
+Because a pick is a species and not a set, pick legality is only exclusivity,
+one entry per base species, and affordability: a pick is legal when the
+cheapest remaining entry per base species can still fill the rest of the
+roster. That replaces the combinatorial roster search the fixed-set board
+needed.
+
+Before every series each coach picks six of its ten and builds every set —
+item, ability, nature, moves, EVs — knowing the opponent's full roster and its
+own results so far. `src/teambuild.ts` states the league rules that Showdown
+does not know (the Mega lock) itself, and delegates format legality to
+Showdown's `TeamValidator` so the model is corrected with the simulator's own
+messages. Movepools in the prompt come from `getMovePool`, so the prompt can
+never offer a move the validator then rejects. A rejected team is retried;
+after the attempts run out the model's own last team is repaired minimally
+rather than replaced, and each repair is recorded per set.
+
+Drafting and teambuilding run with the same Showdown dex tools the battle
+engine uses (`DEX_TOOLS`, driven by the shared bounded loop in
+`src/dex-lookups.ts`): a coach counter-picking can look up what a Mega becomes,
+read a matchup, or estimate damage, and a coach building spreads can check what
+an item does here and what a spread outruns. Reusing the battle tools keeps one
+source of simulator truth instead of a second, weaker one, which matters most
+for a game that postdates every model's training data. Lookups are bounded per
+round and recorded as `tool_lookups` in the per-model logs. A tool round is not
+an attempt.
+
+Each model gets three attempts per pick and five per teambuild, then a fallback.
+Transient upstream failures never spend one of those attempts: they retry with
+backoff, and pause on the `RecoveryGate` when one is supplied, so a rate limit
+cannot push a coach toward a random pick or a repaired team. Credential and
+request errors still fail fast.
+
+The round robin runs as weeks — a circle-method schedule where every coach
+plays once per week — so standings and each coach's season history are
+well-defined as the league proceeds. The top four then play semifinals and a
+final. Per-model logs hold prompts and responses, `draft/draft.jsonl` the
+shared pick transcript, and `teambuild/teambuild.jsonl` every team brought.
+Configurations and rows carry `draft_scaffold` and `teambuild_scaffold`.
+Draft rows use `mode: "draft"`, include the stage, round and board id, and are
+not rated. Rotation, tournament, and draft use `src/series.ts`. Exhibition uses
+the lower-level best-of-three loop with the external seat bridge.
 
 Reference opponents implement `BattleAgent`
 (`act`/`observe`/`abandonDecision`). They do not use `LLMEngine` notebooks,

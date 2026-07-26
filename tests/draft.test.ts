@@ -4,47 +4,98 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import type { DraftState } from '../src/draft.js';
-import { boardInfo, draftScaffoldRevision, legalPicks, loadBoard, runDraft, snakeOrder } from '../src/draft.js';
+import type { DraftBoardMon, DraftState } from '../src/draft.js';
+import {
+  boardInfo,
+  draftScaffoldRevision,
+  legalPicks,
+  loadBoard,
+  maxAffordable,
+  parsePick,
+  runDraft,
+  snakeOrder,
+} from '../src/draft.js';
 import type { DraftLeagueEvent } from '../src/draftleague.js';
-import { DRAFT_PROTOCOL_VERSION, runDraftLeague } from '../src/draftleague.js';
+import { DRAFT_PROTOCOL_VERSION, roundRobinWeeks, runDraftLeague } from '../src/draftleague.js';
 import { scaffoldRevision } from '../src/llm-engine.js';
 import { ApiError } from '../src/providers.js';
 import { seededRng } from '../src/random.js';
 import { loadRows } from '../src/records.js';
 import { RecoveryGate } from '../src/recovery.js';
 import { loadShowdown } from '../src/showdown.js';
+import { runTeambuild, teambuildScaffoldRevision } from '../src/teambuild.js';
 import type { Completion, Provider, ProviderMessage } from '../src/types.js';
 
-const BOARD = loadBoard('regmb-202607');
+const BOARD = loadBoard('wdl-regmb-202607');
+const mon = (id: string): DraftBoardMon => {
+  const found = BOARD.mons.find((candidate) => candidate.id === id);
+  assert.ok(found, `board is missing ${id}`);
+  return found;
+};
 
-test('draft scaffold identity is distinct and stable', () => {
-  assert.match(draftScaffoldRevision(), /^[0-9a-f]{12}$/);
-  assert.equal(draftScaffoldRevision(), draftScaffoldRevision());
-  assert.notEqual(draftScaffoldRevision(), scaffoldRevision());
-});
-
-function freshState(): DraftState {
+function freshState(overrides: Partial<DraftState> = {}): DraftState {
   return {
     board: BOARD,
     taken: new Map(),
     rosters: [[], []],
     budgets: [BOARD.budget, BOARD.budget],
+    teamNames: ['', ''],
+    ...overrides,
   };
 }
 
-test('the bundled board is coherent and sized for a mini league', () => {
-  assert.equal(BOARD.format, 'gen9championsvgc2026regmbbo3');
-  assert.ok(BOARD.mons.length >= 30);
-  assert.equal(new Set(BOARD.mons.map((mon) => mon.id)).size, BOARD.mons.length);
-  const info = boardInfo(BOARD);
-  assert.ok(info.maxEntrants >= 4, 'the board must support at least a four-coach league');
-  const { Dex, Teams } = loadShowdown();
-  for (const mon of BOARD.mons) {
-    const sets = Teams.unpack(mon.packed) ?? [];
-    assert.equal(sets.length, 1, `${mon.id} packs exactly one set`);
-    assert.equal(Dex.species.get(sets[0]!.species || sets[0]!.name).name, mon.species);
+test('scaffold identities are distinct and stable', () => {
+  for (const revision of [draftScaffoldRevision(), teambuildScaffoldRevision()]) {
+    assert.match(revision, /^[0-9a-f]{12}$/);
   }
+  assert.equal(draftScaffoldRevision(), draftScaffoldRevision());
+  assert.notEqual(draftScaffoldRevision(), scaffoldRevision());
+  assert.notEqual(draftScaffoldRevision(), teambuildScaffoldRevision());
+});
+
+test('the bundled board mirrors the Wolfey league and fits eight coaches', () => {
+  assert.equal(BOARD.format, 'gen9championsvgc2026regmbbo3');
+  assert.equal(BOARD.budget, 100);
+  assert.equal(BOARD.picks, 10);
+  assert.equal(new Set(BOARD.mons.map((entry) => entry.id)).size, BOARD.mons.length);
+  const info = boardInfo(BOARD);
+  assert.ok(info.maxEntrants >= 8, `board must seat eight coaches, seats ${info.maxEntrants}`);
+  assert.ok(
+    new Set(BOARD.mons.map((entry) => entry.base)).size >= 8 * BOARD.picks,
+    'exclusivity needs one distinct species per pick across the field',
+  );
+});
+
+test('mega entries register the base forme and lock their stone', () => {
+  const { Dex } = loadShowdown();
+  const dex = Dex.mod('champions');
+  const megas = BOARD.mons.filter((entry) => entry.item);
+  assert.ok(megas.length > 60, 'the board should carry the Champions mega roster');
+  for (const entry of megas) {
+    const registered = dex.species.get(entry.species);
+    assert.ok(registered.exists && !registered.name.includes('-Mega'), `${entry.id} registers a base forme`);
+    const stone = dex.items.get(entry.item!);
+    assert.ok(stone.exists, `${entry.id} names a real stone`);
+    const target = (stone as unknown as { megaStone?: Record<string, string> }).megaStone?.[registered.name];
+    assert.equal(target, entry.forme, `${entry.id} stone must produce its forme`);
+  }
+  const zard = mon('charizard-mega-y');
+  assert.equal(zard.species, 'Charizard');
+  assert.equal(zard.item, 'Charizardite Y');
+  assert.equal(mon('charizard').item, undefined, 'the base entry may never hold a stone');
+  assert.equal(mon('charizard').base, zard.base, 'base and mega share a species-clause key');
+});
+
+test('re-priced entries keep the Wolfey listing and the usage that moved it', () => {
+  const adjusted = BOARD.mons.filter((entry) => entry.usage);
+  assert.ok(adjusted.length > 40, 'the usage pass should have moved a meaningful share of the board');
+  for (const entry of adjusted) {
+    assert.ok(typeof entry.listed === 'number' && entry.listed !== entry.cost);
+    assert.match(entry.usage!, /^#\d+ at [\d.]+%$/);
+  }
+  assert.equal(mon('farigiraf').cost, 18, 'a Reg M-B staple should not stay at its Reg M-A price');
+  assert.equal(mon('toxapex').listed, 3, 'Toxapex was exploitably cheap on the Wolfey board');
+  assert.ok(mon('toxapex').cost > 3);
 });
 
 test('a board id must match its filename', (t) => {
@@ -54,14 +105,12 @@ test('a board id must match its filename', (t) => {
   assert.throws(() => loadBoard('foo', directory), /id must match its filename/);
 });
 
-test('each board entry must pack exactly one set', (t) => {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-draft-board-packed-'));
+test('a board entry naming an unknown species is rejected', (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-draft-board-species-'));
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
-  const mons = BOARD.mons.map((mon, index) =>
-    index === 0 ? { ...mon, packed: `${mon.packed}]${BOARD.mons[1]!.packed}` } : mon,
-  );
-  fs.writeFileSync(path.join(directory, 'two-sets.json'), JSON.stringify({ ...BOARD, id: 'two-sets', mons }));
-  assert.throws(() => loadBoard('two-sets', directory), /must contain exactly one packed set/);
+  const mons = BOARD.mons.map((entry, index) => (index === 0 ? { ...entry, species: 'Missingno' } : entry));
+  fs.writeFileSync(path.join(directory, 'bad.json'), JSON.stringify({ ...BOARD, id: 'bad', mons }));
+  assert.throws(() => loadBoard('bad', directory), /not a legal species/);
 });
 
 test('snake order reverses on every round', () => {
@@ -69,145 +118,70 @@ test('snake order reverses on every round', () => {
   assert.deepEqual(snakeOrder(2, 2), [0, 1, 1, 0]);
 });
 
-test('legal picks enforce exclusivity, item clause, and budget feasibility', () => {
-  const state = freshState();
-  const whimsicott = BOARD.mons.find((mon) => mon.id === 'whimsicott')!;
-  const sashHolders = ['lycanroc-dusk', 'mamoswine', 'gholdengo'];
-  state.taken.set(whimsicott.id, 0);
-  state.rosters[0] = [whimsicott];
-  state.budgets[0] = BOARD.budget - whimsicott.cost;
-
-  const legal = legalPicks(state, 0);
-  const legalIds = new Set(legal.map((mon) => mon.id));
-  assert.ok(!legalIds.has('whimsicott'), 'a taken mon is gone for everyone');
-  for (const id of sashHolders) {
-    assert.ok(!legalIds.has(id), `${id} shares Focus Sash with the drafted Whimsicott`);
+test('the round robin pairs every coach once and plays one match a week', () => {
+  for (const size of [2, 4, 7, 8]) {
+    const weeks = roundRobinWeeks(size);
+    assert.equal(weeks.length, size % 2 ? size : size - 1, `${size} coaches`);
+    const seen = new Set<string>();
+    for (const week of weeks) {
+      const playing = new Set<number>();
+      for (const [home, away] of week) {
+        assert.ok(!playing.has(home) && !playing.has(away), `${size}: a coach plays twice in one week`);
+        playing.add(home);
+        playing.add(away);
+        const key = [home, away].sort((a, b) => a - b).join('-');
+        assert.ok(!seen.has(key), `${size}: ${key} is scheduled twice`);
+        seen.add(key);
+      }
+    }
+    assert.equal(seen.size, (size * (size - 1)) / 2, `${size}: every pair meets exactly once`);
   }
+});
+
+test('legal picks enforce exclusivity and one entry per base species', () => {
+  const state = freshState();
+  const zardY = mon('charizard-mega-y');
+  state.taken.set(zardY.id, 0);
+  state.rosters[0] = [zardY];
+  state.budgets[0] = BOARD.budget - zardY.cost;
+
+  const legalIds = new Set(legalPicks(state, 0).map((entry) => entry.id));
+  assert.ok(!legalIds.has('charizard-mega-y'), 'a taken entry is gone');
+  assert.ok(!legalIds.has('charizard'), 'the base forme shares a species with the drafted mega');
+  assert.ok(!legalIds.has('charizard-mega-x'), 'the other mega shares that species too');
   assert.ok(legalIds.has('garchomp'));
 
-  const rival = legalPicks(state, 1);
-  assert.ok(!rival.some((mon) => mon.id === 'whimsicott'), 'exclusivity applies across rosters');
-  assert.ok(
-    rival.some((mon) => sashHolders.includes(mon.id)),
-    'the rival may still draft a Focus Sash holder',
-  );
+  const rival = legalPicks(state, 1).map((entry) => entry.id);
+  assert.ok(!rival.includes('charizard-mega-y'), 'exclusivity applies across rosters');
+  assert.ok(rival.includes('charizard'), 'but a rival may still take the base forme');
+});
 
+test('a pick must leave enough budget to finish the roster', () => {
+  const state = freshState();
+  state.budgets[0] = 25;
+  const legal = legalPicks(state, 0);
+  const cheapestNine = [...new Set(BOARD.mons.map((entry) => entry.base))]
+    .map((base) => Math.min(...BOARD.mons.filter((entry) => entry.base === base).map((entry) => entry.cost)))
+    .sort((a, b) => a - b)
+    .slice(0, BOARD.picks - 1)
+    .reduce((sum, cost) => sum + cost, 0);
+  assert.ok(legal.length > 0);
+  for (const entry of legal) assert.ok(entry.cost <= 25 - cheapestNine, `${entry.id} leaves the roster unfinishable`);
+  assert.equal(maxAffordable(legal), Math.max(...legal.map((entry) => entry.cost)));
+});
+
+test('the last pick may spend everything that is left', () => {
+  const state = freshState();
+  const roster = BOARD.mons.filter((entry) => entry.cost === 1).slice(0, BOARD.picks - 1);
+  state.rosters[0] = roster;
+  for (const entry of roster) state.taken.set(entry.id, 0);
   state.budgets[0] = 20;
-  const constrained = legalPicks(state, 0);
-  assert.ok(constrained.every((mon) => mon.cost <= 20 - 3 * 4));
-});
-
-test('budget feasibility follows the remaining board instead of a fixed minimum cost', () => {
-  const available = new Set(BOARD.mons.slice(0, 6).map((mon) => mon.id));
-  const state: DraftState = {
-    board: {
-      ...BOARD,
-      mons: BOARD.mons.map((mon) => (available.has(mon.id) ? { ...mon, cost: 12 } : mon)),
-    },
-    taken: new Map(BOARD.mons.filter((mon) => !available.has(mon.id)).map((mon) => [mon.id, 1])),
-    rosters: [[], []],
-    budgets: [65, BOARD.budget],
-  };
-
-  assert.deepEqual(legalPicks(state, 0), []);
-});
-
-test('legal picks preserve a clause-valid path to a complete roster', () => {
-  const { Teams } = loadShowdown();
-  const garchomp = BOARD.mons.find((mon) => mon.id === 'garchomp')!;
-  const kingambit = BOARD.mons.find((mon) => mon.id === 'kingambit')!;
-  const farigiraf = BOARD.mons.find((mon) => mon.id === 'farigiraf')!;
-  const sinistcha = BOARD.mons.find((mon) => mon.id === 'sinistcha')!;
-  const alternateSet = (Teams.unpack(garchomp.packed) ?? [])[0]!;
-  const alternateGarchomp = {
-    ...garchomp,
-    id: 'garchomp-leftovers',
-    cost: 1,
-    packed: Teams.pack([{ ...alternateSet, item: 'Leftovers' }]),
-  };
-  const state: DraftState = {
-    board: {
-      ...BOARD,
-      picks: 4,
-      mons: [farigiraf, sinistcha, { ...garchomp, cost: 3 }, { ...kingambit, cost: 1 }, alternateGarchomp],
-    },
-    taken: new Map([
-      [farigiraf.id, 0],
-      [sinistcha.id, 0],
-    ]),
-    rosters: [[farigiraf, sinistcha]],
-    budgets: [4],
-  };
-
-  assert.deepEqual(
-    legalPicks(state, 0).map((mon) => mon.id),
-    ['kingambit', 'garchomp-leftovers'],
+  const legal = legalPicks(state, 0);
+  assert.ok(
+    legal.some((entry) => entry.cost === 20),
+    'with one slot left the whole remaining budget is spendable',
   );
-});
-
-test("a pick cannot consume another coach's only legal completion", () => {
-  const mon = (id: string) => BOARD.mons.find((candidate) => candidate.id === id)!;
-  const firstRoster = [mon('garchomp'), mon('pelipper'), mon('grimmsnarl')];
-  const secondRoster = [mon('whimsicott'), mon('farigiraf'), mon('sinistcha')];
-  const sylveon = { ...mon('sylveon'), cost: 1 };
-  const lycanroc = { ...mon('lycanroc-dusk'), cost: 1 };
-  const state: DraftState = {
-    board: {
-      ...BOARD,
-      picks: 4,
-      mons: [...firstRoster, ...secondRoster, sylveon, lycanroc],
-    },
-    taken: new Map([
-      ...firstRoster.map((candidate) => [candidate.id, 0] as const),
-      ...secondRoster.map((candidate) => [candidate.id, 1] as const),
-    ]),
-    rosters: [firstRoster, secondRoster],
-    budgets: [1, 1],
-  };
-
-  assert.deepEqual(
-    legalPicks(state, 0).map((candidate) => candidate.id),
-    ['lycanroc-dusk'],
-  );
-});
-
-test('draft completion assigns remaining sets disjointly across coaches', () => {
-  const costs: Record<string, number> = {
-    garchomp: 19,
-    incineroar: 19,
-    'aerodactyl-mega': 19,
-    kingambit: 20,
-    basculegion: 20,
-    'charizard-mega-y': 20,
-    'floette-mega': 19,
-    sinistcha: 19,
-    whimsicott: 19,
-    'camerupt-mega': 3,
-    'pyroar-mega': 5,
-    'delphox-mega': 20,
-    farigiraf: 20,
-    sneasler: 20,
-    sylveon: 20,
-    'blastoise-mega': 20,
-  };
-  const mons = Object.entries(costs).map(([id, cost]) => ({
-    ...BOARD.mons.find((candidate) => candidate.id === id)!,
-    cost,
-  }));
-  const byId = Object.fromEntries(mons.map((mon) => [mon.id, mon]));
-  const rosters = [
-    [byId.garchomp!, byId.incineroar!, byId['aerodactyl-mega']!],
-    [byId.kingambit!, byId.basculegion!, byId['charizard-mega-y']!],
-    [byId['floette-mega']!, byId.sinistcha!, byId.whimsicott!],
-  ];
-  const state: DraftState = {
-    board: { ...BOARD, budget: 63, picks: 4, mons },
-    taken: new Map(rosters.flatMap((roster, entrant) => roster.map((mon) => [mon.id, entrant] as const))),
-    rosters,
-    budgets: [6, 3, 6],
-  };
-
-  assert.deepEqual(legalPicks(state, 2), []);
+  assert.ok(legal.every((entry) => entry.cost <= 20));
 });
 
 function scriptedProvider(responses: string[], onComplete?: (messages: ProviderMessage[]) => void): Provider {
@@ -222,11 +196,10 @@ function scriptedProvider(responses: string[], onComplete?: (messages: ProviderM
   };
 }
 
-test('llm drafters get retries with feedback and their rationale is logged', async (t) => {
+test('drafters get retries with feedback, and name their franchise on the first pick', async (t) => {
   const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-draft-logs-'));
   t.after(() => fs.rmSync(logDir, { recursive: true, force: true }));
   let receivedReasoning = '';
-  const messageRoles: string[][] = [];
   const outcome = await runDraft(
     ['fake:model', 'random'],
     { ...BOARD, picks: 4 },
@@ -236,48 +209,240 @@ test('llm drafters get retries with feedback and their rationale is logged', asy
       reasoningByModel: { 'fake:model': 'high' },
       makeDraftProvider: (_spec, _apiKey, reasoning) => {
         receivedReasoning = reasoning ?? '';
-        return scriptedProvider(
-          [
-            'I will take {"pick": "not-a-mon", "reasoning": "bad id"}',
-            '{"pick": "garchomp", "reasoning": "Best stats on the board and Life Orb pressure."}',
-            '{"pick": "incineroar", "reasoning": "Fake Out support."}',
-            '{"pick": "sinistcha", "reasoning": "Redirection and Matcha Gotcha."}',
-            '{"pick": "farigiraf", "reasoning": "Trick Room insurance."}',
-          ],
-          (messages) => messageRoles.push(messages.map((message) => message.role)),
-        );
+        return scriptedProvider([
+          'I will take {"pick": "not-a-mon", "team_name": "Nowhere Nidokings", "reasoning": "bad id"}',
+          '{"pick": "garchomp", "team_name": "Route 210 Garchomps", "reasoning": "Best ground type available."}',
+          '{"pick": "incineroar", "reasoning": "Fake Out support."}',
+          '{"pick": "sinistcha", "reasoning": "Redirection."}',
+          '{"pick": "farigiraf", "reasoning": "Trick Room insurance."}',
+        ]);
       },
     },
   );
-  assert.equal(receivedReasoning, 'high');
-  assert.equal(outcome.rosters[0]!.length, 4);
-  assert.equal(outcome.rosters[1]!.length, 4);
-  assert.equal(outcome.rosters[0]![0]!.id, 'garchomp');
-  const firstPick = outcome.picks[0]!;
-  assert.equal(firstPick.fallback, false);
-  assert.match(firstPick.rationale, /Life Orb pressure/);
 
-  const seatLog = fs
+  assert.equal(receivedReasoning, 'high');
+  assert.equal(outcome.teamNames[0], 'Route 210 Garchomps');
+  assert.equal(outcome.rosters[0]![0]!.id, 'garchomp');
+  assert.equal(outcome.picks[0]!.fallback, false);
+  assert.match(outcome.picks[0]!.rationale, /Best ground type/);
+
+  const rows = fs
     .readFileSync(path.join(logDir, 'drafter-0-fake-model.jsonl'), 'utf8')
     .trim()
     .split('\n')
     .map((line) => JSON.parse(line) as Record<string, unknown>);
-  assert.equal(seatLog[0]!.attempt, 1);
-  assert.match(String(seatLog[0]!.error), /not an available board id/);
-  assert.ok(seatLog[0]!.system, 'the first attempt records the system prompt');
-  assert.equal(seatLog[1]!.attempt, 2);
-  assert.match(String(seatLog[1]!.user), /rejected/);
-  assert.deepEqual(messageRoles[0], ['user']);
-  assert.deepEqual(messageRoles[1], ['user', 'assistant', 'user']);
+  assert.match(String(rows[0]!.error), /is not a board id/);
+  assert.ok(String(rows[0]!.system).includes('DRAFT BOARD'), 'the board rides in the cacheable system prompt');
 
   const transcript = fs
     .readFileSync(path.join(logDir, 'draft.jsonl'), 'utf8')
     .trim()
     .split('\n')
     .map((line) => JSON.parse(line) as Record<string, unknown>);
-  assert.equal(transcript.length, 8);
-  assert.equal(transcript[0]!.mon, 'garchomp');
-  assert.match(String(transcript[0]!.rationale), /Life Orb pressure/);
+  assert.equal(transcript[0]!.team_name, 'Route 210 Garchomps');
+  assert.equal(transcript[0]!.rationale, 'Best ground type available.');
+});
+
+test('a rejected pick is told which rule it broke', () => {
+  const state = freshState();
+  const zardY = mon('charizard-mega-y');
+  state.teamNames[1] = 'Rival Rotoms';
+  state.taken.set(zardY.id, 1);
+  state.rosters[1] = [zardY];
+  const garchomp = mon('garchomp');
+  state.taken.set(garchomp.id, 0);
+  state.rosters[0] = [garchomp];
+  state.budgets[0] = BOARD.budget - garchomp.cost;
+
+  const reasons = ['nonsense-id', 'charizard-mega-y', 'garchomp-mega', 'basculegion'].map((id) => {
+    const legal = legalPicks(state, 0);
+    const parsed = parsePick(JSON.stringify({ pick: id, reasoning: 'x' }), legal, state, 0);
+    return typeof parsed === 'string' ? parsed : 'accepted';
+  });
+
+  assert.match(reasons[0]!, /is not a board id/);
+  assert.match(reasons[1]!, /already drafted by Rival Rotoms/);
+  assert.match(reasons[2]!, /shares the species Garchomp with your Garchomp/);
+  assert.equal(reasons[3], 'accepted', 'an affordable, untaken, unclashing pick is fine');
+
+  state.budgets[0] = 12;
+  const tight = legalPicks(state, 0);
+  const denied = parsePick(JSON.stringify({ pick: 'basculegion', reasoning: 'x' }), tight, state, 0);
+  assert.match(String(denied), /costs 19, but you can spend at most \d+ points?/);
+});
+
+test('a pick may be written as the board id or the name shown beside it', () => {
+  const state = freshState();
+  const legal = legalPicks(state, 0);
+  for (const spelling of ['lucario-mega', 'Mega Lucario', 'mega-lucario', 'MEGA LUCARIO']) {
+    const parsed = parsePick(JSON.stringify({ pick: spelling, reasoning: 'x' }), legal, state, 0);
+    assert.notEqual(typeof parsed, 'string', `${spelling} should resolve`);
+    assert.equal(typeof parsed === 'string' ? '' : parsed.mon.id, 'lucario-mega');
+  }
+});
+
+test('drafters can look up the dex before committing a pick', async (t) => {
+  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-draft-tools-'));
+  t.after(() => fs.rmSync(logDir, { recursive: true, force: true }));
+  let offered: string[] = [];
+  let toolResult = '';
+  let call = 0;
+  const outcome = await runDraft(
+    ['fake:model', 'random'],
+    { ...BOARD, picks: 4 },
+    {
+      logDir,
+      rng: seededRng(7),
+      makeDraftProvider: () => ({
+        complete(_system, messages, options): Promise<Completion> {
+          call += 1;
+          offered = (options?.tools ?? []).map((tool) => tool.name);
+          if (call === 1) {
+            return Promise.resolve({
+              text: '',
+              usage: { total_tokens: 5 },
+              toolCalls: [
+                { id: 'c1', name: 'lookup_species', arguments: { name: 'Blastoise', item: 'Blastoisinite' } },
+              ],
+            });
+          }
+          if (call === 2) toolResult = String(messages[messages.length - 1]?.content ?? '');
+          const picks = ['garchomp', 'incineroar', 'sinistcha', 'farigiraf'];
+          return Promise.resolve({
+            text: `{"pick": "${picks[Math.min(call - 2, picks.length - 1)]}", "team_name": "Calc Chompers", "reasoning": "Checked the Mega first."}`,
+            usage: { total_tokens: 9 },
+            toolCalls: [],
+          });
+        },
+      }),
+    },
+  );
+
+  assert.ok(offered.includes('lookup_species'), 'the dex tools are offered while drafting');
+  assert.ok(offered.includes('estimate_damage'), 'including the damage calculator, for counter-picking');
+  assert.match(toolResult, /Blastoise-Mega/, 'the lookup is resolved against the simulator and fed back');
+  assert.equal(outcome.picks[0]!.fallback, false);
+  assert.equal(outcome.rosters[0]![0]!.id, 'garchomp');
+
+  const rows = fs
+    .readFileSync(path.join(logDir, 'drafter-0-fake-model.jsonl'), 'utf8')
+    .trim()
+    .split('\n')
+    .map((line) => JSON.parse(line) as Record<string, unknown>);
+  assert.deepEqual(rows[0]!.tool_lookups, ['lookup_species'], 'lookups are logged for the audit trail');
+});
+
+test('teambuilders can look up the dex while writing sets', async (t) => {
+  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-teambuild-tools-'));
+  t.after(() => fs.rmSync(logDir, { recursive: true, force: true }));
+  let offered: string[] = [];
+  let toolResult = '';
+  let call = 0;
+  const { view } = await runTeambuild(teambuildRequest(), {
+    logDir,
+    rng: seededRng(7),
+    makeTeambuildProvider: () => ({
+      complete(_system, messages, options): Promise<Completion> {
+        call += 1;
+        offered = (options?.tools ?? []).map((tool) => tool.name);
+        if (call === 1) {
+          return Promise.resolve({
+            text: '',
+            usage: { total_tokens: 5 },
+            toolCalls: [
+              {
+                id: 'c1',
+                name: 'estimate_damage',
+                arguments: { attacker: 'Garchomp', defender: 'Incineroar', move: 'Earthquake' },
+              },
+            ],
+          });
+        }
+        toolResult = String(messages[messages.length - 1]?.content ?? '');
+        return Promise.resolve({ text: GOOD_TEAM, usage: { total_tokens: 9 }, toolCalls: [] });
+      },
+    }),
+  });
+
+  assert.ok(offered.includes('estimate_damage'), 'the calculator is offered while building spreads');
+  assert.match(toolResult, /Earthquake/, 'the calc is resolved and fed back');
+  assert.equal(view.attempts, 1, 'a tool round is not a failed attempt');
+});
+
+test('a pick cut off by its token budget is told so, not blamed for formatting', async (t) => {
+  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-draft-truncated-'));
+  t.after(() => fs.rmSync(logDir, { recursive: true, force: true }));
+  const long = 'y'.repeat(4_000);
+  let secondPrompt = '';
+  let call = 0;
+  const outcome = await runDraft(['fake:model', 'random'], { ...BOARD, picks: 4 }, {
+    logDir,
+    rng: seededRng(8),
+    makeDraftProvider: () => ({
+      complete(_system, messages, options): Promise<Completion> {
+        call += 1;
+        if (call === 1) {
+          return Promise.resolve({
+            text: `Weighing the board ${long}`,
+            usage: { output_tokens: options?.maxTokens ?? 0 },
+            toolCalls: [],
+          });
+        }
+        if (call === 2) secondPrompt = messages.map((message) => String(message.content ?? '')).join('\n');
+        const picks = ['garchomp', 'incineroar', 'sinistcha', 'farigiraf'];
+        return Promise.resolve({
+          text: `{"pick": "${picks[Math.min(call - 2, picks.length - 1)]}", "team_name": "Budget Chompers", "reasoning": "Kept it short."}`,
+          usage: { output_tokens: 40 },
+          toolCalls: [],
+        });
+      },
+    }),
+  });
+
+  assert.ok(!secondPrompt.includes(long), 'the overrun reasoning must not be replayed into the retry');
+  assert.match(secondPrompt, /used the whole 32768-token budget before naming a pick/);
+  assert.equal(outcome.picks[0]!.fallback, false, 'the model still gets to make its own pick');
+
+  const rows = fs
+    .readFileSync(path.join(logDir, 'drafter-0-fake-model.jsonl'), 'utf8')
+    .trim()
+    .split('\n')
+    .map((line) => JSON.parse(line) as Record<string, unknown>);
+  assert.match(String(rows[0]!.error), /whole token budget before naming a pick/);
+});
+
+test('a teambuild cut off by its token budget is told so', async (t) => {
+  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-teambuild-truncated-'));
+  t.after(() => fs.rmSync(logDir, { recursive: true, force: true }));
+  const long = 'z'.repeat(4_000);
+  let secondPrompt = '';
+  let call = 0;
+  const { view } = await runTeambuild(teambuildRequest(), {
+    logDir,
+    rng: seededRng(8),
+    makeTeambuildProvider: () => ({
+      complete(_system, messages, options): Promise<Completion> {
+        call += 1;
+        if (call === 1) {
+          return Promise.resolve({
+            text: `Considering the matchup ${long}`,
+            usage: { output_tokens: options?.maxTokens ?? 0 },
+            toolCalls: [],
+          });
+        }
+        secondPrompt = messages.map((message) => String(message.content ?? '')).join('\n');
+        return Promise.resolve({ text: GOOD_TEAM, usage: { output_tokens: 60 }, toolCalls: [] });
+      },
+    }),
+  });
+
+  assert.ok(!secondPrompt.includes(long), 'the overrun reasoning must not be replayed into the retry');
+  assert.match(secondPrompt, /used the whole 65536-token budget before finishing the team/);
+  assert.equal(view.attempts, 2);
+  assert.ok(
+    view.sets.every((set) => !set.repaired),
+    'the model still writes its own team once it fits inside the budget',
+  );
 });
 
 test('a drafter that never answers falls back to a random legal pick', async (t) => {
@@ -288,17 +453,16 @@ test('a drafter that never answers falls back to a random legal pick', async (t)
     { ...BOARD, picks: 4 },
     {
       logDir,
-      rng: seededRng(2),
-      makeDraftProvider: () => scriptedProvider(['no json here at all']),
+      rng: seededRng(3),
+      makeDraftProvider: () => scriptedProvider(['no json here']),
     },
   );
-  const llmPicks = outcome.picks.filter((pick) => pick.entrant === 0);
-  assert.ok(llmPicks.every((pick) => pick.fallback));
-  assert.match(llmPicks[0]!.rationale, /random legal pick after \d+ failed attempts/);
+  assert.equal(outcome.picks[0]!.fallback, true);
+  assert.match(outcome.picks[0]!.rationale, /random legal pick after 3 rejected replies/);
 });
 
-test('a hard quota failure stops the draft instead of making random picks', async (t) => {
-  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-draft-quota-'));
+test('a credential failure stops the draft instead of making random picks', async (t) => {
+  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-draft-terminal-'));
   t.after(() => fs.rmSync(logDir, { recursive: true, force: true }));
   await assert.rejects(
     runDraft(
@@ -306,26 +470,44 @@ test('a hard quota failure stops the draft instead of making random picks', asyn
       { ...BOARD, picks: 4 },
       {
         logDir,
-        rng: seededRng(3),
+        rng: seededRng(2),
         makeDraftProvider: () => ({
-          async complete() {
-            throw new ApiError(429, 'google:gemini-test 429: exceeded your current quota; requests per day');
-          },
+          complete: () => Promise.reject(new ApiError(401, 'invalid api key')),
         }),
       },
     ),
-    /Google API quota is exhausted.*cannot continue/,
+    /credentials/i,
   );
-  const rows = fs
-    .readFileSync(path.join(logDir, 'drafter-0-google-gemini-test.jsonl'), 'utf8')
-    .trim()
-    .split('\n')
-    .map((line) => JSON.parse(line) as Record<string, unknown>);
-  assert.equal(rows.length, 1);
-  assert.equal(rows[0]!.error, 'Google API quota is exhausted (429).');
 });
 
-test('transient draft failures retry on their own while quota failures pause for recovery', async (t) => {
+test('transient upstream failures never spend a compliance attempt', async (t) => {
+  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-draft-transient-'));
+  t.after(() => fs.rmSync(logDir, { recursive: true, force: true }));
+  let calls = 0;
+  const outcome = await runDraft(
+    ['fake:model', 'random'],
+    { ...BOARD, picks: 4 },
+    {
+      logDir,
+      rng: seededRng(5),
+      makeDraftProvider: () => ({
+        complete(): Promise<Completion> {
+          calls += 1;
+          if (calls <= 3) return Promise.reject(new ApiError(503, 'overloaded'));
+          return Promise.resolve({
+            text: '{"pick": "garchomp", "team_name": "Backoff Braviaries", "reasoning": "Survived the outage."}',
+            usage: { total_tokens: 10 },
+            toolCalls: [],
+          });
+        },
+      }),
+    },
+  );
+  assert.equal(outcome.picks[0]!.fallback, false, 'three 503s must not exhaust the model’s three attempts');
+  assert.equal(outcome.rosters[0]![0]!.id, 'garchomp');
+});
+
+test('a quota failure pauses for recovery and resumes where it left off', async (t) => {
   const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-draft-recovery-'));
   t.after(() => fs.rmSync(logDir, { recursive: true, force: true }));
   const recovery = new RecoveryGate();
@@ -334,116 +516,353 @@ test('transient draft failures retry on their own while quota failures pause for
     if (pause) paused.resolve();
   });
   let calls = 0;
-  const provider: Provider = {
-    complete(): Promise<Completion> {
-      calls += 1;
-      if (calls === 1) return Promise.reject(new ApiError(503, 'overloaded'));
-      if (calls === 2) return Promise.reject(new ApiError(429, 'google:gemini-test 429: exceeded your current quota'));
-      return Promise.resolve({
-        text: '{"pick": "garchomp", "reasoning": "Best stats on the board."}',
-        usage: { total_tokens: 10 },
-        toolCalls: [],
-      });
-    },
-  };
   const pending = runDraft(
     ['google:gemini-test', 'random'],
     { ...BOARD, picks: 4 },
-    { logDir, rng: seededRng(4), recovery, makeDraftProvider: () => provider },
+    {
+      logDir,
+      rng: seededRng(4),
+      recovery,
+      makeDraftProvider: () => ({
+        complete(): Promise<Completion> {
+          calls += 1;
+          if (calls === 1) return Promise.reject(new ApiError(429, 'exceeded your current quota'));
+          return Promise.resolve({
+            text: '{"pick": "garchomp", "team_name": "Patient Piplups", "reasoning": "Waited it out."}',
+            usage: { total_tokens: 10 },
+            toolCalls: [],
+          });
+        },
+      }),
+    },
   );
 
   await paused.promise;
   assert.equal(recovery.paused?.kind, 'quota');
-  assert.equal(calls, 2, 'the 503 retried without pausing; only the quota failure paused');
   recovery.resume();
 
   const outcome = await pending;
-  assert.equal(outcome.picks[0]!.fallback, false);
+  assert.equal(outcome.picks[0]!.fallback, false, 'the draft resumes rather than randomising');
   assert.equal(outcome.rosters[0]![0]!.id, 'garchomp');
-  const rows = fs
-    .readFileSync(path.join(logDir, 'drafter-0-google-gemini-test.jsonl'), 'utf8')
-    .trim()
-    .split('\n')
-    .map((line) => JSON.parse(line) as Record<string, unknown>);
-  assert.match(String(rows[0]!.error), /temporarily unavailable/);
-  assert.match(String(rows[1]!.error), /quota is exhausted/);
   removeListener();
 });
 
-test('a full draft league drafts, plays a round robin, and crowns a playoff champion', async (t) => {
+const TEAMBUILD_ROSTER = [
+  'garchomp',
+  'incineroar',
+  'sinistcha',
+  'farigiraf',
+  'whimsicott',
+  'pelipper',
+  'charizard-mega-y',
+  'toxapex',
+  'grimmsnarl',
+  'gholdengo',
+].map(mon);
+
+function teambuildRequest(overrides: Record<string, unknown> = {}) {
+  return {
+    seriesIndex: 0,
+    entrant: 0,
+    opponent: 1,
+    model: 'fake:model',
+    opponentModel: 'fake:rival',
+    teamName: 'Test Tauros',
+    opponentTeamName: 'Rival Rotoms',
+    roster: TEAMBUILD_ROSTER,
+    opponentRoster: TEAMBUILD_ROSTER.slice(0, 10),
+    history: [],
+    format: BOARD.format,
+    ...overrides,
+  };
+}
+
+const GOOD_TEAM = JSON.stringify({
+  team_plan: 'Rain beats their sun core, so Pelipper leads with Charizard held back.',
+  sets: [
+    {
+      id: 'garchomp',
+      item: 'Life Orb',
+      ability: 'Rough Skin',
+      nature: 'Jolly',
+      moves: ['Earthquake', 'Dragon Claw', 'Rock Slide', 'Protect'],
+      evs: { hp: 2, atk: 32, def: 0, spa: 0, spd: 0, spe: 32 },
+    },
+    {
+      id: 'incineroar',
+      item: 'Sitrus Berry',
+      ability: 'Intimidate',
+      nature: 'Impish',
+      moves: ['Fake Out', 'Flare Blitz', 'Parting Shot', 'Darkest Lariat'],
+      evs: { hp: 32, atk: 0, def: 20, spa: 0, spd: 14, spe: 0 },
+    },
+    {
+      id: 'sinistcha',
+      item: 'Leftovers',
+      ability: 'Hospitality',
+      nature: 'Bold',
+      moves: ['Matcha Gotcha', 'Rage Powder', 'Life Dew', 'Protect'],
+      evs: { hp: 32, atk: 0, def: 20, spa: 0, spd: 14, spe: 0 },
+    },
+    {
+      id: 'farigiraf',
+      item: 'Colbur Berry',
+      ability: 'Armor Tail',
+      nature: 'Relaxed',
+      moves: ['Psychic', 'Trick Room', 'Helping Hand', 'Protect'],
+      evs: { hp: 32, atk: 0, def: 20, spa: 14, spd: 0, spe: 0 },
+    },
+    {
+      id: 'whimsicott',
+      item: 'Focus Sash',
+      ability: 'Prankster',
+      nature: 'Timid',
+      moves: ['Tailwind', 'Encore', 'Moonblast', 'Protect'],
+      evs: { hp: 2, atk: 0, def: 0, spa: 32, spd: 0, spe: 32 },
+    },
+    {
+      id: 'charizard-mega-y',
+      item: 'Charizardite Y',
+      ability: 'Blaze',
+      nature: 'Modest',
+      moves: ['Heat Wave', 'Solar Beam', 'Weather Ball', 'Protect'],
+      evs: { hp: 20, atk: 0, def: 0, spa: 32, spd: 0, spe: 14 },
+    },
+  ],
+});
+
+test('a legal teambuild is accepted as written and packs the base forme', async (t) => {
+  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-teambuild-'));
+  t.after(() => fs.rmSync(logDir, { recursive: true, force: true }));
+  const { view, packed } = await runTeambuild(teambuildRequest(), {
+    logDir,
+    rng: seededRng(1),
+    makeTeambuildProvider: () => scriptedProvider([GOOD_TEAM]),
+  });
+
+  assert.equal(view.attempts, 1);
+  assert.equal(view.brought.length, 6);
+  assert.ok(
+    view.sets.every((set) => !set.repaired),
+    `no set should need repair: ${JSON.stringify(view.sets)}`,
+  );
+  assert.match(view.rationale, /Rain beats their sun core/);
+  assert.ok(packed.includes('Charizard|'), 'the mega registers as its base forme');
+  assert.ok(packed.includes('CharizarditeY'), 'holding its stone');
+
+  const { Teams } = loadShowdown();
+  assert.equal((Teams.unpack(packed) ?? []).length, 6);
+});
+
+test('the teambuild prompt carries the roster, the opponent, and only legal moves', async (t) => {
+  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-teambuild-prompt-'));
+  t.after(() => fs.rmSync(logDir, { recursive: true, force: true }));
+  let prompt = '';
+  await runTeambuild(teambuildRequest({ history: ['Week 1: beat Rival Rotoms 2-0'] }), {
+    logDir,
+    rng: seededRng(1),
+    makeTeambuildProvider: () =>
+      scriptedProvider([GOOD_TEAM], (messages) => {
+        prompt = messages[0]!.content ?? '';
+      }),
+  });
+
+  assert.ok(prompt.includes('YOUR ROSTER'), 'the model sees its roster');
+  assert.ok(prompt.includes('Rival Rotoms'), 'and who it is playing');
+  assert.ok(prompt.includes('Week 1: beat Rival Rotoms 2-0'), 'and its own season so far');
+  assert.ok(prompt.includes('MUST hold Charizardite Y'), 'the mega lock is stated');
+  assert.match(
+    prompt,
+    /set "ability" to one of Blaze or Solar Power, NOT its Mega ability/,
+    'a Mega entry registers its pre-Mega ability, which models otherwise get wrong',
+  );
+  assert.ok(prompt.includes('cannot hold a Mega Stone'), 'and so is its inverse');
+  assert.ok(!/moves:.*\bBounce\b/.test(prompt), 'the movepool must not offer moves the validator rejects');
+});
+
+test('the system prompt lists the Champions item list, which Gen 9 knowledge gets wrong', async (t) => {
+  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-teambuild-items-'));
+  t.after(() => fs.rmSync(logDir, { recursive: true, force: true }));
+  let system = '';
+  await runTeambuild(teambuildRequest(), {
+    logDir,
+    rng: seededRng(1),
+    makeTeambuildProvider: () => ({
+      complete(prompt): Promise<Completion> {
+        system = prompt;
+        return Promise.resolve({ text: GOOD_TEAM, usage: { total_tokens: 10 }, toolCalls: [] });
+      },
+    }),
+  });
+
+  for (const item of ['Leftovers', 'Life Orb', 'Focus Sash', 'Light Clay']) {
+    assert.ok(system.includes(item), `${item} is legal here and must be offered`);
+  }
+  for (const absent of ['Assault Vest', 'Rocky Helmet', 'Safety Goggles', 'Booster Energy', 'Eviolite']) {
+    assert.ok(!system.includes(absent), `${absent} does not exist in Champions and must not be offered`);
+  }
+  assert.ok(!system.includes('Charizardite'), 'Mega Stones are locked or banned per entry, never a free choice');
+});
+
+test('an illegal team is rejected with Showdown’s own errors, then repaired', async (t) => {
+  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-teambuild-repair-'));
+  t.after(() => fs.rmSync(logDir, { recursive: true, force: true }));
+  const broken = JSON.parse(GOOD_TEAM) as { sets: Array<Record<string, unknown>> };
+  broken.sets[0]!.moves = ['Earthquake', 'Bounce', 'Rock Slide', 'Protect'];
+  broken.sets[0]!.evs = { hp: 60, atk: 60, def: 60, spa: 60, spd: 60, spe: 60 };
+  broken.sets[5]!.item = 'Leftovers';
+
+  const { view, packed } = await runTeambuild(teambuildRequest(), {
+    logDir,
+    rng: seededRng(9),
+    makeTeambuildProvider: () => scriptedProvider([JSON.stringify(broken)]),
+  });
+
+  assert.equal(view.attempts, 5, 'the model gets its retries before anything is repaired');
+  const zard = view.sets.find((set) => set.species.includes('Charizard'))!;
+  assert.equal(zard.item, 'Charizardite Y', 'the mega lock is restored');
+  assert.ok(zard.repairs.some((repair) => repair.includes('locked to')));
+  const chomp = view.sets.find((set) => set.species === 'Garchomp')!;
+  assert.ok(!chomp.moves.includes('Bounce'), 'the illegal move is dropped');
+  assert.ok(chomp.repairs.some((repair) => repair.includes('Bounce')));
+  assert.ok(
+    Object.values(chomp.evs).reduce((sum, value) => sum + value, 0) <= 66,
+    'EVs are brought inside the Champions budget',
+  );
+
+  const errors = fs
+    .readFileSync(path.join(logDir, 'series-1-fake-model.jsonl'), 'utf8')
+    .trim()
+    .split('\n')
+    .map((line) => JSON.parse(line) as Record<string, unknown>);
+  assert.match(String(errors[0]!.error), /Bounce|Stat Points|Charizardite/);
+
+  const { Teams } = loadShowdown();
+  assert.equal((Teams.unpack(packed) ?? []).length, 6, 'the repaired team still packs');
+});
+
+test('a team that survives repair still illegal is rebuilt rather than aborting the league', async (t) => {
+  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-teambuild-rebuild-'));
+  t.after(() => fs.rmSync(logDir, { recursive: true, force: true }));
+  const broken = JSON.parse(GOOD_TEAM) as { sets: Array<Record<string, unknown>> };
+  for (const set of broken.sets) {
+    set.moves = [];
+    set.evs = { hp: 0, atk: 0, def: 0, spa: 0, spd: 0, spe: 0 };
+    set.nature = 'Serious';
+  }
+
+  const { view, packed } = await runTeambuild(teambuildRequest(), {
+    logDir,
+    rng: seededRng(4),
+    makeTeambuildProvider: () => scriptedProvider([JSON.stringify(broken)]),
+  });
+
+  const { Teams } = loadShowdown();
+  const unpacked = Teams.unpack(packed) ?? [];
+  assert.equal(unpacked.length, 6);
+  for (const set of unpacked) assert.ok((set.moves ?? []).length > 0, `${set.species} must end with moves`);
+  assert.ok(
+    view.sets.every((set) => set.repaired),
+    'every set needed repair here',
+  );
+});
+
+test('a teambuild quota failure pauses instead of shipping a repaired team', async (t) => {
+  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-teambuild-recovery-'));
+  t.after(() => fs.rmSync(logDir, { recursive: true, force: true }));
+  const recovery = new RecoveryGate();
+  const paused = Promise.withResolvers<void>();
+  const removeListener = recovery.onChange((pause) => {
+    if (pause) paused.resolve();
+  });
+  let calls = 0;
+  const pending = runTeambuild(teambuildRequest({ model: 'google:gemini-test' }), {
+    logDir,
+    rng: seededRng(2),
+    recovery,
+    makeTeambuildProvider: () => ({
+      complete(): Promise<Completion> {
+        calls += 1;
+        if (calls === 1) return Promise.reject(new ApiError(429, 'exceeded your current quota'));
+        return Promise.resolve({ text: GOOD_TEAM, usage: { total_tokens: 10 }, toolCalls: [] });
+      },
+    }),
+  });
+
+  await paused.promise;
+  assert.equal(recovery.paused?.kind, 'quota');
+  recovery.resume();
+
+  const { view } = await pending;
+  assert.ok(
+    view.sets.every((set) => !set.repaired),
+    'the model still got to write its own team',
+  );
+  removeListener();
+});
+
+test('a full draft league drafts, plays weekly rounds, and crowns a champion', async (t) => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-draft-league-'));
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
   const recordsPath = path.join(directory, 'results.jsonl');
   const events: DraftLeagueEvent[] = [];
   const rows = await runDraftLeague(['random', 'random', 'random', 'random'], directory, {
-    seed: 21,
-    concurrency: 2,
     recordsPath,
+    seed: 11,
+    concurrency: 2,
     onEvent: (event) => events.push(event),
   });
 
-  assert.equal(rows.length, 9, 'six round-robin series and three playoff series');
-  assert.equal(rows.filter((row) => row.stage === 'roundrobin').length, 6);
-  assert.equal(rows.filter((row) => row.stage === 'playoff').length, 3);
+  assert.equal(rows.length, 6 + 3, 'a four-coach round robin is six series, plus semis and a final');
   for (const row of rows) {
     assert.equal(row.mode, 'draft');
     assert.equal(row.protocol_version, DRAFT_PROTOCOL_VERSION);
-    assert.equal(row.board, 'regmb-202607');
-    assert.equal(row.pool, undefined);
-    assert.equal(row.scaffold, scaffoldRevision());
+    assert.equal(row.board, 'wdl-regmb-202607');
     assert.equal(row.draft_scaffold, draftScaffoldRevision());
-  }
-  for (const row of rows.filter((record) => record.stage === 'playoff')) {
-    assert.equal(typeof row.winner, 'string');
-    assert.equal(row.advanced, row.winner);
+    assert.equal(row.teambuild_scaffold, teambuildScaffoldRevision());
   }
 
   const config = JSON.parse(fs.readFileSync(path.join(directory, 'config.json'), 'utf8')) as Record<string, unknown>;
   assert.equal(config.mode, 'draft');
-  assert.equal(config.scaffold, scaffoldRevision());
-  assert.equal(config.draft_scaffold, draftScaffoldRevision());
+  assert.equal(config.weeks, 3);
   const rosters = config.rosters as string[][];
   assert.equal(rosters.length, 4);
-  const drafted = rosters.flat();
-  assert.equal(drafted.length, 24);
-  assert.equal(new Set(drafted).size, 24, 'no mon is drafted twice');
+  for (const roster of rosters) assert.equal(roster.length, 10);
+  assert.equal(new Set(rosters.flat()).size, 40, 'no entry is drafted twice');
 
-  assert.ok(fs.existsSync(path.join(directory, 'draft', 'draft.jsonl')));
-  assert.ok(fs.existsSync(path.join(directory, 'teams.json')));
+  const stored = JSON.parse(fs.readFileSync(path.join(directory, 'rosters.json'), 'utf8')) as Array<
+    Record<string, unknown>
+  >;
+  for (const entry of stored) assert.ok((entry.spent as number) <= 100, 'no coach overspends');
+
+  const teambuilds = fs
+    .readFileSync(path.join(directory, 'teambuild', 'teambuild.jsonl'), 'utf8')
+    .trim()
+    .split('\n')
+    .map((line) => JSON.parse(line) as Record<string, unknown>);
+  assert.equal(teambuilds.length, rows.length * 2, 'both coaches build before every series');
+  for (const build of teambuilds) assert.equal((build.brought as string[]).length, 6);
 
   const draftEvents = events.filter(
     (event): event is Extract<DraftLeagueEvent, { type: 'draft' }> => event.type === 'draft',
   );
-  assert.equal(
-    draftEvents.filter((event) => event.draft.phase === 'draft').length,
-    25,
-    'one initial view plus one per pick',
-  );
   const finalDraft = draftEvents[draftEvents.length - 1]!.draft;
   assert.equal(finalDraft.phase, 'done');
-  assert.ok(finalDraft.table);
-  const brackets = events.filter(
-    (event): event is Extract<DraftLeagueEvent, { type: 'bracket' }> => event.type === 'bracket',
-  );
-  const champion = brackets[brackets.length - 1]!.bracket.champion;
-  assert.notEqual(champion, null);
-
-  assert.equal(loadRows(recordsPath).length, 9);
+  assert.equal(finalDraft.weeks, 3);
+  assert.ok(finalDraft.teambuilds.length > 0);
+  assert.equal(loadRows(recordsPath).length, rows.length);
 });
 
-test('a two-coach league skips semifinals and plays a single playoff final', async (t) => {
+test('a two-coach league plays one week and a single final', async (t) => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-draft-league-two-'));
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
   const rows = await runDraftLeague(['random', 'random'], directory, {
-    seed: 4,
-    concurrency: 1,
     recordsPath: path.join(directory, 'results.jsonl'),
+    seed: 5,
+    concurrency: 1,
   });
   assert.equal(rows.length, 2);
-  assert.deepEqual(
-    rows.map((row) => row.stage),
-    ['roundrobin', 'playoff'],
-  );
-  assert.equal(rows[1]!.round, 1);
-  assert.equal(typeof rows[1]!.advanced, 'string');
+  assert.equal(rows[0]!.stage, 'roundrobin');
+  assert.equal(rows[1]!.stage, 'playoff');
+  assert.ok(rows[1]!.winner, 'a playoff series must produce a winner');
 });

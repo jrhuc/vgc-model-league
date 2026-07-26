@@ -2,8 +2,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import type { DraftBoardMon } from './draft.js';
-import { describeBoardMon, draftScaffoldRevision, loadBoard, runDraft } from './draft.js';
-import type { BracketView, DraftTableRow, DraftView } from './gui/api.js';
+import { draftScaffoldRevision, loadBoard, runDraft } from './draft.js';
+import type { BracketView, DraftTableRow, DraftView, TeambuildView } from './gui/api.js';
 import { scaffoldRevision } from './llm-engine.js';
 import { BOARDS_DIR, defaultPsDir, RESULTS_PATH } from './paths.js';
 import { validateModelExecution } from './providers.js';
@@ -13,13 +13,13 @@ import { appendRow } from './records.js';
 import type { ExperimentOptions } from './series.js';
 import { mapLimit, playRecordedSeries } from './series.js';
 import { showdownCommit } from './showdown.js';
-import type { Team } from './teams.js';
-import { normalizePackedTeam, validateTeam } from './teams.js';
+import { runTeambuild, teambuildScaffoldRevision } from './teambuild.js';
+import { validateTeam } from './teams.js';
 import { DEFAULT_TIMER_SCALE } from './timer.js';
 import type { TournamentEvent } from './tournament.js';
 import type { Pid } from './types.js';
 
-export const DRAFT_PROTOCOL_VERSION = 1;
+export const DRAFT_PROTOCOL_VERSION = 2;
 
 export type DraftLeagueEvent = TournamentEvent | { type: 'draft'; draft: DraftView };
 
@@ -32,10 +32,33 @@ export interface DraftLeagueOptions extends ExperimentOptions {
 interface SeriesPlanned {
   index: number;
   stage: 'roundrobin' | 'playoff';
+  /** Round-robin week, 1-based; playoff round for playoff series. */
   round: number;
   entrants: [number, number] | null;
   gameSeeds: Array<[number, number, number, number]>;
   engineSeeds: Record<Pid, number>;
+}
+
+/**
+ * Circle-method round robin: every coach plays every other exactly once, and
+ * each week is a set of simultaneous matches, as the Wolfey league schedules it.
+ * An odd field gives one coach a bye each week.
+ */
+export function roundRobinWeeks(entrants: number): Array<Array<[number, number]>> {
+  const seats = [...Array(entrants).keys()];
+  if (seats.length % 2) seats.push(-1);
+  const weeks: Array<Array<[number, number]>> = [];
+  for (let week = 0; week < seats.length - 1; week += 1) {
+    const pairs: Array<[number, number]> = [];
+    for (let match = 0; match < seats.length / 2; match += 1) {
+      const home = seats[match]!;
+      const away = seats[seats.length - 1 - match]!;
+      if (home >= 0 && away >= 0) pairs.push(week % 2 ? [away, home] : [home, away]);
+    }
+    weeks.push(pairs);
+    seats.splice(1, 0, seats.pop()!);
+  }
+  return weeks;
 }
 
 export async function runDraftLeague(
@@ -49,10 +72,11 @@ export async function runDraftLeague(
   fs.mkdirSync(runDir, { recursive: true });
   const recordsPath = options.recordsPath ?? RESULTS_PATH;
   const psDir = options.psDir ?? defaultPsDir();
-  const board = loadBoard(options.board ?? 'regmb-202607', options.boardsDir ?? BOARDS_DIR, psDir);
-  if (models.length * board.picks + board.picks > board.mons.length) {
+  const board = loadBoard(options.board ?? 'wdl-regmb-202607', options.boardsDir ?? BOARDS_DIR, psDir);
+  const distinctBases = new Set(board.mons.map((mon) => mon.base)).size;
+  if (models.length * board.picks > distinctBases) {
     throw new Error(
-      `board ${JSON.stringify(board.id)} has ${board.mons.length} sets, too few for ${models.length} rosters of ${board.picks} with slack`,
+      `board ${JSON.stringify(board.id)} holds ${distinctBases} distinct species, too few for ${models.length} rosters of ${board.picks}`,
     );
   }
   const seed = resolveSeed(options.seed);
@@ -60,19 +84,23 @@ export async function runDraftLeague(
   const random = seededRng(seed);
   const scaffold = scaffoldRevision();
   const draftScaffold = draftScaffoldRevision();
+  const teambuildScaffold = teambuildScaffoldRevision();
 
   const entrants = shuffle(models, random);
-  const pairs: Array<[number, number]> = [];
-  for (let first = 0; first < entrants.length; first += 1) {
-    for (let second = first + 1; second < entrants.length; second += 1) {
-      pairs.push(random() < 0.5 ? [first, second] : [second, first]);
-    }
-  }
+  const weeks = roundRobinWeeks(entrants.length);
   const playoffRounds = entrants.length >= 4 ? 2 : 1;
   const playoffSeriesCount = playoffRounds === 2 ? 3 : 1;
   const plans: SeriesPlanned[] = [];
-  for (const pair of pairs) {
-    plans.push({ index: plans.length, stage: 'roundrobin', round: 0, entrants: pair, ...seriesEntropy(random) });
+  for (const [week, pairs] of weeks.entries()) {
+    for (const pair of pairs) {
+      plans.push({
+        index: plans.length,
+        stage: 'roundrobin',
+        round: week + 1,
+        entrants: pair,
+        ...seriesEntropy(random),
+      });
+    }
   }
   for (let series = 0; series < playoffSeriesCount; series += 1) {
     plans.push({
@@ -84,22 +112,28 @@ export async function runDraftLeague(
     });
   }
 
-  const boardViews = board.mons.map((mon) => describeBoardMon(mon, psDir));
   const table: DraftTableRow[] = entrants.map((_, entrant) => ({ entrant, w: 0, l: 0, gw: 0, gl: 0 }));
+  const teambuilds: TeambuildView[] = [];
+  const history: string[][] = entrants.map(() => []);
   let phase: DraftView['phase'] = 'draft';
+  let week = 0;
   let rosters: DraftBoardMon[][] = entrants.map(() => []);
   let budgets: number[] = entrants.map(() => board.budget);
+  let teamNames: string[] = entrants.map(() => '');
   let picks: DraftView['picks'] = [];
   const draftView = (withTable: boolean): DraftView => ({
     boardId: board.id,
     budget: board.budget,
     picksPerEntrant: board.picks,
     entrants: [...entrants],
-    board: boardViews,
+    teamNames: [...teamNames],
     picks: [...picks],
     rosters: rosters.map((roster) => roster.map((mon) => mon.id)),
     budgets: [...budgets],
     table: withTable ? rankedTable(table) : null,
+    teambuilds: [...teambuilds],
+    week,
+    weeks: weeks.length,
     phase,
   });
 
@@ -131,27 +165,23 @@ export async function runDraftLeague(
       picks = [...picks, view];
       rosters = state.rosters;
       budgets = state.budgets;
+      teamNames = state.teamNames;
       options.onEvent?.({ type: 'draft', draft: draftView(false) });
     },
   });
   rosters = outcome.rosters;
   budgets = outcome.budgets;
+  teamNames = outcome.teamNames;
 
-  const teams: Team[] = rosters.map((roster, index) => {
-    const packed = normalizePackedTeam(roster.map((mon) => mon.packed).join(']'), psDir);
-    const problems = validateTeamProblems(packed, board.format, psDir);
-    if (problems) throw new Error(`drafted roster for ${entrants[index]} is not legal: ${problems}`);
-    return { id: `roster-${index + 1}`, packed };
-  });
   fs.writeFileSync(
-    path.join(runDir, 'teams.json'),
+    path.join(runDir, 'rosters.json'),
     `${JSON.stringify(
       entrants.map((model, index) => ({
         model,
-        team: teams[index]!.id,
-        mons: rosters[index]!.map((mon) => mon.id),
+        team_name: teamNames[index],
         budget_left: budgets[index],
-        packed: teams[index]!.packed,
+        spent: board.budget - budgets[index]!,
+        roster: rosters[index]!.map((mon) => ({ id: mon.id, name: mon.name, cost: mon.cost })),
       })),
       null,
       2,
@@ -166,6 +196,7 @@ export async function runDraftLeague(
         protocol_version: DRAFT_PROTOCOL_VERSION,
         scaffold,
         draft_scaffold: draftScaffold,
+        teambuild_scaffold: teambuildScaffold,
         models,
         seed,
         concurrency: options.concurrency ?? 2,
@@ -175,6 +206,8 @@ export async function runDraftLeague(
         board: board.id,
         format: board.format,
         entrants,
+        team_names: teamNames,
+        weeks: weeks.length,
         rosters: rosters.map((roster) => roster.map((mon) => mon.id)),
         contributor: options.contributor ?? null,
       },
@@ -187,16 +220,52 @@ export async function runDraftLeague(
   phase = 'roundrobin';
   options.onEvent?.({ type: 'draft', draft: draftView(true) });
 
+  const teambuildFor = async (plan: SeriesPlanned, entrant: number, opponent: number, signal: AbortSignal) => {
+    const result = await runTeambuild(
+      {
+        seriesIndex: plan.index,
+        entrant,
+        opponent,
+        model: entrants[entrant]!,
+        opponentModel: entrants[opponent]!,
+        teamName: teamNames[entrant]!,
+        opponentTeamName: teamNames[opponent]!,
+        roster: rosters[entrant]!,
+        opponentRoster: rosters[opponent]!,
+        history: history[entrant]!,
+        format: board.format,
+      },
+      {
+        psDir,
+        logDir: path.join(runDir, 'teambuild'),
+        rng: random,
+        signal,
+        ...(options.reasoning === undefined ? {} : { reasoning: options.reasoning }),
+        ...(options.reasoningByModel === undefined ? {} : { reasoningByModel: options.reasoningByModel }),
+        ...(options.apiKeys === undefined ? {} : { apiKeys: options.apiKeys }),
+        ...(options.recovery === undefined ? {} : { recovery: options.recovery }),
+      },
+    );
+    validateTeam(result.packed, board.format, psDir);
+    teambuilds.push(result.view);
+    options.onEvent?.({ type: 'draft', draft: draftView(true) });
+    return result;
+  };
+
   const results: SeriesRecord[] = [];
   let seeding: number[] = [];
   const playSeries = async (plan: SeriesPlanned, signal: AbortSignal): Promise<SeriesRecord> => {
     const [a, b] = plan.entrants!;
     const players: Record<Pid, string> = { p1: entrants[a]!, p2: entrants[b]! };
     options.onEvent?.({ type: 'series-players', index: plan.index, players });
+    const [home, away] = await Promise.all([teambuildFor(plan, a, b, signal), teambuildFor(plan, b, a, signal)]);
     options.onEvent?.({ type: 'series-start', index: plan.index });
     const { winnerSide, fields } = await playRecordedSeries({
       players,
-      teams: { p1: teams[a]!, p2: teams[b]! },
+      teams: {
+        p1: { id: `${teamNames[a] || entrants[a]} wk${plan.round}`, packed: home.packed },
+        p2: { id: `${teamNames[b] || entrants[b]} wk${plan.round}`, packed: away.packed },
+      },
       gameSeeds: plan.gameSeeds,
       engineSeeds: plan.engineSeeds,
       format: board.format,
@@ -224,14 +293,11 @@ export async function runDraftLeague(
       protocol_version: DRAFT_PROTOCOL_VERSION,
       scaffold,
       draft_scaffold: draftScaffold,
+      teambuild_scaffold: teambuildScaffold,
       series_index: plan.index,
       stage: plan.stage,
-      ...(plan.stage === 'playoff'
-        ? {
-            round: plan.round,
-            advanced: entrants[winnerSide === 'p1' ? a : b]!,
-          }
-        : {}),
+      round: plan.round,
+      ...(plan.stage === 'playoff' ? { advanced: entrants[winnerSide === 'p1' ? a : b]! } : {}),
       board: board.id,
       ...(options.contributor === undefined ? {} : { contributor: options.contributor }),
       run_seed: seed,
@@ -239,8 +305,19 @@ export async function runDraftLeague(
       ...fields,
     } as SeriesRecord;
     appendRow(recordsPath, row);
+    const score = fields.score as Record<Pid, number>;
+    for (const [entrant, opponent, side] of [
+      [a, b, 'p1'],
+      [b, a, 'p2'],
+    ] as const) {
+      const won = winnerSide === side;
+      const result = winnerSide ? (won ? 'beat' : 'lost to') : 'drew with';
+      history[entrant]!.push(
+        `${plan.stage === 'playoff' ? 'Playoffs' : `Week ${plan.round}`}: ${result} ` +
+          `${teamNames[opponent] || entrants[opponent]} ${score[side]}-${score[side === 'p1' ? 'p2' : 'p1']}`,
+      );
+    }
     if (plan.stage === 'roundrobin') {
-      const score = fields.score as Record<Pid, number>;
       table[a]!.gw += score.p1;
       table[a]!.gl += score.p2;
       table[b]!.gw += score.p2;
@@ -255,12 +332,17 @@ export async function runDraftLeague(
     return row;
   };
 
-  const roundRobin = plans.filter((plan) => plan.stage === 'roundrobin');
-  results.push(
-    ...(await mapLimit(roundRobin, options.concurrency ?? 2, options.signal, (plan, signal) =>
-      playSeries(plan, signal),
-    )),
-  );
+  for (const index of weeks.keys()) {
+    if (options.signal?.aborted) return results;
+    week = index + 1;
+    options.onEvent?.({ type: 'draft', draft: draftView(true) });
+    const scheduled = plans.filter((plan) => plan.stage === 'roundrobin' && plan.round === week);
+    results.push(
+      ...(await mapLimit(scheduled, options.concurrency ?? 2, options.signal, (plan, signal) =>
+        playSeries(plan, signal),
+      )),
+    );
+  }
   if (options.signal?.aborted) return results;
 
   seeding = rankedTable(table).map((row) => row.entrant);
@@ -271,7 +353,7 @@ export async function runDraftLeague(
   const bracket: BracketView = {
     entrants: entrants.map((model, index) => ({
       model,
-      team: `seed ${seeding.indexOf(index) + 1}`,
+      team: teamNames[index] || `seed ${seeding.indexOf(index) + 1}`,
     })),
     rounds:
       playoffRounds === 2
@@ -330,13 +412,4 @@ export async function runDraftLeague(
 
 function rankedTable(table: DraftTableRow[]): DraftTableRow[] {
   return [...table].sort((a, b) => b.w - a.w || b.gw - b.gl - (a.gw - a.gl) || b.gw - a.gw || a.entrant - b.entrant);
-}
-
-function validateTeamProblems(packed: string, format: string, psDir: string): string | null {
-  try {
-    validateTeam(packed, format, psDir);
-    return null;
-  } catch (error) {
-    return error instanceof Error ? error.message : String(error);
-  }
 }

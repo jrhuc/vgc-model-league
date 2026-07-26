@@ -70,10 +70,14 @@ test('built client bundle boots and renders the app against the live server', as
     assert.match(text, /Control sheet/);
     assert.match(text, /No models selected/);
     const navButtons = window.document.querySelectorAll('.nav-button');
-    assert.equal(navButtons.length, 3, 'setup, the live run, and one data room; pools live inside run setup');
+    assert.equal(
+      navButtons.length,
+      4,
+      'setup, the live run, the draft league, and one data room; pools live inside run setup',
+    );
     assert.deepEqual(
       [...navButtons].map((button) => button.textContent),
-      ['New run', 'Live run', 'Data room'],
+      ['New run', 'Live run', 'Draft league', 'Data room'],
       'every recorded result reads from one data room',
     );
 
@@ -151,7 +155,8 @@ test('built client bundle boots and renders the app against the live server', as
     asButton(modeTabs[2]).click();
     await waitFor(() => rendered().includes('Draft board'));
     assert.match(rendered(), /Snake draft/);
-    assert.match(rendered(), /top seeds meet in playoffs/);
+    assert.match(rendered(), /weekly round robin, then playoffs/);
+    assert.match(rendered(), /pick six and build each set themselves/);
     assert.match(
       window.document.querySelector('.schedule')?.textContent ?? '',
       /Add at least two models to plan the draft/,

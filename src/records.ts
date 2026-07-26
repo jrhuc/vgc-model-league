@@ -8,6 +8,7 @@ export interface SeriesRecord extends JsonObject {
   protocol_version?: number;
   scaffold?: string;
   draft_scaffold?: string;
+  teambuild_scaffold?: string;
   run_id?: string;
   series_index?: number;
   pool?: string;
