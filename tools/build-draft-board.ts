@@ -6,12 +6,8 @@ import { fileURLToPath } from 'node:url';
 import { BOARDS_DIR, defaultPsDir } from '../src/paths.js';
 import { loadShowdown } from '../src/showdown.js';
 
-const SOURCE_COSTS = path.join(BOARDS_DIR, 'sources', 'wdl-season2-costs.json');
+const SOURCE_COSTS = path.join(BOARDS_DIR, 'sources', 'draft-costs.json');
 
-// Costs for the Reg M-B additions, which postdate the Wolfey board's Reg M-A
-// pool. Each carries the WDL-priced entry it was anchored against, so the
-// judgement stays auditable. Smogon tiers are the Reg M-B viability rankings
-// (smogon.com/forums/threads/3785289); "unranked" means below C-.
 const REGMB_ADDITIONS: Array<{ name: string; cost: number; anchor: string }> = [
   { name: 'Metagross-Mega', cost: 17, anchor: 'Smogon B; BST 700 matches Mega Tyranitar (17)' },
   { name: 'Swampert-Mega', cost: 15, anchor: 'Smogon B; rain sweeper above Mega Gyarados (14)' },
@@ -58,13 +54,8 @@ const REGMB_ADDITIONS: Array<{ name: string; cost: number; anchor: string }> = [
   { name: 'Qwilfish', cost: 2, anchor: 'unranked; cf. Sandaconda (2)' },
 ];
 
-// The Wolfey board was priced early in Reg M-A. These costs are re-fitted
-// against Reg M-B ladder usage (boards/sources/regmb-usage-2026-06-1760.txt,
-// Smogon's 1760+ weighted cut, 1.16M battles) by quantile-matching usage rank
-// onto the board's own cost distribution, then moving each entry halfway from
-// its old price to that target. Only entries that are genuinely played
-// (>=1% usage) or expensive enough for a stale price to matter (cost >=10)
-// move at all, and only when the gap is >=3 points.
+// Reprice prior Reg M-A entries against Reg M-B ladder usage by quantile-matching
+// usage rank to the board's cost distribution and moving halfway to the target.
 const USAGE_ADJUSTMENTS: Array<{ name: string; cost: number; usage: string }> = [
   { name: 'Farigiraf', cost: 18, usage: '#7 at 20.72%' },
   { name: 'Pelipper', cost: 18, usage: '#8 at 18.58%' },
@@ -130,7 +121,7 @@ const USAGE_ADJUSTMENTS: Array<{ name: string; cost: number; usage: string }> = 
   { name: 'Medicham-Mega', cost: 8, usage: '#209 at 0.06%' },
 ];
 
-const WDL_ALIASES: Record<string, string> = {
+const BOARD_ALIASES: Record<string, string> = {
   'Mega Charizard X': 'Charizard-Mega-X',
   'Mega Charizard Y': 'Charizard-Mega-Y',
   'Basculegion-Male': 'Basculegion',
@@ -142,8 +133,8 @@ const WDL_ALIASES: Record<string, string> = {
   'Paldean Tauros Blaze': 'Tauros-Paldea-Blaze',
 };
 
-export function dexNameFor(boardName: string): string {
-  const alias = WDL_ALIASES[boardName];
+function dexNameFor(boardName: string): string {
+  const alias = BOARD_ALIASES[boardName];
   if (alias) return alias;
   const name = boardName.startsWith('Mega ') ? `${boardName.slice(5)}-Mega` : boardName;
   return name
@@ -152,12 +143,11 @@ export function dexNameFor(boardName: string): string {
     .replace(/^Galarian (.+)$/, '$1-Galar');
 }
 
-export interface BoardEntrySource {
+interface BoardEntrySource {
   name: string;
   cost: number;
-  origin: 'wdl' | 'regmb';
+  origin: 'base' | 'regmb';
   anchor?: string;
-  usage?: string;
 }
 
 function displayName(dexName: string): string {
@@ -166,21 +156,23 @@ function displayName(dexName: string): string {
   return `Mega ${mega[1]}${mega[2] ? ` ${mega[2]}` : ''}`;
 }
 
-export function buildBoard(boardId = 'wdl-regmb-202607', format = 'gen9championsvgc2026regmbbo3'): string {
+function buildBoard(boardId = 'regmb-202607', format = 'gen9championsvgc2026regmbbo3'): string {
   const psDir = defaultPsDir();
   const { Dex } = loadShowdown(psDir);
-  const dex = Dex.mod('champions');
+  const resolvedFormat = Dex.formats.get(format);
+  if (!resolvedFormat.exists) throw new Error(`unknown format ${format}`);
+  const dex = Dex.mod(resolvedFormat.mod || 'base');
 
   const stoneFor = new Map<string, { item: string; from: string }>();
   for (const item of dex.items.all()) {
-    const map = (item as unknown as { megaStone?: Record<string, string> }).megaStone;
-    if (!map) continue;
+    const map = item.megaStone;
+    if (!map || typeof map === 'string') continue;
     for (const [from, to] of Object.entries(map)) stoneFor.set(to, { item: item.name, from });
   }
 
-  const wdl = JSON.parse(fs.readFileSync(SOURCE_COSTS, 'utf8')) as Array<{ name: string; cost: number }>;
+  const baseCosts = JSON.parse(fs.readFileSync(SOURCE_COSTS, 'utf8')) as Array<{ name: string; cost: number }>;
   const sources: BoardEntrySource[] = [
-    ...wdl.map((entry): BoardEntrySource => ({ name: entry.name, cost: entry.cost, origin: 'wdl' })),
+    ...baseCosts.map((entry): BoardEntrySource => ({ name: entry.name, cost: entry.cost, origin: 'base' })),
     ...REGMB_ADDITIONS.map((entry): BoardEntrySource => ({ ...entry, origin: 'regmb' })),
   ];
 
@@ -194,7 +186,7 @@ export function buildBoard(boardId = 'wdl-regmb-202607', format = 'gen9champions
   const mons = [];
   for (const source of sources) {
     const species = dex.species.get(dexNameFor(source.name));
-    if (!species.exists) throw new Error(`board entry ${JSON.stringify(source.name)} is not in the champions dex`);
+    if (!species.exists) throw new Error(`board entry ${JSON.stringify(source.name)} is not in the format dex`);
     if (species.isNonstandard) throw new Error(`board entry ${JSON.stringify(source.name)} is not standard`);
     if (seen.has(species.name)) throw new Error(`duplicate board entry for ${species.name}`);
     seen.add(species.name);
@@ -202,9 +194,10 @@ export function buildBoard(boardId = 'wdl-regmb-202607', format = 'gen9champions
     const stone = stoneFor.get(species.name);
     const registered = stone ? dex.species.get(stone.from) : species;
     const adjusted = adjustments.get(species.name);
+    if (adjusted) adjustments.delete(species.name);
     mons.push({
       id: species.name.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
-      name: source.origin === 'wdl' ? source.name : displayName(species.name),
+      name: source.origin === 'base' ? source.name : displayName(species.name),
       species: registered.name,
       ...(stone ? { forme: species.name, item: stone.item } : {}),
       base: registered.baseSpecies,
@@ -215,6 +208,7 @@ export function buildBoard(boardId = 'wdl-regmb-202607', format = 'gen9champions
       ...(adjusted ? { listed: source.cost, usage: adjusted.usage } : {}),
     });
   }
+  if (adjustments.size) throw new Error(`unused usage adjustments: ${[...adjustments.keys()].join(', ')}`);
   mons.sort((a, b) => b.cost - a.cost || a.name.localeCompare(b.name));
 
   const board = {
@@ -223,8 +217,7 @@ export function buildBoard(boardId = 'wdl-regmb-202607', format = 'gen9champions
     budget: 100,
     picks: 10,
     source:
-      'Costs 1-20 from the Wolfey Draft League season 2 board (wolfeydraftleague.com/draft-board, Reg M-A), ' +
-      'which its About page offers for reuse. Reg M-B additions are priced against WDL entries; each carries its anchor.',
+      'Costs 1-20 from a prior Regulation M-A draft board. Reg M-B additions are priced against comparable entries; each carries its anchor.',
     mons,
   };
   fs.mkdirSync(BOARDS_DIR, { recursive: true });
@@ -241,6 +234,6 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   const added = board.mons.filter((mon) => mon.origin === 'regmb').length;
   const megas = board.mons.filter((mon) => mon.item).length;
   console.log(
-    `${file}: ${board.mons.length} entries (${board.mons.length - added} WDL, ${added} Reg M-B), ${megas} megas, costs ${Math.min(...board.mons.map((mon) => mon.cost))}-${Math.max(...board.mons.map((mon) => mon.cost))}`,
+    `${file}: ${board.mons.length} entries (${board.mons.length - added} base, ${added} Reg M-B), ${megas} megas, costs ${Math.min(...board.mons.map((mon) => mon.cost))}-${Math.max(...board.mons.map((mon) => mon.cost))}`,
   );
 }

@@ -252,11 +252,16 @@ class HttpError extends Error {
   }
 }
 
-/** Sprites are vendored under the species' Showdown sprite id; unknown names render as text alone. */
+const spriteIds = new Map<string, string>();
+
 function spriteIdFor(species: string): string {
+  const cached = spriteIds.get(species);
+  if (cached !== undefined) return cached;
   const { Dex } = loadShowdown();
   const resolved = Dex.mod('champions').species.get(species);
-  return resolved.exists ? resolved.spriteid : '';
+  const id = resolved.exists ? resolved.spriteid : '';
+  spriteIds.set(species, id);
+  return id;
 }
 
 function snapshotMon(battle: BattleState, pid: Pid, mon: MonState): MonView {

@@ -1,9 +1,9 @@
 {
-  "id": "wdl-regmb-202607",
+  "id": "regmb-202607",
   "format": "gen9championsvgc2026regmbbo3",
   "budget": 100,
   "picks": 10,
-  "source": "Costs 1-20 from the Wolfey Draft League season 2 board (wolfeydraftleague.com/draft-board, Reg M-A), which its About page offers for reuse. Reg M-B additions are priced against WDL entries; each carries its anchor.",
+  "source": "Costs 1-20 from a prior Regulation M-A draft board. Reg M-B additions are priced against comparable entries; each carries its anchor.",
   "mons": [
     {
       "id": "charizard-mega-y",
@@ -17,7 +17,7 @@
         "Flying"
       ],
       "cost": 20,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "floette-mega",
@@ -30,7 +30,7 @@
         "Fairy"
       ],
       "cost": 20,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "archaludon",
@@ -42,7 +42,7 @@
         "Dragon"
       ],
       "cost": 19,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "basculegion",
@@ -54,7 +54,7 @@
         "Ghost"
       ],
       "cost": 19,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "sneasler",
@@ -66,7 +66,7 @@
         "Poison"
       ],
       "cost": 19,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "whimsicott",
@@ -78,7 +78,7 @@
         "Fairy"
       ],
       "cost": 19,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "farigiraf",
@@ -90,7 +90,7 @@
         "Psychic"
       ],
       "cost": 18,
-      "origin": "wdl",
+      "origin": "base",
       "listed": 16,
       "usage": "#7 at 20.72%"
     },
@@ -104,7 +104,7 @@
         "Ground"
       ],
       "cost": 18,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "incineroar",
@@ -116,7 +116,7 @@
         "Dark"
       ],
       "cost": 18,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "gengar-mega",
@@ -130,7 +130,7 @@
         "Poison"
       ],
       "cost": 18,
-      "origin": "wdl",
+      "origin": "base",
       "listed": 20,
       "usage": "#35 at 3.35%"
     },
@@ -144,7 +144,7 @@
         "Flying"
       ],
       "cost": 18,
-      "origin": "wdl",
+      "origin": "base",
       "listed": 16,
       "usage": "#8 at 18.58%"
     },
@@ -158,7 +158,7 @@
         "Ghost"
       ],
       "cost": 18,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "aerodactyl",
@@ -170,7 +170,7 @@
         "Flying"
       ],
       "cost": 17,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "kingambit",
@@ -182,7 +182,7 @@
         "Steel"
       ],
       "cost": 17,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "aerodactyl-mega",
@@ -196,7 +196,7 @@
         "Flying"
       ],
       "cost": 17,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "blastoise-mega",
@@ -209,7 +209,7 @@
         "Water"
       ],
       "cost": 17,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "delphox-mega",
@@ -223,7 +223,7 @@
         "Psychic"
       ],
       "cost": 17,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "froslass-mega",
@@ -237,7 +237,7 @@
         "Ghost"
       ],
       "cost": 17,
-      "origin": "wdl",
+      "origin": "base",
       "listed": 19,
       "usage": "#33 at 3.87%"
     },
@@ -295,7 +295,7 @@
         "Normal"
       ],
       "cost": 16,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "gardevoir-mega",
@@ -309,7 +309,7 @@
         "Fairy"
       ],
       "cost": 16,
-      "origin": "wdl",
+      "origin": "base",
       "listed": 18,
       "usage": "#60 at 1.67%"
     },
@@ -325,7 +325,7 @@
         "Dark"
       ],
       "cost": 16,
-      "origin": "wdl",
+      "origin": "base",
       "listed": 17,
       "usage": "#47 at 2.45%"
     },
@@ -338,7 +338,7 @@
         "Fairy"
       ],
       "cost": 15,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "dragonite-mega",
@@ -352,7 +352,7 @@
         "Flying"
       ],
       "cost": 15,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "kangaskhan-mega",
@@ -365,7 +365,7 @@
         "Normal"
       ],
       "cost": 15,
-      "origin": "wdl",
+      "origin": "base",
       "listed": 18,
       "usage": "#72 at 1.46%"
     },
@@ -394,7 +394,7 @@
         "Fairy"
       ],
       "cost": 15,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "sylveon",
@@ -405,7 +405,7 @@
         "Fairy"
       ],
       "cost": 15,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "talonflame",
@@ -417,7 +417,7 @@
         "Flying"
       ],
       "cost": 15,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "torkoal",
@@ -428,7 +428,7 @@
         "Fire"
       ],
       "cost": 15,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "aegislash",
@@ -440,7 +440,7 @@
         "Ghost"
       ],
       "cost": 14,
-      "origin": "wdl",
+      "origin": "base",
       "listed": 16,
       "usage": "#76 at 1.36%"
     },
@@ -454,7 +454,7 @@
         "Fairy"
       ],
       "cost": 14,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "annihilape",
@@ -481,7 +481,7 @@
         "Ghost"
       ],
       "cost": 14,
-      "origin": "wdl",
+      "origin": "base",
       "listed": 15,
       "usage": "#70 at 1.50%"
     },
@@ -495,7 +495,7 @@
         "Flying"
       ],
       "cost": 14,
-      "origin": "wdl",
+      "origin": "base",
       "listed": 16,
       "usage": "#68 at 1.55%"
     },
@@ -509,7 +509,7 @@
         "Dragon"
       ],
       "cost": 14,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "kommo-o",
@@ -521,7 +521,7 @@
         "Fighting"
       ],
       "cost": 14,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "glimmora-mega",
@@ -535,7 +535,7 @@
         "Poison"
       ],
       "cost": 14,
-      "origin": "wdl",
+      "origin": "base",
       "listed": 16,
       "usage": "#71 at 1.48%"
     },
@@ -551,7 +551,7 @@
         "Fighting"
       ],
       "cost": 14,
-      "origin": "wdl",
+      "origin": "base",
       "listed": 16,
       "usage": "#87 at 0.75%"
     },
@@ -600,7 +600,7 @@
         "Fire"
       ],
       "cost": 14,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "staraptor-mega",
@@ -631,7 +631,7 @@
         "Poison"
       ],
       "cost": 14,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "milotic",
@@ -642,7 +642,7 @@
         "Water"
       ],
       "cost": 14,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "rotom-wash",
@@ -654,7 +654,7 @@
         "Water"
       ],
       "cost": 14,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "sableye",
@@ -666,7 +666,7 @@
         "Ghost"
       ],
       "cost": 14,
-      "origin": "wdl",
+      "origin": "base",
       "listed": 11,
       "usage": "#24 at 5.87%"
     },
@@ -680,7 +680,7 @@
         "Dark"
       ],
       "cost": 14,
-      "origin": "wdl",
+      "origin": "base",
       "listed": 16,
       "usage": "#79 at 1.21%"
     },
@@ -694,7 +694,7 @@
         "Fire"
       ],
       "cost": 14,
-      "origin": "wdl",
+      "origin": "base",
       "listed": 16,
       "usage": "#77 at 1.33%"
     },
@@ -708,7 +708,7 @@
         "Steel"
       ],
       "cost": 13,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "excadrill",
@@ -720,7 +720,7 @@
         "Steel"
       ],
       "cost": 13,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "glimmora",
@@ -732,7 +732,7 @@
         "Poison"
       ],
       "cost": 13,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "arcanine-hisui",
@@ -744,7 +744,7 @@
         "Rock"
       ],
       "cost": 13,
-      "origin": "wdl",
+      "origin": "base",
       "listed": 15,
       "usage": "#78 at 1.21%"
     },
@@ -777,7 +777,7 @@
         "Steel"
       ],
       "cost": 13,
-      "origin": "wdl",
+      "origin": "base",
       "listed": 15,
       "usage": "#86 at 0.84%"
     },
@@ -790,7 +790,7 @@
         "Water"
       ],
       "cost": 13,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "venusaur",
@@ -802,7 +802,7 @@
         "Poison"
       ],
       "cost": 13,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "azumarill",
@@ -814,7 +814,7 @@
         "Fairy"
       ],
       "cost": 12,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "basculegion-f",
@@ -826,7 +826,7 @@
         "Ghost"
       ],
       "cost": 12,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "ceruledge",
@@ -838,7 +838,7 @@
         "Ghost"
       ],
       "cost": 12,
-      "origin": "wdl",
+      "origin": "base",
       "listed": 8,
       "usage": "#42 at 2.66%"
     },
@@ -852,7 +852,7 @@
         "Ground"
       ],
       "cost": 12,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "blaziken-mega",
@@ -881,7 +881,7 @@
         "Dragon"
       ],
       "cost": 12,
-      "origin": "wdl",
+      "origin": "base",
       "listed": 15,
       "usage": "#107 at 0.46%"
     },
@@ -913,7 +913,7 @@
         "Ground"
       ],
       "cost": 12,
-      "origin": "wdl",
+      "origin": "base",
       "listed": 14,
       "usage": "#110 at 0.42%"
     },
@@ -929,7 +929,7 @@
         "Dark"
       ],
       "cost": 12,
-      "origin": "wdl",
+      "origin": "base",
       "listed": 14,
       "usage": "#99 at 0.51%"
     },
@@ -945,7 +945,7 @@
         "Fairy"
       ],
       "cost": 12,
-      "origin": "wdl",
+      "origin": "base",
       "listed": 14,
       "usage": "#82 at 1.06%"
     },
@@ -978,7 +978,7 @@
         "Psychic"
       ],
       "cost": 12,
-      "origin": "wdl",
+      "origin": "base",
       "listed": 15,
       "usage": "#116 at 0.37%"
     },
@@ -992,7 +992,7 @@
         "Dark"
       ],
       "cost": 12,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "palafin",
@@ -1003,7 +1003,7 @@
         "Water"
       ],
       "cost": 12,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "rotom-heat",
@@ -1015,7 +1015,7 @@
         "Fire"
       ],
       "cost": 12,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "vivillon",
@@ -1027,7 +1027,7 @@
         "Flying"
       ],
       "cost": 12,
-      "origin": "wdl",
+      "origin": "base",
       "listed": 10,
       "usage": "#56 at 1.82%"
     },
@@ -1041,7 +1041,7 @@
         "Bug"
       ],
       "cost": 11,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "arcanine",
@@ -1052,7 +1052,7 @@
         "Fire"
       ],
       "cost": 11,
-      "origin": "wdl",
+      "origin": "base",
       "listed": 14,
       "usage": "#131 at 0.27%"
     },
@@ -1066,7 +1066,7 @@
         "Flying"
       ],
       "cost": 11,
-      "origin": "wdl",
+      "origin": "base",
       "listed": 13,
       "usage": "#109 at 0.44%"
     },
@@ -1080,7 +1080,7 @@
         "Ghost"
       ],
       "cost": 11,
-      "origin": "wdl",
+      "origin": "base",
       "listed": 8,
       "usage": "#55 at 1.89%"
     },
@@ -1094,7 +1094,7 @@
         "Fairy"
       ],
       "cost": 11,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "lucario-mega",
@@ -1108,7 +1108,7 @@
         "Steel"
       ],
       "cost": 11,
-      "origin": "wdl",
+      "origin": "base",
       "listed": 15,
       "usage": "#147 at 0.22%"
     },
@@ -1154,7 +1154,7 @@
         "Psychic"
       ],
       "cost": 11,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "mimikyu",
@@ -1166,7 +1166,7 @@
         "Fairy"
       ],
       "cost": 11,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "ninetales",
@@ -1177,7 +1177,7 @@
         "Fire"
       ],
       "cost": 11,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "scizor",
@@ -1189,7 +1189,7 @@
         "Steel"
       ],
       "cost": 11,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "tinkaton",
@@ -1201,7 +1201,7 @@
         "Steel"
       ],
       "cost": 11,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "tsareena",
@@ -1212,7 +1212,7 @@
         "Grass"
       ],
       "cost": 11,
-      "origin": "wdl",
+      "origin": "base",
       "listed": 8,
       "usage": "#54 at 1.97%"
     },
@@ -1226,7 +1226,7 @@
         "Fighting"
       ],
       "cost": 10,
-      "origin": "wdl",
+      "origin": "base",
       "listed": 8,
       "usage": "#74 at 1.42%"
     },
@@ -1240,7 +1240,7 @@
         "Fairy"
       ],
       "cost": 10,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "kangaskhan",
@@ -1251,7 +1251,7 @@
         "Normal"
       ],
       "cost": 10,
-      "origin": "wdl",
+      "origin": "base",
       "listed": 7,
       "usage": "#53 at 1.97%"
     },
@@ -1267,7 +1267,7 @@
         "Ground"
       ],
       "cost": 10,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "clefable-mega",
@@ -1281,7 +1281,7 @@
         "Flying"
       ],
       "cost": 10,
-      "origin": "wdl",
+      "origin": "base",
       "listed": 14,
       "usage": "#154 at 0.19%"
     },
@@ -1314,7 +1314,7 @@
         "Dark"
       ],
       "cost": 10,
-      "origin": "wdl",
+      "origin": "base",
       "listed": 12,
       "usage": "#155 at 0.19%"
     },
@@ -1328,7 +1328,7 @@
         "Psychic"
       ],
       "cost": 10,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "raichu",
@@ -1339,7 +1339,7 @@
         "Electric"
       ],
       "cost": 10,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "rotom-mow",
@@ -1351,7 +1351,7 @@
         "Grass"
       ],
       "cost": 10,
-      "origin": "wdl",
+      "origin": "base",
       "listed": 11,
       "usage": "#122 at 0.34%"
     },
@@ -1379,7 +1379,7 @@
         "Water"
       ],
       "cost": 9,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "hatterene",
@@ -1391,7 +1391,7 @@
         "Fairy"
       ],
       "cost": 9,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "zoroark-hisui",
@@ -1403,7 +1403,7 @@
         "Ghost"
       ],
       "cost": 9,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "krookodile",
@@ -1415,7 +1415,7 @@
         "Dark"
       ],
       "cost": 9,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "altaria-mega",
@@ -1429,7 +1429,7 @@
         "Fairy"
       ],
       "cost": 9,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "chandelure-mega",
@@ -1443,7 +1443,7 @@
         "Fire"
       ],
       "cost": 9,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "chimecho-mega",
@@ -1457,7 +1457,7 @@
         "Steel"
       ],
       "cost": 9,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "excadrill-mega",
@@ -1471,7 +1471,7 @@
         "Steel"
       ],
       "cost": 9,
-      "origin": "wdl",
+      "origin": "base",
       "listed": 13,
       "usage": "#188 at 0.09%"
     },
@@ -1487,7 +1487,7 @@
         "Dragon"
       ],
       "cost": 9,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "meowstic-m-mega",
@@ -1500,7 +1500,7 @@
         "Psychic"
       ],
       "cost": 9,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "sableye-mega",
@@ -1514,7 +1514,7 @@
         "Ghost"
       ],
       "cost": 9,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "skarmory-mega",
@@ -1528,7 +1528,7 @@
         "Flying"
       ],
       "cost": 9,
-      "origin": "wdl",
+      "origin": "base",
       "listed": 11,
       "usage": "#157 at 0.19%"
     },
@@ -1542,7 +1542,7 @@
         "Dragon"
       ],
       "cost": 9,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "tauros-paldea-aqua",
@@ -1554,7 +1554,7 @@
         "Water"
       ],
       "cost": 9,
-      "origin": "wdl",
+      "origin": "base",
       "listed": 11,
       "usage": "#140 at 0.23%"
     },
@@ -1568,7 +1568,7 @@
         "Fire"
       ],
       "cost": 9,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "rhyperior",
@@ -1580,7 +1580,7 @@
         "Rock"
       ],
       "cost": 9,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "weavile",
@@ -1592,7 +1592,7 @@
         "Ice"
       ],
       "cost": 9,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "armarouge",
@@ -1604,7 +1604,7 @@
         "Psychic"
       ],
       "cost": 8,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "floette-eternal",
@@ -1615,7 +1615,7 @@
         "Fairy"
       ],
       "cost": 8,
-      "origin": "wdl",
+      "origin": "base",
       "listed": 11,
       "usage": "#206 at 0.06%"
     },
@@ -1629,7 +1629,7 @@
         "Poison"
       ],
       "cost": 8,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "liepard",
@@ -1640,7 +1640,7 @@
         "Dark"
       ],
       "cost": 8,
-      "origin": "wdl",
+      "origin": "base",
       "listed": 10,
       "usage": "#159 at 0.18%"
     },
@@ -1653,7 +1653,7 @@
         "Rock"
       ],
       "cost": 8,
-      "origin": "wdl",
+      "origin": "base",
       "listed": 5,
       "usage": "#69 at 1.50%"
     },
@@ -1668,7 +1668,7 @@
         "Steel"
       ],
       "cost": 8,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "alakazam-mega",
@@ -1681,7 +1681,7 @@
         "Psychic"
       ],
       "cost": 8,
-      "origin": "wdl",
+      "origin": "base",
       "listed": 12,
       "usage": "#190 at 0.09%"
     },
@@ -1712,7 +1712,7 @@
         "Fighting"
       ],
       "cost": 8,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "crabominable-mega",
@@ -1726,7 +1726,7 @@
         "Ice"
       ],
       "cost": 8,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "drampa-mega",
@@ -1740,7 +1740,7 @@
         "Dragon"
       ],
       "cost": 8,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "emboar-mega",
@@ -1754,7 +1754,7 @@
         "Fighting"
       ],
       "cost": 8,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "gallade-mega",
@@ -1768,7 +1768,7 @@
         "Fighting"
       ],
       "cost": 8,
-      "origin": "wdl",
+      "origin": "base",
       "listed": 12,
       "usage": "#192 at 0.08%"
     },
@@ -1784,7 +1784,7 @@
         "Ghost"
       ],
       "cost": 8,
-      "origin": "wdl",
+      "origin": "base",
       "listed": 10,
       "usage": "#144 at 0.23%"
     },
@@ -1800,7 +1800,7 @@
         "Flying"
       ],
       "cost": 8,
-      "origin": "wdl",
+      "origin": "base",
       "listed": 10,
       "usage": "#164 at 0.15%"
     },
@@ -1815,7 +1815,7 @@
         "Electric"
       ],
       "cost": 8,
-      "origin": "wdl",
+      "origin": "base",
       "listed": 10,
       "usage": "#186 at 0.10%"
     },
@@ -1831,7 +1831,7 @@
         "Psychic"
       ],
       "cost": 8,
-      "origin": "wdl",
+      "origin": "base",
       "listed": 12,
       "usage": "#209 at 0.06%"
     },
@@ -1876,7 +1876,7 @@
         "Psychic"
       ],
       "cost": 8,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "reuniclus",
@@ -1887,7 +1887,7 @@
         "Psychic"
       ],
       "cost": 8,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "snorlax",
@@ -1898,7 +1898,7 @@
         "Normal"
       ],
       "cost": 8,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "toxapex",
@@ -1910,7 +1910,7 @@
         "Water"
       ],
       "cost": 8,
-      "origin": "wdl",
+      "origin": "base",
       "listed": 3,
       "usage": "#50 at 2.25%"
     },
@@ -1923,7 +1923,7 @@
         "Ice"
       ],
       "cost": 8,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "vileplume",
@@ -1949,7 +1949,7 @@
         "Fighting"
       ],
       "cost": 7,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "empoleon",
@@ -1961,7 +1961,7 @@
         "Steel"
       ],
       "cost": 7,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "espeon",
@@ -1972,7 +1972,7 @@
         "Psychic"
       ],
       "cost": 7,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "florges",
@@ -1983,7 +1983,7 @@
         "Fairy"
       ],
       "cost": 7,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "slowbro-galar",
@@ -1995,7 +1995,7 @@
         "Psychic"
       ],
       "cost": 7,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "greninja",
@@ -2007,7 +2007,7 @@
         "Dark"
       ],
       "cost": 7,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "hawlucha",
@@ -2019,7 +2019,7 @@
         "Flying"
       ],
       "cost": 7,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "infernape",
@@ -2031,7 +2031,7 @@
         "Fighting"
       ],
       "cost": 7,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "medicham",
@@ -2043,7 +2043,7 @@
         "Psychic"
       ],
       "cost": 7,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "falinks-mega",
@@ -2071,7 +2071,7 @@
         "Fighting"
       ],
       "cost": 7,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "malamar-mega",
@@ -2100,7 +2100,7 @@
         "Flying"
       ],
       "cost": 7,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "pinsir-mega",
@@ -2114,7 +2114,7 @@
         "Flying"
       ],
       "cost": 7,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "sharpedo-mega",
@@ -2128,7 +2128,7 @@
         "Dark"
       ],
       "cost": 7,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "victreebel-mega",
@@ -2142,7 +2142,7 @@
         "Poison"
       ],
       "cost": 7,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "orthworm",
@@ -2153,7 +2153,7 @@
         "Steel"
       ],
       "cost": 7,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "salazzle",
@@ -2165,7 +2165,7 @@
         "Fire"
       ],
       "cost": 7,
-      "origin": "wdl",
+      "origin": "base",
       "listed": 10,
       "usage": "#208 at 0.06%"
     },
@@ -2179,7 +2179,7 @@
         "Psychic"
       ],
       "cost": 7,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "slowking",
@@ -2191,7 +2191,7 @@
         "Psychic"
       ],
       "cost": 7,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "wyrdeer",
@@ -2203,7 +2203,7 @@
         "Psychic"
       ],
       "cost": 7,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "abomasnow",
@@ -2215,7 +2215,7 @@
         "Ice"
       ],
       "cost": 6,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "aromatisse",
@@ -2226,7 +2226,7 @@
         "Fairy"
       ],
       "cost": 6,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "blaziken",
@@ -2251,7 +2251,7 @@
         "Fire"
       ],
       "cost": 6,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "diggersby",
@@ -2263,7 +2263,7 @@
         "Ground"
       ],
       "cost": 6,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "slowking-galar",
@@ -2275,7 +2275,7 @@
         "Psychic"
       ],
       "cost": 6,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "goodra-hisui",
@@ -2287,7 +2287,7 @@
         "Dragon"
       ],
       "cost": 6,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "houndstone",
@@ -2311,7 +2311,7 @@
         "Dragon"
       ],
       "cost": 6,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "kleavor",
@@ -2323,7 +2323,7 @@
         "Rock"
       ],
       "cost": 6,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "lucario",
@@ -2335,7 +2335,7 @@
         "Steel"
       ],
       "cost": 6,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "abomasnow-mega",
@@ -2349,7 +2349,7 @@
         "Ice"
       ],
       "cost": 6,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "houndoom-mega",
@@ -2363,7 +2363,7 @@
         "Fire"
       ],
       "cost": 6,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "steelix-mega",
@@ -2377,7 +2377,7 @@
         "Ground"
       ],
       "cost": 6,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "metagross",
@@ -2402,7 +2402,7 @@
         "Dark"
       ],
       "cost": 6,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "spiritomb",
@@ -2414,7 +2414,7 @@
         "Dark"
       ],
       "cost": 6,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "swampert",
@@ -2438,7 +2438,7 @@
         "Dark"
       ],
       "cost": 6,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "alakazam",
@@ -2449,7 +2449,7 @@
         "Psychic"
       ],
       "cost": 5,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "raichu-alola",
@@ -2461,7 +2461,7 @@
         "Psychic"
       ],
       "cost": 5,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "charizard",
@@ -2473,7 +2473,7 @@
         "Flying"
       ],
       "cost": 5,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "cofagrigus",
@@ -2484,7 +2484,7 @@
         "Ghost"
       ],
       "cost": 5,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "delphox",
@@ -2496,7 +2496,7 @@
         "Psychic"
       ],
       "cost": 5,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "espathra",
@@ -2507,7 +2507,7 @@
         "Psychic"
       ],
       "cost": 5,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "garganacl",
@@ -2518,7 +2518,7 @@
         "Rock"
       ],
       "cost": 5,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "glaceon",
@@ -2529,7 +2529,7 @@
         "Ice"
       ],
       "cost": 5,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "gourgeist",
@@ -2541,7 +2541,7 @@
         "Grass"
       ],
       "cost": 5,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "hippowdon",
@@ -2552,7 +2552,7 @@
         "Ground"
       ],
       "cost": 5,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "leafeon",
@@ -2563,7 +2563,7 @@
         "Grass"
       ],
       "cost": 5,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "banette-mega",
@@ -2576,7 +2576,7 @@
         "Ghost"
       ],
       "cost": 5,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "beedrill-mega",
@@ -2590,7 +2590,7 @@
         "Poison"
       ],
       "cost": 5,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "mudsdale",
@@ -2601,7 +2601,7 @@
         "Ground"
       ],
       "cost": 5,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "polteageist",
@@ -2612,7 +2612,7 @@
         "Ghost"
       ],
       "cost": 5,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "quaquaval",
@@ -2624,7 +2624,7 @@
         "Fighting"
       ],
       "cost": 5,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "runerigus",
@@ -2636,7 +2636,7 @@
         "Ghost"
       ],
       "cost": 5,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "serperior",
@@ -2647,7 +2647,7 @@
         "Grass"
       ],
       "cost": 5,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "skeledirge",
@@ -2659,7 +2659,7 @@
         "Ghost"
       ],
       "cost": 5,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "typhlosion",
@@ -2670,7 +2670,7 @@
         "Fire"
       ],
       "cost": 5,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "umbreon",
@@ -2681,7 +2681,7 @@
         "Dark"
       ],
       "cost": 5,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "vaporeon",
@@ -2692,7 +2692,7 @@
         "Water"
       ],
       "cost": 5,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "alcremie",
@@ -2703,7 +2703,7 @@
         "Fairy"
       ],
       "cost": 4,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "bellibolt",
@@ -2714,7 +2714,7 @@
         "Electric"
       ],
       "cost": 4,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "chesnaught",
@@ -2726,7 +2726,7 @@
         "Fighting"
       ],
       "cost": 4,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "clawitzer",
@@ -2737,7 +2737,7 @@
         "Water"
       ],
       "cost": 4,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "ditto",
@@ -2748,7 +2748,7 @@
         "Normal"
       ],
       "cost": 4,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "froslass",
@@ -2760,7 +2760,7 @@
         "Ghost"
       ],
       "cost": 4,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "golurk",
@@ -2772,7 +2772,7 @@
         "Ghost"
       ],
       "cost": 4,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "goodra",
@@ -2783,7 +2783,7 @@
         "Dragon"
       ],
       "cost": 4,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "heliolisk",
@@ -2795,7 +2795,7 @@
         "Normal"
       ],
       "cost": 4,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "decidueye-hisui",
@@ -2807,7 +2807,7 @@
         "Fighting"
       ],
       "cost": 4,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "samurott-hisui",
@@ -2819,7 +2819,7 @@
         "Dark"
       ],
       "cost": 4,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "jolteon",
@@ -2830,7 +2830,7 @@
         "Electric"
       ],
       "cost": 4,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "luxray",
@@ -2841,7 +2841,7 @@
         "Electric"
       ],
       "cost": 4,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "machamp",
@@ -2852,7 +2852,7 @@
         "Fighting"
       ],
       "cost": 4,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "absol-mega",
@@ -2865,7 +2865,7 @@
         "Dark"
       ],
       "cost": 4,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "ampharos-mega",
@@ -2879,7 +2879,7 @@
         "Dragon"
       ],
       "cost": 4,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "glalie-mega",
@@ -2892,7 +2892,7 @@
         "Ice"
       ],
       "cost": 4,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "overqwil",
@@ -2916,7 +2916,7 @@
         "Rock"
       ],
       "cost": 4,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "roserade",
@@ -2928,7 +2928,7 @@
         "Poison"
       ],
       "cost": 4,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "rotom-frost",
@@ -2940,7 +2940,7 @@
         "Ice"
       ],
       "cost": 4,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "starmie",
@@ -2952,7 +2952,7 @@
         "Psychic"
       ],
       "cost": 4,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "torterra",
@@ -2964,7 +2964,7 @@
         "Ground"
       ],
       "cost": 4,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "toxicroak",
@@ -2976,7 +2976,7 @@
         "Fighting"
       ],
       "cost": 4,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "tyrantrum",
@@ -2988,7 +2988,7 @@
         "Dragon"
       ],
       "cost": 4,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "audino",
@@ -2999,7 +2999,7 @@
         "Normal"
       ],
       "cost": 3,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "aurorus",
@@ -3011,7 +3011,7 @@
         "Ice"
       ],
       "cost": 3,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "barbaracle",
@@ -3035,7 +3035,7 @@
         "Ice"
       ],
       "cost": 3,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "crabominable",
@@ -3047,7 +3047,7 @@
         "Ice"
       ],
       "cost": 3,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "decidueye",
@@ -3059,7 +3059,7 @@
         "Ghost"
       ],
       "cost": 3,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "dragalge",
@@ -3084,7 +3084,7 @@
         "Dragon"
       ],
       "cost": 3,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "eelektross",
@@ -3108,7 +3108,7 @@
         "Fighting"
       ],
       "cost": 3,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "feraligatr",
@@ -3119,7 +3119,7 @@
         "Water"
       ],
       "cost": 3,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "flapple",
@@ -3131,7 +3131,7 @@
         "Dragon"
       ],
       "cost": 3,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "flareon",
@@ -3142,7 +3142,7 @@
         "Fire"
       ],
       "cost": 3,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "gliscor",
@@ -3154,7 +3154,7 @@
         "Flying"
       ],
       "cost": 3,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "heracross",
@@ -3166,7 +3166,7 @@
         "Fighting"
       ],
       "cost": 3,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "lycanroc",
@@ -3177,7 +3177,7 @@
         "Rock"
       ],
       "cost": 3,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "malamar",
@@ -3204,7 +3204,7 @@
         "Fairy"
       ],
       "cost": 3,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "mr-rime",
@@ -3216,7 +3216,7 @@
         "Psychic"
       ],
       "cost": 3,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "musharna",
@@ -3239,7 +3239,7 @@
         "Fighting"
       ],
       "cost": 3,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "passimian",
@@ -3250,7 +3250,7 @@
         "Fighting"
       ],
       "cost": 3,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "sceptile",
@@ -3287,7 +3287,7 @@
         "Fire"
       ],
       "cost": 3,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "scrafty",
@@ -3312,7 +3312,7 @@
         "Flying"
       ],
       "cost": 3,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "trevenant",
@@ -3324,7 +3324,7 @@
         "Grass"
       ],
       "cost": 3,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "victreebel",
@@ -3336,7 +3336,7 @@
         "Poison"
       ],
       "cost": 3,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "aggron",
@@ -3348,7 +3348,7 @@
         "Rock"
       ],
       "cost": 2,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "arbok",
@@ -3359,7 +3359,7 @@
         "Poison"
       ],
       "cost": 2,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "ariados",
@@ -3371,7 +3371,7 @@
         "Poison"
       ],
       "cost": 2,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "bastiodon",
@@ -3383,7 +3383,7 @@
         "Steel"
       ],
       "cost": 2,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "falinks",
@@ -3419,7 +3419,7 @@
         "Psychic"
       ],
       "cost": 2,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "morpeko",
@@ -3431,7 +3431,7 @@
         "Dark"
       ],
       "cost": 2,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "pyroar",
@@ -3469,7 +3469,7 @@
         "Ghost"
       ],
       "cost": 2,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "rotom-fan",
@@ -3481,7 +3481,7 @@
         "Flying"
       ],
       "cost": 2,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "sandaconda",
@@ -3492,7 +3492,7 @@
         "Ground"
       ],
       "cost": 2,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "sharpedo",
@@ -3504,7 +3504,7 @@
         "Dark"
       ],
       "cost": 2,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "slurpuff",
@@ -3515,7 +3515,7 @@
         "Fairy"
       ],
       "cost": 2,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "steelix",
@@ -3527,7 +3527,7 @@
         "Ground"
       ],
       "cost": 2,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "tauros",
@@ -3538,7 +3538,7 @@
         "Normal"
       ],
       "cost": 2,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "absol",
@@ -3549,7 +3549,7 @@
         "Dark"
       ],
       "cost": 1,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "altaria",
@@ -3561,7 +3561,7 @@
         "Flying"
       ],
       "cost": 1,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "ampharos",
@@ -3572,7 +3572,7 @@
         "Electric"
       ],
       "cost": 1,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "appletun",
@@ -3584,7 +3584,7 @@
         "Dragon"
       ],
       "cost": 1,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "avalugg",
@@ -3595,7 +3595,7 @@
         "Ice"
       ],
       "cost": 1,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "banette",
@@ -3606,7 +3606,7 @@
         "Ghost"
       ],
       "cost": 1,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "beedrill",
@@ -3618,7 +3618,7 @@
         "Poison"
       ],
       "cost": 1,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "camerupt",
@@ -3630,7 +3630,7 @@
         "Ground"
       ],
       "cost": 1,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "castform",
@@ -3641,7 +3641,7 @@
         "Normal"
       ],
       "cost": 1,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "chimecho",
@@ -3652,7 +3652,7 @@
         "Psychic"
       ],
       "cost": 1,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "dedenne",
@@ -3664,7 +3664,7 @@
         "Fairy"
       ],
       "cost": 1,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "emolga",
@@ -3676,7 +3676,7 @@
         "Flying"
       ],
       "cost": 1,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "forretress",
@@ -3688,7 +3688,7 @@
         "Steel"
       ],
       "cost": 1,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "furfrou",
@@ -3699,7 +3699,7 @@
         "Normal"
       ],
       "cost": 1,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "stunfisk-galar",
@@ -3711,7 +3711,7 @@
         "Steel"
       ],
       "cost": 1,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "garbodor",
@@ -3722,7 +3722,7 @@
         "Poison"
       ],
       "cost": 1,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "glalie",
@@ -3733,7 +3733,7 @@
         "Ice"
       ],
       "cost": 1,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "avalugg-hisui",
@@ -3745,7 +3745,7 @@
         "Rock"
       ],
       "cost": 1,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "houndoom",
@@ -3757,7 +3757,7 @@
         "Fire"
       ],
       "cost": 1,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "lopunny",
@@ -3768,7 +3768,7 @@
         "Normal"
       ],
       "cost": 1,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "lycanroc-midnight",
@@ -3779,7 +3779,7 @@
         "Rock"
       ],
       "cost": 1,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "manectric",
@@ -3790,7 +3790,7 @@
         "Electric"
       ],
       "cost": 1,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "meganium",
@@ -3801,7 +3801,7 @@
         "Grass"
       ],
       "cost": 1,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "pidgeot",
@@ -3813,7 +3813,7 @@
         "Flying"
       ],
       "cost": 1,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "pikachu",
@@ -3824,7 +3824,7 @@
         "Electric"
       ],
       "cost": 1,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "pinsir",
@@ -3835,7 +3835,7 @@
         "Bug"
       ],
       "cost": 1,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "samurott",
@@ -3846,7 +3846,7 @@
         "Water"
       ],
       "cost": 1,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "simipour",
@@ -3857,7 +3857,7 @@
         "Water"
       ],
       "cost": 1,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "simisage",
@@ -3868,7 +3868,7 @@
         "Grass"
       ],
       "cost": 1,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "simisear",
@@ -3879,7 +3879,7 @@
         "Fire"
       ],
       "cost": 1,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "stunfisk",
@@ -3891,7 +3891,7 @@
         "Electric"
       ],
       "cost": 1,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "toucannon",
@@ -3903,7 +3903,7 @@
         "Flying"
       ],
       "cost": 1,
-      "origin": "wdl"
+      "origin": "base"
     },
     {
       "id": "watchog",
@@ -3914,7 +3914,7 @@
         "Normal"
       ],
       "cost": 1,
-      "origin": "wdl"
+      "origin": "base"
     }
   ]
 }

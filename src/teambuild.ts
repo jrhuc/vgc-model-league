@@ -7,7 +7,7 @@ import type { TeambuildSetView, TeambuildView } from './gui/api.js';
 import { defaultPsDir } from './paths.js';
 import type { ModelReasoningConfig, ReasoningLevel } from './providers.js';
 import { classifyProviderFailure, makeProvider, parseSpec, reasoningForModel } from './providers.js';
-import type { Rng } from './random.js';
+import { type Rng, shuffle } from './random.js';
 import type { RecoveryGate } from './recovery.js';
 import { ShowdownReference } from './reference.js';
 import type { ShowdownApi } from './showdown.js';
@@ -57,8 +57,6 @@ const TEAMBUILD_PROMPT_POLICY = {
     'Your previous reply used the whole {{budget}}-token budget before finishing the team. Reply now with only the JSON object, keeping your reasoning short enough to finish inside the budget.',
   maxTokens: 65_536,
   timeoutSeconds: 900,
-  // One teambuild governs a whole best-of-three, so buying more attempts to
-  // avoid a repaired team is far cheaper than the series it would distort.
   attempts: 5,
   providerRetries: 4,
   retryBaseMs: 2_000,
@@ -124,7 +122,6 @@ function slug(value: string): string {
 
 type DexLike = ReturnType<ShowdownApi['Dex']['mod']>;
 
-/** Showdown's own movepool, so the prompt cannot offer a move the validator then rejects. */
 function legalMoves(dex: DexLike, mon: DraftBoardMon): string[] {
   const species = dex.species.get(mon.species);
   const pool = dex.species.getMovePool(species.id);
@@ -173,12 +170,6 @@ function isMegaStone(item: { megaStone?: unknown }): boolean {
   return Boolean(item.megaStone);
 }
 
-/**
- * The Champions item list is much shorter than Gen 9's, and models reach for
- * absent staples (Assault Vest, Rocky Helmet, Safety Goggles) unless told.
- * Mega Stones are excluded: a roster entry either has one locked or is banned
- * from holding any, so they are never a free choice.
- */
 function legalItems(dex: DexLike): string[] {
   const names: string[] = [];
   for (const item of dex.items.all()) {
@@ -264,11 +255,6 @@ function parseSets(response: string, roster: DraftBoardMon[]): { sets: RawSet[];
   return { sets, plan: String(record.team_plan ?? '').trim() };
 }
 
-/**
- * Brings one set inside the rules without discarding more of the model's
- * intent than necessary: illegal moves are dropped before legal ones are
- * added, and EVs are scaled rather than reset.
- */
 function repairSet(
   dex: DexLike,
   mon: DraftBoardMon,
@@ -324,12 +310,10 @@ function repairSet(
     }
     if (!moves.includes(resolved)) moves.push(resolved);
   }
-  while (moves.length < 4 && moves.length < pool.length) {
+  if (!moves.length && pool.length) {
     const candidate = pool[Math.floor(rng() * pool.length)]!;
-    if (!moves.includes(candidate)) {
-      moves.push(candidate);
-      repairs.push(`filled an empty move slot with ${candidate}`);
-    }
+    moves.push(candidate);
+    repairs.push(`filled an empty move slot with ${candidate}`);
   }
 
   const evs: Record<string, number> = { ...set.evs };
@@ -396,22 +380,20 @@ export async function runTeambuild(request: TeambuildRequest, options: Teambuild
   const validator = new TeamValidator(request.format);
   const reference = new ShowdownReference(request.format, psDir);
   fs.mkdirSync(options.logDir, { recursive: true });
-  const logFile = path.join(options.logDir, `series-${request.seriesIndex + 1}-${slug(request.model)}.jsonl`);
+  const logFile = path.join(
+    options.logDir,
+    `series-${request.seriesIndex + 1}-e${request.entrant}-${slug(request.model)}.jsonl`,
+  );
 
   const system = systemPrompt(request, dex, evLimit, evMax);
   const messages: ProviderMessage[] = [{ role: 'user', content: userPrompt(request, dex) }];
+  const reasoning = reasoningForModel(request.model, options);
   const provider =
     request.model === 'random'
       ? undefined
-      : (options.makeTeambuildProvider?.(
-          request.model,
-          options.apiKeys?.[request.model],
-          reasoningForModel(request.model, options),
-        ) ??
+      : (options.makeTeambuildProvider?.(request.model, options.apiKeys?.[request.model], reasoning) ??
         makeProvider(parseSpec(request.model), {
-          ...(reasoningForModel(request.model, options) === undefined
-            ? {}
-            : { reasoning: reasoningForModel(request.model, options) }),
+          ...(reasoning === undefined ? {} : { reasoning }),
           ...(options.apiKeys?.[request.model] === undefined ? {} : { apiKey: options.apiKeys[request.model] }),
         }));
 
@@ -461,8 +443,6 @@ export async function runTeambuild(request: TeambuildRequest, options: Teambuild
         }
       }
       if (error) {
-        // Replaying an overrun reply spends the retry's budget on the very
-        // reasoning that overran, so summarise it instead.
         messages.push({
           role: 'assistant',
           content: truncated ? '[reply cut off before the team was finished]' : response,
@@ -504,9 +484,6 @@ export async function runTeambuild(request: TeambuildRequest, options: Teambuild
     }
   }
 
-  // Repair the model's own last attempt rather than replacing it: a team that
-  // failed validation still encodes what the coach wanted, and only the parts
-  // the validator rejected should change.
   const chosen = accepted ??
     lastParsed ?? {
       sets: fallbackSets(request.roster, options.rng, evLimit, evMax),
@@ -517,34 +494,37 @@ export async function runTeambuild(request: TeambuildRequest, options: Teambuild
   const taken = new Set<string>();
   const views: TeambuildSetView[] = [];
   const packedSets: string[] = [];
-  const repaired: Array<{ mon: DraftBoardMon; set: RawSet; repairs: string[] }> = chosen.sets.map((raw) => {
+  let repaired: Array<{ mon: DraftBoardMon; set: RawSet; repairs: string[] }> = chosen.sets.map((raw) => {
     const mon = owned.get(raw.id)!;
-    return { mon, ...repairSet(dex, mon, raw, evLimit, evMax, taken, options.rng) };
+    return accepted
+      ? { mon, set: raw, repairs: [] }
+      : { mon, ...repairSet(dex, mon, raw, evLimit, evMax, taken, options.rng) };
   });
 
-  // Per-set repair cannot see cross-set or event-legality rules, so ask
-  // Showdown one more time. Anything still illegal is rebuilt from scratch:
-  // the league must not abort because one set could not be salvaged.
-  for (const problem of validateCandidate(
+  const problems = validateCandidate(
     dex,
     validator,
     repaired.map((entry) => entry.set),
     owned,
     psDir,
-  )) {
-    const failing = repaired.find((entry) => problem.startsWith(entry.mon.name) || problem.includes(entry.mon.species));
-    if (!failing) continue;
-    const rebuilt = repairSet(
+  );
+  if (problems.length) {
+    const fallbackTaken = new Set<string>();
+    repaired = fallbackSets(request.roster, options.rng, evLimit, evMax).map((raw) => {
+      const mon = owned.get(raw.id)!;
+      const rebuilt = repairSet(dex, mon, raw, evLimit, evMax, fallbackTaken, options.rng);
+      return { mon, set: rebuilt.set, repairs: [`rebuilt from scratch: ${problems.join('; ')}`, ...rebuilt.repairs] };
+    });
+    const fallbackProblems = validateCandidate(
       dex,
-      failing.mon,
-      { ...minimalSet(failing.mon, evLimit, evMax), id: failing.mon.id },
-      evLimit,
-      evMax,
-      taken,
-      options.rng,
+      validator,
+      repaired.map((entry) => entry.set),
+      owned,
+      psDir,
     );
-    failing.set = rebuilt.set;
-    failing.repairs = [...failing.repairs, `rebuilt from scratch: ${problem}`];
+    if (fallbackProblems.length) {
+      throw new Error(`could not create a legal fallback team: ${fallbackProblems.join('; ')}`);
+    }
   }
 
   for (const { mon, set, repairs } of repaired) {
@@ -567,7 +547,7 @@ export async function runTeambuild(request: TeambuildRequest, options: Teambuild
     seriesIndex: request.seriesIndex,
     entrant: request.entrant,
     opponent: request.opponent,
-    brought: chosen.sets.map((set) => set.id),
+    brought: repaired.map((entry) => entry.mon.id),
     sets: views,
     rationale: chosen.plan.slice(0, 900),
     attempts: attemptsUsed,
@@ -580,11 +560,6 @@ export async function runTeambuild(request: TeambuildRequest, options: Teambuild
   return { packed, view };
 }
 
-/**
- * League rules are checked here because Showdown does not know them; format
- * legality is delegated to Showdown's own validator so its messages, not a
- * reimplementation of them, are what the model gets told to fix.
- */
 function validateCandidate(
   dex: DexLike,
   validator: { validateTeam(team: unknown[]): string[] | null },
@@ -614,7 +589,6 @@ function validateCandidate(
   return problems;
 }
 
-/** A deliberately plain legal build, used only when a set cannot be salvaged. */
 function minimalSet(mon: DraftBoardMon, evLimit: number, evMax: number): RawSet {
   const evs = Object.fromEntries(STATS.map((stat) => [stat, 0])) as Record<Stat, number>;
   let spent = 0;
@@ -626,32 +600,13 @@ function minimalSet(mon: DraftBoardMon, evLimit: number, evMax: number): RawSet 
   return { id: mon.id, item: mon.item ?? '', ability: '', nature: 'Hardy', moves: [], evs, note: '' };
 }
 
-/**
- * Six of the roster with the EV budget spent evenly. Repair fills the moves,
- * ability and nature, so this only has to be a legal starting point.
- */
 function fallbackSets(roster: DraftBoardMon[], rng: Rng, evLimit: number, evMax: number): RawSet[] {
   const chosen: DraftBoardMon[] = [];
   const bases = new Set<string>();
-  for (const mon of [...roster].sort(() => rng() - 0.5)) {
+  for (const mon of shuffle(roster, rng)) {
     if (chosen.length >= 6 || bases.has(mon.base)) continue;
     bases.add(mon.base);
     chosen.push(mon);
   }
-  const evs = Object.fromEntries(STATS.map((stat) => [stat, 0])) as Record<Stat, number>;
-  let spent = 0;
-  for (const stat of STATS) {
-    const share = Math.min(evMax, Math.floor(evLimit / STATS.length), evLimit - spent);
-    evs[stat] = share;
-    spent += share;
-  }
-  return chosen.map((mon) => ({
-    id: mon.id,
-    item: mon.item ?? '',
-    ability: '',
-    nature: 'Hardy',
-    moves: [],
-    evs: { ...evs },
-    note: '',
-  }));
+  return chosen.map((mon) => minimalSet(mon, evLimit, evMax));
 }

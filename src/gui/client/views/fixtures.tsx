@@ -78,7 +78,7 @@ const HEADINGS: Record<RunMode, { eyebrow: string; title: [string, string]; lede
   draft: {
     eyebrow: 'Draft league · protocol v1',
     title: ['Draft rosters.', 'Crown a champion.'],
-    lede: 'A Wolfey Draft League recreation. Coaches snake-draft ten Pokémon each inside a points budget, then before every match pick six and build each set themselves. A weekly round robin, then playoffs.',
+    lede: 'Coaches snake-draft ten Pokémon each inside a points budget, then before every match pick six and build each set themselves. A weekly round robin, then playoffs.',
   },
   rotation: {
     eyebrow: 'Rotation · protocol v1',

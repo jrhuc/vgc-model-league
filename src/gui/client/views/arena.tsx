@@ -139,7 +139,7 @@ function Mon({ mon }: { mon: MonView }) {
   return (
     <div class={`mon ${mon.slot ? 'active ' : ''}${mon.fainted ? 'fainted' : ''}`}>
       <div class="mon-top">
-        <Sprite id={mon.spriteId} name={mon.species} size={32} />
+        <Sprite id={mon.spriteId} size={32} />
         <span class="mon-name">
           {mon.species}
           {mon.status && !mon.fainted && <span class={`status-chip ${mon.status}`}>{mon.status.toUpperCase()}</span>}

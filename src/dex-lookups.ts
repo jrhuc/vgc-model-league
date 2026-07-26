@@ -2,12 +2,11 @@ import { assistantToolMessage, classifyProviderFailure, toolResultMessage } from
 import type { RecoveryGate } from './recovery.js';
 import type { ShowdownReference } from './reference.js';
 import { DEX_TOOLS } from './reference.js';
-import type { Completion, JsonObject, Provider, ProviderMessage, ToolCall } from './types.js';
+import type { Completion, JsonObject, Provider, ProviderMessage } from './types.js';
 
 export interface DexToolPolicy {
   maxTokens: number;
   timeoutSeconds: number;
-  /** Rounds of lookups before the model must answer. */
   toolRounds: number;
   maxCallsPerRound: number;
   providerRetries: number;
@@ -17,7 +16,6 @@ export interface DexToolPolicy {
 export interface DexToolRequest {
   provider: Provider;
   system: string;
-  /** Extended in place, so a retry sees the lookups the model already made. */
   messages: ProviderMessage[];
   spec: string;
   reference: ShowdownReference;
@@ -40,11 +38,6 @@ const delay = (ms: number, signal?: AbortSignal): Promise<void> =>
     signal?.addEventListener('abort', abort, { once: true });
   });
 
-/**
- * Transient upstream failures retry with backoff and never surface, so a rate
- * limit cannot be mistaken for a model that failed to answer. Pausable
- * failures are thrown for the caller to hold on its RecoveryGate.
- */
 async function completeOnce(request: DexToolRequest, options: { tools: boolean; final: boolean }): Promise<Completion> {
   for (let attempt = 0; ; attempt += 1) {
     await request.recovery?.wait(request.signal);
@@ -64,17 +57,6 @@ async function completeOnce(request: DexToolRequest, options: { tools: boolean; 
   }
 }
 
-function boundedCalls(calls: ToolCall[], max: number): ToolCall[] {
-  return calls.slice(0, max);
-}
-
-/**
- * Runs the model with the Showdown dex tools available, resolving each lookup
- * until it answers or its rounds run out. Drafting and teambuilding need the
- * same simulator facts as battling — what a Mega becomes, how a matchup reads,
- * what a spread outruns — so they get the same tools rather than a second,
- * weaker source of truth.
- */
 export async function completeWithDexTools(request: DexToolRequest): Promise<Completion> {
   const usage: Record<string, number> = {};
   for (let round = 0; ; round += 1) {
@@ -85,10 +67,7 @@ export async function completeWithDexTools(request: DexToolRequest): Promise<Com
       usage[key] = (usage[key] ?? 0) + Math.trunc(value);
     }
     if (!completion.toolCalls.length || final) {
-      // Providers disagree about whether reasoning counts toward the cap and
-      // several never set finishReason, so treat spending the budget as the
-      // signal. Callers use it to tell a cut-off model to answer immediately
-      // instead of blaming its formatting.
+      // Some providers omit finishReason, so an exhausted output budget also means truncation.
       const spent = (completion.usage.output_tokens ?? 0) >= request.policy.maxTokens;
       return {
         ...completion,
@@ -97,7 +76,7 @@ export async function completeWithDexTools(request: DexToolRequest): Promise<Com
       };
     }
 
-    const calls = boundedCalls(completion.toolCalls, request.policy.maxCallsPerRound);
+    const calls = completion.toolCalls.slice(0, request.policy.maxCallsPerRound);
     request.messages.push(
       assistantToolMessage(
         calls.length === completion.toolCalls.length

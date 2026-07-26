@@ -296,7 +296,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
       allowPositionals: true,
       options: {
         ...EXPERIMENT_CLI_OPTIONS,
-        board: { type: 'string', default: 'wdl-regmb-202607' },
+        board: { type: 'string', default: 'regmb-202607' },
       },
     });
     const models = experimentModels(command, values.models, positionals);

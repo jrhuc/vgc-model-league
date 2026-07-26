@@ -64,7 +64,7 @@ function BoardBrowser({
           return (
             <div class={`board-card ${owner !== undefined ? 'taken' : ''}`} key={mon.id}>
               <div class="board-card-head">
-                <Sprite id={mon.spriteId} name={mon.name} size={32} />
+                <Sprite id={mon.spriteId} size={32} />
                 <b>{mon.name}</b>
                 <span class="board-cost">{mon.cost}</span>
               </div>
@@ -83,7 +83,7 @@ function BoardBrowser({
               <small class="board-abilities">{mon.abilities.join(' / ')}</small>
               {mon.item ? <small class="board-locked">locked to {mon.item}</small> : null}
               {mon.usage ? (
-                <small class="board-note" title={`listed at ${mon.listed} on the Wolfey board`}>
+                <small class="board-note" title={`listed at ${mon.listed} on the original board`}>
                   re-priced from {mon.listed} · {mon.usage}
                 </small>
               ) : mon.anchor ? (
@@ -115,7 +115,7 @@ function TeambuildCard({ build, draft }: { build: TeambuildView; draft: DraftVie
         {build.sets.map((set, index) => (
           <div class={`teambuild-set ${set.repaired ? 'repaired' : ''}`} key={`${set.species}-${index}`}>
             <div class="teambuild-set-head">
-              <Sprite id={set.spriteId} name={set.species} size={26} />
+              <Sprite id={set.spriteId} size={26} />
               <b>{set.species}</b>
               {set.item ? <span>@ {set.item}</span> : null}
             </div>
@@ -147,19 +147,33 @@ function TeambuildCard({ build, draft }: { build: TeambuildView; draft: DraftVie
 }
 
 function useBoard(boardId: string, active: boolean) {
-  const [board, setBoard] = useState<BoardResponse | null>(null);
-  const [error, setError] = useState('');
+  const [result, setResult] = useState<{ id: string; board: BoardResponse | null; error: string }>({
+    id: '',
+    board: null,
+    error: '',
+  });
   useEffect(() => {
     if (!boardId || !active) return;
     let live = true;
+    setResult({ id: boardId, board: null, error: '' });
     api<BoardResponse>(`/api/board?id=${encodeURIComponent(boardId)}`)
-      .then((data) => live && setBoard(data))
-      .catch((cause: unknown) => live && setError(cause instanceof Error ? cause.message : String(cause)));
+      .then((board) => {
+        if (live) setResult({ id: boardId, board, error: '' });
+      })
+      .catch((cause: unknown) => {
+        if (live) {
+          setResult({
+            id: boardId,
+            board: null,
+            error: cause instanceof Error ? cause.message : String(cause),
+          });
+        }
+      });
     return () => {
       live = false;
     };
   }, [boardId, active]);
-  return { board, error };
+  return result.id === boardId ? result : { id: boardId, board: null, error: '' };
 }
 
 function BoardOnly({
@@ -206,7 +220,7 @@ export function LeagueView({
 }) {
   const draft = run?.mode === 'draft' ? run.draft : null;
   const summary = app.boards.find((info) => info.id === (draft?.boardId ?? app.boards[0]?.id ?? ''));
-  const { board: fullBoard } = useBoard(draft?.boardId ?? '', active && Boolean(draft));
+  const { board: fullBoard, error: boardError } = useBoard(draft?.boardId ?? '', active && Boolean(draft));
   const byId = useMemo(() => new Map((fullBoard?.mons ?? []).map((mon) => [mon.id, mon] as const)), [fullBoard]);
   const owners = useMemo(
     () => new Map((draft?.picks ?? []).map((pick) => [pick.mon, pick.entrant] as const)),
@@ -227,7 +241,7 @@ export function LeagueView({
             <h2>Draft league</h2>
             <p>
               Board {draft.boardId} · {draft.budget} points · {draft.picksPerEntrant} picks each
-              {draft.weeks ? ` · week ${draft.week} of ${draft.weeks}` : ''}
+              {draft.phase === 'roundrobin' ? ` · week ${draft.week} of ${draft.weeks}` : ''}
             </p>
           </div>
           <span class="phase-pill">{PHASE_LABELS[draft.phase]}</span>
@@ -251,7 +265,7 @@ export function LeagueView({
                   const mon = byId.get(id);
                   return (
                     <li key={id}>
-                      <Sprite id={mon?.spriteId ?? ''} name={mon?.name ?? id} size={22} />
+                      <Sprite id={mon?.spriteId ?? ''} size={22} />
                       <span>{mon?.name ?? id}</span>
                       <span class="muted">{mon?.cost}</span>
                     </li>
@@ -306,17 +320,18 @@ export function LeagueView({
         </section>
       )}
 
-      {recent.length > 0 && (
-        <section class="panel">
-          <div class="section-head">
-            <div>
-              <h2>Draft board</h2>
-              <p>Every pick, with the rationale the coach gave for it.</p>
-            </div>
+      <section class="panel">
+        <div class="section-head">
+          <div>
+            <h2>Draft board</h2>
+            <p>Every pick, with the rationale the coach gave for it.</p>
           </div>
-          {active && fullBoard ? (
-            <BoardBrowser board={fullBoard.mons} owners={owners} coach={(entrant) => coachLabel(draft, entrant)} />
-          ) : null}
+        </div>
+        {boardError ? <p class="empty-note">Could not load the board: {boardError}</p> : null}
+        {active && fullBoard ? (
+          <BoardBrowser board={fullBoard.mons} owners={owners} coach={(entrant) => coachLabel(draft, entrant)} />
+        ) : null}
+        {recent.length > 0 ? (
           <div class="draft-feed">
             <h3>Picks</h3>
             {recent.map((pick) => (
@@ -329,8 +344,8 @@ export function LeagueView({
               </div>
             ))}
           </div>
-        </section>
-      )}
+        ) : null}
+      </section>
     </div>
   );
 }

@@ -183,7 +183,7 @@ export function App() {
 
   const onStarted = (startedRun: RunSnapshot) => {
     acceptRun(startedRun);
-    navigate('arena');
+    navigate(startedRun.mode === 'draft' ? 'league' : 'arena');
   };
 
   const onPools = (pools: PoolInfo[]) => {

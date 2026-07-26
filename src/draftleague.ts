@@ -32,18 +32,12 @@ export interface DraftLeagueOptions extends ExperimentOptions {
 interface SeriesPlanned {
   index: number;
   stage: 'roundrobin' | 'playoff';
-  /** Round-robin week, 1-based; playoff round for playoff series. */
   round: number;
   entrants: [number, number] | null;
   gameSeeds: Array<[number, number, number, number]>;
   engineSeeds: Record<Pid, number>;
 }
 
-/**
- * Circle-method round robin: every coach plays every other exactly once, and
- * each week is a set of simultaneous matches, as the Wolfey league schedules it.
- * An odd field gives one coach a bye each week.
- */
 export function roundRobinWeeks(entrants: number): Array<Array<[number, number]>> {
   const seats = [...Array(entrants).keys()];
   if (seats.length % 2) seats.push(-1);
@@ -72,7 +66,7 @@ export async function runDraftLeague(
   fs.mkdirSync(runDir, { recursive: true });
   const recordsPath = options.recordsPath ?? RESULTS_PATH;
   const psDir = options.psDir ?? defaultPsDir();
-  const board = loadBoard(options.board ?? 'wdl-regmb-202607', options.boardsDir ?? BOARDS_DIR, psDir);
+  const board = loadBoard(options.board ?? 'regmb-202607', options.boardsDir ?? BOARDS_DIR, psDir);
   const distinctBases = new Set(board.mons.map((mon) => mon.base)).size;
   if (models.length * board.picks > distinctBases) {
     throw new Error(
@@ -238,7 +232,7 @@ export async function runDraftLeague(
       {
         psDir,
         logDir: path.join(runDir, 'teambuild'),
-        rng: random,
+        rng: seededRng(`${seed}:tb:${plan.index}:${entrant}`),
         signal,
         ...(options.reasoning === undefined ? {} : { reasoning: options.reasoning }),
         ...(options.reasoningByModel === undefined ? {} : { reasoningByModel: options.reasoningByModel }),
@@ -347,6 +341,7 @@ export async function runDraftLeague(
 
   seeding = rankedTable(table).map((row) => row.entrant);
   phase = 'playoffs';
+  week = 0;
   options.onEvent?.({ type: 'draft', draft: draftView(true) });
 
   const playoffs = plans.filter((plan) => plan.stage === 'playoff');

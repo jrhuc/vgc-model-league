@@ -1178,7 +1178,7 @@ test('gui starts draft runs, validates the board, and mirrors draft state', asyn
     const state = await apiJson(`${base}api/state`);
     const boards = state.data.boards as Array<Record<string, unknown>>;
     assert.ok(boards.length >= 1, 'the bundled draft board is advertised');
-    assert.equal(boards[0]!.id, 'wdl-regmb-202607');
+    assert.equal(boards[0]!.id, 'regmb-202607');
 
     const unknown = await apiJson(`${base}api/run`, {
       mode: 'draft',
@@ -1199,7 +1199,7 @@ test('gui starts draft runs, validates the board, and mirrors draft state', asyn
     const tooMany = await apiJson(`${base}api/run`, {
       mode: 'draft',
       models: Array.from({ length: 9 }, () => 'random'),
-      board: 'wdl-regmb-202607',
+      board: 'regmb-202607',
     });
     assert.equal(tooMany.status, 400);
     assert.match(String(tooMany.data.error), /supports at most/);
@@ -1207,7 +1207,7 @@ test('gui starts draft runs, validates the board, and mirrors draft state', asyn
     const started = await apiJson(`${base}api/run`, {
       mode: 'draft',
       models: ['random', 'random'],
-      board: 'wdl-regmb-202607',
+      board: 'regmb-202607',
     });
     assert.equal(started.status, 200, JSON.stringify(started.data));
     let run = (await apiJson(`${base}api/state`)).data.run as Record<string, unknown>;
@@ -1217,8 +1217,8 @@ test('gui starts draft runs, validates the board, and mirrors draft state', asyn
     }
     assert.equal(run.state, 'done', String(run.error ?? ''));
     assert.equal(run.mode, 'draft');
-    assert.equal(run.board, 'wdl-regmb-202607');
-    assert.equal(received?.board, 'wdl-regmb-202607');
+    assert.equal(run.board, 'regmb-202607');
+    assert.equal(received?.board, 'regmb-202607');
     const draft = run.draft as Record<string, unknown>;
     assert.equal(draft.phase, 'draft');
     const picks = draft.picks as Array<Record<string, unknown>>;
@@ -1255,7 +1255,7 @@ test('hosted draft runs execute in the worker and stream draft state', async (t)
         origin: 'http://league.example',
         'content-type': 'application/json',
       },
-      body: '{"mode":"draft","models":["random","random"],"board":"wdl-regmb-202607","concurrency":1,"seed":5}',
+      body: '{"mode":"draft","models":["random","random"],"board":"regmb-202607","concurrency":1,"seed":5}',
     });
     assert.equal(started.status, 200, JSON.stringify(started.data));
     const finished = await settled.promise;

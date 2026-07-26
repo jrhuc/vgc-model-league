@@ -26,7 +26,7 @@ import { loadShowdown } from '../src/showdown.js';
 import { runTeambuild, teambuildScaffoldRevision } from '../src/teambuild.js';
 import type { Completion, Provider, ProviderMessage } from '../src/types.js';
 
-const BOARD = loadBoard('wdl-regmb-202607');
+const BOARD = loadBoard('regmb-202607');
 const mon = (id: string): DraftBoardMon => {
   const found = BOARD.mons.find((candidate) => candidate.id === id);
   assert.ok(found, `board is missing ${id}`);
@@ -53,7 +53,7 @@ test('scaffold identities are distinct and stable', () => {
   assert.notEqual(draftScaffoldRevision(), teambuildScaffoldRevision());
 });
 
-test('the bundled board mirrors the Wolfey league and fits eight coaches', () => {
+test('the bundled board fits eight coaches', () => {
   assert.equal(BOARD.format, 'gen9championsvgc2026regmbbo3');
   assert.equal(BOARD.budget, 100);
   assert.equal(BOARD.picks, 10);
@@ -76,7 +76,8 @@ test('mega entries register the base forme and lock their stone', () => {
     assert.ok(registered.exists && !registered.name.includes('-Mega'), `${entry.id} registers a base forme`);
     const stone = dex.items.get(entry.item!);
     assert.ok(stone.exists, `${entry.id} names a real stone`);
-    const target = (stone as unknown as { megaStone?: Record<string, string> }).megaStone?.[registered.name];
+    const megaStone = stone.megaStone;
+    const target = typeof megaStone === 'string' ? megaStone : megaStone?.[registered.name];
     assert.equal(target, entry.forme, `${entry.id} stone must produce its forme`);
   }
   const zard = mon('charizard-mega-y');
@@ -86,7 +87,7 @@ test('mega entries register the base forme and lock their stone', () => {
   assert.equal(mon('charizard').base, zard.base, 'base and mega share a species-clause key');
 });
 
-test('re-priced entries keep the Wolfey listing and the usage that moved it', () => {
+test('re-priced entries keep the prior listing and the usage that moved it', () => {
   const adjusted = BOARD.mons.filter((entry) => entry.usage);
   assert.ok(adjusted.length > 40, 'the usage pass should have moved a meaningful share of the board');
   for (const entry of adjusted) {
@@ -94,7 +95,7 @@ test('re-priced entries keep the Wolfey listing and the usage that moved it', ()
     assert.match(entry.usage!, /^#\d+ at [\d.]+%$/);
   }
   assert.equal(mon('farigiraf').cost, 18, 'a Reg M-B staple should not stay at its Reg M-A price');
-  assert.equal(mon('toxapex').listed, 3, 'Toxapex was exploitably cheap on the Wolfey board');
+  assert.equal(mon('toxapex').listed, 3, 'Toxapex was exploitably cheap on the prior board');
   assert.ok(mon('toxapex').cost > 3);
 });
 
@@ -111,6 +112,30 @@ test('a board entry naming an unknown species is rejected', (t) => {
   const mons = BOARD.mons.map((entry, index) => (index === 0 ? { ...entry, species: 'Missingno' } : entry));
   fs.writeFileSync(path.join(directory, 'bad.json'), JSON.stringify({ ...BOARD, id: 'bad', mons }));
   assert.throws(() => loadBoard('bad', directory), /not a legal species/);
+});
+
+test('a board rejects inconsistent battle metadata and an unaffordable budget', (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-draft-board-invariants-'));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const write = (id: string, mons: DraftBoardMon[], budget = BOARD.budget) => {
+    fs.writeFileSync(path.join(directory, `${id}.json`), JSON.stringify({ ...BOARD, id, budget, mons }));
+  };
+
+  write(
+    'bad-base',
+    BOARD.mons.map((entry, index) => (index ? entry : { ...entry, base: 'Missing' })),
+  );
+  assert.throws(() => loadBoard('bad-base', directory), /wrong base species/);
+
+  const mega = BOARD.mons.findIndex((entry) => entry.item);
+  write(
+    'bad-mega',
+    BOARD.mons.map((entry, index) => (index === mega ? { ...entry, item: 'Leftovers' } : entry)),
+  );
+  assert.throws(() => loadBoard('bad-mega', directory), /invalid Mega forme or stone/);
+
+  write('bad-budget', BOARD.mons, 1);
+  assert.throws(() => loadBoard('bad-budget', directory), /budget that can afford/);
 });
 
 test('snake order reverses on every round', () => {
@@ -271,11 +296,23 @@ test('a rejected pick is told which rule it broke', () => {
   assert.match(String(denied), /costs 19, but you can spend at most \d+ points?/);
 });
 
+test('the first pick requires a franchise name', () => {
+  const state = freshState();
+  const legal = legalPicks(state, 0);
+  assert.match(String(parsePick('{"pick":"garchomp"}', legal, state, 0)), /team_name/);
+  assert.notEqual(typeof parsePick('{"pick":"garchomp","team_name":"Route 210 Garchomps"}', legal, state, 0), 'string');
+});
+
 test('a pick may be written as the board id or the name shown beside it', () => {
   const state = freshState();
   const legal = legalPicks(state, 0);
   for (const spelling of ['lucario-mega', 'Mega Lucario', 'mega-lucario', 'MEGA LUCARIO']) {
-    const parsed = parsePick(JSON.stringify({ pick: spelling, reasoning: 'x' }), legal, state, 0);
+    const parsed = parsePick(
+      JSON.stringify({ pick: spelling, team_name: 'Mega Evolutions', reasoning: 'x' }),
+      legal,
+      state,
+      0,
+    );
     assert.notEqual(typeof parsed, 'string', `${spelling} should resolve`);
     assert.equal(typeof parsed === 'string' ? '' : parsed.mon.id, 'lucario-mega');
   }
@@ -375,29 +412,33 @@ test('a pick cut off by its token budget is told so, not blamed for formatting',
   const long = 'y'.repeat(4_000);
   let secondPrompt = '';
   let call = 0;
-  const outcome = await runDraft(['fake:model', 'random'], { ...BOARD, picks: 4 }, {
-    logDir,
-    rng: seededRng(8),
-    makeDraftProvider: () => ({
-      complete(_system, messages, options): Promise<Completion> {
-        call += 1;
-        if (call === 1) {
+  const outcome = await runDraft(
+    ['fake:model', 'random'],
+    { ...BOARD, picks: 4 },
+    {
+      logDir,
+      rng: seededRng(8),
+      makeDraftProvider: () => ({
+        complete(_system, messages, options): Promise<Completion> {
+          call += 1;
+          if (call === 1) {
+            return Promise.resolve({
+              text: `Weighing the board ${long}`,
+              usage: { output_tokens: options?.maxTokens ?? 0 },
+              toolCalls: [],
+            });
+          }
+          if (call === 2) secondPrompt = messages.map((message) => String(message.content ?? '')).join('\n');
+          const picks = ['garchomp', 'incineroar', 'sinistcha', 'farigiraf'];
           return Promise.resolve({
-            text: `Weighing the board ${long}`,
-            usage: { output_tokens: options?.maxTokens ?? 0 },
+            text: `{"pick": "${picks[Math.min(call - 2, picks.length - 1)]}", "team_name": "Budget Chompers", "reasoning": "Kept it short."}`,
+            usage: { output_tokens: 40 },
             toolCalls: [],
           });
-        }
-        if (call === 2) secondPrompt = messages.map((message) => String(message.content ?? '')).join('\n');
-        const picks = ['garchomp', 'incineroar', 'sinistcha', 'farigiraf'];
-        return Promise.resolve({
-          text: `{"pick": "${picks[Math.min(call - 2, picks.length - 1)]}", "team_name": "Budget Chompers", "reasoning": "Kept it short."}`,
-          usage: { output_tokens: 40 },
-          toolCalls: [],
-        });
-      },
-    }),
-  });
+        },
+      }),
+    },
+  );
 
   assert.ok(!secondPrompt.includes(long), 'the overrun reasoning must not be replayed into the retry');
   assert.match(secondPrompt, /used the whole 32768-token budget before naming a pick/);
@@ -654,6 +695,20 @@ test('a legal teambuild is accepted as written and packs the base forme', async 
   assert.equal((Teams.unpack(packed) ?? []).length, 6);
 });
 
+test('an accepted teambuild preserves fewer than four legal moves', async (t) => {
+  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-teambuild-three-moves-'));
+  t.after(() => fs.rmSync(logDir, { recursive: true, force: true }));
+  const team = JSON.parse(GOOD_TEAM) as { sets: Array<{ moves: string[] }> };
+  team.sets[0]!.moves = team.sets[0]!.moves.slice(0, 3);
+  const { view } = await runTeambuild(teambuildRequest(), {
+    logDir,
+    rng: seededRng(1),
+    makeTeambuildProvider: () => scriptedProvider([JSON.stringify(team)]),
+  });
+  assert.deepEqual(view.sets[0]!.moves, team.sets[0]!.moves);
+  assert.equal(view.sets[0]!.repaired, false);
+});
+
 test('the teambuild prompt carries the roster, the opponent, and only legal moves', async (t) => {
   const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-teambuild-prompt-'));
   t.after(() => fs.rmSync(logDir, { recursive: true, force: true }));
@@ -731,7 +786,7 @@ test('an illegal team is rejected with Showdown’s own errors, then repaired', 
   );
 
   const errors = fs
-    .readFileSync(path.join(logDir, 'series-1-fake-model.jsonl'), 'utf8')
+    .readFileSync(path.join(logDir, 'series-1-e0-fake-model.jsonl'), 'utf8')
     .trim()
     .split('\n')
     .map((line) => JSON.parse(line) as Record<string, unknown>);
@@ -817,7 +872,7 @@ test('a full draft league drafts, plays weekly rounds, and crowns a champion', a
   for (const row of rows) {
     assert.equal(row.mode, 'draft');
     assert.equal(row.protocol_version, DRAFT_PROTOCOL_VERSION);
-    assert.equal(row.board, 'wdl-regmb-202607');
+    assert.equal(row.board, 'regmb-202607');
     assert.equal(row.draft_scaffold, draftScaffoldRevision());
     assert.equal(row.teambuild_scaffold, teambuildScaffoldRevision());
   }

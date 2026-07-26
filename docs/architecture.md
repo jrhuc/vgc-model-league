@@ -86,10 +86,9 @@ concurrency. A drawn series advances the higher seed, and its record keeps
 Inline-team rows have no pool. Tournament rows are not rated.
 
 Draft League mode (`src/draftleague.ts`, drafting in `src/draft.ts`,
-teambuilding in `src/teambuild.ts`) recreates the Wolfey Draft League
-(wolfeydraftleague.com) on the current regulation. Eight coaches snake-draft
-ten Pokémon each from an immutable `boards/<id>.json` board inside a
-hundred-point budget, name a franchise, then keep that roster all season.
+teambuilding in `src/teambuild.ts`) has eight coaches snake-draft ten Pokémon
+each from an immutable `boards/<id>.json` board inside a hundred-point budget,
+name a franchise, then keep that roster all season.
 
 A board entry is a species, not a set: `{id, name, species, forme?, item?,
 base, types, cost}`. Megas are separate, separately priced entries from their
@@ -97,9 +96,10 @@ base forme, following the tournament sheet convention — the entry registers
 the base forme and locks the Mega Stone, while drafting the base forme forbids
 any stone. `base` is the species-clause key, and a roster holds at most one
 entry per base species, so any six of the ten are a legal team. Board costs
-come from the Wolfey season 2 board, extended to the Reg M-B additions and
-re-fitted against Reg M-B ladder usage; `boards/sources/` holds both inputs and
-each adjusted entry keeps its `listed` price and the `usage` that moved it.
+come from a prior Regulation M-A draft board, extended to the Reg M-B additions
+and re-fitted against Reg M-B ladder usage; `boards/sources/` holds both local
+inputs, and each adjusted entry keeps its `listed` price and the `usage` that
+moved it.
 
 Because a pick is a species and not a set, pick legality is only exclusivity,
 one entry per base species, and affordability: a pick is legal when the

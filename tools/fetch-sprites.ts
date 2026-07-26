@@ -21,16 +21,10 @@ async function download(spriteId: string): Promise<Buffer | undefined> {
 
 interface SpriteTarget {
   id: string;
-  /** Base forme to borrow from when this forme has no sprite upstream. */
   fallback: string;
 }
 
-/**
- * Every species the simulator can put on the field, so the arena and the draft
- * board can both render from one vendored set. Champions-original Megas have no
- * upstream sprite, so they borrow their base forme's.
- */
-export function spriteTargets(format = 'gen9championsvgc2026regmbbo3', psDir = defaultPsDir()): SpriteTarget[] {
+function spriteTargets(format = 'gen9championsvgc2026regmbbo3', psDir = defaultPsDir()): SpriteTarget[] {
   const { Dex } = loadShowdown(psDir);
   const dex = Dex.mod(Dex.formats.get(format).mod || 'base');
   const targets = new Map<string, SpriteTarget>();
@@ -42,7 +36,7 @@ export function spriteTargets(format = 'gen9championsvgc2026regmbbo3', psDir = d
   return [...targets.values()].sort((a, b) => a.id.localeCompare(b.id));
 }
 
-export async function fetchSprites(): Promise<{ written: number; substituted: string[]; missing: string[] }> {
+async function fetchSprites(): Promise<{ written: number; substituted: string[]; missing: string[] }> {
   fs.mkdirSync(SPRITE_DIR, { recursive: true });
   const targets = spriteTargets();
   const substituted: string[] = [];

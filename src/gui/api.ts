@@ -55,28 +55,21 @@ export interface BoardInfo {
   monCount: number;
   budget: number;
   picks: number;
-  /** Largest entrant count the board can support with one spare roster of slack. */
   maxEntrants: number;
 }
 
 export interface DraftBoardMonView {
   id: string;
   name: string;
-  /** Showdown sprite id of the forme this entry becomes in battle. */
   spriteId: string;
   cost: number;
   types: string[];
-  /** Mega Stone this entry is locked to; empty for non-Mega entries. */
   item: string;
   abilities: string[];
   baseStats: Record<string, number>;
-  /** "wdl" for a Wolfey board price, "regmb" for a Reg M-B addition. */
   origin: string;
-  /** Why a Reg M-B addition costs what it does; empty for Wolfey entries. */
   anchor: string;
-  /** Reg M-B ladder usage behind a re-priced entry; empty when unchanged. */
   usage: string;
-  /** The pre-adjustment price, present only when usage moved it. */
   listed: number | null;
 }
 
@@ -98,14 +91,12 @@ export interface DraftTableRow {
 
 export interface TeambuildSetView {
   species: string;
-  /** Showdown sprite id of the forme this set becomes in battle. */
   spriteId: string;
   item: string;
   ability: string;
   nature: string;
   moves: string[];
   evs: Record<string, number>;
-  /** True when the validator rejected the model's set and it was repaired. */
   repaired: boolean;
   repairs: string[];
 }
@@ -114,7 +105,6 @@ export interface TeambuildView {
   seriesIndex: number;
   entrant: number;
   opponent: number;
-  /** Board ids the model brought, a subset of its roster. */
   brought: string[];
   sets: TeambuildSetView[];
   rationale: string;
@@ -126,16 +116,12 @@ export interface DraftView {
   budget: number;
   picksPerEntrant: number;
   entrants: string[];
-  /** Franchise names the models chose during the draft. */
   teamNames: string[];
   picks: DraftPickView[];
   rosters: string[][];
   budgets: number[];
-  /** Round-robin table, present once battles begin; sorted by rank. */
   table: DraftTableRow[] | null;
-  /** One entry per completed teambuild, newest last. */
   teambuilds: TeambuildView[];
-  /** Round-robin week now playing, 1-based; 0 before the schedule starts. */
   week: number;
   weeks: number;
   phase: 'draft' | 'roundrobin' | 'playoffs' | 'done';
@@ -147,9 +133,7 @@ export interface BracketEntrantView {
 }
 
 interface BracketMatchView {
-  /** Index into RunSnapshot.rows; null for byes, which play no series. */
   seriesIndex: number | null;
-  /** Entrant indices; null until the feeding match resolves. */
   slots: [number | null, number | null];
   winner: number | null;
 }
@@ -222,7 +206,6 @@ export interface AppState {
 
 export interface MonView {
   species: string;
-  /** Showdown sprite id, resolved server-side; renders as /sprites/<id>.png. */
   spriteId: string;
   slot: string;
   hp: string;

@@ -41,8 +41,8 @@ const DRAFT_PROMPT_POLICY = {
     '{{board}}',
   ],
   firstTurnInstruction:
-    'This is your first pick, so also choose your franchise name: a sports-style team name in the WDL house style, ' +
-    'such as "East Coast Egg Eaters", "Melbourne Rotoms" or "Jubilife Piplups". Reply with a single JSON object ' +
+    'This is your first pick, so also choose your franchise name: a sports-style team name, such as ' +
+    '"East Coast Egg Eaters", "Melbourne Rotoms" or "Jubilife Piplups". Reply with a single JSON object ' +
     '{"pick": "<board-id>", "team_name": "<your franchise name>", "reasoning": "<2-4 sentences>"} and nothing else.',
   turnInstruction:
     'Reply with a single JSON object {"pick": "<board-id>", "reasoning": "<2-4 sentences>"} and nothing else.',
@@ -64,7 +64,6 @@ const DRAFT_PROMPT_POLICY = {
   retryBaseMs: 2_000,
   toolRounds: 3,
   maxCallsPerRound: 6,
-  fallback: 'uniform-random-legal',
 } as const;
 
 export function draftScaffoldRevision(): string {
@@ -74,21 +73,15 @@ export function draftScaffoldRevision(): string {
 export interface DraftBoardMon {
   id: string;
   name: string;
-  /** Registered forme: the base species, plus its stone for Mega entries. */
   species: string;
-  /** Mega forme this entry becomes in battle; absent for non-Mega entries. */
   forme?: string;
-  /** Mega Stone this entry is locked to; absent for non-Mega entries. */
   item?: string;
-  /** Species-clause key: two entries sharing it cannot join one roster. */
   base: string;
   types: string[];
   cost: number;
-  origin: string;
+  origin: 'base' | 'regmb';
   anchor?: string;
-  /** Reg M-B ladder usage behind a re-priced entry. */
   usage?: string;
-  /** The pre-adjustment price, present only when usage moved it. */
   listed?: number;
 }
 
@@ -101,10 +94,17 @@ export interface DraftBoard {
   mons: DraftBoardMon[];
 }
 
+function cheapestCostsByBase(mons: readonly DraftBoardMon[]): number[] {
+  const costs = new Map<string, number>();
+  for (const mon of mons) {
+    const current = costs.get(mon.base);
+    if (current === undefined || mon.cost < current) costs.set(mon.base, mon.cost);
+  }
+  return [...costs.values()].sort((a, b) => a - b);
+}
+
 export function boardInfo(board: DraftBoard): BoardInfo {
-  const cheapest = [...new Set(board.mons.map((mon) => mon.base))]
-    .map((base) => Math.min(...board.mons.filter((mon) => mon.base === base).map((mon) => mon.cost)))
-    .sort((a, b) => a - b);
+  const cheapest = cheapestCostsByBase(board.mons);
   const affordable = cheapest.slice(0, board.picks).reduce((sum, cost) => sum + cost, 0) <= board.budget;
   return {
     id: board.id,
@@ -144,11 +144,20 @@ export function loadBoard(name: string, boardsDir = BOARDS_DIR, psDir = defaultP
     throw new Error(`${file} needs an integer budget and at least 4 picks per entrant`);
   }
   const { Dex } = loadShowdown(psDir);
-  const dex = Dex.mod(Dex.formats.get(format).mod || 'base');
+  const resolvedFormat = Dex.formats.get(format);
+  if (!resolvedFormat.exists) throw new Error(`${file} names an unknown format`);
+  const dex = Dex.mod(resolvedFormat.mod || 'base');
   const entries = Array.isArray(manifest.mons) ? manifest.mons : [];
   const seen = new Set<string>();
   const mons = entries.map((entry) => {
+    if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) {
+      throw new Error(`invalid board entry in ${file}`);
+    }
     const record = entry as Record<string, unknown>;
+    const origin = text(record.origin);
+    if (origin !== 'base' && origin !== 'regmb') {
+      throw new Error(`board entry ${JSON.stringify(record.id)} in ${file} needs a valid origin`);
+    }
     const mon: DraftBoardMon = {
       id: text(record.id),
       name: text(record.name),
@@ -158,7 +167,7 @@ export function loadBoard(name: string, boardsDir = BOARDS_DIR, psDir = defaultP
       base: text(record.base),
       types: Array.isArray(record.types) ? record.types.map((type) => String(type)) : [],
       cost: Number(record.cost),
-      origin: text(record.origin),
+      origin,
       ...(record.anchor ? { anchor: text(record.anchor) } : {}),
       ...(record.usage ? { usage: text(record.usage) } : {}),
       ...(record.listed === undefined ? {} : { listed: Number(record.listed) }),
@@ -170,14 +179,43 @@ export function loadBoard(name: string, boardsDir = BOARDS_DIR, psDir = defaultP
     if (!species.exists || species.isNonstandard) {
       throw new Error(`board entry ${JSON.stringify(mon.id)} in ${file} is not a legal species in ${format}`);
     }
-    if (mon.item && !dex.items.get(mon.item).exists) {
-      throw new Error(`board entry ${JSON.stringify(mon.id)} in ${file} names an unknown item`);
+    if (mon.base !== species.baseSpecies) {
+      throw new Error(`board entry ${JSON.stringify(mon.id)} in ${file} has the wrong base species`);
+    }
+    if (Boolean(mon.forme) !== Boolean(mon.item)) {
+      throw new Error(`board entry ${JSON.stringify(mon.id)} in ${file} needs both a Mega forme and stone`);
+    }
+    if (mon.item) {
+      const item = dex.items.get(mon.item);
+      const megaStone = item.megaStone;
+      const target = typeof megaStone === 'string' ? megaStone : megaStone?.[species.name];
+      if (!item.exists || target !== mon.forme) {
+        throw new Error(`board entry ${JSON.stringify(mon.id)} in ${file} has an invalid Mega forme or stone`);
+      }
+    }
+    const battleForme = dex.species.get(mon.forme ?? mon.species);
+    if (
+      !battleForme.exists ||
+      mon.types.length !== battleForme.types.length ||
+      mon.types.some((type, index) => type !== battleForme.types[index])
+    ) {
+      throw new Error(`board entry ${JSON.stringify(mon.id)} in ${file} has invalid battle types`);
+    }
+    if (
+      (mon.usage === undefined) !== (mon.listed === undefined) ||
+      (mon.listed !== undefined && (!Number.isInteger(mon.listed) || mon.listed < 1))
+    ) {
+      throw new Error(`board entry ${JSON.stringify(mon.id)} in ${file} has invalid repricing metadata`);
     }
     if (seen.has(mon.id)) throw new Error(`duplicate board entry ${JSON.stringify(mon.id)} in ${file}`);
     seen.add(mon.id);
     return mon;
   });
   if (mons.length < picks * 2) throw new Error(`${file} needs at least ${picks * 2} draftable entries`);
+  const cheapest = cheapestCostsByBase(mons).slice(0, picks);
+  if (cheapest.length < picks || cheapest.reduce((sum, cost) => sum + cost, 0) > budget) {
+    throw new Error(`${file} needs a budget that can afford one ${picks}-Pokémon roster`);
+  }
   return { id, format, budget, picks, source: text(manifest.source), mons };
 }
 
@@ -209,17 +247,12 @@ export interface DraftState {
   teamNames: string[];
 }
 
-/**
- * Cheapest cost per remaining base species, ascending. A roster holds at most
- * one entry per base species, so the k cheapest of these are exactly the
- * cheapest legal way to fill k slots.
- */
 function cheapestByBase(state: DraftState, drafter: number, exclude?: DraftBoardMon): number[] {
   const owned = new Set(state.rosters[drafter]!.map((mon) => mon.base));
   if (exclude) owned.add(exclude.base);
   const floor = new Map<string, number>();
   for (const mon of state.board.mons) {
-    if (state.taken.has(mon.id) || owned.has(mon.base) || mon === exclude) continue;
+    if (state.taken.has(mon.id) || owned.has(mon.base)) continue;
     const current = floor.get(mon.base);
     if (current === undefined || mon.cost < current) floor.set(mon.base, mon.cost);
   }
@@ -379,11 +412,6 @@ interface ParsedPick {
   teamName: string;
 }
 
-/**
- * Says which rule the pick broke. A single "not available" message conflates
- * four different causes, and models were observed retrying the same
- * unaffordable pick because the rejection never named the price.
- */
 function rejection(pickId: string, legal: DraftBoardMon[], state: DraftState, drafter: number): string {
   const entry = state.board.mons.find((candidate) => candidate.id === pickId || slug(candidate.name) === pickId);
   if (!entry) return `"${pickId}" is not a board id. Copy an id exactly as it appears in the board list.`;
@@ -420,12 +448,14 @@ export function parsePick(
   const pickId = slug(String(record.pick ?? ''));
   const mon = legal.find((candidate) => candidate.id === pickId || slug(candidate.name) === pickId);
   if (!mon) return rejection(pickId, legal, state, drafter);
+  const teamName = String(record.team_name ?? '')
+    .trim()
+    .slice(0, 60);
+  if (!state.rosters[drafter]!.length && !teamName) return '"team_name" is required with your first pick';
   return {
     mon,
     reasoning: String(record.reasoning ?? '').trim(),
-    teamName: String(record.team_name ?? '')
-      .trim()
-      .slice(0, 60),
+    teamName,
   };
 }
 
@@ -511,8 +541,6 @@ export async function runDraft(models: string[], board: DraftBoard, options: Run
           if (typeof parsed === 'string') {
             error = truncated ? `the reply used its whole token budget before naming a pick` : parsed;
             lastError = error;
-            // Replaying an overrun reply spends the retry's budget on the very
-            // reasoning that overran, so summarise it instead.
             messages.push({ role: 'assistant', content: truncated ? '[reply cut off before a pick]' : response });
             messages.push({
               role: 'user',
@@ -563,6 +591,7 @@ export async function runDraft(models: string[], board: DraftBoard, options: Run
       if (!state.teamNames[drafter]) state.teamNames[drafter] = `Random Coach ${drafter + 1}`;
     }
 
+    if (!state.teamNames[drafter]) state.teamNames[drafter] = `Coach ${drafter + 1}`;
     state.taken.set(chosen.id, drafter);
     state.rosters[drafter]!.push(chosen);
     state.budgets[drafter]! -= chosen.cost;
