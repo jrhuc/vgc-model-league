@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
@@ -51,7 +52,9 @@ Commands:
   draft --models <spec> <spec>...     snake-draft rosters from a board, then a weekly round robin and playoffs
       each coach drafts 10 within a 100-point budget, then picks 6 and builds every set before each match
       [--board <name>] [--seed <n>] [--concurrency <n>] [--reasoning <level>] [--timer-scale <n|off>]
-      [--auto-resume]
+      [--auto-resume] [--through-week <n>] [--resume <run-dir>]
+      --through-week stops cleanly after that round-robin week; --resume continues a stored league
+      (models, board, and seed come from the run's config) and also recovers a run that died mid-season
   exhibition --opponent <spec>        host one bo3 where a terminal agent plays a seat over a local bridge
       [--seat p1|p2] [--name <label>] [--pool <name>] [--seed <n>] [--port <n>] [--reasoning <level>]
       [--agent-dir <path>]
@@ -297,17 +300,46 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
       options: {
         ...EXPERIMENT_CLI_OPTIONS,
         board: { type: 'string', default: 'regmb-202607' },
+        'through-week': { type: 'string' },
+        resume: { type: 'string' },
       },
     });
-    const models = experimentModels(command, values.models, positionals);
-    const execution = experimentExecution(values);
-    const { runDraftLeague } = await import('./draftleague.js');
-    const runDir = makeRunDirectory();
+    const { runDraftLeague, roundRobinWeeks } = await import('./draftleague.js');
+    const resumeDir = values.resume ? path.resolve(values.resume) : undefined;
+    const storedConfig = resumeDir
+      ? (JSON.parse(fs.readFileSync(path.join(resumeDir, 'config.json'), 'utf8')) as {
+          models: string[];
+          seed: number;
+          board: string;
+          concurrency?: number;
+          reasoning?: string | null;
+          timer_scale?: number | 'off';
+        })
+      : undefined;
+    const models = storedConfig ? storedConfig.models : experimentModels(command, values.models, positionals);
+    let execution: ReturnType<typeof experimentExecution>;
+    if (storedConfig) {
+      const storedReasoning = storedConfig.reasoning ? reasoningLevel(storedConfig.reasoning) : undefined;
+      execution = {
+        recordsPath: RESULTS_PATH,
+        seed: storedConfig.seed,
+        ...(storedReasoning === undefined ? {} : { reasoning: storedReasoning }),
+        ...(storedConfig.timer_scale === undefined ? {} : { timerScale: storedConfig.timer_scale }),
+        ...(values['auto-resume'] ? { recovery: autoResumeGate() } : {}),
+      };
+    } else {
+      execution = experimentExecution(values);
+    }
+    const throughWeek =
+      values['through-week'] === undefined ? undefined : positiveInteger('through-week', values['through-week']);
+    const runDir = resumeDir ?? makeRunDirectory();
     let lastTeambuilds = 0;
     const rows = await withRunStatus(runDir, () =>
       runDraftLeague(models, runDir, {
-        board: values.board,
-        concurrency: positiveInteger('concurrency', values.concurrency),
+        board: storedConfig ? storedConfig.board : values.board,
+        concurrency: storedConfig?.concurrency ?? positiveInteger('concurrency', values.concurrency),
+        ...(throughWeek === undefined ? {} : { throughWeek }),
+        ...(resumeDir ? { resume: true } : {}),
         ...execution,
         onEvent: (event) => {
           if (event.type !== 'draft') return;
@@ -330,9 +362,15 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
       }),
     );
     printResults(rows);
-    const champion = rows[rows.length - 1]?.advanced;
-    if (typeof champion !== 'string' || !champion) throw new Error('draft final did not identify a champion');
-    console.log(`Champion: ${champion}`);
+    const totalSeries = roundRobinWeeks(models.length).flat().length + (models.length >= 5 ? 3 : 1);
+    if (rows.length < totalSeries) {
+      console.log(`League paused after ${rows.length} of ${totalSeries} series.`);
+      console.log(`Resume with: vgcleague draft --resume ${runDir}`);
+    } else {
+      const champion = rows[rows.length - 1]?.advanced;
+      if (typeof champion !== 'string' || !champion) throw new Error('draft final did not identify a champion');
+      console.log(`Champion: ${champion}`);
+    }
     console.log(`Draft logs: ${path.join(runDir, 'draft')}`);
     console.log(`Teambuild logs: ${path.join(runDir, 'teambuild')}`);
     return 0;

@@ -67,22 +67,22 @@ function bracketPreview(count: number): string {
 const HEADINGS: Record<RunMode, { eyebrow: string; title: [string, string]; lede: string }> = {
   match: {
     eyebrow: 'Exhibition match',
-    title: ['Two models.', 'One best-of-three.'],
+    title: ['Set up an', 'exhibition match.'],
     lede: 'Pick two models and assign each a team from a pool or a Poképaste export. The match runs on the pinned Pokémon Showdown simulator.',
   },
   tournament: {
     eyebrow: 'Tournament · protocol v1',
-    title: ['Build a', 'knockout bracket.'],
+    title: ['Set up a', 'tournament.'],
     lede: 'Assign each model a team from a pool draw or by hand. Models keep that team through a single-elimination best-of-three bracket.',
   },
   draft: {
     eyebrow: 'Draft league · protocol v1',
-    title: ['Draft rosters.', 'Crown a champion.'],
+    title: ['Set up a', 'draft league.'],
     lede: 'Coaches snake-draft ten Pokémon each inside a points budget, then before every match pick six and build each set themselves. A weekly round robin, then playoffs.',
   },
   rotation: {
     eyebrow: 'Rotation · protocol v1',
-    title: ['Set up a', 'Rotation run.'],
+    title: ['Set up a', 'rotation run.'],
     lede: 'Pick an immutable team pool and at least two models. Every pairing plays mirrored best-of-three series. Results append to the local record book.',
   },
 };
@@ -1023,8 +1023,8 @@ export function FixturesView({ app, run, onStarted, onPools }: FixturesProps) {
         <aside class="panel settings" aria-labelledby="settingsTitle">
           <div class="section-head">
             <div>
-              <p class="eyebrow">Run conditions</p>
-              <h2 id="settingsTitle">Control sheet</h2>
+              <p class="eyebrow">Launch</p>
+              <h2 id="settingsTitle">Run settings</h2>
             </div>
           </div>
           <div class="settings-body">

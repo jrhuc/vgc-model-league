@@ -87,6 +87,14 @@ A failed series stops the full run. Queued series do not start. In-flight
 series stop. Completed series stay on disk. A run that the league reports as
 failed does not use provider credits in the background.
 
+A draft league can play in installments. `--through-week <n>` stops cleanly
+after that round-robin week; `draft --resume <run-dir>` continues a stored
+league from its recorded series — models, board, and seed come from the run's
+config, drafted rosters are reused, and finished series are never replayed.
+The same command recovers a league whose process died mid-season. With four
+coaches the round robin seeds a top-two final; five or more coaches play
+semifinals first.
+
 If you do not give `--pool`, standings and reports include every pool except
 the disposable `test` pool, and they keep only rotation rows. Ratings never
 mix battle speeds: each timer scale gets its own standings and head-to-head,

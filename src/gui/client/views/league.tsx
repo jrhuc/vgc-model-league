@@ -12,6 +12,22 @@ const PHASE_LABELS: Record<DraftView['phase'], string> = {
 };
 
 const STAT_ORDER = ['hp', 'atk', 'def', 'spa', 'spd', 'spe'] as const;
+const STAT_LABELS: Record<(typeof STAT_ORDER)[number], string> = {
+  hp: 'HP',
+  atk: 'Atk',
+  def: 'Def',
+  spa: 'SpA',
+  spd: 'SpD',
+  spe: 'Spe',
+};
+
+const COST_BANDS = [
+  { min: 16, max: 20, cls: 'c16' },
+  { min: 11, max: 15, cls: 'c11' },
+  { min: 6, max: 10, cls: 'c6' },
+  { min: 1, max: 5, cls: 'c1' },
+] as const;
+const EMPTY_OWNERS = new Map<string, number>();
 
 function coachLabel(draft: DraftView, entrant: number): string {
   return draft.teamNames[entrant] || draft.entrants[entrant] || `Coach ${entrant + 1}`;
@@ -28,71 +44,96 @@ function BoardBrowser({
 }) {
   const [query, setQuery] = useState('');
   const [hideTaken, setHideTaken] = useState(false);
-  const filtered = useMemo(() => {
+  const { count, groups } = useMemo(() => {
     const needle = query.trim().toLowerCase();
-    return board.filter((mon) => {
-      if (hideTaken && owners.has(mon.id)) return false;
-      if (!needle) return true;
-      return (
-        mon.name.toLowerCase().includes(needle) ||
-        mon.types.some((type) => type.toLowerCase().includes(needle)) ||
-        mon.abilities.some((ability) => ability.toLowerCase().includes(needle))
-      );
-    });
+    const next = COST_BANDS.map((band) => ({ band, mons: [] as DraftBoardMonView[] }));
+    let count = 0;
+    for (const mon of board) {
+      if (hideTaken && owners.has(mon.id)) continue;
+      if (
+        needle &&
+        !mon.name.toLowerCase().includes(needle) &&
+        !mon.types.some((type) => type.toLowerCase().includes(needle)) &&
+        !mon.abilities.some((ability) => ability.toLowerCase().includes(needle))
+      ) {
+        continue;
+      }
+      const group = next.find(({ band }) => mon.cost >= band.min && mon.cost <= band.max);
+      if (group) group.mons.push(mon);
+      count += 1;
+    }
+    return { count, groups: next.filter((group) => group.mons.length > 0) };
   }, [board, owners, query, hideTaken]);
 
   return (
     <div class="board-browser">
       <div class="board-controls">
-        <input
-          type="search"
-          placeholder="Filter by name, type or ability"
-          value={query}
-          onInput={(event) => setQuery((event.target as HTMLInputElement).value)}
-        />
+        <label class="board-search">
+          <span class="visually-hidden">Search the draft board</span>
+          <input
+            type="search"
+            placeholder="Search Pokémon, type or ability"
+            value={query}
+            onInput={(event) => setQuery((event.target as HTMLInputElement).value)}
+          />
+        </label>
         <label class="board-toggle">
           <input type="checkbox" checked={hideTaken} onChange={() => setHideTaken((value) => !value)} />
-          Hide drafted
+          Available only
         </label>
-        <span class="muted">
-          {filtered.length} of {board.length}
+        <span class="board-count">
+          <b>{count}</b> / {board.length}
         </span>
       </div>
-      <div class="board-grid">
-        {filtered.map((mon) => {
-          const owner = owners.get(mon.id);
-          return (
-            <div class={`board-card ${owner !== undefined ? 'taken' : ''}`} key={mon.id}>
-              <div class="board-card-head">
-                <Sprite id={mon.spriteId} size={32} />
-                <b>{mon.name}</b>
-                <span class="board-cost">{mon.cost}</span>
-              </div>
-              <div class="board-types">
-                {mon.types.map((type) => (
-                  <span class={`type-chip t-${type.toLowerCase()}`} key={type}>
-                    {type}
-                  </span>
-                ))}
-              </div>
-              <div class="board-stats">
-                {STAT_ORDER.map((stat) => (
-                  <span key={stat}>{mon.baseStats[stat] ?? 0}</span>
-                ))}
-              </div>
-              <small class="board-abilities">{mon.abilities.join(' / ')}</small>
-              {mon.item ? <small class="board-locked">locked to {mon.item}</small> : null}
-              {mon.usage ? (
-                <small class="board-note" title={`listed at ${mon.listed} on the original board`}>
-                  re-priced from {mon.listed} · {mon.usage}
-                </small>
-              ) : mon.anchor ? (
-                <small class="board-note">Reg M-B addition · {mon.anchor}</small>
-              ) : null}
-              {owner !== undefined ? <small class="board-owner">{coach(owner)}</small> : null}
+      <div class="board-catalog">
+        {groups.map(({ band, mons }) => (
+          <section class="board-tier" key={band.min}>
+            <header class={`board-tier-head ${band.cls}`}>
+              <h3>
+                {band.min}–{band.max} points
+              </h3>
+              <b>{mons.length}</b>
+            </header>
+            <div class="board-grid">
+              {mons.map((mon) => {
+                const owner = owners.get(mon.id);
+                return (
+                  <article class={`board-card ${owner !== undefined ? 'taken' : ''}`} key={mon.id}>
+                    <div class="board-card-head">
+                      <Sprite id={mon.spriteId} size={46} />
+                      <div class="board-identity">
+                        <b>{mon.name}</b>
+                        <div class="board-types">
+                          {mon.types.map((type) => (
+                            <span class={`type-chip t-${type.toLowerCase()}`} key={type}>
+                              {type}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                      <span class={`board-cost ${band.cls}`}>
+                        {mon.cost}
+                        <small>pts</small>
+                      </span>
+                    </div>
+                    <div class="board-stats">
+                      {STAT_ORDER.map((stat) => (
+                        <span key={stat}>
+                          <small>{STAT_LABELS[stat]}</small>
+                          {mon.baseStats[stat] ?? 0}
+                        </span>
+                      ))}
+                    </div>
+                    <small class="board-abilities">{mon.abilities.join(' · ')}</small>
+                    {mon.item ? <small class="board-locked">Mega Stone · {mon.item}</small> : null}
+                    {owner !== undefined ? <small class="board-owner">Drafted by {coach(owner)}</small> : null}
+                  </article>
+                );
+              })}
             </div>
-          );
-        })}
+          </section>
+        ))}
+        {count === 0 ? <p class="board-empty">No board entries match this search.</p> : null}
       </div>
     </div>
   );
@@ -188,23 +229,31 @@ function BoardOnly({
   const { board, error } = useBoard(boardId, active);
 
   return (
-    <div class="panel">
-      <div class="section-head">
+    <div class="league-view">
+      <header class="page-heading league-heading">
         <div>
-          <h2>Draft league</h2>
-          <p>
-            {summary
-              ? `Board ${summary.id} · ${summary.monCount} entries · ${summary.budget} points · ${summary.picks} picks each · up to ${summary.maxEntrants} coaches`
-              : 'No draft board is installed.'}
-          </p>
+          <p class="eyebrow">Draft room</p>
+          <h1>Draft board.</h1>
         </div>
-      </div>
-      <p class="empty-note">
-        Start a draft league from <b>New run</b> to watch the draft, the teambuilds and the season here.
-      </p>
-      {board?.source ? <p class="board-source">{board.source}</p> : null}
-      {error ? <p class="empty-note">Could not load the board: {error}</p> : null}
-      {board ? <BoardBrowser board={board.mons} owners={new Map()} coach={() => ''} /> : null}
+        <p class="lede">Every legal pick with its point cost, typing, base stats and abilities.</p>
+      </header>
+      <section class="panel board-panel">
+        <div class="section-head">
+          <div>
+            <h2>{summary ? `Board ${summary.id}` : 'Draft board'}</h2>
+            <p>
+              {summary
+                ? `${summary.monCount} entries · ${summary.budget}-point budget · ${summary.picks} picks per coach · up to ${summary.maxEntrants} coaches`
+                : 'No draft board is installed.'}
+            </p>
+          </div>
+        </div>
+        <p class="board-callout">
+          No draft is running. Start one from <b>New run</b>; rosters, pick reasoning and match builds will appear here.
+        </p>
+        {error ? <p class="empty-note">Could not load the board: {error}</p> : null}
+        {board ? <BoardBrowser board={board.mons} owners={EMPTY_OWNERS} coach={() => ''} /> : null}
+      </section>
     </div>
   );
 }
@@ -235,10 +284,17 @@ export function LeagueView({
   const spent = (entrant: number) => draft.budget - (draft.budgets[entrant] ?? 0);
   return (
     <div class="league-view">
+      <header class="page-heading league-heading">
+        <div>
+          <p class="eyebrow">Draft room / {PHASE_LABELS[draft.phase]}</p>
+          <h1>Draft league.</h1>
+        </div>
+        <p class="lede">Rosters, pick rationales, matchup teambuilds and results for the current league.</p>
+      </header>
       <section class="panel">
         <div class="section-head">
           <div>
-            <h2>Draft league</h2>
+            <h2>Franchises</h2>
             <p>
               Board {draft.boardId} · {draft.budget} points · {draft.picksPerEntrant} picks each
               {draft.phase === 'roundrobin' ? ` · week ${draft.week} of ${draft.weeks}` : ''}
@@ -257,7 +313,7 @@ export function LeagueView({
                   <small>{model}</small>
                 </div>
                 <span class="muted">
-                  {spent(entrant)}/{draft.budget}
+                  {spent(entrant)}/{draft.budget} pts
                 </span>
               </div>
               <ol class="franchise-roster">
@@ -323,8 +379,8 @@ export function LeagueView({
       <section class="panel">
         <div class="section-head">
           <div>
-            <h2>Draft board</h2>
-            <p>Every pick, with the rationale the coach gave for it.</p>
+            <h2>Board &amp; picks</h2>
+            <p>Availability across the board, plus the pick log.</p>
           </div>
         </div>
         {boardError ? <p class="empty-note">Could not load the board: {boardError}</p> : null}
@@ -333,7 +389,7 @@ export function LeagueView({
         ) : null}
         {recent.length > 0 ? (
           <div class="draft-feed">
-            <h3>Picks</h3>
+            <h3>Pick log</h3>
             {recent.map((pick) => (
               <div class="draft-feed-item" key={pick.pick}>
                 <span class="draft-feed-head">

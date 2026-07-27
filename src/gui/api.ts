@@ -67,10 +67,6 @@ export interface DraftBoardMonView {
   item: string;
   abilities: string[];
   baseStats: Record<string, number>;
-  origin: string;
-  anchor: string;
-  usage: string;
-  listed: number | null;
 }
 
 export interface DraftPickView {
@@ -188,7 +184,6 @@ export interface BoardResponse {
   format: string;
   budget: number;
   picks: number;
-  source: string;
   mons: DraftBoardMonView[];
 }
 

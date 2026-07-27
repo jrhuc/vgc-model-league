@@ -9,12 +9,17 @@ import { DataRoomView, isDataRoomSection } from './views/dataroom';
 import { FixturesView } from './views/fixtures';
 import { LeagueView } from './views/league';
 
-const NAV = [
-  { id: 'fixtures', label: 'New run' },
-  { id: 'arena', label: 'Live run' },
-  { id: 'league', label: 'Draft league' },
-  { id: 'results', label: 'Data room' },
+const NAV_SETS = [
+  [
+    { id: 'fixtures', label: 'New run' },
+    { id: 'arena', label: 'Live run' },
+  ],
+  [
+    { id: 'league', label: 'Draft room' },
+    { id: 'results', label: 'Data room' },
+  ],
 ] as const;
+const NAV = NAV_SETS.flat();
 
 export type ViewId = (typeof NAV)[number]['id'];
 
@@ -230,15 +235,19 @@ export function App() {
           </div>
         </div>
         <nav class="primary-nav" aria-label="Main navigation">
-          {NAV.map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              class={`nav-button ${view === item.id ? 'on' : ''}`}
-              onClick={() => navigate(item.id)}
-            >
-              {item.label}
-            </button>
+          {NAV_SETS.map((set, index) => (
+            <div class="nav-set" key={index}>
+              {set.map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  class={`nav-button ${view === item.id ? 'on' : ''}`}
+                  onClick={() => navigate(item.id)}
+                >
+                  {item.label}
+                </button>
+              ))}
+            </div>
           ))}
         </nav>
         <div class="header-aside">

@@ -870,16 +870,11 @@ export function DataRoomView({
           <p class="eyebrow">
             Data room / {SECTIONS.find((entry) => entry.id === section)?.label.toLowerCase()} / {pool || 'overall'}
           </p>
-          <h1>
-            How well do
-            <br />
-            they play?
-          </h1>
+          <h1>Records.</h1>
         </div>
         <p class="lede">
-          Every series leaves structured evidence, and all of it lives here.{' '}
-          {SECTIONS.find((entry) => entry.id === section)?.blurb} Same model merged across providers, battle speeds
-          rated separately, test pool excluded from the overall view.
+          {SECTIONS.find((entry) => entry.id === section)?.blurb} The same model is merged across providers, battle
+          speeds are rated separately, and the test pool is excluded from the overall view.
         </p>
       </div>
       <nav class="section-nav" aria-label="Data room sections">
@@ -1078,9 +1073,9 @@ export function DataRoomView({
           <section class="panel chart-panel">
             <div class="section-head">
               <div>
-                <h2>Does thinking buy wins?</h2>
+                <h2>Thinking time and win rate</h2>
                 <p>
-                  Median deliberation per decision against series win rate, one dot per model. Small samples wobble —
+                  Median deliberation per decision against series win rate, one dot per model. Small samples are noisy;
                   read alongside the series counts in the tooltip.
                 </p>
               </div>
@@ -1128,8 +1123,8 @@ export function DataRoomView({
                 <h2>Luck ledger</h2>
                 <p>
                   Misses, crits taken, flinches, and full paralysis suffered by the winner minus the loser, per decided
-                  series, sorted by that difference. Bars right of zero are wins earned against the run of luck; the
-                  right column is what each side actually suffered, so an even series reads apart from a quiet one.
+                  series, sorted by that difference. Bars right of zero are series won despite worse luck. The right
+                  column shows each side's raw counts, which separates an even series from one with few luck events.
                 </p>
               </div>
             </div>
@@ -1138,7 +1133,7 @@ export function DataRoomView({
             </div>
           </section>
           <details class="audit-details">
-            <summary>Scaffold health — fallbacks, parse failures, retries (audit data, not play quality)</summary>
+            <summary>Scaffold health: fallbacks, parse failures, retries (audit data, not play quality)</summary>
             <section class="panel chart-panel">
               <RatesTable models={models} order={eloOrder} columns={RELIABILITY_COLUMNS} rgb="232, 75, 79" />
             </section>
@@ -1150,7 +1145,7 @@ export function DataRoomView({
           {archives.length === 0 ? (
             <section class="panel">
               <div class="results-empty">
-                No tournaments recorded yet. Start one from the New run tab — the whole bracket lands here when it ends.
+                No tournaments recorded yet. Start one from the New run tab; finished brackets are archived here.
               </div>
             </section>
           ) : (

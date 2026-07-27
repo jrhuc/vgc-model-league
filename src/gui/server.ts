@@ -862,7 +862,6 @@ export class GuiServer {
       format: board.format,
       budget: board.budget,
       picks: board.picks,
-      source: board.source,
       mons: board.mons.map((mon) => describeBoardMon(mon, undefined, board.format)),
     };
   }
