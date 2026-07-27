@@ -1,161 +1,166 @@
 # Visualisation plan
 
-A league run produces on the order of tens of millions of tokens of evidence —
-draft rationales, teambuild reasoning, per-decision traces, protocol-joined
-turn logs — and the GUI currently surfaces almost none of it. This plan
-reorganises the site around two ideas:
+League runs produce draft, team build, decision, and battle evidence. The GUI
+must make this evidence useful without mixing visitor pages with analysis.
 
-1. **Leagues are stories.** A finished draft league deserves an archive page a
-   person can browse: the franchises, who drafted what and why, the matchups,
-   the bracket. Inspiration is wolfeydraftleague.com/teams (card grid → roster
-   detail), adapted to our broadsheet design language, not copied.
-2. **Models are the through-line.** Stats that describe *how a model plays* —
-   reasoning tokens per decision vs outcomes, latency, switch/Protect/spread
-   tendencies, tool use, reliability — are mode-agnostic and should aggregate
-   across every game in every mode. Stats that only mean something inside a
-   mode (rotation Elo, draft budgets, bracket placements) stay under their
-   mode. Today's data room conflates the two by scoping everything to a pool.
+Use two rules:
 
-## Site information architecture
+1. League and tournament pages tell the story of an event.
+2. The data room compares model behavior across all modes.
 
-The records side splits by **audience**, not by data shape: draft leagues and
-tournaments are the visitor-facing visualisations (teams, brackets, stories);
-the data room is the analyst layer where every detailed or mathematical
-insight lands.
+Keep mode-specific values with their mode. Examples include rotation Elo,
+draft budgets, and bracket placement.
+
+## Information architecture
 
 | Group | View | Content |
 | --- | --- | --- |
-| Run | **New run** | unchanged (fixtures + pools) |
-| Run | **Live run** | unchanged arena; the draft room remains the live-league view during a draft run |
-| Records | **Draft leagues** | NEW — archive of draft leagues: team cards, rosters, rationales, standings, schedule |
-| Records | **Tournaments** | NEW — bracket visualisations and placements (TournamentCard moves here from the data room) |
-| Records | **Data** | the analyst room. Default tab is **Play** (per-model tendencies, aggregated across all modes); model drill-down profiles, the rotation ladder, latency/reliability all live here |
+| Run | New run | Fixtures and pools |
+| Run | Live run | Arena and active draft room |
+| Records | Draft leagues | Franchises, rosters, rationales, schedule, and results |
+| Records | Tournaments | Brackets and placements |
+| Records | Data | Model profiles, play patterns, ratings, latency, and reliability |
 
-Routing stays hash-based: `#leagues`, `#leagues/<run-id>`,
-`#leagues/<run-id>/<team>`, `#tournaments`, `#tournaments/<run-id>`, `#data`,
-`#data/<model-id>`. `navigate()` should switch to `pushState` so back
-navigates the archive drill-down.
+Use these hash routes:
 
-League and tournament pages stay deliberately stat-light — records, rosters,
-results, rationales — with "full stats →" links into `#data/<model-id>` so
-charts don't creep back into the visitor pages.
+```text
+#leagues
+#leagues/<run-id>
+#leagues/<run-id>/<team>
+#tournaments
+#tournaments/<run-id>
+#data
+#data/<model-id>
+```
 
-## Draft leagues archive
+Use `pushState` for drill-down navigation. Browser Back must return to the
+previous archive page.
 
-**Landing (`#leagues`)** — one row/card per archived draft league: board,
-date, coaches with logos, champion. Tournaments get the same treatment on
-their own `#tournaments` landing, with the bracket as the flagship visual.
+Keep league and tournament pages concise. Link detailed statistics to the
+related model profile.
 
-**League page (`#leagues/<run-id>`)** — the flagship view (see mockup):
+## Draft league archive
 
-- Header: league name (board + date), stage/champion banner, and a run-facts
-  strip for visitors who want to run their own: models, board, budget/points
-  params, series format, wall-clock duration, total tokens, and **total API
-  spend** where known.
-- **Team cards**, one per franchise: pixel model logo, franchise name, model
-  id, W-L record and finish, budget spent, roster as a sprite grid with point
-  costs. Hovering a sprite reveals the pick number and the coach's recorded
-  draft rationale for that pick (from `draft/draft.jsonl`, which stores full
-  rationale text per pick). Click-through → team page.
-- **Standings** for the round robin (game diff as tiebreak display).
-- **Schedule & results**: RR weeks then playoffs, each series showing per-game
-  winners/turn counts, linking to the archived series detail.
-- **Draft board tab**: the board grid with drafted picks overlaid (pick number
-  + franchise), undrafted mons dimmed — the "what was left on the board" view.
+### League list
 
-**Team page (`#leagues/<run-id>/<team>`)** — the full draft in pick order with
-complete rationales (fallback picks flagged), then per-series entries: the six
-brought, the built sets (from `teambuild/*.jsonl`), result, and how the sheet
-changed series to series — data Wolfey's league can't have.
+Show one card for each stored draft league. Each card shows the board, date,
+coaches, and champion.
+
+### League page
+
+Show:
+
+- board and date;
+- current stage or champion;
+- models, budget, format, duration, token use, and known API cost;
+- one card for each franchise;
+- round-robin standings;
+- the weekly schedule and playoff results;
+- the draft board with pick numbers and remaining entries.
+
+A franchise card shows its name, model, record, finish, points spent, and
+roster sprites. A sprite reveals the pick number and recorded rationale. The
+card links to the team page.
+
+A series entry shows game winners and turn counts. It links to the stored
+series detail.
+
+### Team page
+
+Show the full draft in pick order. Include each rationale and mark fallback
+picks. For each series, show the six selected Pokémon, built sets, result, and
+changes from the previous series.
+
+## Tournament archive
+
+Show one card for each stored tournament. The tournament page uses the bracket
+as its main view. Move the current tournament card out of the data room.
 
 ## Data room
 
-**Play is the default tab.** Landing on `#data` shows the per-model play
-tendencies (the current Play section, promoted), aggregated across all games
-in all modes with mode/pool as *filters*. Clicking a model opens its profile.
+Make Play the default view. Aggregate model behavior across rotation, draft,
+tournament, and exhibition. Use mode and pool as filters.
 
-**Model profiles (`#data/<model-id>`)** aggregate every decision the model
-has made across all modes (rotation, draft, tournament, exhibition):
+A model profile shows:
 
-- Identity: pixel logo, model id, providers seen, first/last played, totals
-  (series, games, decisions, tokens).
-- **Reasoning depth vs outcome**: reasoning tokens per decision against win
-  rate / decision quality proxies. Requires the plumbing change below.
-- Latency & throughput: median/IQR wall-clock, tokens/sec (already in traces).
-- **Play fingerprint**: the decision_stats counters that exist in every result
-  row but are never surfaced — switch %, Protect % (+ consecutive-Protect),
-  spread-move %, ally-target %, mega timing, lead/bring changes between games,
-  repeated joint actions, threat conversion. Rendered as a compact per-model
-  bar profile, comparable across models.
-- Reliability: fallbacks, parse failures, retries, abandoned decisions
-  (today's collapsed "scaffold health" table moves here).
-- Mode ledger: per-mode records with links into Leagues / ladder.
+- model ID, providers, first use, and last use;
+- totals for series, games, decisions, and tokens;
+- reasoning tokens per decision and outcome;
+- latency, interquartile range, and token throughput;
+- switch, Protect, spread move, ally target, and Mega timing rates;
+- lead changes, bring changes, repeated actions, and threat conversion;
+- fallbacks, parse failures, retries, and abandoned decisions;
+- records for each mode with links to related archives.
 
-Beyond Play and profiles, the data room keeps the rotation ladder (Elo, H2H,
-trajectory — the only rated, controlled comparison) and any future
-cross-cutting analytics. Brackets leave for `#tournaments`; everything
-detailed or mathematical arrives here.
+Keep the rotation ladder, head-to-head results, and rating trajectory in the
+data room. Keep brackets in the tournament archive.
 
-## Pixel logos
+## Model marks
 
-Every model gets a pixel-art mark in the same visual register as the gen-5
-sprites. Checked-in SVGs (crisp-edged rects on a 12×12 grid) at
-`src/gui/client/public/logos/<slug>.svg`, resolved from the model spec.
+Store checked-in pixel SVG files in:
 
-- **Model-family marks first, lab marks second**: claude (sunburst), gpt
-  (blossom), gemini (spark), grok, kimi, deepseek (whale), qwen, glm, llama /
-  muse (Meta infinity until Muse has its own mark), mistral. Moonshot and xAI
-  are in the drawn set — the monogram fallback is only for genuinely unseen
-  providers.
-- Resolution: exact model-family match on the model id → family mark; else
-  provider/lab mark; else monogram (first letter, ink on paper).
-- Used everywhere a model appears: league cards, standings, arena headers,
-  data room tables.
+```text
+src/gui/client/public/logos/<slug>.svg
+```
 
-## Data plumbing
+Use a 12 by 12 grid and crisp rectangular shapes. Resolve a mark in this
+order:
 
-- **`GET /api/leagues`** — scan results.jsonl for draft/tournament run_ids,
-  join `runs/<id>/config.json` (already read by `configEntrants`) for names.
-- **`GET /api/league?run=`** — config.json + rosters.json + draft.jsonl +
-  results rows for the run + teambuild summaries. All reads guarded by the
-  existing `SAFE_SEGMENT` pattern in evidence.ts.
-- **`GET /api/model?id=`** — global aggregate over results.jsonl rows +
-  per-decision points (readLatencyPoints, extended).
-- **Reasoning tokens**: today they exist only in `p*-trace.jsonl` /
-  `drafter-*.jsonl` / teambuild logs (`usage.reasoning_tokens`, only when >0).
-  Two-part fix: (a) write `reasoning_tokens` into `p*-decisions.jsonl` rows at
-  the llm-engine decision-log writer and add a total to `decision_stats`;
-  (b) a one-off backfill script that reads traces and patches existing
-  decisions files so run 1–3 data is usable.
-- **API spend capture**: OpenRouter's usage accounting (`usage: {include:
-  true}` on the request) returns per-request cost in credits; record it
-  alongside token usage in traces/decision logs and sum into a per-run
-  `spend` figure (results rows or run summary). Optional per provider —
-  free-tier/keyless providers report nothing, so the league header labels
-  partial sums as such. Backfill runs 1–3 from the known account deltas
-  (run 3 ≈ the $23.78→final credits window).
-- **Caching**: `loadRows()` re-reads and re-parses all of results.jsonl on
-  every request; add an mtime-keyed cache before fan-out grows.
-- **Publish gap**: `vgcleague publish` currently ships result rows + decision
-  logs only. League archives on a deployment need rosters.json, draft.jsonl
-  (rationales, no prompts), and built sets from teambuild logs added to the
-  payload. Prompts and raw responses stay local as before.
+1. exact model family;
+2. provider or laboratory;
+3. first-letter monogram.
 
-## Design language
+Provide marks for Claude, GPT, Gemini, Grok, Kimi, DeepSeek, Qwen, GLM, Llama,
+Muse, and Mistral. Use the marks in league cards, standings, arena headers, and
+data tables.
 
-Keep the existing broadsheet system (paper `#f4f7fb`, ink `#0b1b34`, blue
-`#1458e6`, hairline borders, square corners, condensed display + mono labels).
-Wolfey's dark-zinc theme is not adopted; what we take is the structure — card
-grid, sprite tiles, drill-down hierarchy. Chart colors should move from the
-hardcoded constants in dataroom.tsx to CSS variables while we're in there.
+## Data changes
 
-## Phasing (all after the current run exits — no dist builds while live)
+Add these API routes:
 
-1. Draft-league archive: endpoints + landing + league page + team page.
-   Tournaments page (brackets move out of the data room). Pixel logo set.
-2. Data room re-cut: Play as default tab, model profile drill-downs,
-   reasoning-token plumbing and backfill.
-3. Publish-payload extension, `pushState` routing, residual cleanup.
+- `GET /api/leagues` lists stored draft and tournament runs.
+- `GET /api/league?run=` joins run configuration, rosters, draft records,
+  results, and team build summaries.
+- `GET /api/model?id=` returns global result and decision aggregates.
 
-Mockup of the league page (real run-3 data): see the published artifact from
-the 2026-07-27 session; iterate there before building.
+Guard every run identifier with the existing `SAFE_SEGMENT` rule.
+
+Add `reasoning_tokens` to decision log rows and decision totals. Backfill old
+decision logs from trace usage so runs 1 through 3 remain usable.
+
+Request OpenRouter usage accounting and store reported cost with token usage.
+Treat cost as optional. Mark a run total as partial when any provider omits
+cost. Backfill known costs for runs 1 through 3 from account records.
+
+Cache parsed result rows by file modification time. Do not parse the complete
+results file for each request.
+
+Extend publication bundles with draft rosters, draft rationales, and built
+sets. Keep prompts and raw responses local.
+
+## Visual rules
+
+Keep the current broadsheet system:
+
+- paper `#f4f7fb`;
+- ink `#0b1b34`;
+- blue `#1458e6`;
+- thin borders and square corners;
+- condensed display type and monospaced labels.
+
+Use the card and drill-down structure from `wolfeydraftleague.com/teams`. Do
+not copy its dark theme. Move chart colors from TypeScript constants to CSS
+variables.
+
+## Implementation order
+
+Do not build or change generated files while a run is active.
+
+1. Add the draft league and tournament archives.
+2. Add the model marks.
+3. Rework the data room and add model profiles.
+4. Add reasoning-token and cost data.
+5. Extend publication bundles and route history.
+6. Remove obsolete views and data paths.
+
+Use the league-page mockup from the 2026-07-27 session as the visual reference.
