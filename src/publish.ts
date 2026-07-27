@@ -59,6 +59,28 @@ function readRunConfig(runsDir: string, runId: string): Record<string, unknown> 
   }
 }
 
+function readLeagueAssets(runsDir: string, runId: string): ImportRequest['league'] {
+  const runDir = path.join(runsDir, runId);
+  const read = (file: string): string | undefined => {
+    try {
+      return fs.readFileSync(path.join(runDir, file), 'utf8');
+    } catch {
+      return undefined;
+    }
+  };
+  const league: NonNullable<ImportRequest['league']> = {};
+  const rosters = read('rosters.json');
+  if (rosters !== undefined) {
+    const parsed: unknown = JSON.parse(rosters);
+    if (Array.isArray(parsed)) league.rosters = parsed;
+  }
+  const draft = read(path.join('draft', 'draft.jsonl'));
+  if (draft !== undefined) league.draft = draft;
+  const teambuild = read(path.join('teambuild', 'teambuild.jsonl'));
+  if (teambuild !== undefined) league.teambuild = teambuild;
+  return Object.keys(league).length > 0 ? league : undefined;
+}
+
 async function exportPool(name: string, teamsDir: string): Promise<NonNullable<ImportRequest['pool']>> {
   const { loadShowdown } = await import('./showdown.js');
   const { Teams } = loadShowdown();
@@ -113,12 +135,15 @@ export async function publishRecords(options: PublishOptions): Promise<PublishSu
     if (!sentConfigs.has(runId)) {
       const config = readRunConfig(options.runsDir, runId);
       if (config) bundle.runConfig = config;
+      const league = readLeagueAssets(options.runsDir, runId);
+      if (league) bundle.league = league;
       sentConfigs.add(runId);
     }
     const pool = typeof row.pool === 'string' ? row.pool : '';
     if (pool && !remotePools.has(pool)) bundle.pool = await exportPool(pool, options.teamsDir);
     if (options.dryRun) {
-      log(`would publish ${label}${bundle.pool ? ` with pool ${pool}` : ''}`);
+      const extras = [bundle.pool ? `pool ${pool}` : '', bundle.league ? 'league assets' : ''].filter(Boolean);
+      log(`would publish ${label}${extras.length > 0 ? ` with ${extras.join(' and ')}` : ''}`);
       if (bundle.pool) remotePools.add(pool);
       continue;
     }
@@ -130,6 +155,11 @@ export async function publishRecords(options: PublishOptions): Promise<PublishSu
     if (result.imported) summary.published += 1;
     else summary.duplicates += 1;
     log(`${result.imported ? 'published' : 'already there'}: ${label}`);
+    if (bundle.league) {
+      if (!Array.isArray(result.league))
+        log(`WARNING: server ignored league assets for ${runId} — deploy a newer server and re-publish`);
+      else if (result.league.length > 0) log(`league assets stored: ${result.league.join(', ')}`);
+    }
   }
   if (options.dryRun) log(`${rows.length} series selected; nothing sent`);
   return summary;

@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-import type { ImportRequest, ImportResponse } from './gui/api.js';
+import type { ImportRequest, ImportResponse, LeagueAssets } from './gui/api.js';
 import { appendRow, loadRows, type SeriesRecord } from './records.js';
 import { createPool, listPools } from './teams.js';
 import type { ExperimentMode, JsonObject, Pid } from './types.js';
@@ -54,18 +54,48 @@ function validateRow(candidate: unknown): SeriesRecord {
   return row;
 }
 
-function validateLog(text: unknown, pid: Pid): string {
-  if (typeof text !== 'string') throw new ImportError(`logs.${pid} must be JSONL text`);
-  if (Buffer.byteLength(text) > MAX_LOG_BYTES) throw new ImportError(`logs.${pid} is larger than 1 MB`);
+function validateJsonl(text: unknown, field: string): string {
+  if (typeof text !== 'string') throw new ImportError(`${field} must be JSONL text`);
+  if (Buffer.byteLength(text) > MAX_LOG_BYTES) throw new ImportError(`${field} is larger than 1 MB`);
   for (const line of text.split('\n')) {
     if (!line.trim()) continue;
     try {
       JSON.parse(line);
     } catch {
-      throw new ImportError(`logs.${pid} contains a line that is not JSON`);
+      throw new ImportError(`${field} contains a line that is not JSON`);
     }
   }
   return text.endsWith('\n') ? text : `${text}\n`;
+}
+
+const LEAGUE_FILES: Array<{ key: keyof LeagueAssets; file: string }> = [
+  { key: 'rosters', file: 'rosters.json' },
+  { key: 'draft', file: 'draft/draft.jsonl' },
+  { key: 'teambuild', file: 'teambuild/teambuild.jsonl' },
+];
+
+function writeLeagueAssets(league: ImportRequest['league'], runDir: string): string[] {
+  if (league === undefined) return [];
+  if (!isRecord(league)) throw new ImportError('league must be a JSON object');
+  const written: string[] = [];
+  for (const { key, file } of LEAGUE_FILES) {
+    const value = league[key];
+    if (value === undefined) continue;
+    let text: string;
+    if (key === 'rosters') {
+      if (!Array.isArray(value)) throw new ImportError('league.rosters must be an array');
+      text = `${JSON.stringify(value, null, 2)}\n`;
+      if (Buffer.byteLength(text) > MAX_LOG_BYTES) throw new ImportError('league.rosters is larger than 1 MB');
+    } else {
+      text = validateJsonl(value, `league.${key}`);
+    }
+    const target = path.join(runDir, file);
+    if (fs.existsSync(target)) continue;
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.writeFileSync(target, text, 'utf8');
+    written.push(file);
+  }
+  return written;
 }
 
 function ensurePool(bundle: ImportRequest, options: ImportOptions): 'created' | 'present' | null {
@@ -88,17 +118,18 @@ export function importSeries(bundle: ImportRequest, options: ImportOptions): Imp
   const logs: Array<{ pid: Pid; text: string }> = [];
   for (const pid of SEATS) {
     const text = bundle.logs?.[pid];
-    if (text !== undefined) logs.push({ pid, text: validateLog(text, pid) });
+    if (text !== undefined) logs.push({ pid, text: validateJsonl(text, `logs.${pid}`) });
   }
   if (bundle.runConfig !== undefined && !isRecord(bundle.runConfig)) {
     throw new ImportError('runConfig must be a JSON object');
   }
   const known = new Set(loadRows(options.recordsPath).map(seriesKey));
   const pool = ensurePool(bundle, options);
-  if (known.has(seriesKey(row))) {
-    return { imported: false, duplicate: true, runId, seriesId, logs: [], pool };
-  }
   const runDir = path.join(options.runsDir, runId);
+  const league = writeLeagueAssets(bundle.league, runDir);
+  if (known.has(seriesKey(row))) {
+    return { imported: false, duplicate: true, runId, seriesId, logs: [], pool, league };
+  }
   const seriesDir = path.join(runDir, 'series', seriesId);
   fs.mkdirSync(seriesDir, { recursive: true });
   for (const log of logs) fs.writeFileSync(path.join(seriesDir, `${log.pid}-decisions.jsonl`), log.text, 'utf8');
@@ -108,5 +139,5 @@ export function importSeries(bundle: ImportRequest, options: ImportOptions): Imp
   }
   const origin: RowOrigin = { source: 'import', at: new Date().toISOString() };
   appendRow(options.recordsPath, { ...row, origin } as JsonObject);
-  return { imported: true, runId, seriesId, logs: logs.map((log) => log.pid), pool };
+  return { imported: true, runId, seriesId, logs: logs.map((log) => log.pid), pool, league };
 }
