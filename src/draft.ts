@@ -232,10 +232,6 @@ export function describeBoardMon(mon: DraftBoardMon, psDir = defaultPsDir(), for
     item: mon.item ?? '',
     abilities: Object.values(species.abilities ?? {}).filter(Boolean) as string[],
     baseStats: species.baseStats as unknown as Record<string, number>,
-    origin: mon.origin,
-    anchor: mon.anchor ?? '',
-    usage: mon.usage ?? '',
-    listed: mon.listed ?? null,
   };
 }
 

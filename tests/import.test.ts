@@ -85,6 +85,47 @@ test('importSeries stores a row with its decision logs and stamps provenance', (
   }
 });
 
+test('importSeries stores league assets, even for rows it already holds', () => {
+  const store = scratch();
+  try {
+    const first = importSeries({ row: bundleRow({ mode: 'draft', pool: undefined }) }, store.paths);
+    assert.equal(first.imported, true);
+    assert.deepEqual(first.league, []);
+
+    const league = {
+      rosters: [{ model: 'random', team_name: 'Testers', roster: [{ id: 'pikachu', cost: 1 }] }],
+      draft: '{"pick":1,"mon":"pikachu","rationale":"volt tackle"}',
+      teambuild: '{"seriesIndex":1,"brought":["pikachu"]}',
+    };
+    const backfill = importSeries({ row: bundleRow({ mode: 'draft', pool: undefined }), league }, store.paths);
+    assert.equal(backfill.duplicate, true);
+    assert.deepEqual(backfill.league, ['rosters.json', 'draft/draft.jsonl', 'teambuild/teambuild.jsonl']);
+
+    const runDir = path.join(store.paths.runsDir, '20260725T000000.000000Z-abcd1234');
+    const rosters = JSON.parse(fs.readFileSync(path.join(runDir, 'rosters.json'), 'utf8')) as unknown[];
+    assert.equal((rosters[0] as { team_name: string }).team_name, 'Testers');
+    assert.match(fs.readFileSync(path.join(runDir, 'draft', 'draft.jsonl'), 'utf8'), /volt tackle/);
+
+    const repeat = importSeries({ row: bundleRow({ mode: 'draft', pool: undefined }), league }, store.paths);
+    assert.deepEqual(repeat.league, [], 'assets already on disk are left untouched');
+
+    assert.throws(
+      () => importSeries({ row: bundleRow({ series_id: 'ddddeeeeffff' }), league: { draft: 'not json' } }, store.paths),
+      /not JSON/,
+    );
+    assert.throws(
+      () =>
+        importSeries(
+          { row: bundleRow({ series_id: 'ddddeeeeffff' }), league: { rosters: 'nope' as unknown as unknown[] } },
+          store.paths,
+        ),
+      /must be an array/,
+    );
+  } finally {
+    store.dispose();
+  }
+});
+
 test('importSeries rejects rows it cannot place on disk', () => {
   const store = scratch();
   try {

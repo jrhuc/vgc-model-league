@@ -868,7 +868,7 @@ test('a full draft league drafts, plays weekly rounds, and crowns a champion', a
     onEvent: (event) => events.push(event),
   });
 
-  assert.equal(rows.length, 6 + 3, 'a four-coach round robin is six series, plus semis and a final');
+  assert.equal(rows.length, 6 + 1, 'a four-coach round robin is six series, plus a top-two final');
   for (const row of rows) {
     assert.equal(row.mode, 'draft');
     assert.equal(row.protocol_version, DRAFT_PROTOCOL_VERSION);
@@ -906,6 +906,34 @@ test('a full draft league drafts, plays weekly rounds, and crowns a champion', a
   assert.equal(finalDraft.weeks, 3);
   assert.ok(finalDraft.teambuilds.length > 0);
   assert.equal(loadRows(recordsPath).length, rows.length);
+});
+
+test('a draft league checkpoints after a week and resumes to a champion', async (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-draft-league-resume-'));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const recordsPath = path.join(directory, 'results.jsonl');
+  const models = ['random', 'random', 'random', 'random'];
+  const first = await runDraftLeague(models, directory, {
+    recordsPath,
+    seed: 11,
+    concurrency: 2,
+    throughWeek: 1,
+  });
+  assert.equal(first.length, 2, 'week one is two series');
+  assert.ok(first.every((row) => row.stage === 'roundrobin' && row.round === 1));
+
+  const resumed = await runDraftLeague(models, directory, {
+    recordsPath,
+    seed: 11,
+    concurrency: 2,
+    resume: true,
+  });
+  assert.equal(resumed.length, 6 + 1, 'the resumed league finishes the round robin and the final');
+  assert.equal(new Set(resumed.map((row) => row.series_index)).size, 7, 'no series repeats');
+  assert.equal(loadRows(recordsPath).length, 7, 'each series is recorded exactly once');
+  const final = resumed[resumed.length - 1]!;
+  assert.equal(final.stage, 'playoff');
+  assert.ok(final.advanced, 'the resumed league crowns a champion');
 });
 
 test('a two-coach league plays one week and a single final', async (t) => {

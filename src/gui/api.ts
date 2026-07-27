@@ -67,10 +67,6 @@ export interface DraftBoardMonView {
   item: string;
   abilities: string[];
   baseStats: Record<string, number>;
-  origin: string;
-  anchor: string;
-  usage: string;
-  listed: number | null;
 }
 
 export interface DraftPickView {
@@ -188,7 +184,6 @@ export interface BoardResponse {
   format: string;
   budget: number;
   picks: number;
-  source: string;
   mons: DraftBoardMonView[];
 }
 
@@ -412,6 +407,13 @@ export interface ImportRequest {
   logs?: Partial<Record<Pid, string>>;
   runConfig?: Record<string, unknown>;
   pool?: { name: string; format: string; teams: Array<{ id: string; paste: string }> };
+  league?: LeagueAssets;
+}
+
+export interface LeagueAssets {
+  rosters?: unknown[];
+  draft?: string;
+  teambuild?: string;
 }
 
 export interface ImportResponse {
@@ -421,6 +423,7 @@ export interface ImportResponse {
   seriesId: string;
   logs: Pid[];
   pool: 'created' | 'present' | null;
+  league: string[];
 }
 
 export interface ModelsResponse {

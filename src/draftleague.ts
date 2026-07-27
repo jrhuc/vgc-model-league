@@ -9,7 +9,7 @@ import { BOARDS_DIR, defaultPsDir, RESULTS_PATH } from './paths.js';
 import { validateModelExecution } from './providers.js';
 import { resolveSeed, seededRng, seriesEntropy, shuffle } from './random.js';
 import type { SeriesRecord } from './records.js';
-import { appendRow } from './records.js';
+import { appendRow, loadRows } from './records.js';
 import type { ExperimentOptions } from './series.js';
 import { mapLimit, playRecordedSeries } from './series.js';
 import { showdownCommit } from './showdown.js';
@@ -27,6 +27,8 @@ export interface DraftLeagueOptions extends ExperimentOptions {
   boardsDir?: string;
   board?: string;
   onEvent?: (event: DraftLeagueEvent) => void;
+  throughWeek?: number;
+  resume?: boolean;
 }
 
 interface SeriesPlanned {
@@ -80,9 +82,10 @@ export async function runDraftLeague(
   const draftScaffold = draftScaffoldRevision();
   const teambuildScaffold = teambuildScaffoldRevision();
 
-  const entrants = shuffle(models, random);
+  const stored = options.resume ? loadStoredLeague(runDir) : undefined;
+  const entrants = stored ? stored.entrants : shuffle(models, random);
   const weeks = roundRobinWeeks(entrants.length);
-  const playoffRounds = entrants.length >= 4 ? 2 : 1;
+  const playoffRounds = entrants.length >= 5 ? 2 : 1;
   const playoffSeriesCount = playoffRounds === 2 ? 3 : 1;
   const plans: SeriesPlanned[] = [];
   for (const [week, pairs] of weeks.entries()) {
@@ -92,7 +95,7 @@ export async function runDraftLeague(
         stage: 'roundrobin',
         round: week + 1,
         entrants: pair,
-        ...seriesEntropy(random),
+        ...seriesEntropy(seededRng(`${seed}:series:${plans.length}`)),
       });
     }
   }
@@ -102,8 +105,22 @@ export async function runDraftLeague(
       stage: 'playoff',
       round: playoffRounds === 1 || series < 2 ? 1 : 2,
       entrants: null,
-      ...seriesEntropy(random),
+      ...seriesEntropy(seededRng(`${seed}:series:${plans.length}`)),
     });
+  }
+  const runId = path.basename(runDir);
+  const completed = new Map<number, SeriesRecord>();
+  if (stored) {
+    for (const row of loadRows(recordsPath)) {
+      if (row.run_id !== runId || row.mode !== 'draft') continue;
+      const plan = plans[row.series_index as number];
+      if (!plan || plan.stage !== row.stage || plan.round !== row.round) {
+        throw new Error(
+          `run ${runId} series ${row.series_index} does not match the rebuilt schedule; it cannot resume`,
+        );
+      }
+      completed.set(row.series_index as number, row);
+    }
   }
 
   const table: DraftTableRow[] = entrants.map((_, entrant) => ({ entrant, w: 0, l: 0, gw: 0, gl: 0 }));
@@ -146,70 +163,85 @@ export async function runDraftLeague(
   });
   options.onEvent?.({ type: 'draft', draft: draftView(false) });
 
-  const outcome = await runDraft(entrants, board, {
-    psDir,
-    logDir: path.join(runDir, 'draft'),
-    rng: random,
-    ...(options.reasoning === undefined ? {} : { reasoning: options.reasoning }),
-    ...(options.reasoningByModel === undefined ? {} : { reasoningByModel: options.reasoningByModel }),
-    ...(options.apiKeys === undefined ? {} : { apiKeys: options.apiKeys }),
-    ...(options.recovery === undefined ? {} : { recovery: options.recovery }),
-    ...(options.signal === undefined ? {} : { signal: options.signal }),
-    onPick: (view, state) => {
-      picks = [...picks, view];
-      rosters = state.rosters;
-      budgets = state.budgets;
-      teamNames = state.teamNames;
-      options.onEvent?.({ type: 'draft', draft: draftView(false) });
-    },
-  });
-  rosters = outcome.rosters;
-  budgets = outcome.budgets;
-  teamNames = outcome.teamNames;
-
-  fs.writeFileSync(
-    path.join(runDir, 'rosters.json'),
-    `${JSON.stringify(
-      entrants.map((model, index) => ({
-        model,
-        team_name: teamNames[index],
-        budget_left: budgets[index],
-        spent: board.budget - budgets[index]!,
-        roster: rosters[index]!.map((mon) => ({ id: mon.id, name: mon.name, cost: mon.cost })),
-      })),
-      null,
-      2,
-    )}\n`,
-    'utf8',
-  );
-  fs.writeFileSync(
-    path.join(runDir, 'config.json'),
-    `${JSON.stringify(
-      {
-        mode: 'draft',
-        protocol_version: DRAFT_PROTOCOL_VERSION,
-        scaffold,
-        draft_scaffold: draftScaffold,
-        teambuild_scaffold: teambuildScaffold,
-        models,
-        seed,
-        concurrency: options.concurrency ?? 2,
-        reasoning: options.reasoning ?? null,
-        reasoning_by_model: options.reasoningByModel ?? null,
-        timer_scale: timerScale,
-        board: board.id,
-        format: board.format,
-        entrants,
-        team_names: teamNames,
-        weeks: weeks.length,
-        rosters: rosters.map((roster) => roster.map((mon) => mon.id)),
-        contributor: options.contributor ?? null,
+  if (stored) {
+    const monById = new Map(board.mons.map((mon) => [mon.id, mon] as const));
+    rosters = stored.rosterIds.map((ids) =>
+      ids.map((id) => {
+        const mon = monById.get(id);
+        if (!mon) throw new Error(`run ${runId} drafted ${id}, which board ${board.id} does not hold`);
+        return mon;
+      }),
+    );
+    budgets = rosters.map((roster) => board.budget - roster.reduce((sum, mon) => sum + mon.cost, 0));
+    teamNames = stored.teamNames;
+  } else {
+    const outcome = await runDraft(entrants, board, {
+      psDir,
+      logDir: path.join(runDir, 'draft'),
+      rng: random,
+      ...(options.reasoning === undefined ? {} : { reasoning: options.reasoning }),
+      ...(options.reasoningByModel === undefined ? {} : { reasoningByModel: options.reasoningByModel }),
+      ...(options.apiKeys === undefined ? {} : { apiKeys: options.apiKeys }),
+      ...(options.recovery === undefined ? {} : { recovery: options.recovery }),
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
+      onPick: (view, state) => {
+        picks = [...picks, view];
+        rosters = state.rosters;
+        budgets = state.budgets;
+        teamNames = state.teamNames;
+        options.onEvent?.({ type: 'draft', draft: draftView(false) });
       },
-      null,
-      2,
-    )}\n`,
-    'utf8',
-  );
+    });
+    rosters = outcome.rosters;
+    budgets = outcome.budgets;
+    teamNames = outcome.teamNames;
+  }
+
+  if (!stored) {
+    fs.writeFileSync(
+      path.join(runDir, 'rosters.json'),
+      `${JSON.stringify(
+        entrants.map((model, index) => ({
+          model,
+          team_name: teamNames[index],
+          budget_left: budgets[index],
+          spent: board.budget - budgets[index]!,
+          roster: rosters[index]!.map((mon) => ({ id: mon.id, name: mon.name, cost: mon.cost })),
+        })),
+        null,
+        2,
+      )}\n`,
+      'utf8',
+    );
+    fs.writeFileSync(
+      path.join(runDir, 'config.json'),
+      `${JSON.stringify(
+        {
+          mode: 'draft',
+          protocol_version: DRAFT_PROTOCOL_VERSION,
+          scaffold,
+          draft_scaffold: draftScaffold,
+          teambuild_scaffold: teambuildScaffold,
+          models,
+          seed,
+          concurrency: options.concurrency ?? 2,
+          reasoning: options.reasoning ?? null,
+          reasoning_by_model: options.reasoningByModel ?? null,
+          timer_scale: timerScale,
+          board: board.id,
+          format: board.format,
+          entrants,
+          team_names: teamNames,
+          weeks: weeks.length,
+          rosters: rosters.map((roster) => roster.map((mon) => mon.id)),
+          contributor: options.contributor ?? null,
+        },
+        null,
+        2,
+      )}\n`,
+      'utf8',
+    );
+  }
 
   phase = 'roundrobin';
   options.onEvent?.({ type: 'draft', draft: draftView(true) });
@@ -299,7 +331,15 @@ export async function runDraftLeague(
       ...fields,
     } as SeriesRecord;
     appendRow(recordsPath, row);
-    const score = fields.score as Record<Pid, number>;
+    applyOutcome(plan, row);
+    options.onEvent?.({ type: 'series-end', index: plan.index, record: row });
+    return row;
+  };
+
+  const applyOutcome = (plan: SeriesPlanned, row: SeriesRecord): void => {
+    const [a, b] = plan.entrants!;
+    const winnerSide = (row.winner_side ?? undefined) as Pid | undefined;
+    const score = row.score as Record<Pid, number>;
     for (const [entrant, opponent, side] of [
       [a, b, 'p1'],
       [b, a, 'p2'],
@@ -322,22 +362,36 @@ export async function runDraftLeague(
       }
       options.onEvent?.({ type: 'draft', draft: draftView(true) });
     }
-    options.onEvent?.({ type: 'series-end', index: plan.index, record: row });
-    return row;
   };
 
+  for (const plan of plans) {
+    if (plan.stage !== 'roundrobin') continue;
+    const row = completed.get(plan.index);
+    if (row) {
+      applyOutcome(plan, row);
+      results.push(row);
+    }
+  }
+
+  const stopWeek = options.throughWeek;
   for (const index of weeks.keys()) {
-    if (options.signal?.aborted) return results;
+    if (options.signal?.aborted) return sorted(results);
     week = index + 1;
     options.onEvent?.({ type: 'draft', draft: draftView(true) });
-    const scheduled = plans.filter((plan) => plan.stage === 'roundrobin' && plan.round === week);
+    const scheduled = plans.filter(
+      (plan) => plan.stage === 'roundrobin' && plan.round === week && !completed.has(plan.index),
+    );
     results.push(
       ...(await mapLimit(scheduled, options.concurrency ?? 2, options.signal, (plan, signal) =>
         playSeries(plan, signal),
       )),
     );
+    if (stopWeek !== undefined && week >= stopWeek) {
+      options.onEvent?.({ type: 'draft', draft: draftView(true) });
+      return sorted(results);
+    }
   }
-  if (options.signal?.aborted) return results;
+  if (options.signal?.aborted) return sorted(results);
 
   seeding = rankedTable(table).map((row) => row.entrant);
   phase = 'playoffs';
@@ -383,26 +437,61 @@ export async function runDraftLeague(
       async (matchIndex, signal) => {
         const plan = playoffs[matchIndex]!;
         plan.entrants = bracket.rounds[0]![matchIndex]!.slots as [number, number];
+        const existing = completed.get(plan.index);
+        if (existing) {
+          applyOutcome(plan, existing);
+          resolve(matchIndex, 0, existing.winner_side as Pid);
+          return existing;
+        }
         const row = await playSeries(plan, signal);
         resolve(matchIndex, 0, row.winner_side as Pid);
         return row;
       },
     );
     results.push(...semis);
-    if (options.signal?.aborted) return results;
+    if (options.signal?.aborted) return sorted(results);
   }
   const finalPlan = playoffs[playoffs.length - 1]!;
   const finalRound = playoffRounds - 1;
   finalPlan.entrants = bracket.rounds[finalRound]![0]!.slots as [number, number];
-  if (finalPlan.entrants[0] === null || finalPlan.entrants[1] === null) return results;
-  const finalRow = await mapLimit([finalPlan], 1, options.signal, (plan, signal) => playSeries(plan, signal));
+  if (finalPlan.entrants[0] === null || finalPlan.entrants[1] === null) return sorted(results);
+  const storedFinal = completed.get(finalPlan.index);
+  const finalRow = storedFinal
+    ? [storedFinal]
+    : await mapLimit([finalPlan], 1, options.signal, (plan, signal) => playSeries(plan, signal));
   if (finalRow[0]) {
+    if (storedFinal) applyOutcome(finalPlan, storedFinal);
     resolve(0, finalRound, finalRow[0].winner_side as Pid);
     results.push(finalRow[0]);
     phase = 'done';
     options.onEvent?.({ type: 'draft', draft: draftView(true) });
   }
-  return results;
+  return sorted(results);
+}
+
+function sorted(rows: SeriesRecord[]): SeriesRecord[] {
+  return [...rows].sort((a, b) => (a.series_index as number) - (b.series_index as number));
+}
+
+interface StoredLeague {
+  entrants: string[];
+  teamNames: string[];
+  rosterIds: string[][];
+}
+
+function loadStoredLeague(runDir: string): StoredLeague {
+  const configPath = path.join(runDir, 'config.json');
+  if (!fs.existsSync(configPath)) throw new Error(`${runDir} holds no draft league config to resume`);
+  const config = JSON.parse(fs.readFileSync(configPath, 'utf8')) as {
+    mode?: string;
+    entrants?: string[];
+    team_names?: string[];
+    rosters?: string[][];
+  };
+  if (config.mode !== 'draft' || !config.entrants || !config.team_names || !config.rosters) {
+    throw new Error(`${runDir} is not a completed-draft league run`);
+  }
+  return { entrants: config.entrants, teamNames: config.team_names, rosterIds: config.rosters };
 }
 
 function rankedTable(table: DraftTableRow[]): DraftTableRow[] {

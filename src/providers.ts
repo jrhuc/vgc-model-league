@@ -288,6 +288,14 @@ export function classifyProviderFailure(error: unknown, spec = 'provider'): Prov
   if (status === 0 && error instanceof ApiError) {
     return { kind: 'network', summary: `${label} API could not be reached.`, terminal: false, pausable: true };
   }
+  if (status === 200) {
+    return {
+      kind: 'upstream',
+      summary: `${label} API returned an unusable 200 response.`,
+      terminal: false,
+      pausable: true,
+    };
+  }
   if (status === 409 || status === 425) {
     return {
       kind: 'upstream',
@@ -427,6 +435,7 @@ export class SdkProvider implements Provider {
   private readonly apiKey: string | undefined;
   private readonly fetch: typeof fetch | undefined;
   private supportsTemperature = true;
+  private supportsToolChoice = true;
 
   constructor(
     private readonly spec: ProviderSpec,
@@ -495,13 +504,15 @@ export class SdkProvider implements Provider {
       !(this.spec.provider === 'openai' && /^(?:gpt-5|o\d)/i.test(this.model));
     const mappedProviderOptions = providerOptions(this.spec, this.reasoning);
     while (true) {
+      const sendToolChoice = Boolean(options.toolChoice) && this.supportsToolChoice;
+      const suppressTools = options.toolChoice === 'none' && !this.supportsToolChoice;
       try {
         const result = await generateText({
           model,
           system,
           messages: convertMessages(messages),
-          ...(tools ? { tools } : {}),
-          ...(tools && options.toolChoice ? { toolChoice: options.toolChoice } : {}),
+          ...(tools && !suppressTools ? { tools } : {}),
+          ...(tools && !suppressTools && sendToolChoice ? { toolChoice: options.toolChoice } : {}),
           maxOutputTokens,
           ...(sendTemperature ? { temperature: options.temperature ?? 0.2 } : {}),
           ...(mappedProviderOptions ? { providerOptions: mappedProviderOptions } : {}),
@@ -544,6 +555,14 @@ export class SdkProvider implements Provider {
           ) {
             this.supportsTemperature = false;
             sendTemperature = false;
+            continue;
+          }
+          if (
+            this.supportsToolChoice &&
+            /tool_choice/i.test(errorText) &&
+            (error.statusCode === 400 || openRouterErrorStatus(error.responseBody) === 400)
+          ) {
+            this.supportsToolChoice = false;
             continue;
           }
           const detail = redactSecrets(error.responseBody ?? error.message, [apiKey]);
