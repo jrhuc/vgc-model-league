@@ -52,8 +52,10 @@ Commands:
   draft --models <spec> <spec>...     snake-draft rosters from a board, then a weekly round robin and playoffs
       each coach drafts 10 within a 100-point budget, then picks 6 and builds every set before each match
       [--board <name>] [--seed <n>] [--concurrency <n>] [--reasoning <level>] [--timer-scale <n|off>]
-      [--auto-resume] [--through-week <n>] [--resume <run-dir>]
+      [--auto-resume] [--through-week <n>] [--resume <run-dir>] [--sequential-weeks] [--closed-sheets]
       --through-week stops cleanly after that round-robin week; --resume continues a stored league
+      round-robin series run concurrently with blind teambuilds; --sequential-weeks restores
+      week-by-week play (implied by --through-week); --closed-sheets hides opposing team sheets
       (models, board, and seed come from the run's config) and also recovers a run that died mid-season
   exhibition --opponent <spec>        host one bo3 where a terminal agent plays a seat over a local bridge
       [--seat p1|p2] [--name <label>] [--pool <name>] [--seed <n>] [--port <n>] [--reasoning <level>]
@@ -302,6 +304,8 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
         board: { type: 'string', default: 'regmb-202607' },
         'through-week': { type: 'string' },
         resume: { type: 'string' },
+        'sequential-weeks': { type: 'boolean', default: false },
+        'closed-sheets': { type: 'boolean', default: false },
       },
     });
     const { runDraftLeague, roundRobinWeeks } = await import('./draftleague.js');
@@ -314,6 +318,8 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
           concurrency?: number;
           reasoning?: string | null;
           timer_scale?: number | 'off';
+          sequential_weeks?: boolean;
+          closed_sheets?: boolean;
         })
       : undefined;
     const models = storedConfig ? storedConfig.models : experimentModels(command, values.models, positionals);
@@ -340,6 +346,12 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
         concurrency: storedConfig?.concurrency ?? positiveInteger('concurrency', values.concurrency),
         ...(throughWeek === undefined ? {} : { throughWeek }),
         ...(resumeDir ? { resume: true } : {}),
+        ...((storedConfig ? storedConfig.sequential_weeks === true : values['sequential-weeks'])
+          ? { sequentialWeeks: true }
+          : {}),
+        ...((storedConfig ? storedConfig.closed_sheets === true : values['closed-sheets'])
+          ? { closedSheets: true }
+          : {}),
         ...execution,
         onEvent: (event) => {
           if (event.type !== 'draft') return;

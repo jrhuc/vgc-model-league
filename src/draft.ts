@@ -41,8 +41,8 @@ const DRAFT_PROMPT_POLICY = {
     '{{board}}',
   ],
   firstTurnInstruction:
-    'This is your first pick, so also choose your franchise name: a sports-style team name, such as ' +
-    '"East Coast Egg Eaters", "Melbourne Rotoms" or "Jubilife Piplups". Reply with a single JSON object ' +
+    'This is your first pick, so also choose your franchise name: a personalised team name, such as ' +
+    '"DeepSeek Wailords", "Golden State Gholdengos" or "Mega-Claude Gaming". Reply with a single JSON object ' +
     '{"pick": "<board-id>", "team_name": "<your franchise name>", "reasoning": "<2-4 sentences>"} and nothing else.',
   turnInstruction:
     'Reply with a single JSON object {"pick": "<board-id>", "reasoning": "<2-4 sentences>"} and nothing else.',

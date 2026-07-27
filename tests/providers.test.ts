@@ -312,6 +312,53 @@ test('Gemini thought signatures round-trip through replayed tool calls', async (
   assert.deepEqual(completion.toolCalls[0]?.providerMetadata, { google: { thoughtSignature: 'sig-2' } });
 });
 
+test('OpenRouter requests buy usage accounting and surface cost and upstream provider', async () => {
+  let body: Record<string, unknown> = {};
+  const fetch = (async (_input, init) => {
+    body = JSON.parse(String(init?.body));
+    return jsonResponse({
+      id: 'gen_1',
+      provider: 'DeepInfra',
+      choices: [{ message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' }],
+      usage: { prompt_tokens: 4, completion_tokens: 2, total_tokens: 6, cost: 0.00123 },
+    });
+  }) as typeof globalThis.fetch;
+  const provider = makeProvider(parseSpec('openrouter:z-ai/glm-5.2:nitro'), { apiKey: 'or-key', fetch });
+
+  const completion = await provider.complete('system', [{ role: 'user', content: 'hello' }]);
+
+  assert.equal(body.model, 'z-ai/glm-5.2:nitro', 'variant suffixes pass through to OpenRouter untouched');
+  assert.deepEqual(body.usage, { include: true });
+  assert.equal(completion.provider, 'DeepInfra');
+  assert.equal(completion.usage.cost, 0.00123);
+  assert.equal(completion.usage.input_tokens, 4);
+  assert.equal(completion.usage.output_tokens, 2);
+});
+
+test('OpenRouter routing preferences come from the environment and must be JSON', async () => {
+  process.env.VGC_OPENROUTER_PROVIDER = '{"order":["deepinfra"]}';
+  try {
+    let body: Record<string, unknown> = {};
+    const fetch = (async (_input, init) => {
+      body = JSON.parse(String(init?.body));
+      return jsonResponse({
+        choices: [{ message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' }],
+        usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+      });
+    }) as typeof globalThis.fetch;
+    const provider = makeProvider(parseSpec('openrouter:qwen/qwen3.7-plus'), { apiKey: 'or-key', fetch });
+    const completion = await provider.complete('system', [{ role: 'user', content: 'hello' }]);
+    assert.deepEqual(body.provider, { order: ['deepinfra'] });
+    assert.equal(completion.provider, undefined, 'a response naming no provider adds nothing');
+    assert.equal('cost' in completion.usage, false);
+
+    process.env.VGC_OPENROUTER_PROVIDER = 'not json';
+    assert.throws(() => makeProvider(parseSpec('openrouter:qwen/qwen3.7-plus'), { apiKey: 'or-key' }), /must be JSON/);
+  } finally {
+    delete process.env.VGC_OPENROUTER_PROVIDER;
+  }
+});
+
 test('compat provider uses chat completions', async () => {
   let url = '';
   let body: Record<string, unknown> = {};

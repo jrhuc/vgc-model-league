@@ -98,7 +98,7 @@ test('LLM choices parse prose, retry, and record fallbacks', async () => {
     [[`${decision([1])} earlier draft was {"choices":[9]}`], 'move 2', false, 1, 0],
     [['{"choices":[1],"notes":"legacy"}', decision([1])], 'move 2', false, 2, 1],
     [['invalid', decision([1])], 'move 2', false, 2, 1],
-    [['invalid', decision([9])], 'move 1', true, 2, 2],
+    [['invalid', decision([9]), 'invalid', decision([9])], 'move 1', true, 4, 4],
   ];
   for (const [responses, expected, fallback, calls, parseFailures] of cases) {
     const provider = new ScriptedProvider(responses);
@@ -245,6 +245,34 @@ test('provider failures abort and persistent empty responses fail after retries'
   const empty = new LLMEngine('p1', 'empty', { provider, decisionLog: [] });
   await assert.rejects(empty.act(request(), { povLines: [] }), /empty response/);
   assert.equal(provider.calls.length, 3, 'empty responses are retried before failing');
+});
+
+test('DSML tool-call markup gets a reprompt naming the problem', async () => {
+  const provider = new ScriptedProvider([
+    '<｜｜DSML｜｜invoke name="estimate_damage"><｜｜DSML｜｜parameter name="attacker">Gholdengo</｜｜DSML｜｜parameter>',
+    decision([1]),
+  ]);
+  const decisions: Record<string, unknown>[] = [];
+  const engine = new LLMEngine('p1', 'scripted', { provider, decisionLog: decisions });
+  assert.equal(await engine.act(request(), { povLines: ['|turn|1'] }), 'move 2');
+  assert.equal(decisions[0]!.fallback, false);
+  const reprompt = String(provider.calls[1]!.messages.at(-1)?.content);
+  assert.match(reprompt, /tool-call markup as plain text/);
+});
+
+test('a tool-call-only final answer is retried untimed instead of defaulting', async () => {
+  const toolOnly: Completion = {
+    text: '',
+    usage: { input_tokens: 5, output_tokens: 1 },
+    toolCalls: [{ id: 'call_1', name: 'lookup_move', arguments: { name: 'protect' } }],
+    finishReason: 'stop',
+  };
+  const provider = new ScriptedProvider([toolOnly, toolOnly, toolOnly, toolOnly, toolOnly, decision([1])]);
+  const decisions: Record<string, unknown>[] = [];
+  const engine = new LLMEngine('p1', 'scripted', { provider, decisionLog: decisions });
+  assert.equal(await engine.act(request(), { povLines: ['|turn|1'] }), 'move 2');
+  assert.equal(decisions[0]!.fallback, false);
+  assert.equal(provider.calls.length, 6);
 });
 
 test('non-transient provider failures with a live timer fail the run', async () => {
@@ -473,7 +501,7 @@ test('reasoning truncation without time to retry yields to the battle timer with
 });
 
 test('untimed truncation records a legal fallback with the truncation summary', async () => {
-  const provider = new ScriptedProvider([lengthTruncated()]);
+  const provider = new ScriptedProvider([lengthTruncated(), lengthTruncated(), lengthTruncated(), lengthTruncated()]);
   const decisions: Record<string, unknown>[] = [];
   const engine = new LLMEngine('p1', 'opencode-go:deepseek-v4-flash', { provider, decisionLog: decisions });
   assert.equal(await engine.act(request(), { povLines: [] }), 'move 1');
@@ -497,7 +525,7 @@ test('a decision cut off mid-reasoning blames the budget, not the model formatti
   });
   const decisions: Record<string, unknown>[] = [];
   const engine = new LLMEngine('p1', 'openrouter:qwen/qwen3.5-flash-02-23', {
-    provider: new ScriptedProvider([rambled(), rambled(), rambled()]),
+    provider: new ScriptedProvider([rambled(), rambled(), rambled(), rambled()]),
     decisionLog: decisions,
   });
 
@@ -517,7 +545,7 @@ test('a truncated retry is not fed its own overrun reasoning', async () => {
     usage: { input_tokens: 10, output_tokens: 32_768 },
     toolCalls: [],
   });
-  const provider = new ScriptedProvider([rambled(), rambled(), rambled()]);
+  const provider = new ScriptedProvider([rambled(), rambled(), rambled(), rambled()]);
   const engine = new LLMEngine('p1', 'fake:model', { provider, decisionLog: [] });
   await engine.act(request(), { povLines: [] });
 
@@ -536,7 +564,7 @@ test('a genuine format failure is still reported as one', async () => {
   });
   const decisions: Record<string, unknown>[] = [];
   const engine = new LLMEngine('p1', 'scripted', {
-    provider: new ScriptedProvider([malformed(), malformed(), malformed()]),
+    provider: new ScriptedProvider([malformed(), malformed(), malformed(), malformed()]),
     decisionLog: decisions,
   });
 
@@ -933,13 +961,14 @@ test('a double-Mega joint choice is retried with the conflict explained, not sil
 });
 
 test('a persistent illegal joint choice becomes a flagged legal fallback', async () => {
-  const provider = new ScriptedProvider([decision([1, 1], 'mega both'), decision([1, 1], 'mega both again')]);
+  const stubborn = () => decision([1, 1], 'mega both again');
+  const provider = new ScriptedProvider([stubborn(), stubborn(), stubborn(), stubborn()]);
   const decisions: Record<string, unknown>[] = [];
   const engine = new LLMEngine('p1', 'scripted', { provider, decisionLog: decisions });
   assert.equal(await engine.act(megaRequest(), { povLines: ['|turn|1'] }), 'move 1, move 1');
   assert.equal(decisions[0]!.fallback, true);
   assert.match(String(decisions[0]!.rationale), /defaulted to the first legal option/);
-  assert.equal(decisions[0]!.parse_failures, 2);
+  assert.equal(decisions[0]!.parse_failures, 4);
 });
 
 test('engines that commit conflicting choices record the substitution', async () => {

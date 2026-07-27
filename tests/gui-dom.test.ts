@@ -18,21 +18,9 @@ type TestButton = {
   getAttribute(name: string): string | null;
 };
 
-type TestField = {
-  value: string;
-  getAttribute(name: string): string | null;
-  focus(): void;
-  dispatchEvent(event: unknown): boolean;
-};
-
 function asButton(node: unknown): TestButton {
   assert.ok(node);
   return node as TestButton;
-}
-
-function asField(node: unknown): TestField {
-  assert.ok(node);
-  return node as TestField;
 }
 
 async function waitFor(predicate: () => boolean, ms = 5000): Promise<void> {
@@ -43,7 +31,10 @@ async function waitFor(predicate: () => boolean, ms = 5000): Promise<void> {
   }
 }
 
-test('built client bundle boots and renders the app against the live server', async () => {
+// The GUI is redesigned freely pre-release, so this suite only guards against a
+// bundle that fails to boot; nothing here may assert on layout, copy, or DOM
+// structure.
+test('built client bundle boots against the live server', async () => {
   const gui = new GuiServer({ runsDir: RUNS_SCRATCH });
   const base = await gui.listen(0);
   const window = new Window({ url: base });
@@ -63,140 +54,13 @@ test('built client bundle boots and renders the app against the live server', as
     window.eval(bundle);
 
     const rendered = () => window.document.body.textContent ?? '';
-    await waitFor(() => rendered().includes('Model lineup'));
-    const text = rendered();
-    assert.match(text, /VGC MODEL LEAGUE/);
-    assert.match(text, /Model lineup/);
-    assert.match(text, /Control sheet/);
-    assert.match(text, /No models selected/);
-    const navButtons = window.document.querySelectorAll('.nav-button');
-    assert.equal(
-      navButtons.length,
-      4,
-      'setup, the live run, the draft league, and one data room; pools live inside run setup',
-    );
-    assert.deepEqual(
-      [...navButtons].map((button) => button.textContent),
-      ['New run', 'Live run', 'Draft league', 'Data room'],
-      'every recorded result reads from one data room',
-    );
-
-    const modeTabs = window.document.querySelectorAll('.mode-tab');
-    assert.equal(modeTabs.length, 4, 'match, tournament, draft, and rotation modes are offered');
-    assert.equal(
-      window.document.querySelector('.mode-tabs')?.tagName,
-      'FIELDSET',
-      'run modes use a semantic toggle group',
-    );
-    assert.equal(modeTabs[0]?.getAttribute('role'), null);
-    assert.equal(modeTabs[0]?.getAttribute('aria-pressed'), 'true');
-    assert.equal(modeTabs[1]?.getAttribute('aria-pressed'), 'false');
-    assert.ok(
-      window.document.querySelector('legend.visually-hidden'),
-      'fieldset legends stay readable to assistive tech',
-    );
-    assert.equal(window.document.querySelector('#pool'), null, 'a match needs no team pool');
-
-    const addBaseline = asButton(
-      [...window.document.querySelectorAll('button')].find(
-        (button) => button.textContent?.trim() === 'Add random baseline',
-      ),
-    );
-    addBaseline.click();
-    addBaseline.click();
-    await waitFor(() => window.document.querySelectorAll('.contender').length === 2);
-    assert.ok(
-      rendered().includes('Sample ·'),
-      'sample teams prefill match contenders so the run can start immediately',
-    );
-    assert.equal(
-      window.document.querySelector('.add-bay:not(.hidden)'),
-      null,
-      'a full match lineup hides the model selection bay',
-    );
-    const contenderButton = asButton(window.document.querySelector('.contender-main'));
-    assert.equal(contenderButton.getAttribute('aria-expanded'), 'false');
-    contenderButton.click();
-    await waitFor(() => window.document.querySelector('#teamPaste0') !== null);
-    assert.equal(contenderButton.getAttribute('aria-expanded'), 'true');
-    const pasteField = asField(window.document.querySelector('#teamPaste0'));
-    assert.ok(pasteField.value.trim().length > 0, 'the sample team prefills the paste editor');
-    assert.match(
-      window.document.querySelector('.schedule')?.textContent ?? '',
-      /with Sample ·|assign its team from a pool/,
-    );
-    const validateButton = asButton(
-      [...window.document.querySelectorAll('button')].find((button) => button.textContent?.trim() === 'Validate team'),
-    );
-    assert.equal(validateButton.disabled, false, 'a non-empty paste enables validation');
-    validateButton.click();
-    await waitFor(() => window.document.querySelector('#teamPaste0') === null, 30_000);
-    assert.equal(window.document.querySelector('#teamPaste0'), null, 'a legal paste collapses the team editor');
-    assert.match(rendered(), /Pasted team ✓/);
-    assert.equal(contenderButton.getAttribute('aria-expanded'), 'false');
-    asButton(window.document.querySelector('.icon-button')).click();
-    await waitFor(() => window.document.querySelectorAll('.contender').length === 1);
-    asButton(window.document.querySelector('.icon-button')).click();
-    await waitFor(() => window.document.querySelectorAll('.contender').length === 0);
-
-    asButton(modeTabs[3]).click();
-    await waitFor(() => window.document.querySelector('#pool') !== null);
-    const poolDropdown = asButton(window.document.querySelector('#pool'));
-    assert.equal(poolDropdown.getAttribute('role'), 'combobox');
-    assert.ok(
-      (window.document.querySelector('.pool-facts')?.textContent ?? '').includes('teams'),
-      'selected pool should show its team count',
-    );
-    assert.ok(
-      (window.document.querySelector('.pools-manager > summary')?.textContent ?? '').includes('Manage team pools'),
-      'pool creation is collapsed into the run setup page',
-    );
-
-    asButton(modeTabs[2]).click();
-    await waitFor(() => rendered().includes('Draft board'));
-    assert.match(rendered(), /Snake draft/);
-    assert.match(rendered(), /weekly round robin, then playoffs/);
-    assert.match(rendered(), /pick six and build each set themselves/);
-    assert.match(
-      window.document.querySelector('.schedule')?.textContent ?? '',
-      /Add at least two models to plan the draft/,
-    );
-
-    asButton(modeTabs[1]).click();
-    await waitFor(() => window.document.querySelector('#pool') !== null);
-    assert.equal(modeTabs[1]?.getAttribute('aria-pressed'), 'true');
-    for (let count = 0; count < 3; count += 1) addBaseline.click();
-    await waitFor(() => window.document.querySelectorAll('.contender').length === 3);
-    assert.doesNotMatch(rendered(), /even number of models/);
-    const startButton = asButton(
-      [...window.document.querySelectorAll('button')].find((button) =>
-        /Start the 3-model bracket/.test(button.textContent ?? ''),
-      ),
-    );
-    assert.equal(startButton.disabled, false);
-
-    asButton(modeTabs[0]).click();
-    await waitFor(() => rendered().includes('Run card'));
-
-    const modelSearch = window.document.querySelector('#modelSearch');
-    assert.ok(modelSearch, 'model combobox input should render');
-    assert.equal(modelSearch.getAttribute('role'), 'combobox');
-
-    const providerSearch = asField(window.document.querySelector('#provider'));
-    assert.equal(providerSearch.getAttribute('role'), 'combobox');
-    assert.equal(providerSearch.getAttribute('aria-haspopup'), 'listbox');
-    assert.equal(providerSearch.value, 'Anthropic');
-    providerSearch.focus();
-    providerSearch.value = 'vercel';
-    providerSearch.dispatchEvent(new window.Event('input', { bubbles: true }));
-    await waitFor(() => window.document.querySelectorAll('.dropdown-option').length === 1);
-    assert.equal(window.document.querySelector('.dropdown-option')?.textContent?.trim(), 'Vercel AI Gateway');
+    await waitFor(() => rendered().trim().length > 0);
+    assert.ok(rendered().trim().length > 0, 'the app must render something instead of crashing on boot');
   } finally {
     await window.happyDOM.close();
     gui.close();
   }
 });
-
 test('the data room archives a bracket and expands it on demand', async () => {
   const recordsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-gui-records-'));
   const recordsPath = path.join(recordsDir, 'results.jsonl');

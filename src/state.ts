@@ -41,6 +41,7 @@ export class MonState {
   fainted = false;
   preview = false;
   brought: boolean | undefined;
+  formes = new Set<string>();
   /** Successful consecutive Protect-like stalls; 0 means next Protect is full odds. */
   protectSuccessStreak = 0;
 
@@ -267,6 +268,7 @@ export class BattleState {
     } else if (kind === '-formechange' && args.length >= 2) {
       const mon = this.mon(args[0]!);
       mon.species = args[1]!;
+      mon.formes.add(this.speciesKey(args[1]!));
       mon.ability = undefined;
     } else if (kind === 'showteam' && args.length >= 2) this.showTeam(args[0]!, args.slice(1).join('|'));
     else if (kind === '-vgctimer' && (args[0] === 'p1' || args[0] === 'p2')) {
@@ -595,7 +597,7 @@ export class BattleState {
     const rich = new Set(
       mons
         .filter((mon) => mon.hp !== undefined || mon.moves.size || mon.item || mon.ability)
-        .map((mon) => this.speciesKey(mon.species)),
+        .flatMap((mon) => [this.speciesKey(mon.species), ...mon.formes]),
     );
     for (const mon of mons) {
       if (mon.hp === undefined && !mon.moves.size) continue;
@@ -645,8 +647,11 @@ export class BattleState {
       side,
       [...side.mons.values()].filter((mon) => !own || mon.brought !== false),
     );
+    const broughtCount = [...this.sides[this.pid].mons.values()].filter((mon) => mon.brought === true).length;
+    const foesResolved =
+      !own && broughtCount > 0 && mons.filter((mon) => mon.hpPercent !== undefined).length >= broughtCount;
     if (!own && side.showteam) {
-      const knownSpecies = new Set(mons.map((mon) => this.speciesKey(mon.species)));
+      const knownSpecies = new Set(mons.flatMap((mon) => [this.speciesKey(mon.species), ...mon.formes]));
       const knownIdentities = new Set(mons.map((mon) => this.monKey(mon.ident)));
       mons.push(
         ...side.sheet.filter(
@@ -678,7 +683,8 @@ export class BattleState {
       const attrs = [mon.species];
       if (reference?.types) attrs.push(`types ${reference.types}`);
       if (activeSlots.length) attrs.push(`active slot ${activeSlots.join('/')}`);
-      attrs.push(`HP ${mon.hpPercent === undefined ? '?' : `${Math.round(mon.hpPercent)}%`}`);
+      if (foesResolved && mon.hpPercent === undefined) attrs.push('not brought this game');
+      else attrs.push(`HP ${mon.hpPercent === undefined ? '?' : `${Math.round(mon.hpPercent)}%`}`);
       if (mon.status) attrs.push(mon.status);
       if (mon.fainted) attrs.push('fainted');
       if (!expandedRoster && !activeSlots.length) {
@@ -806,7 +812,10 @@ export class BattleState {
   private setDetails(mon: MonState, details: string): void {
     if (!details) return;
     const [species] = details.split(',').map((value) => value.trim());
-    if (species) mon.species = species;
+    if (species) {
+      mon.species = species;
+      mon.formes.add(this.speciesKey(species));
+    }
   }
 
   private setHp(mon: MonState, hp: string): void {

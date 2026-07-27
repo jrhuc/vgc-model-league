@@ -70,6 +70,7 @@ export interface Completion {
   toolCalls: ToolCall[];
   finishReason?: string;
   reasoning?: string;
+  provider?: string;
   /** AI SDK response messages, replayed verbatim so provider metadata (e.g. Gemini thought signatures) survives. */
   responseMessages?: JsonObject[];
 }

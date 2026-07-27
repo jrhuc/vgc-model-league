@@ -29,6 +29,7 @@ export interface DraftLeagueOptions extends ExperimentOptions {
   onEvent?: (event: DraftLeagueEvent) => void;
   throughWeek?: number;
   resume?: boolean;
+  sequentialWeeks?: boolean;
 }
 
 interface SeriesPlanned {
@@ -230,6 +231,8 @@ export async function runDraftLeague(
           timer_scale: timerScale,
           board: board.id,
           format: board.format,
+          sequential_weeks: options.sequentialWeeks === true || options.throughWeek !== undefined,
+          closed_sheets: options.closedSheets === true,
           entrants,
           team_names: teamNames,
           weeks: weeks.length,
@@ -246,7 +249,13 @@ export async function runDraftLeague(
   phase = 'roundrobin';
   options.onEvent?.({ type: 'draft', draft: draftView(true) });
 
-  const teambuildFor = async (plan: SeriesPlanned, entrant: number, opponent: number, signal: AbortSignal) => {
+  const teambuildFor = async (
+    plan: SeriesPlanned,
+    entrant: number,
+    opponent: number,
+    signal: AbortSignal,
+    frozenHistory?: string[][],
+  ) => {
     const result = await runTeambuild(
       {
         seriesIndex: plan.index,
@@ -258,7 +267,7 @@ export async function runDraftLeague(
         opponentTeamName: teamNames[opponent]!,
         roster: rosters[entrant]!,
         opponentRoster: rosters[opponent]!,
-        history: history[entrant]!,
+        history: (frozenHistory ?? history)[entrant]!,
         format: board.format,
       },
       {
@@ -280,11 +289,18 @@ export async function runDraftLeague(
 
   const results: SeriesRecord[] = [];
   let seeding: number[] = [];
-  const playSeries = async (plan: SeriesPlanned, signal: AbortSignal): Promise<SeriesRecord> => {
+  const playSeries = async (
+    plan: SeriesPlanned,
+    signal: AbortSignal,
+    frozenHistory?: string[][],
+  ): Promise<SeriesRecord> => {
     const [a, b] = plan.entrants!;
     const players: Record<Pid, string> = { p1: entrants[a]!, p2: entrants[b]! };
     options.onEvent?.({ type: 'series-players', index: plan.index, players });
-    const [home, away] = await Promise.all([teambuildFor(plan, a, b, signal), teambuildFor(plan, b, a, signal)]);
+    const [home, away] = await Promise.all([
+      teambuildFor(plan, a, b, signal, frozenHistory),
+      teambuildFor(plan, b, a, signal, frozenHistory),
+    ]);
     options.onEvent?.({ type: 'series-start', index: plan.index });
     const { winnerSide, fields } = await playRecordedSeries({
       players,
@@ -299,6 +315,7 @@ export async function runDraftLeague(
       runDir,
       signal,
       ...(plan.stage === 'playoff' ? { requireWinner: true } : {}),
+      ...(options.closedSheets === true ? { closedSheets: true } : {}),
       ...(options.reasoning === undefined ? {} : { reasoning: options.reasoning }),
       ...(options.apiKeys === undefined ? {} : { apiKeys: options.apiKeys }),
       ...(options.recovery === undefined ? {} : { recovery: options.recovery }),
@@ -374,22 +391,34 @@ export async function runDraftLeague(
   }
 
   const stopWeek = options.throughWeek;
-  for (const index of weeks.keys()) {
-    if (options.signal?.aborted) return sorted(results);
-    week = index + 1;
+  if (options.sequentialWeeks === true || stopWeek !== undefined) {
+    for (const index of weeks.keys()) {
+      if (options.signal?.aborted) return sorted(results);
+      week = index + 1;
+      options.onEvent?.({ type: 'draft', draft: draftView(true) });
+      const scheduled = plans.filter(
+        (plan) => plan.stage === 'roundrobin' && plan.round === week && !completed.has(plan.index),
+      );
+      results.push(
+        ...(await mapLimit(scheduled, options.concurrency ?? 2, options.signal, (plan, signal) =>
+          playSeries(plan, signal),
+        )),
+      );
+      if (stopWeek !== undefined && week >= stopWeek) {
+        options.onEvent?.({ type: 'draft', draft: draftView(true) });
+        return sorted(results);
+      }
+    }
+  } else {
+    week = weeks.length;
     options.onEvent?.({ type: 'draft', draft: draftView(true) });
-    const scheduled = plans.filter(
-      (plan) => plan.stage === 'roundrobin' && plan.round === week && !completed.has(plan.index),
-    );
+    const scheduled = plans.filter((plan) => plan.stage === 'roundrobin' && !completed.has(plan.index));
+    const frozenHistory = history.map((lines) => [...lines]);
     results.push(
       ...(await mapLimit(scheduled, options.concurrency ?? 2, options.signal, (plan, signal) =>
-        playSeries(plan, signal),
+        playSeries(plan, signal, frozenHistory),
       )),
     );
-    if (stopWeek !== undefined && week >= stopWeek) {
-      options.onEvent?.({ type: 'draft', draft: draftView(true) });
-      return sorted(results);
-    }
   }
   if (options.signal?.aborted) return sorted(results);
 

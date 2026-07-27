@@ -880,6 +880,8 @@ test('a full draft league drafts, plays weekly rounds, and crowns a champion', a
   const config = JSON.parse(fs.readFileSync(path.join(directory, 'config.json'), 'utf8')) as Record<string, unknown>;
   assert.equal(config.mode, 'draft');
   assert.equal(config.weeks, 3);
+  assert.equal(config.sequential_weeks, false, 'round-robin series run concurrently by default');
+  assert.equal(config.closed_sheets, false, 'the stock format keeps its open team sheets by default');
   const rosters = config.rosters as string[][];
   assert.equal(rosters.length, 4);
   for (const roster of rosters) assert.equal(roster.length, 10);
@@ -943,9 +945,17 @@ test('a two-coach league plays one week and a single final', async (t) => {
     recordsPath: path.join(directory, 'results.jsonl'),
     seed: 5,
     concurrency: 1,
+    sequentialWeeks: true,
+    closedSheets: true,
   });
   assert.equal(rows.length, 2);
   assert.equal(rows[0]!.stage, 'roundrobin');
   assert.equal(rows[1]!.stage, 'playoff');
   assert.ok(rows[1]!.winner, 'a playoff series must produce a winner');
+  const config = JSON.parse(fs.readFileSync(path.join(directory, 'config.json'), 'utf8')) as Record<string, unknown>;
+  assert.equal(config.sequential_weeks, true);
+  assert.equal(config.closed_sheets, true);
+  for (const row of rows) assert.equal(row.closed_sheets, true, 'series records carry the sheet rule');
+  const gameLog = fs.readFileSync(path.join(directory, 'series', String(rows[0]!.series_id), 'game-1.log'), 'utf8');
+  assert.ok(!gameLog.includes('|showteam|'), 'closed-sheet games publish no team sheets');
 });

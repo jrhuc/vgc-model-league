@@ -10,6 +10,7 @@ import { makeProvider, parseSpec, reasoningForModel } from './providers.js';
 import { seededRng } from './random.js';
 import type { RecoveryGate } from './recovery.js';
 import { ShowdownReference } from './reference.js';
+import { loadShowdown } from './showdown.js';
 import { SimBattle } from './sim.js';
 import type { Team } from './teams.js';
 import { DEFAULT_TIMER_SCALE } from './timer.js';
@@ -25,6 +26,7 @@ export interface ExperimentOptions extends ModelReasoningConfig {
   signal?: AbortSignal;
   contributor?: ContributorAttribution;
   recovery?: RecoveryGate;
+  closedSheets?: boolean;
 }
 
 export async function mapLimit<T, R>(
@@ -246,6 +248,7 @@ export interface RecordedSeriesContext extends ModelReasoningConfig {
   requireWinner?: boolean;
   timerScale?: TimerScale;
   recovery?: RecoveryGate;
+  closedSheets?: boolean;
 }
 
 interface RecordedSeriesFields extends JsonObject {
@@ -314,6 +317,7 @@ export async function playRecordedSeries(context: RecordedSeriesContext): Promis
       ),
     ]),
   ) as Record<Pid, RandomEngine | LLMEngine>;
+  const battleFormat = context.closedSheets ? closedSheetsFormat(context.format, context.psDir) : context.format;
   const { score, games, winnerSide } = await playBo3({
     engines,
     names,
@@ -322,7 +326,7 @@ export async function playRecordedSeries(context: RecordedSeriesContext): Promis
     gameSeeds: context.gameSeeds,
     seriesId,
     seriesDir,
-    format: context.format,
+    format: battleFormat,
     psDir: context.psDir,
     ...(context.requireWinner === undefined ? {} : { requireWinner: context.requireWinner }),
     timerScale,
@@ -350,6 +354,7 @@ export async function playRecordedSeries(context: RecordedSeriesContext): Promis
       games,
       engine_seeds: context.engineSeeds,
       timer_scale: timerScale,
+      ...(context.closedSheets ? { closed_sheets: true } : {}),
       reasoning: context.reasoning ?? null,
       ...(context.reasoningByModel === undefined
         ? {}
@@ -357,6 +362,16 @@ export async function playRecordedSeries(context: RecordedSeriesContext): Promis
       decision_stats: stats,
     },
   };
+}
+
+export function closedSheetsFormat(format: string, psDir: string): string {
+  const { Dex } = loadShowdown(psDir);
+  const ruleTable = Dex.formats.getRuleTable(Dex.formats.get(format));
+  const repeals = [
+    ...(ruleTable.has('forceopenteamsheets') ? ['!Force Open Team Sheets'] : []),
+    ...(ruleTable.has('openteamsheets') ? ['!Open Team Sheets'] : []),
+  ];
+  return repeals.length ? `${format}@@@${repeals.join(',')}` : format;
 }
 
 function relative(file: string): string {

@@ -109,6 +109,47 @@ test('opposing Mega formes do not duplicate their open-sheet base forme', () => 
   assert.match(rendered, /Gengar-Mega/);
 });
 
+test('a Mega whose sheet identity differs still merges with its base forme', () => {
+  const state = new BattleState('p1');
+  state.feed([
+    '|poke|p2|Floette-Eternal, L50|',
+    '|showteam|p2|Floette-Eternal|Floette-Eternal|Floettite|FlowerVeil|moonblast,protect|Timid|||||50',
+    '|switch|p2a: Floette|Floette-Eternal, L50|100/100',
+    '|detailschange|p2a: Floette|Floette-Mega, L50',
+    '|-mega|p2a: Floette|Floette-Eternal|Floettite',
+  ]);
+  const rendered = state.render({});
+  assert.equal(rendered.match(/^- Floette/gm)?.length, 1, 'the mega and its sheet entry are one Pokémon');
+  assert.match(rendered, /Floette-Mega/);
+});
+
+test('unseen opponents read as not brought once the whole bring is revealed', () => {
+  const state = new BattleState('p1');
+  state.feed([
+    '|showteam|p2|Altaria||FocusSash|CloudNine|dracometeor,roost|Timid|||||50]Rotom-Wash||SitrusBerry|Levitate|thunderbolt,protect|Timid|||||50]Garchomp||LifeOrb|RoughSkin|earthquake,protect|Jolly|||||50]Dragapult||MuscleBand|ClearBody|dragondarts,protect|Jolly|||||50]Annihilape||Leftovers|Defiant|ragefist,protect|Jolly|||||50]Floette-Eternal||Floettite|FlowerVeil|moonblast,protect|Timid|||||50',
+    '|switch|p2a: Altaria|Altaria, L50|100/100',
+    '|switch|p2b: Rotom|Rotom-Wash, L50|100/100',
+  ]);
+  const brought: BattleRequest = {
+    side: {
+      pokemon: Array.from({ length: 4 }, (_, index) => ({
+        ident: `p1: Own${index + 1}`,
+        details: `Species${index + 1}, L50`,
+        condition: '100/100',
+        active: index < 2,
+      })),
+    },
+    active: [null, null],
+  };
+  assert.match(state.render(brought), /Annihilape; HP \?/, 'two reveals leave the bench uncertain');
+
+  state.feed(['|switch|p2a: Garchomp|Garchomp, L50|100/100', '|switch|p2b: Dragapult|Dragapult, L50|100/100']);
+  const rendered = state.render(brought);
+  assert.match(rendered, /Annihilape; not brought this game/);
+  assert.match(rendered, /Floette-Eternal; not brought this game/);
+  assert.doesNotMatch(rendered, /HP \?/, 'four reveals resolve the whole opposing bring');
+});
+
 test('post-preview own state omits Pokémon that were not brought', () => {
   const state = new BattleState('p1');
   const previewPokemon = Array.from({ length: 6 }, (_, index) => ({

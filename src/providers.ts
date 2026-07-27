@@ -346,6 +346,52 @@ function openRouterErrorStatus(responseBody: string | undefined): number | undef
 
 const DEFAULT_TIMEOUT = 120;
 
+interface GatewayResponseMeta {
+  cost?: number | undefined;
+  provider?: string | undefined;
+}
+
+function parseRoutingPreferences(): JsonObject | undefined {
+  const raw = process.env.VGC_OPENROUTER_PROVIDER;
+  if (!raw) return undefined;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error('VGC_OPENROUTER_PROVIDER must be JSON, e.g. {"order":["deepinfra"],"ignore":["novita"]}');
+  }
+  if (!isRecord(parsed)) throw new Error('VGC_OPENROUTER_PROVIDER must be a JSON object of routing preferences');
+  return parsed;
+}
+
+function openRouterFetch(
+  base: typeof fetch | undefined,
+  routing: JsonObject | undefined,
+  meta: GatewayResponseMeta,
+): typeof fetch {
+  const inner = base ?? fetch;
+  return async (input, init) => {
+    let request = init;
+    if (typeof request?.body === 'string') {
+      try {
+        const body = JSON.parse(request.body) as JsonObject;
+        body.usage = { include: true };
+        if (routing) body.provider = routing;
+        request = { ...request, body: JSON.stringify(body) };
+      } catch {}
+    }
+    const response = await inner(input, request);
+    if (response.ok && (response.headers.get('content-type') ?? '').includes('json')) {
+      try {
+        const payload = (await response.clone().json()) as JsonObject;
+        if (typeof payload.provider === 'string' && payload.provider) meta.provider = payload.provider;
+        if (isRecord(payload.usage) && typeof payload.usage.cost === 'number') meta.cost = payload.usage.cost;
+      } catch {}
+    }
+    return response;
+  };
+}
+
 function googleThinkingBudgetMax(model: string): number {
   return model.includes('2.5') && model.includes('pro') && !model.includes('flash') ? 32_768 : 24_576;
 }
@@ -434,6 +480,7 @@ export class SdkProvider implements Provider {
   readonly reasoning?: ReasoningLevel | undefined;
   private readonly apiKey: string | undefined;
   private readonly fetch: typeof fetch | undefined;
+  private readonly gatewayMeta: GatewayResponseMeta | undefined;
   private supportsTemperature = true;
   private supportsToolChoice = true;
 
@@ -444,7 +491,12 @@ export class SdkProvider implements Provider {
     this.model = spec.model;
     this.reasoning = options.reasoning;
     this.apiKey = options.apiKey;
-    this.fetch = options.fetch;
+    if (spec.provider === 'openrouter') {
+      this.gatewayMeta = {};
+      this.fetch = openRouterFetch(options.fetch, parseRoutingPreferences(), this.gatewayMeta);
+    } else {
+      this.fetch = options.fetch;
+    }
   }
 
   private key(): string {
@@ -503,6 +555,10 @@ export class SdkProvider implements Provider {
       (this.spec.provider === 'google' || this.reasoning === undefined || this.reasoning === 'off') &&
       !(this.spec.provider === 'openai' && /^(?:gpt-5|o\d)/i.test(this.model));
     const mappedProviderOptions = providerOptions(this.spec, this.reasoning);
+    if (this.gatewayMeta) {
+      this.gatewayMeta.cost = undefined;
+      this.gatewayMeta.provider = undefined;
+    }
     while (true) {
       const sendToolChoice = Boolean(options.toolChoice) && this.supportsToolChoice;
       const suppressTools = options.toolChoice === 'none' && !this.supportsToolChoice;
@@ -530,7 +586,9 @@ export class SdkProvider implements Provider {
             input_tokens: result.usage.inputTokens ?? 0,
             output_tokens: result.usage.outputTokens ?? 0,
             ...(reasoningTokens > 0 ? { reasoning_tokens: reasoningTokens } : {}),
+            ...(this.gatewayMeta?.cost !== undefined ? { cost: this.gatewayMeta.cost } : {}),
           },
+          ...(this.gatewayMeta?.provider ? { provider: this.gatewayMeta.provider } : {}),
           toolCalls: result.toolCalls.map((call) => ({
             id: call.toolCallId,
             name: call.toolName,
