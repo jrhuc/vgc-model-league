@@ -60,6 +60,11 @@ function fromSource(args: string[]): string {
 export class BattleLog {
   readonly entries: BattleLogEntry[] = [];
   private turn = 0;
+  private readonly maxEntries: number;
+
+  constructor(maxEntries = MAX_ENTRIES) {
+    this.maxEntries = maxEntries;
+  }
 
   feed(lines: unknown): void {
     if (!Array.isArray(lines)) return;
@@ -70,7 +75,7 @@ export class BattleLog {
 
   private push(kind: BattleLogKind, text: string): void {
     this.entries.push({ turn: this.turn, kind, text });
-    if (this.entries.length > MAX_ENTRIES) this.entries.splice(0, this.entries.length - MAX_ENTRIES);
+    if (this.entries.length > this.maxEntries) this.entries.splice(0, this.entries.length - this.maxEntries);
   }
 
   private feedLine(line: string): void {

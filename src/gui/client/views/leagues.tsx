@@ -4,6 +4,7 @@ import type {
   BoardInfo,
   LeagueCardView,
   LeagueFranchiseView,
+  LeagueGameResponse,
   LeagueResponse,
   LeagueSeriesView,
   LeaguesResponse,
@@ -175,7 +176,15 @@ function seriesLabel(series: LeagueSeriesView, maxPlayoffRound: number): string 
       : 'Final';
 }
 
-function ScheduleTable({ league, onOpenTeam }: { league: LeagueResponse; onOpenTeam: (entrant: number) => void }) {
+function ScheduleTable({
+  league,
+  onOpenTeam,
+  onOpenGame,
+}: {
+  league: LeagueResponse;
+  onOpenTeam: (entrant: number) => void;
+  onOpenGame: (seriesIndex: number, game: number) => void;
+}) {
   const maxPlayoffRound = Math.max(
     1,
     ...league.series.filter((entry) => entry.stage === 'playoff').map((entry) => entry.round),
@@ -217,13 +226,15 @@ function ScheduleTable({ league, onOpenTeam }: { league: LeagueResponse; onOpenT
               <td>
                 <span class="game-chips">
                   {series.games.map((game, index) => (
-                    <span
+                    <button
                       key={index}
+                      type="button"
                       class={`game-chip ${game.winner === series.sides[0] ? 'left' : game.winner === series.sides[1] ? 'right' : ''}`}
-                      title={`Game ${index + 1}: ${game.winner === null ? 'no winner' : `${name(game.winner)} in ${game.turns} turns`}`}
+                      title={`Open game ${index + 1}: ${game.winner === null ? 'no winner' : `${name(game.winner)} in ${game.turns} turns`}`}
+                      onClick={() => onOpenGame(series.seriesIndex, index + 1)}
                     >
                       {game.winner === null ? '·' : name(game.winner).slice(0, 1)}
-                    </span>
+                    </button>
                   ))}
                 </span>
               </td>
@@ -232,6 +243,138 @@ function ScheduleTable({ league, onOpenTeam }: { league: LeagueResponse; onOpenT
           ))}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+function secondsLabel(ms: number | null): string {
+  return ms === null ? '' : `${Math.round(ms / 1000)}s`;
+}
+
+function GamePage({
+  league,
+  seriesIndex,
+  game,
+  onOpenGame,
+  onOpenTeam,
+  onBack,
+}: {
+  league: LeagueResponse;
+  seriesIndex: number;
+  game: number;
+  onOpenGame: (seriesIndex: number, game: number) => void;
+  onOpenTeam: (entrant: number) => void;
+  onBack: () => void;
+}) {
+  const [view, setView] = useState<LeagueGameResponse | null>(null);
+  const [error, setError] = useState('');
+  useEffect(() => {
+    setView(null);
+    api<LeagueGameResponse>(
+      `/api/league/game?run=${encodeURIComponent(league.runId)}&series=${seriesIndex}&game=${game}`,
+    )
+      .then((response) => {
+        setView(response);
+        setError('');
+      })
+      .catch((failure: Error) => setError(failure.message));
+  }, [league.runId, seriesIndex, game]);
+
+  const maxPlayoffRound = Math.max(
+    1,
+    ...league.series.filter((entry) => entry.stage === 'playoff').map((entry) => entry.round),
+  );
+  const series = league.series.find((entry) => entry.seriesIndex === seriesIndex);
+  if (error) return <div class="message error">Could not load this game: {error}</div>;
+  if (!view) return <p class="muted">Loading the game…</p>;
+
+  const turns = [
+    ...new Set([...view.log.map((entry) => entry.turn), ...view.decisions.map((entry) => entry.turn)]),
+  ].sort((a, b) => a - b);
+  return (
+    <div class="league-view">
+      <header class="page-heading league-heading">
+        <div>
+          <p class="eyebrow">
+            <button type="button" class="text-link" onClick={onBack}>
+              ← {league.board ?? 'League'} · {when(league.when)}
+            </button>{' '}
+            / {series ? seriesLabel(series, maxPlayoffRound) : `Series ${seriesIndex + 1}`}
+          </p>
+          <h1>
+            {view.teamNames[0]} vs {view.teamNames[1]}.
+          </h1>
+        </div>
+        <div class="lede team-lede">
+          <span>
+            Game {view.game} of {view.games.length}
+            {view.winner !== null
+              ? ` · ${league.franchises[view.winner]?.teamName ?? `Coach ${view.winner + 1}`} won`
+              : ' · no winner recorded'}
+          </span>
+          <span class="game-switcher">
+            {view.games.map((number) => (
+              <button
+                key={number}
+                type="button"
+                class={`game-chip ${number === view.game ? 'on' : ''}`}
+                onClick={() => onOpenGame(seriesIndex, number)}
+              >
+                {number}
+              </button>
+            ))}
+            {view.sides.map((entrant) => (
+              <button key={entrant} type="button" class="text-link" onClick={() => onOpenTeam(entrant)}>
+                {league.franchises[entrant]?.teamName ?? `Coach ${entrant + 1}`} →
+              </button>
+            ))}
+          </span>
+        </div>
+      </header>
+
+      <section class="panel">
+        <div class="section-head">
+          <div>
+            <h2>Turn by turn</h2>
+            <p>Both coaches' choices with their recorded reasoning, then what the simulator resolved.</p>
+          </div>
+        </div>
+        <div class="game-timeline">
+          {turns.map((turn) => (
+            <div class="game-turn" key={turn}>
+              {view.decisions
+                .filter((decision) => decision.turn === turn)
+                .map((decision, index) => (
+                  <details class={`game-decision side-${decision.side}`} key={`${turn}:${decision.side}:${index}`}>
+                    <summary>
+                      <b>{view.teamNames[decision.side]}</b>
+                      <span class="game-decision-choice">
+                        {decision.selection.length > 0 ? decision.selection.join(' · ') : decision.action}
+                      </span>
+                      {decision.fallback ? <span class="game-decision-flag">fallback</span> : null}
+                      {decision.automatic ? <span class="game-decision-flag">auto</span> : null}
+                      <small>
+                        {secondsLabel(decision.latencyMs)}
+                        {decision.reasoningTokens
+                          ? ` · ${decision.reasoningTokens.toLocaleString()} reasoning tok`
+                          : ''}
+                      </small>
+                    </summary>
+                    <p>{decision.rationale || 'No stored rationale.'}</p>
+                    {decision.notebook ? <p class="game-decision-notebook">{decision.notebook}</p> : null}
+                  </details>
+                ))}
+              {view.log
+                .filter((entry) => entry.turn === turn)
+                .map((entry, index) => (
+                  <div class={`log-line ${entry.kind}`} key={`${turn}:${index}`}>
+                    {entry.text}
+                  </div>
+                ))}
+            </div>
+          ))}
+        </div>
+      </section>
     </div>
   );
 }
@@ -268,17 +411,81 @@ function setDiff(previous: LeagueTeambuildView | undefined, build: LeagueTeambui
   return lines;
 }
 
+function rate(part: number, whole: number): string {
+  return whole > 0 ? `${Math.round((part / whole) * 100)}%` : '–';
+}
+
+function TeamStats({ franchise, seriesPlayed }: { franchise: LeagueFranchiseView; seriesPlayed: number }) {
+  const stats = franchise.stats;
+  const selections = stats.moveSelections + stats.switchSelections;
+  const rows: Array<[string, string]> = [
+    ['Threat reads converted', rate(stats.threatHits, stats.threatTurns)],
+    ['Switch rate', rate(stats.switchSelections, selections)],
+    ['Protect rate', rate(stats.protectSelections, selections)],
+    ['Consecutive Protects', String(stats.consecutiveProtects)],
+    ['Spread-move share', rate(stats.spreadSelections, stats.moveSelections)],
+    ['Mega activations', String(stats.megaSelections)],
+    ['Dex lookups per decision', stats.decisions > 0 ? (stats.toolLookups / stats.decisions).toFixed(1) : '–'],
+    ['Parse failures', String(stats.parseFailures)],
+    ['Fallback decisions', String(stats.fallbacks)],
+    ['Build attempts per series', seriesPlayed > 0 ? (stats.buildAttempts / seriesPlayed).toFixed(1) : '–'],
+    ['Lead changes between games', String(stats.leadChanges)],
+    ['Bring changes between games', String(stats.bringChanges)],
+  ];
+  return (
+    <section class="panel">
+      <div class="section-head">
+        <div>
+          <h2>Season stats</h2>
+          <p>How this coach actually played across the whole league, from the decision logs.</p>
+        </div>
+      </div>
+      <div class="stat-row">
+        <StatTile label="Decisions" value={stats.decisions.toLocaleString()} note="battle decisions made" />
+        <StatTile
+          label="Median decision"
+          value={stats.latency ? `${Math.round(stats.latency.median / 1000)}s` : '–'}
+          note={
+            stats.latency
+              ? `p75 ${Math.round(stats.latency.p75 / 1000)}s · max ${Math.round(stats.latency.max / 1000)}s`
+              : 'no latency recorded'
+          }
+        />
+        <StatTile
+          label="Reasoning"
+          value={stats.reasoningTokens !== null ? tokensLabel(stats.reasoningTokens) : '–'}
+          note="reasoning tokens spent"
+        />
+        <StatTile
+          label="Cost"
+          value={stats.cost !== null ? `$${stats.cost.toFixed(2)}` : '–'}
+          note={stats.cost !== null ? 'metered by the provider' : 'not metered for this seat'}
+        />
+      </div>
+      <div class="team-rates">
+        {rows.map(([label, value]) => (
+          <span key={label}>
+            {label} <b>{value}</b>
+          </span>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 function TeamPage({
   league,
   franchise,
   spriteFor,
   onBack,
+  onOpenGame,
   onOpenModel,
 }: {
   league: LeagueResponse;
   franchise: LeagueFranchiseView;
   spriteFor: (id: string) => string;
   onBack: () => void;
+  onOpenGame: (seriesIndex: number, game: number) => void;
   onOpenModel: () => void;
 }) {
   const builds = league.teambuilds
@@ -311,6 +518,8 @@ function TeamPage({
           </span>
         </div>
       </header>
+
+      <TeamStats franchise={franchise} seriesPlayed={franchise.overallRecord.w + franchise.overallRecord.l} />
 
       <section class="panel">
         <div class="section-head">
@@ -366,6 +575,24 @@ function TeamPage({
                     {' '}
                     · {build.attempts} build attempt{build.attempts === 1 ? '' : 's'}
                   </span>
+                  {series ? (
+                    <span class="game-chips">
+                      {series.games.map((entry, gameIndex) => (
+                        <button
+                          key={gameIndex}
+                          type="button"
+                          class={`game-chip ${entry.winner === franchise.entrant ? 'left' : entry.winner === null ? '' : 'right'}`}
+                          title={`Open game ${gameIndex + 1}`}
+                          onClick={(event) => {
+                            event.preventDefault();
+                            onOpenGame(series.seriesIndex, gameIndex + 1);
+                          }}
+                        >
+                          {gameIndex + 1}
+                        </button>
+                      ))}
+                    </span>
+                  ) : null}
                 </summary>
                 {changes.length > 0 && (
                   <ul class="build-changes">
@@ -440,6 +667,25 @@ function LeaguePage({
     return map;
   }, [league]);
 
+  const openGame = (seriesIndex: number, game: number) => onOpenTeam(`game-${seriesIndex}-${game}`);
+  const openEntrant = (entrant: number) => {
+    const franchise = league.franchises[entrant];
+    if (franchise) onOpenTeam(teamSlug(franchise.teamName));
+  };
+  const gameRoute = team ? /^game-(\d+)-(\d+)$/.exec(team) : null;
+  if (gameRoute) {
+    return (
+      <GamePage
+        league={league}
+        seriesIndex={Number(gameRoute[1])}
+        game={Number(gameRoute[2])}
+        onOpenGame={openGame}
+        onOpenTeam={openEntrant}
+        onBack={onBack}
+      />
+    );
+  }
+
   const selected = league.franchises.find((franchise) => teamSlug(franchise.teamName) === team);
   if (selected) {
     return (
@@ -448,6 +694,7 @@ function LeaguePage({
         franchise={selected}
         spriteFor={spriteFor}
         onBack={onBack}
+        onOpenGame={openGame}
         onOpenModel={() => onOpenModel(modelKeyOf(selected.model))}
       />
     );
@@ -459,35 +706,8 @@ function LeaguePage({
       b.roundRobinRecord.w - a.roundRobinRecord.w ||
       b.roundRobinRecord.gw - b.roundRobinRecord.gl - (a.roundRobinRecord.gw - a.roundRobinRecord.gl),
   );
-  const seriesByIndex = new Map(league.series.map((series) => [series.seriesIndex, series] as const));
-  const usageByPick = new Map<
-    string,
-    { entrant: number; id: string; name: string; cost: number; matchups: number; w: number; l: number }
-  >();
-  for (const build of league.teambuilds) {
-    const franchise = league.franchises.find((entry) => entry.entrant === build.entrant);
-    const series = seriesByIndex.get(build.seriesIndex);
-    for (const id of build.brought) {
-      const pick = franchise?.roster.find((entry) => entry.id === id);
-      const key = `${build.entrant}:${id}`;
-      const usage = usageByPick.get(key) ?? {
-        entrant: build.entrant,
-        id,
-        name: pick?.name ?? id,
-        cost: pick?.cost ?? 0,
-        matchups: 0,
-        w: 0,
-        l: 0,
-      };
-      usage.matchups += 1;
-      if (series?.winner === build.entrant) usage.w += 1;
-      else if (series?.winner !== null && series?.winner !== undefined) usage.l += 1;
-      usageByPick.set(key, usage);
-    }
-  }
-  const usage = [...usageByPick.values()]
-    .sort((a, b) => b.matchups - a.matchups || b.w - a.w || b.cost - a.cost || a.name.localeCompare(b.name))
-    .slice(0, 8);
+  const fielded = league.usage.filter((entry) => entry.gamesFielded > 0);
+  const benched = league.usage.filter((entry) => entry.builds === 0);
   return (
     <div class="league-view">
       <header class="page-heading league-heading">
@@ -549,23 +769,44 @@ function LeaguePage({
         <section class="panel">
           <div class="section-head">
             <div>
-              <h2>Most selected Pokémon</h2>
-              <p>How often each draft pick made the six built for a matchup, with its series record.</p>
+              <h2>Draft impact</h2>
+              <p>
+                What each pick actually did: games it was fielded in (replayed from the logs), its game record, and how
+                often it went down.
+              </p>
             </div>
           </div>
-          <div class="table-scroll">
+          <div class="usage-strip">
+            <span>
+              <b>{league.distribution.speciesFielded}</b> of {league.distribution.speciesDrafted} picks saw battle
+            </span>
+            <span>
+              <b>{league.distribution.speciesBuilt}</b> made a six
+            </span>
+            <span>
+              <b>{league.distribution.itemsUsed}</b> distinct items
+            </span>
+            {league.distribution.topItems[0] ? (
+              <span>
+                top item <b>{league.distribution.topItems[0].item}</b> ×{league.distribution.topItems[0].count}
+              </span>
+            ) : null}
+          </div>
+          <div class="table-scroll usage-scroll">
             <table class="data-table usage-table">
               <thead>
                 <tr>
                   <th>Pokémon</th>
                   <th>Franchise</th>
                   <th class="num">Cost</th>
-                  <th class="num">Matchups</th>
+                  <th class="num">Built</th>
+                  <th class="num">Games</th>
                   <th class="num">W-L</th>
+                  <th class="num">Faints</th>
                 </tr>
               </thead>
               <tbody>
-                {usage.map((entry) => {
+                {fielded.map((entry) => {
                   const franchise = league.franchises.find((item) => item.entrant === entry.entrant);
                   return (
                     <tr key={`${entry.entrant}:${entry.id}`}>
@@ -589,16 +830,21 @@ function LeaguePage({
                         )}
                       </td>
                       <td class="num">{entry.cost || '–'}</td>
-                      <td class="num">{entry.matchups}</td>
+                      <td class="num">{entry.builds}</td>
+                      <td class="num">{entry.gamesFielded}</td>
                       <td class="num">
-                        {entry.w}-{entry.l}
+                        {entry.gameWins}-{entry.gameLosses}
                       </td>
+                      <td class="num">{entry.faints}</td>
                     </tr>
                   );
                 })}
               </tbody>
             </table>
           </div>
+          {benched.length > 0 ? (
+            <p class="usage-bench">Never built for a matchup: {benched.map((entry) => entry.name).join(', ')}.</p>
+          ) : null}
         </section>
         <section class="panel">
           <div class="section-head">
@@ -607,13 +853,7 @@ function LeaguePage({
               <p>Every series with game winners and turn counts.</p>
             </div>
           </div>
-          <ScheduleTable
-            league={league}
-            onOpenTeam={(entrant) => {
-              const franchise = league.franchises[entrant];
-              if (franchise) onOpenTeam(teamSlug(franchise.teamName));
-            }}
-          />
+          <ScheduleTable league={league} onOpenTeam={openEntrant} onOpenGame={openGame} />
         </section>
       </div>
 

@@ -442,6 +442,27 @@ export interface LeagueRecordView {
   gl: number;
 }
 
+export interface LeagueFranchiseStatsView {
+  decisions: number;
+  latency: QuartileView | null;
+  reasoningTokens: number | null;
+  cost: number | null;
+  toolLookups: number;
+  parseFailures: number;
+  fallbacks: number;
+  moveSelections: number;
+  switchSelections: number;
+  protectSelections: number;
+  consecutiveProtects: number;
+  spreadSelections: number;
+  megaSelections: number;
+  threatTurns: number;
+  threatHits: number;
+  buildAttempts: number;
+  leadChanges: number;
+  bringChanges: number;
+}
+
 export interface LeagueFranchiseView {
   entrant: number;
   model: string;
@@ -452,6 +473,7 @@ export interface LeagueFranchiseView {
   roundRobinRecord: LeagueRecordView;
   finish: string;
   roster: LeagueRosterSlotView[];
+  stats: LeagueFranchiseStatsView;
 }
 
 export interface LeagueGameView {
@@ -489,6 +511,67 @@ export interface LeagueSpendView {
   cost: number | null;
 }
 
+/** One drafted Pokémon's season impact, from teambuilds plus replayed game logs. */
+export interface LeagueUsageView {
+  entrant: number;
+  id: string;
+  name: string;
+  cost: number;
+  pick: number | null;
+  builds: number;
+  seriesWins: number;
+  seriesLosses: number;
+  gamesFielded: number;
+  gameWins: number;
+  gameLosses: number;
+  faints: number;
+}
+
+export interface LeagueDistributionView {
+  speciesDrafted: number;
+  speciesBuilt: number;
+  speciesFielded: number;
+  itemsUsed: number;
+  topItems: Array<{ item: string; count: number }>;
+}
+
+export interface LeagueGameLogEntryView {
+  turn: number;
+  kind: string;
+  text: string;
+}
+
+export interface LeagueGameDecisionView {
+  side: 0 | 1;
+  turn: number;
+  phase: string;
+  selection: string[];
+  action: string;
+  rationale: string;
+  notebook: string;
+  fallback: boolean;
+  automatic: boolean;
+  latencyMs: number | null;
+  totalTokens: number | null;
+  reasoningTokens: number | null;
+}
+
+export interface LeagueGameResponse {
+  runId: string;
+  seriesIndex: number;
+  seriesId: string;
+  stage: 'roundrobin' | 'playoff';
+  round: number;
+  game: number;
+  /** Game numbers with a stored log for this series, ascending. */
+  games: number[];
+  sides: [number, number];
+  teamNames: [string, string];
+  winner: number | null;
+  log: LeagueGameLogEntryView[];
+  decisions: LeagueGameDecisionView[];
+}
+
 export interface LeagueResponse {
   runId: string;
   when: string;
@@ -505,6 +588,8 @@ export interface LeagueResponse {
   series: LeagueSeriesView[];
   teambuilds: LeagueTeambuildView[];
   spend: LeagueSpendView;
+  usage: LeagueUsageView[];
+  distribution: LeagueDistributionView;
 }
 
 export interface QuartileView {

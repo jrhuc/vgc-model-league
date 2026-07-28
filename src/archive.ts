@@ -4,18 +4,24 @@ import { count, decisionLogPath, quantile, readDecisionLog, SAFE_SEGMENT } from 
 import type {
   LeagueCardView,
   LeagueChampionView,
+  LeagueDistributionView,
+  LeagueFranchiseStatsView,
   LeagueFranchiseView,
+  LeagueGameDecisionView,
+  LeagueGameResponse,
   LeagueRecordView,
   LeagueResponse,
   LeagueRosterSlotView,
   LeagueSeriesView,
   LeaguesResponse,
   LeagueTeambuildView,
+  LeagueUsageView,
   ModelProfileResponse,
   ModeRecordView,
   QuartileView,
   TeambuildSetView,
 } from './gui/api.js';
+import { BattleLog } from './gui/battlelog.js';
 import { modelKey, type SeriesRecord, TEST_POOL } from './records.js';
 import type { Pid } from './types.js';
 
@@ -56,10 +62,61 @@ function readRunLines(runsDir: string, runId: string, ...segments: string[]): Re
     try {
       rows.push(JSON.parse(line) as Record<string, unknown>);
     } catch {
-      // a torn tail line on a live run is not an error
+      /** A torn tail line on a live run is not an error. */
     }
   }
   return rows;
+}
+
+function speciesSlug(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '');
+}
+
+interface GameReplay {
+  fielded: [Set<string>, Set<string>];
+  faints: [Map<string, number>, Map<string, number>];
+}
+
+/** Fielded species and faints per side, replayed from a series' stored game logs. */
+function replaySeriesGames(runsDir: string, runId: string, seriesId: string, games: number): Map<number, GameReplay> {
+  const replays = new Map<number, GameReplay>();
+  if (!SAFE_SEGMENT.test(runId) || !SAFE_SEGMENT.test(seriesId)) return replays;
+  for (let game = 1; game <= games; game += 1) {
+    let raw: string;
+    try {
+      raw = fs.readFileSync(path.join(runsDir, runId, 'series', seriesId, `game-${game}.log`), 'utf8');
+    } catch {
+      continue;
+    }
+    const fielded: [Set<string>, Set<string>] = [new Set(), new Set()];
+    const faints: [Map<string, number>, Map<string, number>] = [new Map(), new Map()];
+    const active = new Map<string, string>();
+    for (const line of raw.split('\n')) {
+      const [, kind = '', ...args] = line.split('|');
+      const ident = args[0] ?? '';
+      const side = ident.startsWith('p1') ? 0 : ident.startsWith('p2') ? 1 : -1;
+      if (side === -1) continue;
+      const slot = ident.slice(0, 3);
+      if ((kind === 'switch' || kind === 'drag' || kind === 'replace' || kind === 'detailschange') && args[1]) {
+        const species = speciesSlug(args[1].split(',', 1)[0]!);
+        active.set(slot, species);
+        fielded[side]!.add(species);
+      } else if (kind === 'faint') {
+        const species = active.get(slot);
+        if (species) faints[side]!.set(species, (faints[side]!.get(species) ?? 0) + 1);
+      }
+    }
+    replays.set(game, { fielded, faints });
+  }
+  return replays;
+}
+
+/** A drafted mon enters play under its base species until it megas, so match ids by exact slug or mega prefix. */
+function speciesMatchesPick(pickId: string, species: string): boolean {
+  return pickId === species || pickId.startsWith(`${species}-`);
 }
 
 interface LeagueIdentity {
@@ -276,6 +333,29 @@ export function buildLeague(allRows: SeriesRecord[], runsDir: string, runId: str
 
   const roundRobinRecords: LeagueRecordView[] = identity.models.map(() => ({ w: 0, l: 0, gw: 0, gl: 0 }));
   const overallRecords: LeagueRecordView[] = identity.models.map(() => ({ w: 0, l: 0, gw: 0, gl: 0 }));
+  const statsAgg: LeagueFranchiseStatsView[] = identity.models.map(() => ({
+    decisions: 0,
+    latency: null,
+    reasoningTokens: null,
+    cost: null,
+    toolLookups: 0,
+    parseFailures: 0,
+    fallbacks: 0,
+    moveSelections: 0,
+    switchSelections: 0,
+    protectSelections: 0,
+    consecutiveProtects: 0,
+    spreadSelections: 0,
+    megaSelections: 0,
+    threatTurns: 0,
+    threatHits: 0,
+    buildAttempts: 0,
+    leadChanges: 0,
+    bringChanges: 0,
+  }));
+  const entrantCost = identity.models.map(() => ({ total: 0, seen: false }));
+  const entrantReasoning = identity.models.map(() => ({ total: 0, seen: false }));
+  const entrantLatencies: number[][] = identity.models.map(() => []);
   const series: LeagueSeriesView[] = [];
   for (const row of rows) {
     const a = sideEntrant(row, 'p1', identity);
@@ -283,6 +363,45 @@ export function buildLeague(allRows: SeriesRecord[], runsDir: string, runId: str
     if (a < 0 || b < 0) continue;
     const score = row.score as Record<Pid, number> | undefined;
     const winner = row.winner_side === 'p1' ? a : row.winner_side === 'p2' ? b : null;
+    const dstats = row.decision_stats as Record<Pid, Record<string, unknown>> | undefined;
+    for (const [pid, entrant] of [
+      ['p1', a],
+      ['p2', b],
+    ] as const) {
+      const d = dstats?.[pid];
+      const agg = statsAgg[entrant]!;
+      if (d) {
+        agg.decisions += count(d.decisions);
+        agg.fallbacks += count(d.fallbacks);
+        agg.parseFailures += count(d.parse_failures);
+        agg.toolLookups += count(d.tool_lookups);
+        agg.moveSelections += count(d.move_selections);
+        agg.switchSelections += count(d.switch_selections);
+        agg.protectSelections += count(d.protect_selections);
+        agg.consecutiveProtects += count(d.consecutive_protect_selections);
+        agg.spreadSelections += count(d.spread_move_selections);
+        agg.megaSelections += count(d.mega_selections);
+        agg.threatTurns += count(d.threat_turns);
+        agg.threatHits += count(d.threat_hits);
+        agg.leadChanges += count(d.lead_changes);
+        agg.bringChanges += count(d.bring_changes);
+        if (typeof d.cost === 'number') {
+          entrantCost[entrant]!.total += count(d.cost);
+          entrantCost[entrant]!.seen = true;
+        }
+        if (typeof d.reasoning_tokens === 'number') {
+          entrantReasoning[entrant]!.total += count(d.reasoning_tokens);
+          entrantReasoning[entrant]!.seen = true;
+        }
+      }
+      const file = decisionLogPath(runsDir, runId, String(row.series_id ?? ''), pid);
+      if (file) {
+        for (const entry of readDecisionLog(file)) {
+          if (entry.kind !== 'decision' || entry.automatic) continue;
+          if (entry.latencyMs !== null && entry.latencyMs > 0) entrantLatencies[entrant]!.push(entry.latencyMs);
+        }
+      }
+    }
     const games = (Array.isArray(row.games) ? (row.games as Record<string, unknown>[]) : []).map((game) => ({
       winner: game.winner_side === 'p1' ? a : game.winner_side === 'p2' ? b : null,
       turns: count(game.turns),
@@ -317,18 +436,6 @@ export function buildLeague(allRows: SeriesRecord[], runsDir: string, runId: str
   const rankOf = new Map(ranks.map((entrant, index) => [entrant, index + 1]));
   const playoffsSeen = rows.some((row) => row.stage === 'playoff');
 
-  const franchises: LeagueFranchiseView[] = rosters.map((entry, entrant) => ({
-    entrant,
-    model: entry.model,
-    teamName: entry.teamName,
-    spent: entry.spent,
-    budgetLeft: entry.budgetLeft,
-    overallRecord: overallRecords[entrant]!,
-    roundRobinRecord: roundRobinRecords[entrant]!,
-    finish: finishLabel(entrant, progress, rankOf.get(entrant) ?? entrant + 1, playoffsSeen),
-    roster: entry.roster,
-  }));
-
   const teambuilds: LeagueTeambuildView[] = readRunLines(runsDir, runId, 'teambuild', 'teambuild.jsonl').map(
     (row): LeagueTeambuildView => ({
       seriesIndex: count(row.seriesIndex),
@@ -340,6 +447,112 @@ export function buildLeague(allRows: SeriesRecord[], runsDir: string, runId: str
       attempts: Math.max(1, count(row.attempts)),
     }),
   );
+  for (const build of teambuilds) {
+    const agg = statsAgg[build.entrant];
+    if (agg) agg.buildAttempts += build.attempts;
+  }
+  for (const [entrant, agg] of statsAgg.entries()) {
+    agg.latency = summary(entrantLatencies[entrant]!);
+    if (entrantCost[entrant]!.seen) agg.cost = Math.round(entrantCost[entrant]!.total * 1e4) / 1e4;
+    if (entrantReasoning[entrant]!.seen) agg.reasoningTokens = entrantReasoning[entrant]!.total;
+  }
+
+  const franchises: LeagueFranchiseView[] = rosters.map((entry, entrant) => ({
+    entrant,
+    model: entry.model,
+    teamName: entry.teamName,
+    spent: entry.spent,
+    budgetLeft: entry.budgetLeft,
+    overallRecord: overallRecords[entrant]!,
+    roundRobinRecord: roundRobinRecords[entrant]!,
+    finish: finishLabel(entrant, progress, rankOf.get(entrant) ?? entrant + 1, playoffsSeen),
+    roster: entry.roster,
+    stats: statsAgg[entrant]!,
+  }));
+
+  const buildFor = new Map<string, LeagueTeambuildView>();
+  for (const build of teambuilds) buildFor.set(`${build.seriesIndex}:${build.entrant}`, build);
+  const usageMap = new Map<string, LeagueUsageView>();
+  const usageOf = (entrant: number, id: string): LeagueUsageView => {
+    const key = `${entrant}:${id}`;
+    let usage = usageMap.get(key);
+    if (!usage) {
+      const slot = rosters[entrant]?.roster.find((mon) => mon.id === id);
+      usage = {
+        entrant,
+        id,
+        name: slot?.name ?? id,
+        cost: slot?.cost ?? 0,
+        pick: slot?.pick ?? null,
+        builds: 0,
+        seriesWins: 0,
+        seriesLosses: 0,
+        gamesFielded: 0,
+        gameWins: 0,
+        gameLosses: 0,
+        faints: 0,
+      };
+      usageMap.set(key, usage);
+    }
+    return usage;
+  };
+  for (const view of series) {
+    const replays = replaySeriesGames(runsDir, runId, view.seriesId, view.games.length);
+    for (const [sideIndex, entrant] of view.sides.entries()) {
+      const build = buildFor.get(`${view.seriesIndex}:${entrant}`);
+      if (!build) continue;
+      for (const id of build.brought) {
+        const usage = usageOf(entrant, id);
+        usage.builds += 1;
+        if (view.winner === entrant) usage.seriesWins += 1;
+        else if (view.winner !== null) usage.seriesLosses += 1;
+      }
+      for (const [game, replay] of replays) {
+        const fielded = replay.fielded[sideIndex as 0 | 1]!;
+        const faints = replay.faints[sideIndex as 0 | 1]!;
+        const gameView = view.games[game - 1];
+        for (const id of build.brought) {
+          if (![...fielded].some((species) => speciesMatchesPick(id, species))) continue;
+          const usage = usageOf(entrant, id);
+          usage.gamesFielded += 1;
+          if (gameView?.winner === entrant) usage.gameWins += 1;
+          else if (gameView?.winner !== null && gameView?.winner !== undefined) usage.gameLosses += 1;
+          for (const [species, fainted] of faints) {
+            if (speciesMatchesPick(id, species)) usage.faints += fainted;
+          }
+        }
+      }
+    }
+  }
+  for (const [entrant, entry] of rosters.entries()) {
+    for (const slot of entry.roster) usageOf(entrant, slot.id);
+  }
+  const usage = [...usageMap.values()].sort(
+    (a, b) =>
+      b.gamesFielded - a.gamesFielded ||
+      b.gameWins - a.gameWins ||
+      b.builds - a.builds ||
+      b.cost - a.cost ||
+      a.name.localeCompare(b.name),
+  );
+
+  const itemCounts = new Map<string, number>();
+  for (const build of teambuilds) {
+    for (const set of build.sets) {
+      const item = typeof set.item === 'string' ? set.item.trim() : '';
+      if (item) itemCounts.set(item, (itemCounts.get(item) ?? 0) + 1);
+    }
+  }
+  const distribution: LeagueDistributionView = {
+    speciesDrafted: new Set(rosters.flatMap((entry) => entry.roster.map((mon) => mon.id))).size,
+    speciesBuilt: new Set(teambuilds.flatMap((build) => build.brought)).size,
+    speciesFielded: new Set(usage.filter((entry) => entry.gamesFielded > 0).map((entry) => entry.id)).size,
+    itemsUsed: itemCounts.size,
+    topItems: [...itemCounts.entries()]
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .slice(0, 3)
+      .map(([item, itemCount]) => ({ item, count: itemCount })),
+  };
 
   let decisions = 0;
   let meteredCost = 0;
@@ -393,6 +606,8 @@ export function buildLeague(allRows: SeriesRecord[], runsDir: string, runId: str
       reasoningTokens: reasoningSeen ? reasoning : null,
       cost: meteredCost > 0 ? Math.round(meteredCost * 1e4) / 1e4 : null,
     },
+    usage,
+    distribution,
   };
 }
 
@@ -521,5 +736,85 @@ export function buildModelProfile(allRows: SeriesRecord[], runsDir: string, id: 
         }),
       )
       .sort((a, b) => b.series - a.series || a.mode.localeCompare(b.mode)),
+  };
+}
+
+export function buildLeagueGame(
+  allRows: SeriesRecord[],
+  runsDir: string,
+  runId: string,
+  seriesIndex: number,
+  game: number,
+): LeagueGameResponse | null {
+  if (!SAFE_SEGMENT.test(runId)) return null;
+  const rows = draftRuns(allRows).get(runId);
+  if (!rows) return null;
+  const row = rows.find((entry) => count(entry.series_index) === seriesIndex);
+  if (!row) return null;
+  const seriesId = String(row.series_id ?? '');
+  if (!SAFE_SEGMENT.test(seriesId)) return null;
+  const identity = leagueIdentity(runsDir, runId, rows);
+  const a = sideEntrant(row, 'p1', identity);
+  const b = sideEntrant(row, 'p2', identity);
+  if (a < 0 || b < 0) return null;
+
+  const gameRows = Array.isArray(row.games) ? (row.games as Record<string, unknown>[]) : [];
+  const games: number[] = [];
+  for (let n = 1; n <= Math.max(gameRows.length, 1); n += 1) {
+    if (fs.existsSync(path.join(runsDir, runId, 'series', seriesId, `game-${n}.log`))) games.push(n);
+  }
+  if (!games.includes(game)) return null;
+  let raw: string;
+  try {
+    raw = fs.readFileSync(path.join(runsDir, runId, 'series', seriesId, `game-${game}.log`), 'utf8');
+  } catch {
+    return null;
+  }
+  const battleLog = new BattleLog(10_000);
+  battleLog.feed(raw.split('\n'));
+
+  const decisions: LeagueGameDecisionView[] = [];
+  for (const [side, pid] of [
+    [0, 'p1'],
+    [1, 'p2'],
+  ] as const) {
+    const file = decisionLogPath(runsDir, runId, seriesId, pid);
+    if (!file) continue;
+    for (const entry of readRunLines(runsDir, runId, 'series', seriesId, `${pid}-decisions.jsonl`)) {
+      if (entry.kind !== 'decision' || count(entry.game_number) !== game) continue;
+      const numeric = (value: unknown) => (typeof value === 'number' && Number.isFinite(value) ? value : null);
+      decisions.push({
+        side,
+        turn: count(entry.turn),
+        phase: typeof entry.phase === 'string' ? entry.phase : 'turn',
+        selection: Array.isArray(entry.selection) ? entry.selection.map(String) : [],
+        action: typeof entry.action === 'string' ? entry.action : '',
+        rationale: typeof entry.rationale === 'string' ? entry.rationale : '',
+        notebook: typeof entry.notebook === 'string' ? entry.notebook : '',
+        fallback: entry.fallback === true,
+        automatic: entry.automatic === true,
+        latencyMs: numeric(entry.latency_ms),
+        totalTokens: numeric(entry.total_tokens),
+        reasoningTokens: numeric(entry.reasoning_tokens),
+      });
+    }
+  }
+  decisions.sort((first, second) => first.turn - second.turn || first.side - second.side);
+
+  const gameRow = gameRows[game - 1];
+  const winner = gameRow?.winner_side === 'p1' ? a : gameRow?.winner_side === 'p2' ? b : null;
+  return {
+    runId,
+    seriesIndex,
+    seriesId,
+    stage: row.stage === 'playoff' ? 'playoff' : 'roundrobin',
+    round: count(row.round),
+    game,
+    games,
+    sides: [a, b],
+    teamNames: [identity.teamNames[a] ?? `Coach ${a + 1}`, identity.teamNames[b] ?? `Coach ${b + 1}`],
+    winner,
+    log: battleLog.entries,
+    decisions,
   };
 }
