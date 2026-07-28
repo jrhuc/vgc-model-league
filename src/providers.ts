@@ -393,11 +393,7 @@ function openRouterFetch(
   };
 }
 
-/**
- * Anthropic bills every resent prefix token at full price unless an explicit
- * cache_control breakpoint marks it cacheable; OpenRouter only forwards
- * breakpoints written as content-part fields on its chat-completions shape.
- */
+/** Anthropic caches nothing without explicit breakpoints; OpenRouter forwards them only as content-part fields. */
 function markCacheBreakpoints(body: JsonObject): void {
   if (!Array.isArray(body.messages)) return;
   const mark = (message: JsonObject): boolean => {

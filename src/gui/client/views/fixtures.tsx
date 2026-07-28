@@ -315,6 +315,8 @@ export function FixturesView({ app, run, onStarted, onPools }: FixturesProps) {
   >({});
   const [series, setSeries] = useState('2');
   const [concurrency, setConcurrency] = useState('2');
+  const [closedSheets, setClosedSheets] = useState(false);
+  const [sequentialWeeks, setSequentialWeeks] = useState(false);
   const [reasoning, setReasoning] = useState('');
   const [sharedReasoning, setSharedReasoning] = useState(true);
   const [reasoningByModel, setReasoningByModel] = useState<Record<string, string>>({});
@@ -577,7 +579,13 @@ export function FixturesView({ app, run, onStarted, onPools }: FixturesProps) {
               }
             : { mode: 'tournament', pool, concurrency: Number(concurrency) }
           : mode === 'draft'
-            ? { mode: 'draft', board: board?.id ?? '', concurrency: Number(concurrency) }
+            ? {
+                mode: 'draft',
+                board: board?.id ?? '',
+                concurrency: Number(concurrency),
+                ...(closedSheets ? { closedSheets: true } : {}),
+                ...(sequentialWeeks ? { sequentialWeeks: true } : {}),
+              }
             : { pool, seriesPerPair: Number(series), concurrency: Number(concurrency) }),
     };
     api('/api/run', request)
@@ -1095,6 +1103,32 @@ export function FixturesView({ app, run, onStarted, onPools }: FixturesProps) {
                         : 'Bundle a board file before starting a draft.'}
                     </span>
                   </div>
+                </div>
+                <div class="field">
+                  <label class="field-label" for="teamSheets">
+                    Team sheets
+                  </label>
+                  <select
+                    id="teamSheets"
+                    value={closedSheets ? 'closed' : 'open'}
+                    onChange={(event) => setClosedSheets(event.currentTarget.value === 'closed')}
+                  >
+                    <option value="open">Open — both sides read opposing sets at preview</option>
+                    <option value="closed">Closed — sets stay hidden, deduce through play</option>
+                  </select>
+                </div>
+                <div class="field">
+                  <label class="field-label" for="schedule">
+                    Schedule
+                  </label>
+                  <select
+                    id="schedule"
+                    value={sequentialWeeks ? 'sequential' : 'parallel'}
+                    onChange={(event) => setSequentialWeeks(event.currentTarget.value === 'sequential')}
+                  >
+                    <option value="parallel">Parallel — round-robin weeks run concurrently, builds stay blind</option>
+                    <option value="sequential">Sequential — weeks play in order for adaptation data</option>
+                  </select>
                 </div>
               </div>
             )}

@@ -9,6 +9,7 @@ import type {
   LeagueFranchiseView,
   LeagueGameDecisionView,
   LeagueGameResponse,
+  LeagueLiveSeriesView,
   LeagueRecordView,
   LeagueResponse,
   LeagueRosterSlotView,
@@ -26,6 +27,38 @@ import { modelKey, type SeriesRecord, TEST_POOL } from './records.js';
 import type { Pid } from './types.js';
 
 const PIDS: Pid[] = ['p1', 'p2'];
+
+export function isRunLive(runsDir: string, runId: string): boolean {
+  const status = readRunJson(runsDir, runId, 'status.json') as Record<string, unknown> | null;
+  if (!status || status.state !== 'running' || typeof status.pid !== 'number') return false;
+  try {
+    process.kill(status.pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function draftRunDirs(runsDir: string): string[] {
+  let entries: string[];
+  try {
+    entries = fs.readdirSync(runsDir);
+  } catch {
+    return [];
+  }
+  return entries.filter((runId) => {
+    if (!SAFE_SEGMENT.test(runId)) return false;
+    const config = readRunJson(runsDir, runId, 'config.json') as Record<string, unknown> | null;
+    return config?.mode === 'draft';
+  });
+}
+
+export function findLiveDraftRun(runsDir: string): string | null {
+  const live = draftRunDirs(runsDir)
+    .filter((runId) => isRunLive(runsDir, runId))
+    .sort();
+  return live[live.length - 1] ?? null;
+}
 
 function draftRuns(allRows: SeriesRecord[]): Map<string, SeriesRecord[]> {
   const runs = new Map<string, SeriesRecord[]>();
@@ -80,7 +113,6 @@ interface GameReplay {
   faints: [Map<string, number>, Map<string, number>];
 }
 
-/** Fielded species and faints per side, replayed from a series' stored game logs. */
 function replaySeriesGames(runsDir: string, runId: string, seriesId: string, games: number): Map<number, GameReplay> {
   const replays = new Map<number, GameReplay>();
   if (!SAFE_SEGMENT.test(runId) || !SAFE_SEGMENT.test(seriesId)) return replays;
@@ -117,6 +149,48 @@ function replaySeriesGames(runsDir: string, runId: string, seriesId: string, gam
 /** A drafted mon enters play under its base species until it megas, so match ids by exact slug or mega prefix. */
 function speciesMatchesPick(pickId: string, species: string): boolean {
   return pickId === species || pickId.startsWith(`${species}-`);
+}
+
+function liveSeriesViews(
+  runsDir: string,
+  runId: string,
+  rows: SeriesRecord[],
+  identity: LeagueIdentity,
+): LeagueLiveSeriesView[] {
+  const seen = new Set(rows.map((row) => String(row.series_id ?? '')));
+  let entries: string[] = [];
+  try {
+    entries = fs.readdirSync(path.join(runsDir, runId, 'series'));
+  } catch {
+    return [];
+  }
+  const views: LeagueLiveSeriesView[] = [];
+  for (const seriesId of entries) {
+    if (!SAFE_SEGMENT.test(seriesId) || seen.has(seriesId)) continue;
+    let decisions = 0;
+    let game = 0;
+    let turn = 0;
+    for (const pid of PIDS) {
+      const lines = readRunLines(runsDir, runId, 'series', seriesId, `${pid}-decisions.jsonl`);
+      decisions += lines.length;
+      const last = lines[lines.length - 1];
+      if (last) {
+        game = Math.max(game, count(last.game_number));
+        turn = Math.max(turn, count(last.turn));
+      }
+    }
+    const meta = readRunJson(runsDir, runId, 'series', seriesId, 'series.json') as Record<string, unknown> | null;
+    const players = (meta?.players ?? null) as Record<string, unknown> | null;
+    let sides: [number, number] | null = null;
+    if (players && typeof players.p1 === 'string' && typeof players.p2 === 'string') {
+      const a = identity.models.indexOf(players.p1);
+      const b = identity.models.indexOf(players.p2);
+      if (a >= 0 && b >= 0) sides = [a, b];
+    }
+    if (decisions === 0 && !sides) continue;
+    views.push({ seriesId, game: Math.max(1, game), turn, decisions, sides });
+  }
+  return views.sort((a, b) => a.seriesId.localeCompare(b.seriesId));
 }
 
 interface LeagueIdentity {
@@ -211,28 +285,46 @@ function leagueProgress(rows: SeriesRecord[], identity: LeagueIdentity): LeagueP
   };
 }
 
+function preSeasonPhase(runsDir: string, runId: string): 'drafting' | 'building' | 'roundrobin' {
+  try {
+    if (fs.readdirSync(path.join(runsDir, runId, 'series')).length > 0) return 'roundrobin';
+  } catch {}
+  const builds = readRunLines(runsDir, runId, 'teambuild', 'teambuild.jsonl');
+  return builds.length > 0 ? 'building' : 'drafting';
+}
+
 export function buildLeagues(allRows: SeriesRecord[], runsDir: string): LeaguesResponse {
   const leagues: LeagueCardView[] = [];
-  for (const [runId, rows] of draftRuns(allRows)) {
+  const byRun = draftRuns(allRows);
+  for (const runId of draftRunDirs(runsDir)) {
+    if (!byRun.has(runId) && isRunLive(runsDir, runId)) byRun.set(runId, []);
+  }
+  for (const [runId, rows] of byRun) {
     const identity = leagueIdentity(runsDir, runId, rows);
     if (identity.models.length < 2) continue;
     const progress = leagueProgress(rows, identity);
+    const live = isRunLive(runsDir, runId);
     const timestamps = rows
       .map((row) => String(row.timestamp ?? ''))
       .filter(Boolean)
       .sort();
+    const status = readRunJson(runsDir, runId, 'status.json') as Record<string, unknown> | null;
+    const started = typeof status?.start_time === 'string' ? status.start_time : '';
+    const phase = rows.length === 0 ? preSeasonPhase(runsDir, runId) : progress.phase;
     leagues.push({
       runId,
-      when: timestamps[0] ?? '',
+      when: timestamps[0] ?? started,
       board: identity.board,
       format: identity.format,
       entrants: identity.models,
       teamNames: identity.teamNames,
       weeks: identity.weeks,
       seriesCount: rows.length,
-      phase: progress.phase,
+      phase,
       week: progress.week,
       champion: progress.champion,
+      live,
+      picks: phase === 'drafting' ? readRunLines(runsDir, runId, 'draft', 'draft.jsonl').length : null,
     });
   }
   leagues.sort((a, b) => b.when.localeCompare(a.when));
@@ -257,7 +349,7 @@ function readRosters(runsDir: string, runId: string, identity: LeagueIdentity): 
   for (const [entrant, model] of identity.models.entries()) {
     const record = source.find((candidate) => modelKey(String(candidate.model ?? '')) === modelKey(model)) ?? {};
     const mons = Array.isArray(record.roster) ? (record.roster as Record<string, unknown>[]) : [];
-    const roster = mons.map((mon): LeagueRosterSlotView => {
+    let roster = mons.map((mon): LeagueRosterSlotView => {
       const pick = pickByMon.get(`${modelKey(model)}:${String(mon.id ?? '')}`);
       return {
         id: String(mon.id ?? ''),
@@ -268,11 +360,31 @@ function readRosters(runsDir: string, runId: string, identity: LeagueIdentity): 
         fallback: pick?.fallback === true,
       };
     });
+    let spent = count(record.spent);
+    let budgetLeft = count(record.budget_left);
+    if (roster.length === 0) {
+      const own = picks
+        .filter((pick) => modelKey(String(pick.model ?? '')) === modelKey(model))
+        .sort((a, b) => count(a.pick) - count(b.pick));
+      roster = own.map(
+        (pick): LeagueRosterSlotView => ({
+          id: String(pick.mon ?? ''),
+          name: String(pick.name ?? pick.mon ?? ''),
+          cost: count(pick.cost),
+          pick: count(pick.pick),
+          rationale: typeof pick.rationale === 'string' ? pick.rationale : '',
+          fallback: pick.fallback === true,
+        }),
+      );
+      spent = own.reduce((total, pick) => total + count(pick.cost), 0);
+      const last = own[own.length - 1];
+      if (last) budgetLeft = count(last.budget_left);
+    }
     entries.push({
       model,
       teamName: identity.teamNames[entrant] ?? String(record.team_name ?? ''),
-      spent: count(record.spent),
-      budgetLeft: count(record.budget_left),
+      spent,
+      budgetLeft,
       roster,
     });
   }
@@ -324,8 +436,9 @@ function recordCompletedSeries(
 
 export function buildLeague(allRows: SeriesRecord[], runsDir: string, runId: string): LeagueResponse | null {
   if (!SAFE_SEGMENT.test(runId)) return null;
-  const rows = draftRuns(allRows).get(runId);
-  if (!rows || rows.length === 0) return null;
+  const live = isRunLive(runsDir, runId);
+  const rows = draftRuns(allRows).get(runId) ?? [];
+  if (rows.length === 0 && !live) return null;
   const identity = leagueIdentity(runsDir, runId, rows);
   if (identity.models.length < 2) return null;
   const progress = leagueProgress(rows, identity);
@@ -594,9 +707,11 @@ export function buildLeague(allRows: SeriesRecord[], runsDir: string, runId: str
     budget: sample ? sample.spent + sample.budgetLeft : null,
     picksPerEntrant: rosters.find((entry) => entry.roster.length > 0)?.roster.length ?? null,
     weeks: identity.weeks,
-    phase: progress.phase,
+    phase: rows.length === 0 ? preSeasonPhase(runsDir, runId) : progress.phase,
     week: progress.week,
     champion: progress.champion,
+    live,
+    liveSeries: live ? liveSeriesViews(runsDir, runId, rows, identity) : [],
     franchises,
     series,
     teambuilds,

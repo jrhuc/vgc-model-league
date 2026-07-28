@@ -14,7 +14,7 @@ import { BoardBrowser, STAT_ORDER, useBoard } from '../components/boardbrowser';
 import { StatTile } from '../components/chartkit';
 import { Mark } from '../components/mark';
 import { Sprite } from '../components/sprite';
-import { api } from '../http';
+import { api, apiFresh } from '../http';
 
 function displaySpec(spec: string): string {
   return spec.replace(/:(?:nitro|floor|free)$/, '');
@@ -49,12 +49,17 @@ function tokensLabel(tokens: number | null): string {
 }
 
 const PHASE_LABELS = {
+  drafting: 'Drafting',
+  building: 'Teambuilding',
   roundrobin: 'Round robin',
   playoffs: 'Playoffs',
   complete: 'Complete',
 } as const;
 
-function phaseLabel(card: Pick<LeagueCardView, 'phase' | 'week' | 'weeks'>): string {
+function phaseLabel(card: Pick<LeagueCardView, 'phase' | 'week' | 'weeks'> & { picks?: number | null }): string {
+  if (card.phase === 'drafting' && typeof card.picks === 'number' && card.picks > 0) {
+    return `Drafting · pick ${card.picks}`;
+  }
   if (card.phase === 'roundrobin' && card.week > 0) {
     return `Round robin · week ${card.week}${card.weeks ? ` of ${card.weeks}` : ''}`;
   }
@@ -69,7 +74,10 @@ function LeagueCard({ card, onOpen }: { card: LeagueCardView; onOpen: () => void
           {when(card.when)}
           {card.board ? ` · ${card.board}` : ''}
         </span>
-        <span class={`phase-pill ${card.phase}`}>{phaseLabel(card)}</span>
+        <span class={`phase-pill ${card.phase}`}>
+          {card.live ? <span class="live-dot" aria-label="live" /> : null}
+          {phaseLabel(card)}
+        </span>
       </div>
       {card.champion ? (
         <div class="league-card-champion">
@@ -636,6 +644,71 @@ function TeamPage({
   );
 }
 
+function LiveNow({ league, onOpenTeam }: { league: LeagueResponse; onOpenTeam: (entrant: number) => void }) {
+  const recentPicks = useMemo(() => {
+    const picks: Array<{ pick: number; team: string; entrant: number; name: string; cost: number }> = [];
+    for (const franchise of league.franchises) {
+      for (const slot of franchise.roster) {
+        if (slot.pick !== null)
+          picks.push({ pick: slot.pick, team: franchise.teamName, entrant: franchise.entrant, name: slot.name, cost: slot.cost });
+      }
+    }
+    return picks.sort((a, b) => b.pick - a.pick).slice(0, 6);
+  }, [league]);
+  return (
+    <section class="panel live-now">
+      <div class="section-head">
+        <div>
+          <p class="eyebrow">
+            <span class="live-dot" aria-label="live" /> Live
+          </p>
+          <h2>{PHASE_LABELS[league.phase]} in progress</h2>
+          <p>This page refreshes itself while the run is playing.</p>
+        </div>
+      </div>
+      {league.phase === 'drafting' ? (
+        <ul class="live-feed">
+          {recentPicks.map((entry) => (
+            <li key={`${entry.pick}`}>
+              <b>Pick {entry.pick}</b> · {entry.team} takes {entry.name} ({entry.cost} pts)
+            </li>
+          ))}
+          {recentPicks.length === 0 ? <li>Waiting for the first pick…</li> : null}
+        </ul>
+      ) : null}
+      {league.phase === 'building' ? (
+        <p class="live-note">
+          {league.teambuilds.length} matchup {league.teambuilds.length === 1 ? 'team' : 'teams'} built so far. Series
+          begin when both sides of a matchup are ready.
+        </p>
+      ) : null}
+      {league.liveSeries.length > 0 ? (
+        <ul class="live-feed">
+          {league.liveSeries.map((entry) => (
+            <li key={entry.seriesId}>
+              {entry.sides ? (
+                <>
+                  <button type="button" class="text-link" onClick={() => onOpenTeam(entry.sides![0])}>
+                    {league.franchises[entry.sides[0]]?.teamName ?? '?'}
+                  </button>
+                  {' vs '}
+                  <button type="button" class="text-link" onClick={() => onOpenTeam(entry.sides![1])}>
+                    {league.franchises[entry.sides[1]]?.teamName ?? '?'}
+                  </button>
+                </>
+              ) : (
+                <b>Series {entry.seriesId.slice(0, 6)}…</b>
+              )}{' '}
+              · game {entry.game}
+              {entry.turn > 0 ? ` · turn ${entry.turn}` : ''} · {entry.decisions} decisions
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </section>
+  );
+}
+
 function LeaguePage({
   league,
   team,
@@ -725,6 +798,8 @@ function LeaguePage({
           budget{league.format ? `, ${league.format}` : ''}.
         </p>
       </header>
+
+      {league.live ? <LiveNow league={league} onOpenTeam={openEntrant} /> : null}
 
       <div class="stat-row">
         <StatTile
@@ -916,6 +991,16 @@ export function LeaguesView({
   }, [active, run, epoch]);
 
   useEffect(() => {
+    if (!active || run || !list?.leagues.some((card) => card.live)) return;
+    const timer = setInterval(() => {
+      apiFresh<LeaguesResponse>('/api/leagues')
+        .then(setList)
+        .catch(() => {});
+    }, 30_000);
+    return () => clearInterval(timer);
+  }, [active, run, list]);
+
+  useEffect(() => {
     if (!active || !run) return;
     if (league?.runId === run) return;
     setLeague(null);
@@ -926,6 +1011,16 @@ export function LeaguesView({
       })
       .catch((failure: Error) => setError(failure.message));
   }, [active, run, epoch, league?.runId]);
+
+  useEffect(() => {
+    if (!active || !run || league?.runId !== run || !league.live) return;
+    const timer = setInterval(() => {
+      apiFresh<LeagueResponse>(`/api/league?run=${encodeURIComponent(run)}`)
+        .then(setLeague)
+        .catch(() => {});
+    }, 20_000);
+    return () => clearInterval(timer);
+  }, [active, run, league?.runId, league?.live]);
 
   if (run) {
     if (error) return <div class="message error">Could not load this league: {error}</div>;

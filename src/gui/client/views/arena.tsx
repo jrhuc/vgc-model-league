@@ -19,12 +19,14 @@ export type StoredBattle = BattleMessage & { receivedAt: number };
 
 interface ArenaProps {
   run: RunSnapshot | null;
+  externalRun: { runId: string; mode: 'draft' } | null;
   battles: Record<number, StoredBattle>;
   selected: number | null;
   onSelect: (index: number) => void;
   onLoadGame: (index: number, game: number) => Promise<BattleMessage>;
   onFetchBattle: (index: number) => void;
   onGoFixtures: () => void;
+  onOpenLeague: (runId: string) => void;
 }
 
 function elapsedText(run: RunSnapshot): string {
@@ -456,7 +458,17 @@ function TurnLog({
   );
 }
 
-export function ArenaView({ run, battles, selected, onSelect, onLoadGame, onFetchBattle, onGoFixtures }: ArenaProps) {
+export function ArenaView({
+  run,
+  externalRun,
+  battles,
+  selected,
+  onSelect,
+  onLoadGame,
+  onFetchBattle,
+  onGoFixtures,
+  onOpenLeague,
+}: ArenaProps) {
   const [stopError, setStopError] = useState('');
   const [stopping, setStopping] = useState(false);
   const [resumeError, setResumeError] = useState('');
@@ -489,6 +501,28 @@ export function ArenaView({ run, battles, selected, onSelect, onLoadGame, onFetc
   }, [run, selected, battles]);
 
   if (!run) {
+    if (externalRun) {
+      return (
+        <div class="panel no-run">
+          <div class="no-run-inner">
+            <div class="no-run-mark">
+              <span class="live-dot" aria-label="live" />
+            </div>
+            <p class="eyebrow">League in progress</p>
+            <h2>A draft league is running from the CLI</h2>
+            <p class="lede">Follow the draft board, teambuilds, and series as they land.</p>
+            <button
+              type="button"
+              class="button primary"
+              style="margin-top:22px"
+              onClick={() => onOpenLeague(externalRun.runId)}
+            >
+              Watch the league
+            </button>
+          </div>
+        </div>
+      );
+    }
     return (
       <div class="panel no-run">
         <div class="no-run-inner">

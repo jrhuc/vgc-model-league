@@ -149,6 +149,57 @@ const LEAGUE_ROWS: SeriesRecord[] = [
   }),
 ];
 
+test('a live run with no recorded series surfaces as a drafting league', () => {
+  const runsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-archive-live-'));
+  const liveId = '20260728T210000.000000Z-feed0001';
+  const runDir = path.join(runsDir, liveId);
+  fs.mkdirSync(path.join(runDir, 'draft'), { recursive: true });
+  fs.writeFileSync(
+    path.join(runDir, 'config.json'),
+    JSON.stringify({
+      mode: 'draft',
+      entrants: ['openai:alpha', 'openai:beta'],
+      team_names: ['Alpha Aces', 'Beta Bandits'],
+      weeks: 1,
+      board: 'test-board',
+      format: 'gen9testformat',
+    }),
+  );
+  fs.writeFileSync(
+    path.join(runDir, 'status.json'),
+    JSON.stringify({ state: 'running', error: null, notices: [], start_time: '2026-07-28T21:00:00.000Z', end_time: null, pid: process.pid }),
+  );
+  fs.writeFileSync(
+    path.join(runDir, 'draft', 'draft.jsonl'),
+    `${JSON.stringify({ pick: 1, model: 'openai:alpha', mon: 'pikachu', name: 'Pikachu', cost: 12, budget_left: 88, rationale: 'Speed.', fallback: false })}\n`,
+  );
+  try {
+    const { leagues } = buildLeagues([], runsDir);
+    assert.equal(leagues.length, 1);
+    assert.equal(leagues[0]!.live, true);
+    assert.equal(leagues[0]!.phase, 'drafting');
+    assert.equal(leagues[0]!.picks, 1);
+
+    const league = buildLeague([], runsDir, liveId);
+    assert.ok(league, 'a live run builds a league view before any series lands');
+    assert.equal(league!.live, true);
+    assert.equal(league!.phase, 'drafting');
+    const alpha = league!.franchises.find((franchise) => franchise.model === 'openai:alpha');
+    assert.equal(alpha?.roster[0]?.id, 'pikachu', 'rosters synthesize from draft picks before rosters.json fills in');
+    assert.equal(alpha?.spent, 12);
+    assert.equal(alpha?.budgetLeft, 88);
+
+    fs.writeFileSync(
+      path.join(runDir, 'status.json'),
+      JSON.stringify({ state: 'running', error: null, notices: [], start_time: '2026-07-28T21:00:00.000Z', end_time: null, pid: 999999999 }),
+    );
+    assert.equal(buildLeagues([], runsDir).leagues.length, 0, 'a dead pid means the rowless run is not live');
+    assert.equal(buildLeague([], runsDir, liveId), null);
+  } finally {
+    fs.rmSync(runsDir, { recursive: true, force: true });
+  }
+});
+
 test('buildLeagues lists a stored league with its champion', () => {
   const runsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-archive-'));
   writeLeagueFixture(runsDir);

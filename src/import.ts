@@ -70,7 +70,6 @@ function validateJsonl(text: unknown, field: string): string {
 
 const GAME_LOG_NAME = /^game-\d{1,3}\.log$/;
 
-/** Game logs backfill already-imported series, so they write even on the duplicate path. */
 function writeGameLogs(games: ImportRequest['games'], seriesDir: string): string[] {
   if (games === undefined) return [];
   if (!isRecord(games)) throw new ImportError('games must map log names to text');
@@ -129,6 +128,26 @@ function ensurePool(bundle: ImportRequest, options: ImportOptions): 'created' | 
     throw new ImportError(error instanceof Error ? error.message : String(error));
   }
   return 'created';
+}
+
+export interface RemoveResponse {
+  removed: number;
+  runId: string;
+}
+
+export function removeImportedRun(runId: string, options: ImportOptions): RemoveResponse {
+  if (!SAFE_SEGMENT.test(runId)) throw new ImportError('runId must be a path-safe identifier');
+  const rows = loadRows(options.recordsPath);
+  const target = rows.filter((row) => String(row.run_id ?? '') === runId);
+  if (target.length === 0) throw new ImportError(`no series held for run ${JSON.stringify(runId)}`);
+  if (!target.every(isImported)) throw new ImportError('refusing to remove locally recorded results');
+  const keep = rows.filter((row) => String(row.run_id ?? '') !== runId);
+  const text = keep.map((row) => JSON.stringify(row)).join('\n');
+  const staged = `${options.recordsPath}.tmp`;
+  fs.writeFileSync(staged, text.length ? `${text}\n` : '', 'utf8');
+  fs.renameSync(staged, options.recordsPath);
+  fs.rmSync(path.join(options.runsDir, runId), { recursive: true, force: true });
+  return { removed: target.length, runId };
 }
 
 export function importSeries(bundle: ImportRequest, options: ImportOptions): ImportResponse {
