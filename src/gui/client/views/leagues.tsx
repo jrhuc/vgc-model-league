@@ -15,6 +15,18 @@ import { Mark } from '../components/mark';
 import { Sprite } from '../components/sprite';
 import { api } from '../http';
 
+function displaySpec(spec: string): string {
+  return spec.replace(/:(?:nitro|floor|free)$/, '');
+}
+
+function modelKeyOf(spec: string): string {
+  const model = spec.slice(spec.indexOf(':') + 1);
+  return model
+    .slice(model.lastIndexOf('/') + 1)
+    .toLowerCase()
+    .replace(/:(?:nitro|floor|free)$/, '');
+}
+
 function when(iso: string): string {
   const date = new Date(iso);
   return Number.isNaN(date.getTime()) ? iso : date.toLocaleDateString(undefined, { dateStyle: 'medium' });
@@ -63,7 +75,7 @@ function LeagueCard({ card, onOpen }: { card: LeagueCardView; onOpen: () => void
           <Mark spec={card.champion.model} size={22} />
           <div>
             <b>{card.champion.team}</b>
-            <small>{card.champion.model}</small>
+            <small>{displaySpec(card.champion.model)}</small>
           </div>
           <span class="league-card-title">Champion</span>
         </div>
@@ -107,7 +119,7 @@ function FranchiseCard({
           <b>{franchise.teamName}</b>
           <button type="button" class="model-link" onClick={onOpenModel}>
             <Mark spec={franchise.model} size={14} />
-            <span>{franchise.model}</span>
+            <span>{displaySpec(franchise.model)}</span>
           </button>
         </div>
         <div class="franchise-card-record">
@@ -289,7 +301,7 @@ function TeamPage({
         <div class="lede team-lede">
           <button type="button" class="model-link" onClick={onOpenModel}>
             <Mark spec={franchise.model} size={16} />
-            <span>{franchise.model}</span>
+            <span>{displaySpec(franchise.model)}</span>
           </button>
           <span>
             {franchise.overallRecord.w}-{franchise.overallRecord.l} in series, {franchise.overallRecord.gw}-
@@ -428,11 +440,6 @@ function LeaguePage({
     return map;
   }, [league]);
 
-  const modelKeyOf = (spec: string) => {
-    const model = spec.slice(spec.indexOf(':') + 1);
-    return model.slice(model.lastIndexOf('/') + 1).toLowerCase();
-  };
-
   const selected = league.franchises.find((franchise) => teamSlug(franchise.teamName) === team);
   if (selected) {
     return (
@@ -503,7 +510,7 @@ function LeaguePage({
         <StatTile
           label={league.champion ? 'Champion' : 'Stage'}
           value={league.champion ? league.champion.team : phaseLabel(league)}
-          note={league.champion ? league.champion.model : `${league.series.length} series recorded`}
+          note={league.champion ? displaySpec(league.champion.model) : `${league.series.length} series recorded`}
         />
         <StatTile
           label="Series"

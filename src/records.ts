@@ -40,10 +40,13 @@ export function speedGroups(rows: SeriesRecord[]): Array<{ scale: TimerScale; ro
     .sort((a, b) => (a.scale === 'off' ? -1 : b.scale === 'off' ? 1 : a.scale - b.scale));
 }
 
-/** Ratings merge provider aliases by normalized model id. */
+/** Ratings merge provider aliases and routing variants by normalized model id. */
 export function modelKey(spec: string): string {
   const model = spec.slice(spec.indexOf(':') + 1);
-  return model.slice(model.lastIndexOf('/') + 1).toLowerCase();
+  return model
+    .slice(model.lastIndexOf('/') + 1)
+    .toLowerCase()
+    .replace(/:(?:nitro|floor|free)$/, '');
 }
 
 export const TEST_POOL = 'test';

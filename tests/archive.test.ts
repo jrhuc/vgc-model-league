@@ -36,7 +36,7 @@ function writeLeagueFixture(runsDir: string): void {
         roster: [{ id: 'pikachu', name: 'Pikachu', cost: 90 }],
       },
       {
-        model: 'openai:beta',
+        model: 'compat:beta:nitro',
         team_name: 'Beta Bandits',
         budget_left: 40,
         spent: 60,
@@ -57,7 +57,7 @@ function writeLeagueFixture(runsDir: string): void {
       fallback: false,
     })}\n${JSON.stringify({
       pick: 2,
-      model: 'openai:beta',
+      model: 'compat:beta:nitro',
       team_name: 'Beta Bandits',
       mon: 'eevee',
       name: 'Eevee',

@@ -194,14 +194,14 @@ function readRosters(runsDir: string, runId: string, identity: LeagueIdentity): 
   const stored = readRunJson(runsDir, runId, 'rosters.json');
   const picks = readRunLines(runsDir, runId, 'draft', 'draft.jsonl');
   const pickByMon = new Map<string, Record<string, unknown>>();
-  for (const pick of picks) pickByMon.set(`${pick.model}:${pick.mon}`, pick);
+  for (const pick of picks) pickByMon.set(`${modelKey(String(pick.model ?? ''))}:${pick.mon}`, pick);
   const entries: RosterEntry[] = [];
   const source = Array.isArray(stored) ? (stored as Record<string, unknown>[]) : [];
   for (const [entrant, model] of identity.models.entries()) {
-    const record = source.find((candidate) => candidate.model === model) ?? {};
+    const record = source.find((candidate) => modelKey(String(candidate.model ?? '')) === modelKey(model)) ?? {};
     const mons = Array.isArray(record.roster) ? (record.roster as Record<string, unknown>[]) : [];
     const roster = mons.map((mon): LeagueRosterSlotView => {
-      const pick = pickByMon.get(`${model}:${String(mon.id ?? '')}`);
+      const pick = pickByMon.get(`${modelKey(model)}:${String(mon.id ?? '')}`);
       return {
         id: String(mon.id ?? ''),
         name: String(mon.name ?? mon.id ?? ''),
