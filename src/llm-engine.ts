@@ -107,16 +107,16 @@ const DECISION_MAX_TOKENS_DEEP: Partial<Record<ReasoningLevel, number>> = {
   xhigh: 16_384,
   max: 16_384,
 };
-// Timed budgets follow generation pace so replies arrive before the deadline. The untimed ceiling
-// and wall clock only stop runaway reasoning loops.
+/** Timed budgets follow generation pace so replies arrive before the deadline. The untimed ceiling and wall
+ * clock only stop runaway reasoning loops. */
 const DECISION_MAX_TOKENS_CEILING = 32_768;
 const UNTIMED_CALL_TIMEOUT_S = 600;
 const ASSUMED_TOKENS_PER_SECOND = 75;
 const PACE_SAFETY = 0.8;
 const PACE_SAMPLE_MIN_TOKENS = 256;
 const PACE_SAMPLE_MIN_MS = 2000;
-// Timed tool budgets keep lookups from burning the battle clock; untimed budgets exist only to
-// bound runaway loops, so they allow wide mechanical verification.
+/** Timed tool budgets keep lookups from burning the battle clock; untimed budgets exist only to bound
+ * runaway loops, so they allow wide mechanical verification. */
 const DECISION_MAX_TOOL_ROUNDS = 2;
 const DECISION_MAX_STANDARD_TOOL_CALLS = 2;
 const DECISION_MAX_ORDER_TOOL_CALLS = 1;
@@ -154,12 +154,12 @@ const ACTION_ORDER_TOOL: ToolDefinition = {
 
 const DECISION_TOOLS = [...DEX_TOOLS, ACTION_ORDER_TOOL];
 
-// reasoning_tokens is a breakdown of output_tokens, so summing input and output covers the full spend.
+/** reasoning_tokens is a breakdown of output_tokens, so summing input and output covers the full spend. */
 function totalTokens(usage: Record<string, number> | undefined): number {
   return Math.trunc((usage?.input_tokens ?? 0) + (usage?.output_tokens ?? 0));
 }
 
-// Absent means the provider did not report a reasoning breakdown; zero means it reported none used.
+/** Absent means the provider did not report a reasoning breakdown; zero means it reported none used. */
 function reasoningField(usage: Record<string, number> | undefined): Record<string, number> {
   const value = usage?.reasoning_tokens;
   return value === undefined ? {} : { reasoning_tokens: Math.trunc(value) };
@@ -631,9 +631,9 @@ export class LLMEngine extends BaseEngine {
     while (!parsed && parseFailures < parseAttempts) {
       if (generation !== this.generation) throw new DecisionAbandonedError();
       if (parseFailures && (rawResponse || truncatedBudget)) {
-        // Replaying a truncated ramble verbatim spends the retry's input budget
-        // on the reasoning that already overran, making the retry likelier to
-        // overrun too. Summarise it instead and ask for the answer first.
+        /** Replaying a truncated ramble verbatim spends the retry's input budget on the reasoning that
+         * already overran, making the retry likelier to overrun too. Summarise it instead and ask for the
+         * answer first. */
         messages.push({
           role: 'assistant',
           content: truncatedBudget ? '[response cut off before a choice was submitted]' : rawResponse,
@@ -711,9 +711,9 @@ export class LLMEngine extends BaseEngine {
           }
           continue;
         }
-        // A model cut off mid-reasoning still returns text, so finishReason alone
-        // misses it and the run blames the model's formatting for a budget it
-        // never got to spend. Token count is the signal providers agree on.
+        /** A model cut off mid-reasoning still returns text, so finishReason alone misses it and the run
+         * blames the model's formatting for a budget it never got to spend. Token count is the signal
+         * providers agree on. */
         if (completion.finishReason === 'length' || (completion.usage.output_tokens ?? 0) >= maxTokens) {
           truncatedBudget = maxTokens;
         }

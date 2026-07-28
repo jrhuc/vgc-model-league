@@ -67,7 +67,7 @@ export async function completeWithDexTools(request: DexToolRequest): Promise<Com
       usage[key] = (usage[key] ?? 0) + Math.trunc(value);
     }
     if (!completion.toolCalls.length || final) {
-      // Some providers omit finishReason, so an exhausted output budget also means truncation.
+      /** Some providers omit finishReason, so an exhausted output budget also means truncation. */
       const spent = (completion.usage.output_tokens ?? 0) >= request.policy.maxTokens;
       return {
         ...completion,

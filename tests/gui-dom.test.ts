@@ -31,9 +31,8 @@ async function waitFor(predicate: () => boolean, ms = 5000): Promise<void> {
   }
 }
 
-// The GUI is redesigned freely pre-release, so this suite only guards against a
-// bundle that fails to boot; nothing here may assert on layout, copy, or DOM
-// structure.
+/** The GUI is redesigned freely pre-release, so this suite only guards against a bundle that fails to boot;
+ * nothing here may assert on layout, copy, or DOM structure. */
 test('built client bundle boots against the live server', async () => {
   const gui = new GuiServer({ runsDir: RUNS_SCRATCH });
   const base = await gui.listen(0);

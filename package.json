@@ -14,10 +14,12 @@
     "prebuild": "node tools/setup-showdown.mjs --check && npm run clean",
     "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
     "build": "tsc -p tsconfig.json && tsc -p tsconfig.client.json && vite build --logLevel warn",
-    "check": "biome check src tools tests",
+    "check": "biome check src tools tests && npm run check:comments",
     "check:fix": "biome check --write src tools tests",
+    "check:comments": "node tools/check-comments.mjs",
     "dev:gui": "vite build --watch",
-    "test": "npm run build && node --test dist/tests/*.test.js",
+    "test": "npm run check:comments && npm run build && node --test dist/tests/*.test.js",
+    "archive-run": "node tools/archive-run.mjs",
     "start": "node dist/src/cli.js gui",
     "vgcleague": "node --env-file-if-exists=.env dist/src/cli.js",
     "build-pool": "node dist/tools/build-pool.js",
@@ -30,6 +32,7 @@
     "node": ">=22.13"
   },
   "devDependencies": {
+    "@babel/parser": "^7.29.7",
     "@biomejs/biome": "^2.5.3",
     "@preact/preset-vite": "^2.10.5",
     "@types/node": "^26.1.1",

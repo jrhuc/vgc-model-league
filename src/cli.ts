@@ -238,7 +238,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
           process.exitCode = 1;
         } finally {
           auth?.close();
-          // A wedged run task must not outlive the server: exit instead of draining the event loop.
+          /** A wedged run task must not outlive the server: exit instead of draining the event loop. */
           process.exit(process.exitCode ?? 0);
         }
       })();

@@ -24,8 +24,8 @@ import type { CompleteOptions, Completion, JsonObject, Provider, ProviderFailure
 
 import { isRecord } from './value.js';
 
-// Gemini signs only the first of parallel function calls; the SDK's documented sentinel handles the rest,
-// so its per-part warning is noise. All other AI SDK warnings still log.
+/** Gemini signs only the first of parallel function calls; the SDK's documented sentinel handles the rest,
+ * so its per-part warning is noise. All other AI SDK warnings still log. */
 (globalThis as { AI_SDK_LOG_WARNINGS?: unknown }).AI_SDK_LOG_WARNINGS = (options: {
   warnings: Array<{ message?: string }>;
   provider: string;
