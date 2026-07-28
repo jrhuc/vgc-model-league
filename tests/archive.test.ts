@@ -6,7 +6,6 @@ import test from 'node:test';
 
 import { buildLeague, buildLeagues, buildModelProfile } from '../src/archive.js';
 import { appendRow, loadRows, type SeriesRecord } from '../src/records.js';
-import { backfillDecisionLog } from '../tools/backfill-reasoning.js';
 
 const RUN_ID = 'league-run-1';
 
@@ -258,53 +257,4 @@ test('loadRows caches by mtime and size but sees appended rows', () => {
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
-test('backfill copies reasoning tokens from traces onto matching decision rows', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-backfill-'));
-  const decisions = path.join(dir, 'p1-decisions.jsonl');
-  const traces = path.join(dir, 'p1-trace.jsonl');
-  fs.writeFileSync(
-    decisions,
-    [
-      JSON.stringify({ kind: 'decision', game_id: 'g1', turn: 1, phase: 'turn', total_tokens: 50 }),
-      JSON.stringify({ kind: 'decision', game_id: 'g1', turn: 2, phase: 'turn', automatic: true }),
-      JSON.stringify({ kind: 'decision', game_id: 'g1', turn: 3, phase: 'turn', reasoning_tokens: 7 }),
-      JSON.stringify({ kind: 'game_reflection', game_id: 'g1', game_number: 1 }),
-    ]
-      .map((line) => `${line}\n`)
-      .join(''),
-  );
-  fs.writeFileSync(
-    traces,
-    [
-      JSON.stringify({
-        kind: 'decision_trace',
-        game_id: 'g1',
-        turn: 1,
-        phase: 'turn',
-        usage: { reasoning_tokens: 11 },
-      }),
-      JSON.stringify({
-        kind: 'decision_trace',
-        game_id: 'g1',
-        turn: 3,
-        phase: 'turn',
-        usage: { reasoning_tokens: 99 },
-      }),
-      JSON.stringify({ kind: 'reflection_trace', game_id: 'g1', game_number: 1, usage: { reasoning_tokens: 23 } }),
-    ]
-      .map((line) => `${line}\n`)
-      .join(''),
-  );
-  assert.equal(backfillDecisionLog(decisions, traces), 2);
-  const rows = fs
-    .readFileSync(decisions, 'utf8')
-    .split('\n')
-    .filter((line) => line.trim())
-    .map((line) => JSON.parse(line) as Record<string, unknown>);
-  assert.equal(rows[0]!.reasoning_tokens, 11);
-  assert.equal(rows[1]!.reasoning_tokens, undefined, 'automatic rows have no model usage');
-  assert.equal(rows[2]!.reasoning_tokens, 7, 'already-populated rows stay untouched');
-  assert.equal(rows[3]!.reasoning_tokens, 23, 'reflections match by game number');
-  assert.equal(backfillDecisionLog(decisions, traces), 0, 'the backfill is idempotent');
-  fs.rmSync(dir, { recursive: true, force: true });
 });

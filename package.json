@@ -22,7 +22,6 @@
     "vgcleague": "node --env-file-if-exists=.env dist/src/cli.js",
     "build-pool": "node dist/tools/build-pool.js",
     "build-board": "node dist/tools/build-draft-board.js",
-    "backfill-reasoning": "node dist/tools/backfill-reasoning.js",
     "fetch-sprites": "node dist/tools/fetch-sprites.js",
     "capture-requests": "node dist/tools/capture-requests.js"
   },
