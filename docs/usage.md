@@ -142,8 +142,9 @@ archive directory offsite with your own tooling, for example
 ## Publish local results
 
 `publish` sends completed results to a deployment. It sends result rows,
-decision logs, run configuration, and missing team pools. It does not send
-prompts or raw model responses.
+decision logs, game logs, run configuration, and missing team pools. It does
+not send prompts or raw model responses. Re-publishing a series the deployment
+already holds backfills any game logs it is missing.
 
 ```sh
 export VGC_LEAGUE_PUBLISH_ORIGIN=https://<deployment>

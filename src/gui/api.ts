@@ -644,6 +644,7 @@ export interface ModelProfileResponse {
 export interface ImportRequest {
   row: Record<string, unknown>;
   logs?: Partial<Record<Pid, string>>;
+  games?: Record<string, string>;
   runConfig?: Record<string, unknown>;
   pool?: { name: string; format: string; teams: Array<{ id: string; paste: string }> };
   league?: LeagueAssets;
@@ -661,6 +662,7 @@ export interface ImportResponse {
   runId: string;
   seriesId: string;
   logs: Pid[];
+  games?: string[];
   pool: 'created' | 'present' | null;
   league: string[];
 }

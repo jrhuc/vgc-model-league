@@ -68,6 +68,26 @@ function validateJsonl(text: unknown, field: string): string {
   return text.endsWith('\n') ? text : `${text}\n`;
 }
 
+const GAME_LOG_NAME = /^game-\d{1,3}\.log$/;
+
+/** Game logs backfill already-imported series, so they write even on the duplicate path. */
+function writeGameLogs(games: ImportRequest['games'], seriesDir: string): string[] {
+  if (games === undefined) return [];
+  if (!isRecord(games)) throw new ImportError('games must map log names to text');
+  const written: string[] = [];
+  for (const [name, text] of Object.entries(games)) {
+    if (!GAME_LOG_NAME.test(name)) throw new ImportError(`games contains unsafe name ${JSON.stringify(name)}`);
+    if (typeof text !== 'string') throw new ImportError(`games.${name} must be text`);
+    if (Buffer.byteLength(text) > MAX_LOG_BYTES) throw new ImportError(`games.${name} is larger than 1 MB`);
+    const target = path.join(seriesDir, name);
+    if (fs.existsSync(target)) continue;
+    fs.mkdirSync(seriesDir, { recursive: true });
+    fs.writeFileSync(target, text, 'utf8');
+    written.push(name);
+  }
+  return written;
+}
+
 const LEAGUE_FILES: Array<{ key: keyof LeagueAssets; file: string }> = [
   { key: 'rosters', file: 'rosters.json' },
   { key: 'draft', file: 'draft/draft.jsonl' },
@@ -127,10 +147,11 @@ export function importSeries(bundle: ImportRequest, options: ImportOptions): Imp
   const pool = ensurePool(bundle, options);
   const runDir = path.join(options.runsDir, runId);
   const league = writeLeagueAssets(bundle.league, runDir);
-  if (known.has(seriesKey(row))) {
-    return { imported: false, duplicate: true, runId, seriesId, logs: [], pool, league };
-  }
   const seriesDir = path.join(runDir, 'series', seriesId);
+  const games = writeGameLogs(bundle.games, seriesDir);
+  if (known.has(seriesKey(row))) {
+    return { imported: false, duplicate: true, runId, seriesId, logs: [], games, pool, league };
+  }
   fs.mkdirSync(seriesDir, { recursive: true });
   for (const log of logs) fs.writeFileSync(path.join(seriesDir, `${log.pid}-decisions.jsonl`), log.text, 'utf8');
   const configPath = path.join(runDir, 'config.json');
@@ -139,5 +160,5 @@ export function importSeries(bundle: ImportRequest, options: ImportOptions): Imp
   }
   const origin: RowOrigin = { source: 'import', at: new Date().toISOString() };
   appendRow(options.recordsPath, { ...row, origin } as JsonObject);
-  return { imported: true, runId, seriesId, logs: logs.map((log) => log.pid), pool, league };
+  return { imported: true, runId, seriesId, logs: logs.map((log) => log.pid), games, pool, league };
 }
