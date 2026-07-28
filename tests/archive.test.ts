@@ -256,5 +256,3 @@ test('loadRows caches by mtime and size but sees appended rows', () => {
   assert.equal(loadRows(file).length, 2);
   fs.rmSync(dir, { recursive: true, force: true });
 });
-
-});
