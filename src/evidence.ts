@@ -16,7 +16,7 @@ import { modelKey, type SeriesRecord, scopeRows, TEST_POOL } from './records.js'
 import { buildBracket } from './tournament.js';
 import type { Pid } from './types.js';
 
-const SAFE_SEGMENT = /^[A-Za-z0-9._-]+$/;
+export const SAFE_SEGMENT = /^[A-Za-z0-9._-]+$/;
 const MAX_POINTS_PER_MODEL = 600;
 
 const LUCK_FIELDS = ['misses', 'crits_taken', 'flinched_turns', 'full_paralysis'] as const;
@@ -59,24 +59,41 @@ function bucket(): StatBucket {
   };
 }
 
-function count(value: unknown): number {
+export function count(value: unknown): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : 0;
 }
 
-function decisionLogPath(runsDir: string, runId: string, seriesId: string, pid: Pid): string | null {
+export function decisionLogPath(runsDir: string, runId: string, seriesId: string, pid: Pid): string | null {
   if (!SAFE_SEGMENT.test(runId) || !SAFE_SEGMENT.test(seriesId)) return null;
   return path.join(runsDir, runId, 'series', seriesId, `${pid}-decisions.jsonl`);
 }
 
-function readLatencyPoints(file: string, seriesId: string): LatencyPoint[] {
-  let raw: string;
+export interface DecisionLogRow {
+  kind: string;
+  automatic: boolean;
+  game: number;
+  turn: number;
+  phase: string;
+  latencyMs: number | null;
+  totalTokens: number | null;
+  reasoningTokens: number | null;
+}
+
+const logCache = new Map<string, { mtimeMs: number; size: number; rows: DecisionLogRow[] }>();
+
+/** Cached by mtime and size; decision logs of finished runs never change. */
+export function readDecisionLog(file: string): DecisionLogRow[] {
+  let stat: fs.Stats;
   try {
-    raw = fs.readFileSync(file, 'utf8');
+    stat = fs.statSync(file);
   } catch {
+    logCache.delete(file);
     return [];
   }
-  const points: LatencyPoint[] = [];
-  for (const line of raw.split('\n')) {
+  const cached = logCache.get(file);
+  if (cached && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size) return cached.rows;
+  const rows: DecisionLogRow[] = [];
+  for (const line of fs.readFileSync(file, 'utf8').split('\n')) {
     if (!line.trim()) continue;
     let entry: Record<string, unknown>;
     try {
@@ -84,22 +101,41 @@ function readLatencyPoints(file: string, seriesId: string): LatencyPoint[] {
     } catch {
       continue;
     }
-    if (entry.kind !== 'decision' || entry.automatic === true) continue;
-    if (typeof entry.latency_ms !== 'number' || entry.latency_ms <= 0) continue;
-    const tokens = typeof entry.total_tokens === 'number' && entry.total_tokens > 0 ? entry.total_tokens : undefined;
-    points.push({
-      ms: entry.latency_ms,
-      ...(tokens === undefined ? {} : { tokens }),
-      seriesId,
+    const numeric = (value: unknown) => (typeof value === 'number' && Number.isFinite(value) ? value : null);
+    rows.push({
+      kind: typeof entry.kind === 'string' ? entry.kind : '',
+      automatic: entry.automatic === true,
       game: count(entry.game_number),
       turn: count(entry.turn),
       phase: typeof entry.phase === 'string' ? entry.phase : 'turn',
+      latencyMs: numeric(entry.latency_ms),
+      totalTokens: numeric(entry.total_tokens),
+      reasoningTokens: numeric(entry.reasoning_tokens),
+    });
+  }
+  logCache.set(file, { mtimeMs: stat.mtimeMs, size: stat.size, rows });
+  return rows;
+}
+
+function readLatencyPoints(file: string, seriesId: string): LatencyPoint[] {
+  const points: LatencyPoint[] = [];
+  for (const entry of readDecisionLog(file)) {
+    if (entry.kind !== 'decision' || entry.automatic) continue;
+    if (entry.latencyMs === null || entry.latencyMs <= 0) continue;
+    const tokens = entry.totalTokens !== null && entry.totalTokens > 0 ? entry.totalTokens : undefined;
+    points.push({
+      ms: entry.latencyMs,
+      ...(tokens === undefined ? {} : { tokens }),
+      seriesId,
+      game: entry.game,
+      turn: entry.turn,
+      phase: entry.phase,
     });
   }
   return points;
 }
 
-function quantile(sorted: number[], q: number): number {
+export function quantile(sorted: number[], q: number): number {
   if (sorted.length === 0) return 0;
   const position = (sorted.length - 1) * q;
   const low = Math.floor(position);

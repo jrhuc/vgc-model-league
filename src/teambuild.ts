@@ -20,7 +20,7 @@ const TEAMBUILD_PROMPT_POLICY = {
     'You are {{model}}, coach of {{team}} in a Pokémon VGC draft league, format {{format}}.',
     '',
     'You drafted a roster of {{picks}} Pokémon and keep it all season. Before every match you choose exactly 6 of them',
-    'and build each set from scratch. Nothing carries over from the draft except which Pokémon you own.',
+    'and build each set from scratch. Your private draft note is supplied below as revisable context, not a constraint.',
     '',
     'FORMAT RULES',
     '- Doubles. Both coaches register 6 and bring 4 to each game; team sheets are open, so your opponent sees your sets.',
@@ -49,7 +49,8 @@ const TEAMBUILD_PROMPT_POLICY = {
   ],
   rosterHeading: 'YOUR ROSTER (board id | name | types | base stats | abilities | legal moves):',
   opponentHeading: 'OPPONENT ROSTER — {{model}} of {{team}} (they pick 6 of these):',
-  historyHeading: 'YOUR SEASON SO FAR:',
+  draftNoteHeading: 'YOUR PRIVATE NOTE AT THE END OF THE DRAFT:',
+  playoffContextHeading: 'YOUR PRIVATE CONTEXT FROM EARLIER LEAGUE MATCHES:',
   lockedItem: 'MUST hold {{item}}',
   noMega: 'cannot hold a Mega Stone',
   rejectionTemplate: 'That team was rejected:\n{{error}}\nReply again with only the JSON object.',
@@ -100,13 +101,15 @@ export interface TeambuildRequest {
   seriesIndex: number;
   entrant: number;
   opponent: number;
+  stage: 'roundrobin' | 'playoff';
   model: string;
   opponentModel: string;
   teamName: string;
   opponentTeamName: string;
   roster: DraftBoardMon[];
   opponentRoster: DraftBoardMon[];
-  history: string[];
+  draftNote: string;
+  playoffContext: string[];
   format: string;
 }
 
@@ -202,6 +205,7 @@ function systemPrompt(request: TeambuildRequest, dex: DexLike, evLimit: number, 
 function userPrompt(request: TeambuildRequest, dex: DexLike): string {
   const lines: string[] = [TEAMBUILD_PROMPT_POLICY.rosterHeading];
   lines.push(...rosterBlock(dex, request.roster, true));
+  if (request.draftNote) lines.push('', TEAMBUILD_PROMPT_POLICY.draftNoteHeading, request.draftNote);
   lines.push(
     '',
     TEAMBUILD_PROMPT_POLICY.opponentHeading
@@ -209,8 +213,12 @@ function userPrompt(request: TeambuildRequest, dex: DexLike): string {
       .replace('{{team}}', request.opponentTeamName || request.opponentModel),
   );
   lines.push(...rosterBlock(dex, request.opponentRoster, false));
-  if (request.history.length) {
-    lines.push('', TEAMBUILD_PROMPT_POLICY.historyHeading, ...request.history.map((entry) => `- ${entry}`));
+  if (request.stage === 'playoff' && request.playoffContext.length) {
+    lines.push(
+      '',
+      TEAMBUILD_PROMPT_POLICY.playoffContextHeading,
+      ...request.playoffContext.map((entry) => `- ${entry}`),
+    );
   }
   return lines.join('\n');
 }

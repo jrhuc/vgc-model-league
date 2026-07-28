@@ -6,6 +6,7 @@ import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { buildLeague, buildLeagues, buildModelProfile } from '../archive.js';
 import type { AuthService, AuthSession, AuthUser } from '../auth.js';
 import { AuthError } from '../auth.js';
 import { describeBoardMon, listBoards, loadBoard } from '../draft.js';
@@ -588,6 +589,9 @@ export class GuiServer {
     else if (key === 'GET /api/evidence') this.json(response, 200, this.evidenceBody(url.searchParams.get('pool')));
     else if (key === 'GET /api/tournaments')
       this.json(response, 200, this.tournamentsBody(url.searchParams.get('pool')));
+    else if (key === 'GET /api/leagues') this.json(response, 200, this.leaguesBody());
+    else if (key === 'GET /api/league') this.json(response, 200, this.leagueBody(url.searchParams.get('run') ?? ''));
+    else if (key === 'GET /api/model') this.json(response, 200, this.modelBody(url.searchParams.get('id') ?? ''));
     else if (key === 'GET /api/board') {
       this.json(response, 200, this.boardBody(url.searchParams.get('id') ?? ''));
     } else if (key === 'GET /api/pool/teams') {
@@ -936,6 +940,25 @@ export class GuiServer {
     const all = loadRows(this.options.recordsPath ?? RESULTS_PATH);
     const pool = poolParam?.trim() || null;
     return buildTournaments(all, this.options.runsDir ?? RUNS_DIR, pool);
+  }
+
+  private leaguesBody(): JsonObject {
+    const all = loadRows(this.options.recordsPath ?? RESULTS_PATH);
+    return buildLeagues(all, this.options.runsDir ?? RUNS_DIR) as unknown as JsonObject;
+  }
+
+  private leagueBody(run: string): JsonObject {
+    const all = loadRows(this.options.recordsPath ?? RESULTS_PATH);
+    const league = buildLeague(all, this.options.runsDir ?? RUNS_DIR, run.trim());
+    if (!league) throw new HttpError(404, `no stored draft league ${JSON.stringify(run)}`);
+    return league as unknown as JsonObject;
+  }
+
+  private modelBody(id: string): JsonObject {
+    const all = loadRows(this.options.recordsPath ?? RESULTS_PATH);
+    const profile = buildModelProfile(all, this.options.runsDir ?? RUNS_DIR, id.trim());
+    if (!profile) throw new HttpError(404, `no recorded series for model ${JSON.stringify(id)}`);
+    return profile as unknown as JsonObject;
   }
 
   private runBody(publicView = false): RunSnapshot | null {

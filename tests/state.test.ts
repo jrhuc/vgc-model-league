@@ -248,7 +248,7 @@ test('Protect success reduction is tracked for the next menu', () => {
   assert.match(state.render({}), /Protect success rate reduced/);
 });
 
-test('effective speed and action order preserve hidden ranges and explain redundant Encore', () => {
+test('effective speed and action order use format ranges and explain redundant Encore', () => {
   const reference = new ShowdownReference('gen9championsvgc2026regmb');
   const state = new BattleState('p1');
   state.feed([
@@ -275,16 +275,15 @@ test('effective speed and action order preserve hidden ranges and explain redund
   };
   const rendered = state.render(request, (mon) => reference.describeCompact(mon));
   assert.match(rendered, /Special Defense 125, Speed 170/);
-  assert.match(rendered, /raw Speed range 105-152/);
-  assert.match(rendered, /Choice-locked into Close Combat/);
-  assert.match(state.renderEffectiveSpeeds(reference), /foe Tauros-Paldea-Aqua 157–228 \(Choice Scarf ×1\.5\)/);
+  assert.match(rendered, /raw Speed range 120-152/);
+  assert.match(state.renderEffectiveSpeeds(reference), /foe Tauros-Paldea-Aqua 180–228 \(Choice Scarf ×1\.5\)/);
   assert.equal(state.moveAnnotation('Encore', 'foe', 1), 'redundant: target is Choice-locked into Close Combat');
   assert.match(
     state.compareActionOrder(
       { first: 'Gengar-Mega', first_move: 'Encore', second: 'Tauros-Paldea-Aqua', second_move: 'Close Combat' },
       reference,
     ),
-    /order is uncertain[\s\S]*Encore is redundant/,
+    /Tauros-Paldea-Aqua is guaranteed to act first[\s\S]*Encore is redundant/,
   );
 
   state.feed(['|-start|p2a: Tauros|Encore']);

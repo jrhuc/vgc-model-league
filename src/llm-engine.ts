@@ -90,6 +90,7 @@ export interface LLMEngineOptions {
   reasoning?: ReasoningLevel;
   signal?: AbortSignal;
   recovery?: RecoveryGate;
+  initialNotebook?: string;
 }
 
 const RETRY_ATTEMPTS = 3;
@@ -156,6 +157,12 @@ const DECISION_TOOLS = [...DEX_TOOLS, ACTION_ORDER_TOOL];
 // reasoning_tokens is a breakdown of output_tokens, so summing input and output covers the full spend.
 function totalTokens(usage: Record<string, number> | undefined): number {
   return Math.trunc((usage?.input_tokens ?? 0) + (usage?.output_tokens ?? 0));
+}
+
+// Absent means the provider did not report a reasoning breakdown; zero means it reported none used.
+function reasoningField(usage: Record<string, number> | undefined): Record<string, number> {
+  const value = usage?.reasoning_tokens;
+  return value === undefined ? {} : { reasoning_tokens: Math.trunc(value) };
 }
 
 export function decisionTokenBudget(remainingMs: number, tokensPerSecond: number): number {
@@ -317,7 +324,7 @@ export class LLMEngine extends BaseEngine {
   readonly reference: ShowdownReference;
   private state: BattleState;
   private transcript: string[] = [];
-  private notebook = '';
+  private notebook: string;
   private gameId: string;
   private seriesId?: string;
   private gameNumber = 1;
@@ -343,6 +350,7 @@ export class LLMEngine extends BaseEngine {
   private parseFailureCount = 0;
   private providerRetryCount = 0;
   private costTotal = 0;
+  private reasoningTotal = 0;
   private callRetries = 0;
   private observedTokensPerSecond: number | undefined;
   private threatTurns = 0;
@@ -367,6 +375,7 @@ export class LLMEngine extends BaseEngine {
     this.reference =
       options.reference ?? new ShowdownReference(options.format ?? 'gen9championsvgc2026regmbbo3', options.psDir);
     this.state = new BattleState(pid);
+    this.notebook = options.initialNotebook?.trim().slice(0, DECISION_NOTE_LIMIT) ?? '';
     this.gameId = spec;
   }
 
@@ -382,6 +391,10 @@ export class LLMEngine extends BaseEngine {
     this.pendingThreats = undefined;
     this.transcript = [];
     this.remember(`[Game ${context.gameNumber} begins; series score ${this.scoreText()}]`);
+  }
+
+  override coachingNote(): string {
+    return this.notebook;
   }
 
   override async endGame(context: GameEnd): Promise<void> {
@@ -571,6 +584,7 @@ export class LLMEngine extends BaseEngine {
         parse_failures: parseFailures,
         latency_ms: Math.round(performance.now() - started),
         total_tokens: totalTokens(usage),
+        ...reasoningField(usage),
         timer,
         tool_lookups: toolCalls.map((call) => call.name),
       });
@@ -866,6 +880,7 @@ export class LLMEngine extends BaseEngine {
       this.parseFailureCount += pending.parseFailures ?? 0;
       this.providerRetryCount += pending.providerRetries ?? 0;
       this.costTotal += pending.usage?.cost ?? 0;
+      this.reasoningTotal += Math.trunc(pending.usage?.reasoning_tokens ?? 0);
       if (substitution) this.substitutedActions += 1;
     }
     const action = request.teamPreview ? `team ${parts.join('')}` : parts.join(', ');
@@ -907,6 +922,7 @@ export class LLMEngine extends BaseEngine {
       parse_failures: pending.parseFailures ?? 0,
       latency_ms: Math.round(pending.latencyMs ?? 0),
       total_tokens: totalTokens(pending.usage),
+      ...reasoningField(pending.usage),
       ...(pending.usage?.cost !== undefined ? { cost: pending.usage.cost } : {}),
       timer,
       tool_lookups: (pending.toolCalls ?? []).map((call) => call.name),
@@ -969,6 +985,7 @@ export class LLMEngine extends BaseEngine {
       provider_retries: this.providerRetryCount,
       threat_turns: this.threatTurns,
       threat_hits: this.threatHits,
+      ...(this.reasoningTotal > 0 ? { reasoning_tokens: this.reasoningTotal } : {}),
       ...(this.costTotal > 0 ? { cost: Math.round(this.costTotal * 1e6) / 1e6 } : {}),
     };
   }
@@ -1118,7 +1135,7 @@ export class LLMEngine extends BaseEngine {
     const seriesOver = context.gameNumber >= 3 || Math.max(this.seriesScore.p1, this.seriesScore.p2) >= 2;
     const prompt = [
       `Series ${this.seriesId ?? '?'}; game ${context.gameNumber}; result: ${result}; series score ${this.scoreText()}.`,
-      `Turns: ${String(context.outcome.turns ?? '?')}. Decision errors: ${String(context.outcome.errors ?? 0)}. Legal fallbacks: ${String(context.outcome.fallbacks ?? 0)}.`,
+      `Turns: ${String(context.outcome.turns ?? '?')}. Decision errors: ${String(context.outcome.errors ?? 0)}. Model-choice defaults: ${String(context.outcome.model_choice_fallbacks ?? 0)}. Simulator substitutions: ${String(context.outcome.simulator_substitutions ?? 0)}. Timer autodefaults: ${String(context.outcome.timer_autodefaults ?? 0)}.`,
       '',
       'Final authoritative state:',
       this.state.render({}),
@@ -1184,6 +1201,7 @@ export class LLMEngine extends BaseEngine {
     this.reflections += 1;
     if (fallback) this.reflectionFallbacks += 1;
     this.costTotal += usage.cost ?? 0;
+    this.reasoningTotal += Math.trunc(usage.reasoning_tokens ?? 0);
     this.notebook = review.notebook;
     this.remember(`Game review: ${review.summary} Next-game adjustment: ${review.adjustment}`);
     this.writeLog(this.options.decisionLog, {
@@ -1198,6 +1216,7 @@ export class LLMEngine extends BaseEngine {
       adjustment: review.adjustment,
       ...this.notebookUpdate(),
       total_tokens: totalTokens(usage),
+      ...reasoningField(usage),
       fallback,
       error: error ?? null,
       ...(failureSummary ? { error_summary: failureSummary, failure_kind: failureKind } : {}),

@@ -26,10 +26,10 @@ test('reference reads exact data from the configured Showdown checkout', () => {
     rendered,
     /Species Gengar: Ghost\/Poison; base stats HP 60, Attack 65, Defense 60, Special Attack 130, Special Defense 75, Speed 110; abilities Cursed Body/,
   );
-  assert.match(rendered, /raw Speed 126-178 with Timid alignment/);
+  assert.match(rendered, /raw Speed 143-178 with Timid alignment/);
   assert.match(
     rendered,
-    /Gengar-Mega \(Ghost\/Poison, base stats HP 60, Attack 65, Defense 80, Special Attack 170, Special Defense 95, Speed 130, abilities Shadow Tag; raw Speed 148-200 with Timid alignment\)/,
+    /Gengar-Mega \(Ghost\/Poison, base stats HP 60, Attack 65, Defense 80, Special Attack 170, Special Defense 95, Speed 130, abilities Shadow Tag; raw Speed 165-200 with Timid alignment\)/,
   );
   assert.match(
     rendered,
@@ -40,6 +40,23 @@ test('reference reads exact data from the configured Showdown checkout', () => {
   assert.match(rendered, /Move Earthquake: Ground; Physical; BP 100/);
   assert.match(rendered, /Ability Shadow Tag:/);
   assert.match(rendered, /Stat alignment Timid \(Showdown Nature\): \+spe, -atk/);
+});
+
+test('Champions stat ranges and exact spreads use Stat Points with fixed maximum IVs', () => {
+  const reference = new ShowdownReference('gen9championsvgc2026regmb');
+  assert.match(
+    reference.lookup('calculate_stats', {
+      species: 'Garchomp',
+      nature: 'Jolly',
+      evs: { hp: 2, atk: 32, spe: 32 },
+    }),
+    /Stat Points 66\/66\): HP 185, Attack 182, Defense 115, Special Attack 90, Special Defense 105, Speed 169/,
+  );
+  assert.match(
+    reference.lookup('lookup_ability', { name: 'Shadow Tag' }),
+    /Ghost type|Ghost-type/,
+    'an explicit mechanics lookup returns the full exception text',
+  );
 });
 
 test('Mega formes require the visible matching stone', () => {
@@ -350,8 +367,8 @@ test('speed profiles apply visible battle modifiers without collapsing hidden ra
       item: 'Choice Scarf',
     }),
     {
-      raw: [105, 152],
-      effective: [157, 228],
+      raw: [120, 152],
+      effective: [180, 228],
       modifiers: ['Choice Scarf ×1.5'],
     },
   );
@@ -361,7 +378,7 @@ test('speed profiles apply visible battle modifiers without collapsing hidden ra
       nature: 'Modest',
       tailwind: true,
     })?.effective,
-    [170, 264],
+    [200, 264],
   );
   assert.deepEqual(
     reference.speedProfile({

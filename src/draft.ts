@@ -43,9 +43,11 @@ const DRAFT_PROMPT_POLICY = {
   firstTurnInstruction:
     'This is your first pick, so also choose your franchise name: a personalised team name, such as ' +
     '"DeepSeek Wailords", "Golden State Gholdengos" or "Mega-Claude Gaming". Reply with a single JSON object ' +
-    '{"pick": "<board-id>", "team_name": "<your franchise name>", "reasoning": "<2-4 sentences>"} and nothing else.',
+    '{"pick": "<board-id>", "team_name": "<your franchise name>", "reasoning": "<2-4 sentences>", ' +
+    '"notebook": "<concise full roster plan and needs to carry to your next pick>"} and nothing else.',
   turnInstruction:
-    'Reply with a single JSON object {"pick": "<board-id>", "reasoning": "<2-4 sentences>"} and nothing else.',
+    'Reply with a single JSON object {"pick": "<board-id>", "reasoning": "<2-4 sentences>", ' +
+    '"notebook": "<updated concise full roster plan and needs to carry to your next pick>"} and nothing else.',
   turnTemplate:
     'Overall pick {{pick}} of {{total}}. You have {{budget}} points and {{remaining}} left, so you must keep ' +
     '{{reserve}} points back for the rest of your roster: the most you can spend now is {{affordable}}.',
@@ -53,6 +55,7 @@ const DRAFT_PROMPT_POLICY = {
   takenHeading: 'ALREADY DRAFTED:',
   nothingTaken: '- (nothing yet; you have the first pick)',
   rosterHeading: 'YOUR ROSTER:',
+  notebookHeading: 'YOUR PRIVATE DRAFT NOTE FROM YOUR PREVIOUS PICK:',
   emptyRoster: '- (empty)',
   rejectionTemplate: 'That pick was rejected: {{error}}. Reply again with only the JSON object.',
   truncatedTemplate:
@@ -360,6 +363,7 @@ function draftUserPrompt(
   models: string[],
   pickNumber: number,
   legal: readonly DraftBoardMon[],
+  notebook: string,
 ): string {
   const lines: string[] = [];
   const slotsLeft = state.board.picks - state.rosters[drafter]!.length;
@@ -395,6 +399,7 @@ function draftUserPrompt(
         )
       : [DRAFT_PROMPT_POLICY.emptyRoster]),
   );
+  if (notebook) lines.push('', DRAFT_PROMPT_POLICY.notebookHeading, notebook);
   lines.push(
     '',
     state.rosters[drafter]!.length ? DRAFT_PROMPT_POLICY.turnInstruction : DRAFT_PROMPT_POLICY.firstTurnInstruction,
@@ -406,6 +411,7 @@ interface ParsedPick {
   mon: DraftBoardMon;
   reasoning: string;
   teamName: string;
+  notebook: string;
 }
 
 function rejection(pickId: string, legal: DraftBoardMon[], state: DraftState, drafter: number): string {
@@ -448,10 +454,13 @@ export function parsePick(
     .trim()
     .slice(0, 60);
   if (!state.rosters[drafter]!.length && !teamName) return '"team_name" is required with your first pick';
+  const notebook = typeof record.notebook === 'string' ? record.notebook.trim().slice(0, 1_200) : '';
+  if (!notebook) return '"notebook" must be a concise full roster plan to carry to your next pick';
   return {
     mon,
     reasoning: String(record.reasoning ?? '').trim(),
     teamName,
+    notebook,
   };
 }
 
@@ -460,6 +469,7 @@ export interface DraftOutcome {
   picks: DraftPickView[];
   budgets: number[];
   teamNames: string[];
+  notebooks: string[];
 }
 
 export async function runDraft(models: string[], board: DraftBoard, options: RunDraftOptions): Promise<DraftOutcome> {
@@ -488,6 +498,7 @@ export async function runDraft(models: string[], board: DraftBoard, options: Run
   const seatLogs = models.map((model, index) => path.join(options.logDir, `drafter-${index}-${slug(model)}.jsonl`));
   const transcript = path.join(options.logDir, 'draft.jsonl');
   const picks: DraftPickView[] = [];
+  const notebooks = models.map(() => '');
 
   const order = snakeOrder(models.length, board.picks);
   for (const [pickNumber, drafter] of order.entries()) {
@@ -505,7 +516,7 @@ export async function runDraft(models: string[], board: DraftBoard, options: Run
     if (provider) {
       const system = systemPrompts[drafter]!;
       const messages: ProviderMessage[] = [
-        { role: 'user', content: draftUserPrompt(state, drafter, models, pickNumber, legal) },
+        { role: 'user', content: draftUserPrompt(state, drafter, models, pickNumber, legal, notebooks[drafter]!) },
       ];
       let lastError = '';
       for (let attempt = 1; attempt <= DRAFT_PROMPT_POLICY.attempts && !chosen; attempt += 1) {
@@ -548,6 +559,7 @@ export async function runDraft(models: string[], board: DraftBoard, options: Run
             chosen = parsed.mon;
             reasoning = parsed.reasoning;
             if (parsed.teamName && !state.teamNames[drafter]) state.teamNames[drafter] = parsed.teamName;
+            notebooks[drafter] = parsed.notebook;
           }
         } catch (cause) {
           const failure = classifyProviderFailure(cause, models[drafter]);
@@ -610,6 +622,7 @@ export async function runDraft(models: string[], board: DraftBoard, options: Run
         cost: chosen.cost,
         budget_left: state.budgets[drafter],
         rationale: reasoning,
+        ...(notebooks[drafter] ? { notebook: notebooks[drafter] } : {}),
         fallback,
         timestamp: new Date().toISOString(),
       })}\n`,
@@ -618,5 +631,5 @@ export async function runDraft(models: string[], board: DraftBoard, options: Run
     options.onPick?.(view, state);
   }
 
-  return { rosters: state.rosters, picks, budgets: state.budgets, teamNames: state.teamNames };
+  return { rosters: state.rosters, picks, budgets: state.budgets, teamNames: state.teamNames, notebooks };
 }

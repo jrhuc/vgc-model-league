@@ -47,7 +47,8 @@ export interface BattleOutcome {
   log: string[];
   pov: Record<Pid, string[]>;
   errors: Record<Pid, number>;
-  fallbacks: Record<Pid, number>;
+  simulatorSubstitutions: Record<Pid, number>;
+  timerAutodefaults: Record<Pid, number>;
 }
 
 export interface ToolDefinition {

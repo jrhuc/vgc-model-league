@@ -59,16 +59,22 @@ Values from 0.5 through 4 scale every Showdown clock. Each run records the
 selected scale. Ratings do not mix results from different scales.
 
 Draft-league round-robin series run concurrently under `--concurrency`, with
-every team built blind to the other results. `--sequential-weeks` restores
-week-by-week play, where later builds see earlier scores. `--through-week <n>`
-stops a sequential league after that round-robin week. Use
+every matchup built blind to the other round-robin results. `--sequential-weeks`
+serializes the schedule without adding cross-match coaching context;
+`--through-week <n>` stops a sequential league after that round-robin week. Use
 `draft --resume <run-dir>` to continue the stored league. Resume uses the
-stored models, board, seed, rosters, schedule mode, and completed results.
+stored models, board, seed, rosters, schedule mode, completed results, and
+private playoff coaching context.
 
 The Champions Bo3 formats publish open team sheets at team preview: both
 models read the opposing moves, items, abilities, and stat alignments, but
 never the hidden stat points. `draft --closed-sheets` strips that rule so
 models must deduce sets through play.
+
+Draft coaches carry a private roster note across their picks. Each matchup's
+teambuild plan carries into its own best-of-three. Round-robin matchups do not
+share notes or results; playoff coaches receive their own earlier builds,
+results, and final battle notes.
 
 OpenRouter model specs pass variant suffixes through unchanged, so
 `openrouter:<model>:nitro` requests throughput-sorted routing. Set
@@ -104,6 +110,17 @@ npm run build-board -- <pool>
 ```sh
 npm run vgcleague -- standings --pool regmb-202607
 npm run vgcleague -- report    --pool regmb-202607
+```
+
+The GUI archives finished runs: draft leagues under **Draft leagues** (rosters,
+pick rationales, per-series builds, schedule, and the board), brackets under
+**Tournaments**, and cross-mode model profiles under **Data room**.
+
+Decision logs record `reasoning_tokens` and metered cost when the provider
+reports them. Patch logs from runs recorded before this field existed with:
+
+```sh
+npm run backfill-reasoning
 ```
 
 Without `--pool`, standings and reports exclude the disposable `test` pool.

@@ -98,7 +98,7 @@ test('Showdown timer defaults a slow decision', { timeout: 25_000 }, async () =>
     1,
   );
   const outcome = await battle.run({ p1: new SlowEngine('p1', 1), p2: new RandomEngine('p2', 2) });
-  assert.ok(outcome.fallbacks.p1 >= 1);
+  assert.ok(outcome.timerAutodefaults.p1 >= 1);
   assert.ok(outcome.pov.p1.includes('|timer|autodefault'));
 });
 

@@ -225,6 +225,7 @@ test('drafters get retries with feedback, and name their franchise on the first 
   const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-draft-logs-'));
   t.after(() => fs.rmSync(logDir, { recursive: true, force: true }));
   let receivedReasoning = '';
+  const prompts: string[] = [];
   const outcome = await runDraft(
     ['fake:model', 'random'],
     { ...BOARD, picks: 4 },
@@ -234,13 +235,16 @@ test('drafters get retries with feedback, and name their franchise on the first 
       reasoningByModel: { 'fake:model': 'high' },
       makeDraftProvider: (_spec, _apiKey, reasoning) => {
         receivedReasoning = reasoning ?? '';
-        return scriptedProvider([
-          'I will take {"pick": "not-a-mon", "team_name": "Nowhere Nidokings", "reasoning": "bad id"}',
-          '{"pick": "garchomp", "team_name": "Route 210 Garchomps", "reasoning": "Best ground type available."}',
-          '{"pick": "incineroar", "reasoning": "Fake Out support."}',
-          '{"pick": "sinistcha", "reasoning": "Redirection."}',
-          '{"pick": "farigiraf", "reasoning": "Trick Room insurance."}',
-        ]);
+        return scriptedProvider(
+          [
+            'I will take {"pick": "not-a-mon", "team_name": "Nowhere Nidokings", "reasoning": "bad id", "notebook": "bad"}',
+            '{"pick": "garchomp", "team_name": "Route 210 Garchomps", "reasoning": "Best ground type available.", "notebook": "Build around Garchomp; add Fake Out and speed control."}',
+            '{"pick": "incineroar", "reasoning": "Fake Out support.", "notebook": "Garchomp plus Incineroar; add speed control and redirection."}',
+            '{"pick": "sinistcha", "reasoning": "Redirection.", "notebook": "Ground offense with pivoting and redirection; add speed control."}',
+            '{"pick": "farigiraf", "reasoning": "Trick Room insurance.", "notebook": "Complete flexible Ground offense with priority denial and Trick Room."}',
+          ],
+          (messages) => prompts.push(String(messages.at(-1)?.content ?? '')),
+        );
       },
     },
   );
@@ -250,6 +254,10 @@ test('drafters get retries with feedback, and name their franchise on the first 
   assert.equal(outcome.rosters[0]![0]!.id, 'garchomp');
   assert.equal(outcome.picks[0]!.fallback, false);
   assert.match(outcome.picks[0]!.rationale, /Best ground type/);
+  assert.ok(
+    prompts.some((prompt) => prompt.includes('Build around Garchomp; add Fake Out and speed control.')),
+    'the accepted private draft note reaches the next pick',
+  );
 
   const rows = fs
     .readFileSync(path.join(logDir, 'drafter-0-fake-model.jsonl'), 'utf8')
@@ -281,7 +289,7 @@ test('a rejected pick is told which rule it broke', () => {
 
   const reasons = ['nonsense-id', 'charizard-mega-y', 'garchomp-mega', 'basculegion'].map((id) => {
     const legal = legalPicks(state, 0);
-    const parsed = parsePick(JSON.stringify({ pick: id, reasoning: 'x' }), legal, state, 0);
+    const parsed = parsePick(JSON.stringify({ pick: id, reasoning: 'x', notebook: 'plan' }), legal, state, 0);
     return typeof parsed === 'string' ? parsed : 'accepted';
   });
 
@@ -292,7 +300,7 @@ test('a rejected pick is told which rule it broke', () => {
 
   state.budgets[0] = 12;
   const tight = legalPicks(state, 0);
-  const denied = parsePick(JSON.stringify({ pick: 'basculegion', reasoning: 'x' }), tight, state, 0);
+  const denied = parsePick(JSON.stringify({ pick: 'basculegion', reasoning: 'x', notebook: 'plan' }), tight, state, 0);
   assert.match(String(denied), /costs 19, but you can spend at most \d+ points?/);
 });
 
@@ -300,7 +308,15 @@ test('the first pick requires a franchise name', () => {
   const state = freshState();
   const legal = legalPicks(state, 0);
   assert.match(String(parsePick('{"pick":"garchomp"}', legal, state, 0)), /team_name/);
-  assert.notEqual(typeof parsePick('{"pick":"garchomp","team_name":"Route 210 Garchomps"}', legal, state, 0), 'string');
+  assert.notEqual(
+    typeof parsePick(
+      '{"pick":"garchomp","team_name":"Route 210 Garchomps","notebook":"Build around Garchomp"}',
+      legal,
+      state,
+      0,
+    ),
+    'string',
+  );
 });
 
 test('a pick may be written as the board id or the name shown beside it', () => {
@@ -308,7 +324,7 @@ test('a pick may be written as the board id or the name shown beside it', () => 
   const legal = legalPicks(state, 0);
   for (const spelling of ['lucario-mega', 'Mega Lucario', 'mega-lucario', 'MEGA LUCARIO']) {
     const parsed = parsePick(
-      JSON.stringify({ pick: spelling, team_name: 'Mega Evolutions', reasoning: 'x' }),
+      JSON.stringify({ pick: spelling, team_name: 'Mega Evolutions', reasoning: 'x', notebook: 'plan' }),
       legal,
       state,
       0,
@@ -346,7 +362,7 @@ test('drafters can look up the dex before committing a pick', async (t) => {
           if (call === 2) toolResult = String(messages[messages.length - 1]?.content ?? '');
           const picks = ['garchomp', 'incineroar', 'sinistcha', 'farigiraf'];
           return Promise.resolve({
-            text: `{"pick": "${picks[Math.min(call - 2, picks.length - 1)]}", "team_name": "Calc Chompers", "reasoning": "Checked the Mega first."}`,
+            text: `{"pick": "${picks[Math.min(call - 2, picks.length - 1)]}", "team_name": "Calc Chompers", "reasoning": "Checked the Mega first.", "notebook": "Keep checking exact mechanics."}`,
             usage: { total_tokens: 9 },
             toolCalls: [],
           });
@@ -431,7 +447,7 @@ test('a pick cut off by its token budget is told so, not blamed for formatting',
           if (call === 2) secondPrompt = messages.map((message) => String(message.content ?? '')).join('\n');
           const picks = ['garchomp', 'incineroar', 'sinistcha', 'farigiraf'];
           return Promise.resolve({
-            text: `{"pick": "${picks[Math.min(call - 2, picks.length - 1)]}", "team_name": "Budget Chompers", "reasoning": "Kept it short."}`,
+            text: `{"pick": "${picks[Math.min(call - 2, picks.length - 1)]}", "team_name": "Budget Chompers", "reasoning": "Kept it short.", "notebook": "Build balanced offense."}`,
             usage: { output_tokens: 40 },
             toolCalls: [],
           });
@@ -536,7 +552,7 @@ test('transient upstream failures never spend a compliance attempt', async (t) =
           calls += 1;
           if (calls <= 3) return Promise.reject(new ApiError(503, 'overloaded'));
           return Promise.resolve({
-            text: '{"pick": "garchomp", "team_name": "Backoff Braviaries", "reasoning": "Survived the outage."}',
+            text: '{"pick": "garchomp", "team_name": "Backoff Braviaries", "reasoning": "Survived the outage.", "notebook": "Build around Garchomp."}',
             usage: { total_tokens: 10 },
             toolCalls: [],
           });
@@ -569,7 +585,7 @@ test('a quota failure pauses for recovery and resumes where it left off', async 
           calls += 1;
           if (calls === 1) return Promise.reject(new ApiError(429, 'exceeded your current quota'));
           return Promise.resolve({
-            text: '{"pick": "garchomp", "team_name": "Patient Piplups", "reasoning": "Waited it out."}',
+            text: '{"pick": "garchomp", "team_name": "Patient Piplups", "reasoning": "Waited it out.", "notebook": "Build around Garchomp."}',
             usage: { total_tokens: 10 },
             toolCalls: [],
           });
@@ -606,13 +622,15 @@ function teambuildRequest(overrides: Record<string, unknown> = {}) {
     seriesIndex: 0,
     entrant: 0,
     opponent: 1,
+    stage: 'roundrobin' as const,
     model: 'fake:model',
     opponentModel: 'fake:rival',
     teamName: 'Test Tauros',
     opponentTeamName: 'Rival Rotoms',
     roster: TEAMBUILD_ROSTER,
     opponentRoster: TEAMBUILD_ROSTER.slice(0, 10),
-    history: [],
+    draftNote: 'Flexible Ground offense with two speed-control modes.',
+    playoffContext: [],
     format: BOARD.format,
     ...overrides,
   };
@@ -713,7 +731,7 @@ test('the teambuild prompt carries the roster, the opponent, and only legal move
   const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-teambuild-prompt-'));
   t.after(() => fs.rmSync(logDir, { recursive: true, force: true }));
   let prompt = '';
-  await runTeambuild(teambuildRequest({ history: ['Week 1: beat Rival Rotoms 2-0'] }), {
+  await runTeambuild(teambuildRequest({ stage: 'playoff', playoffContext: ['Week 1: beat Rival Rotoms 2-0'] }), {
     logDir,
     rng: seededRng(1),
     makeTeambuildProvider: () =>
@@ -721,10 +739,10 @@ test('the teambuild prompt carries the roster, the opponent, and only legal move
         prompt = messages[0]!.content ?? '';
       }),
   });
-
   assert.ok(prompt.includes('YOUR ROSTER'), 'the model sees its roster');
   assert.ok(prompt.includes('Rival Rotoms'), 'and who it is playing');
-  assert.ok(prompt.includes('Week 1: beat Rival Rotoms 2-0'), 'and its own season so far');
+  assert.ok(prompt.includes('Flexible Ground offense'), 'and its final private draft note');
+  assert.ok(prompt.includes('Week 1: beat Rival Rotoms 2-0'), 'playoff builders receive earlier match context');
   assert.ok(prompt.includes('MUST hold Charizardite Y'), 'the mega lock is stated');
   assert.match(
     prompt,
@@ -733,6 +751,21 @@ test('the teambuild prompt carries the roster, the opponent, and only legal move
   );
   assert.ok(prompt.includes('cannot hold a Mega Stone'), 'and so is its inverse');
   assert.ok(!/moves:.*\bBounce\b/.test(prompt), 'the movepool must not offer moves the validator rejects');
+});
+
+test('round-robin teambuilds do not receive other round-robin match context', async (t) => {
+  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-teambuild-blind-round-robin-'));
+  t.after(() => fs.rmSync(logDir, { recursive: true, force: true }));
+  let prompt = '';
+  await runTeambuild(teambuildRequest({ playoffContext: ['Prior round-robin scouting that must stay blind'] }), {
+    logDir,
+    rng: seededRng(1),
+    makeTeambuildProvider: () =>
+      scriptedProvider([GOOD_TEAM], (messages) => {
+        prompt = messages[0]!.content ?? '';
+      }),
+  });
+  assert.doesNotMatch(prompt, /Prior round-robin scouting/);
 });
 
 test('the system prompt lists the Champions item list, which Gen 9 knowledge gets wrong', async (t) => {
@@ -882,6 +915,7 @@ test('a full draft league drafts, plays weekly rounds, and crowns a champion', a
   assert.equal(config.weeks, 3);
   assert.equal(config.sequential_weeks, false, 'round-robin series run concurrently by default');
   assert.equal(config.closed_sheets, false, 'the stock format keeps its open team sheets by default');
+  assert.deepEqual(config.draft_notes, ['', '', '', '']);
   const rosters = config.rosters as string[][];
   assert.equal(rosters.length, 4);
   for (const roster of rosters) assert.equal(roster.length, 10);
@@ -899,6 +933,13 @@ test('a full draft league drafts, plays weekly rounds, and crowns a champion', a
     .map((line) => JSON.parse(line) as Record<string, unknown>);
   assert.equal(teambuilds.length, rows.length * 2, 'both coaches build before every series');
   for (const build of teambuilds) assert.equal((build.brought as string[]).length, 6);
+  const coaching = fs
+    .readFileSync(path.join(directory, 'coaching.jsonl'), 'utf8')
+    .trim()
+    .split('\n')
+    .map((line) => JSON.parse(line) as Record<string, unknown>);
+  assert.equal(coaching.length, rows.length * 2, 'each coach receives resumable private playoff context');
+  assert.ok(coaching.every((entry) => String(entry.context).includes('Registered sets:')));
 
   const draftEvents = events.filter(
     (event): event is Extract<DraftLeagueEvent, { type: 'draft' }> => event.type === 'draft',

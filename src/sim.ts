@@ -114,7 +114,8 @@ export class SimBattle {
     };
     const povCursor: Record<Pid, number> = { p1: 0, p2: 0 };
     const errors: Record<Pid, number> = { p1: 0, p2: 0 };
-    const fallbacks: Record<Pid, number> = { p1: 0, p2: 0 };
+    const simulatorSubstitutions: Record<Pid, number> = { p1: 0, p2: 0 };
+    const timerAutodefaults: Record<Pid, number> = { p1: 0, p2: 0 };
     const lastRequest: Record<Pid, BattleRequest | undefined> = { p1: undefined, p2: undefined };
     const requestAt: Record<Pid, number> = { p1: 0, p2: 0 };
     const retryCount: Record<Pid, number> = { p1: 0, p2: 0 };
@@ -146,7 +147,7 @@ export class SimBattle {
         pending.delete(pid);
         agents[pid].abandonDecision?.();
       }
-      if (event === 'autodefault') fallbacks[pid] += 1;
+      if (event === 'autodefault') timerAutodefaults[pid] += 1;
       const line = `|timer|${event}`;
       state.pov[pid].push(line);
       state.log.push(line);
@@ -219,7 +220,7 @@ export class SimBattle {
             void Promise.resolve(timer.choose(pid, 'default')).catch(() => {});
             const stopLine = `|-vgctimerstop|${pid}`;
             onUpdate?.([stopLine], [stopLine]);
-            fallbacks[pid] += 1;
+            simulatorSubstitutions[pid] += 1;
             suppressRequest[pid] = line.includes('[Unavailable choice]');
             pendingError[pid] = undefined;
           } else if (!line.includes('[Unavailable choice]') && lastRequest[pid]) {
@@ -299,6 +300,14 @@ export class SimBattle {
       const remaining = state.pov[pid].slice(povCursor[pid]);
       if (remaining.length) await agents[pid].observe(remaining);
     }
-    return { winner: state.winner, turns: state.turns, log: state.log, pov: state.pov, errors, fallbacks };
+    return {
+      winner: state.winner,
+      turns: state.turns,
+      log: state.log,
+      pov: state.pov,
+      errors,
+      simulatorSubstitutions,
+      timerAutodefaults,
+    };
   }
 }

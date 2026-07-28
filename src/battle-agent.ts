@@ -34,6 +34,9 @@ export abstract class BaseEngine implements BattleAgent {
   decisionStats(): Record<string, number> {
     return {};
   }
+  coachingNote(): string {
+    return '';
+  }
 
   async act(request: BattleRequest, context: AgentContext): Promise<string> {
     const menus = buildMenus(request, this.menuHints(request));

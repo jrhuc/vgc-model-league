@@ -11,6 +11,7 @@ import type {
   SideView,
   SpendView,
 } from '../../api';
+import { Mark } from '../components/mark';
 import { Sprite } from '../components/sprite';
 import { api } from '../http';
 
@@ -232,6 +233,7 @@ function Side({
               title={warning}
             />
           )}
+          <Mark spec={side.player} size={16} />
           <b>{side.player}</b>
         </div>
         <span>
@@ -640,7 +642,8 @@ export function ArenaView({ run, battles, selected, onSelect, onLoadGame, onFetc
                   <span class="board-index">{String(index + 1).padStart(2, '0')}</span>
                   <span class="board-match">
                     <span class="board-names">
-                      {item.players.p1} <span class="muted">vs</span> {item.players.p2}
+                      <Mark spec={item.players.p1} size={13} /> {item.players.p1} <span class="muted">vs</span>{' '}
+                      <Mark spec={item.players.p2} size={13} /> {item.players.p2}
                     </span>
                     <span class="board-detail">{rowState(item)}</span>
                   </span>

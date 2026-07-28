@@ -27,9 +27,46 @@ function fakeEngines(): Bo3Context['engines'] {
     ({
       beginGame() {},
       endGame() {},
+      decisionStats() {
+        return { fallbacks: 0 };
+      },
     }) as unknown as Bo3Context['engines']['p1'];
   return { p1: engine(), p2: engine() };
 }
+
+test('game evidence separates model defaults, simulator substitutions, and timer autodefaults', async (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-series-fallback-evidence-'));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const engines = fakeEngines();
+  let modelFallbacks = 5;
+  engines.p1.decisionStats = () => ({ fallbacks: modelFallbacks });
+  const result = await playBo3({
+    engines,
+    names: { p1: 'Side One', p2: 'Side Two' },
+    players: { p1: 'model-one', p2: 'model-two' },
+    teams: { p1: { id: 'one', packed: '' }, p2: { id: 'two', packed: '' } },
+    gameSeeds: [[1, 2, 3, 4]],
+    seriesId: 'fallbacks',
+    seriesDir: directory,
+    format: 'test',
+    psDir: '',
+    runBattle: async () => {
+      modelFallbacks = 8;
+      return {
+        winner: 'Side One',
+        turns: 1,
+        log: ['|win|Side One'],
+        pov: { p1: [], p2: [] },
+        errors: { p1: 0, p2: 0 },
+        simulatorSubstitutions: { p1: 1, p2: 0 },
+        timerAutodefaults: { p1: 2, p2: 0 },
+      };
+    },
+  });
+  assert.deepEqual(result.games[0]!.model_choice_fallbacks, { p1: 3, p2: 0 });
+  assert.deepEqual(result.games[0]!.simulator_substitutions, { p1: 1, p2: 0 });
+  assert.deepEqual(result.games[0]!.timer_autodefaults, { p1: 2, p2: 0 });
+});
 
 test('single elimination plays deterministic tiebreak games until one side wins', async (t) => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-series-tiebreak-'));
@@ -65,7 +102,8 @@ test('single elimination plays deterministic tiebreak games until one side wins'
           log: [winner ? `|win|${winner}` : '|tie'],
           pov: { p1: [], p2: [] },
           errors: { p1: 0, p2: 0 },
-          fallbacks: { p1: 0, p2: 0 },
+          simulatorSubstitutions: { p1: 0, p2: 0 },
+          timerAutodefaults: { p1: 0, p2: 0 },
         };
       },
     });
@@ -77,6 +115,9 @@ test('single elimination plays deterministic tiebreak games until one side wins'
   assert.equal(first.result.winnerSide, 'p2');
   assert.deepEqual(first.result.score, { p1: 0, p2: 1 });
   assert.equal(first.result.games.length, 4);
+  assert.deepEqual(first.result.games[0]!.model_choice_fallbacks, { p1: 0, p2: 0 });
+  assert.deepEqual(first.result.games[0]!.simulator_substitutions, { p1: 0, p2: 0 });
+  assert.deepEqual(first.result.games[0]!.timer_autodefaults, { p1: 0, p2: 0 });
   assert.deepEqual(first.seeds.slice(0, 3), planned);
   assert.deepEqual(first.seeds[3], second.seeds[3]);
 });
@@ -109,7 +150,8 @@ test('single elimination fails rather than fabricating a winner after the safety
           log: ['|tie'],
           pov: { p1: [], p2: [] },
           errors: { p1: 0, p2: 0 },
-          fallbacks: { p1: 0, p2: 0 },
+          simulatorSubstitutions: { p1: 0, p2: 0 },
+          timerAutodefaults: { p1: 0, p2: 0 },
         };
       },
     }),

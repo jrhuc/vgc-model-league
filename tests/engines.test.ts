@@ -765,12 +765,26 @@ test('readable decisions, technical traces, and post-game reflections stay separ
   ]);
   const decisions: Record<string, unknown>[] = [];
   const traces: Record<string, unknown>[] = [];
-  const engine = new LLMEngine('p1', 'scripted', { provider, decisionLog: decisions, traceLog: traces });
+  const engine = new LLMEngine('p1', 'scripted', {
+    provider,
+    decisionLog: decisions,
+    traceLog: traces,
+    initialNotebook: 'Matchup build: preserve Mon1.',
+  });
   engine.beginGame({ gameId: 'game-1', gameNumber: 1, seriesId: 'series-1' });
   assert.equal(await engine.act(request(), { povLines: ['|turn|1'] }), 'move 2');
+  assert.match(String(provider.calls[0]!.messages[0]!.content), /Matchup build: preserve Mon1/);
   await engine.endGame({
     gameNumber: 1,
-    outcome: { winner: 'p1-scripted', won: true, turns: 1, errors: 0, fallbacks: 0 },
+    outcome: {
+      winner: 'p1-scripted',
+      won: true,
+      turns: 1,
+      errors: 0,
+      model_choice_fallbacks: 2,
+      simulator_substitutions: 1,
+      timer_autodefaults: 3,
+    },
     seriesScore: { p1: 1, p2: 0 },
   });
 
@@ -786,6 +800,11 @@ test('readable decisions, technical traces, and post-game reflections stay separ
   assert.ok('prompt' in traces[0]! && 'raw_response' in traces[0]! && 'menus' in traces[0]!);
   assert.equal(traces[1]!.kind, 'reflection_trace');
   assert.match(provider.calls[1]!.system, /reviewing one completed game/);
+  assert.match(
+    String(provider.calls[1]!.messages[0]!.content),
+    /Model-choice defaults: 2\. Simulator substitutions: 1\. Timer autodefaults: 3\./,
+  );
+  assert.equal(engine.coachingNote(), 'Mon1 is the preferred endgame; verify opposing speed order.');
   assert.deepEqual(engine.decisionStats(), {
     ...oneMoveStats,
     reflections: 1,
