@@ -335,6 +335,33 @@ test('OpenRouter requests buy usage accounting and surface cost and upstream pro
   assert.equal(completion.usage.output_tokens, 2);
 });
 
+test('OpenRouter requests for Anthropic models carry cache breakpoints, others stay untouched', async () => {
+  let body: Record<string, unknown> = {};
+  const fetch = (async (_input, init) => {
+    body = JSON.parse(String(init?.body));
+    return jsonResponse({
+      choices: [{ message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' }],
+      usage: { prompt_tokens: 4, completion_tokens: 2, total_tokens: 6 },
+    });
+  }) as typeof globalThis.fetch;
+
+  const claude = makeProvider(parseSpec('openrouter:anthropic/claude-opus-5'), { apiKey: 'or-key', fetch });
+  await claude.complete('rules', [{ role: 'user', content: 'state' }]);
+  const messages = body.messages as Array<{ role: string; content: unknown }>;
+  const system = messages.find((message) => message.role === 'system');
+  const user = messages.find((message) => message.role === 'user');
+  assert.deepEqual(system?.content, [{ type: 'text', text: 'rules', cache_control: { type: 'ephemeral' } }]);
+  assert.deepEqual(user?.content, [{ type: 'text', text: 'state', cache_control: { type: 'ephemeral' } }]);
+
+  const glm = makeProvider(parseSpec('openrouter:z-ai/glm-5.2'), { apiKey: 'or-key', fetch });
+  await glm.complete('rules', [{ role: 'user', content: 'state' }]);
+  const untouched = body.messages as Array<{ role: string; content: unknown }>;
+  assert.ok(
+    untouched.every((message) => typeof message.content === 'string'),
+    'non-Anthropic models keep plain string content',
+  );
+});
+
 test('OpenRouter routing preferences come from the environment and must be JSON', async () => {
   process.env.VGC_OPENROUTER_PROVIDER = '{"order":["deepinfra"]}';
   try {
@@ -507,4 +534,9 @@ test('Anthropic maps adaptive reasoning without temperature', async () => {
   assert.equal(outputConfig?.effort ?? body.effort, 'xhigh');
   assert.equal('temperature' in body, false);
   assert.equal(completion.text, 'hello');
+  const system = body.system as Array<Record<string, unknown>>;
+  assert.deepEqual(system[0]?.cache_control, { type: 'ephemeral' }, 'the system prefix is a cache breakpoint');
+  const messages = body.messages as Array<{ content: Array<Record<string, unknown>> }>;
+  const lastPart = messages[messages.length - 1]?.content.at(-1);
+  assert.deepEqual(lastPart?.cache_control, { type: 'ephemeral' }, 'the conversation tail is a cache breakpoint');
 });
