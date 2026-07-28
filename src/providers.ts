@@ -377,6 +377,7 @@ function openRouterFetch(
         const body = JSON.parse(request.body) as JsonObject;
         body.usage = { include: true };
         if (routing) body.provider = routing;
+        if (typeof body.model === 'string' && body.model.startsWith('anthropic/')) markCacheBreakpoints(body);
         request = { ...request, body: JSON.stringify(body) };
       } catch {}
     }
@@ -390,6 +391,47 @@ function openRouterFetch(
     }
     return response;
   };
+}
+
+/**
+ * Anthropic bills every resent prefix token at full price unless an explicit
+ * cache_control breakpoint marks it cacheable; OpenRouter only forwards
+ * breakpoints written as content-part fields on its chat-completions shape.
+ */
+function markCacheBreakpoints(body: JsonObject): void {
+  if (!Array.isArray(body.messages)) return;
+  const mark = (message: JsonObject): boolean => {
+    if (typeof message.content === 'string' && message.content) {
+      message.content = [{ type: 'text', text: message.content, cache_control: { type: 'ephemeral' } }];
+      return true;
+    }
+    if (Array.isArray(message.content)) {
+      for (let index = message.content.length - 1; index >= 0; index -= 1) {
+        const part = message.content[index];
+        if (isRecord(part) && part.type === 'text' && typeof part.text === 'string' && part.text) {
+          part.cache_control = { type: 'ephemeral' };
+          return true;
+        }
+      }
+    }
+    return false;
+  };
+  const messages = body.messages.filter(isRecord);
+  const system = messages.find((message) => message.role === 'system');
+  if (system) mark(system);
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message && message !== system && message.role !== 'tool' && mark(message)) break;
+  }
+}
+
+const ANTHROPIC_CACHE_OPTIONS = { anthropic: { cacheControl: { type: 'ephemeral' } } };
+
+function withCacheBreakpoint(messages: ModelMessage[]): ModelMessage[] {
+  const marked = [...messages];
+  const last = marked[marked.length - 1];
+  if (last) marked[marked.length - 1] = { ...last, providerOptions: ANTHROPIC_CACHE_OPTIONS } as ModelMessage;
+  return marked;
 }
 
 function googleThinkingBudgetMax(model: string): number {
@@ -565,8 +607,14 @@ export class SdkProvider implements Provider {
       try {
         const result = await generateText({
           model,
-          system,
-          messages: convertMessages(messages),
+          system:
+            this.spec.provider === 'anthropic'
+              ? { role: 'system', content: system, providerOptions: ANTHROPIC_CACHE_OPTIONS }
+              : system,
+          messages:
+            this.spec.provider === 'anthropic'
+              ? withCacheBreakpoint(convertMessages(messages))
+              : convertMessages(messages),
           ...(tools && !suppressTools ? { tools } : {}),
           ...(tools && !suppressTools && sendToolChoice ? { toolChoice: options.toolChoice } : {}),
           maxOutputTokens,
@@ -586,6 +634,9 @@ export class SdkProvider implements Provider {
             input_tokens: result.usage.inputTokens ?? 0,
             output_tokens: result.usage.outputTokens ?? 0,
             ...(reasoningTokens > 0 ? { reasoning_tokens: reasoningTokens } : {}),
+            ...((result.usage.inputTokenDetails?.cacheReadTokens ?? 0) > 0
+              ? { cached_input_tokens: result.usage.inputTokenDetails.cacheReadTokens as number }
+              : {}),
             ...(this.gatewayMeta?.cost !== undefined ? { cost: this.gatewayMeta.cost } : {}),
           },
           ...(this.gatewayMeta?.provider ? { provider: this.gatewayMeta.provider } : {}),
