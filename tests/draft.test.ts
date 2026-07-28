@@ -772,7 +772,7 @@ test('the system prompt lists the Champions item list, which Gen 9 knowledge get
   const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-teambuild-items-'));
   t.after(() => fs.rmSync(logDir, { recursive: true, force: true }));
   let system = '';
-  await runTeambuild(teambuildRequest(), {
+  await runTeambuild(teambuildRequest({ roster: [...TEAMBUILD_ROSTER, mon('annihilape')] }), {
     logDir,
     rng: seededRng(1),
     makeTeambuildProvider: () => ({
@@ -790,6 +790,8 @@ test('the system prompt lists the Champions item list, which Gen 9 knowledge get
     assert.ok(!system.includes(absent), `${absent} does not exist in Champions and must not be offered`);
   }
   assert.ok(!system.includes('Charizardite'), 'Mega Stones are locked or banned per entry, never a free choice');
+  assert.ok(!system.includes('Final Gambit'), 'Annihilape does not learn Final Gambit in Champions');
+  assert.ok(!system.includes('Knock Off'), 'Incineroar does not learn Knock Off in Champions');
 });
 
 test('an illegal team is rejected with Showdown’s own errors, then repaired', async (t) => {

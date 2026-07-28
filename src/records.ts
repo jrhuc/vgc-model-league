@@ -49,9 +49,7 @@ export function modelKey(spec: string): string {
 export const TEST_POOL = 'test';
 
 export function scopeRows(rows: SeriesRecord[], pool?: string): SeriesRecord[] {
-  return pool === undefined
-    ? rows.filter((row) => row.pool !== TEST_POOL && (row.mode ?? 'rotation') === 'rotation')
-    : rows.filter((row) => row.pool === pool);
+  return pool === undefined ? rows.filter((row) => row.pool !== TEST_POOL) : rows.filter((row) => row.pool === pool);
 }
 
 function playedRows(rows: SeriesRecord[]): SeriesRecord[] {

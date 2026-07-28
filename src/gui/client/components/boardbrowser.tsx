@@ -97,10 +97,12 @@ export function BoardBrowser({
             onInput={(event) => setQuery((event.target as HTMLInputElement).value)}
           />
         </label>
-        <label class="board-toggle">
-          <input type="checkbox" checked={hideTaken} onChange={() => setHideTaken((value) => !value)} />
-          Available only
-        </label>
+        {owners.size > 0 ? (
+          <label class="board-toggle">
+            <input type="checkbox" checked={hideTaken} onChange={() => setHideTaken((value) => !value)} />
+            Available only
+          </label>
+        ) : null}
         <span class="board-count">
           <b>{count}</b> / {board.length}
         </span>

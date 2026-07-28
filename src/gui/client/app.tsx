@@ -367,6 +367,7 @@ export function App() {
             <LeaguesView
               active
               epoch={recordsEpoch}
+              boards={app.boards}
               run={route.run}
               team={route.team}
               onOpenLeague={openLeague}

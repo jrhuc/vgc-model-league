@@ -259,7 +259,7 @@ function summarizeTournaments(rows: SeriesRecord[]): TournamentSummary {
 
 export function buildEvidence(allRows: SeriesRecord[], runsDir: string, pool: string | null): EvidenceResponse {
   const rated = scopeRows(allRows, pool ?? undefined)
-    .filter((row) => (row.mode ?? 'rotation') === 'rotation' && row.players?.p1 && row.players?.p2)
+    .filter((row) => row.players?.p1 && row.players?.p2)
     .sort((a, b) => String(a.timestamp ?? '').localeCompare(String(b.timestamp ?? '')));
   const buckets = new Map<string, StatBucket>();
   for (const row of rated) {

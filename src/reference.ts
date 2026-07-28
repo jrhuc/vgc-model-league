@@ -4,6 +4,8 @@ import { defaultPsDir } from './paths.js';
 import { loadShowdown, showdownCommit } from './showdown.js';
 import type { ToolDefinition } from './types.js';
 
+type FormatDataKind = 'move' | 'item';
+
 function tool(
   name: string,
   description: string,
@@ -437,6 +439,7 @@ export class ShowdownReference {
       ShowdownReference.prototype.lookup,
       prototype.lookupSpecies,
       prototype.lookupOne,
+      prototype.formatLegalityError,
       prototype.lookupMatchup,
       prototype.estimateDamage,
       id,
@@ -726,8 +729,12 @@ export class ShowdownReference {
   lookup(name: string, args: Record<string, unknown> = {}): string {
     const value = typeof args.name === 'string' ? args.name : '';
     if (name === 'lookup_species') return this.lookupSpecies(value, args.item, args.nature);
-    if (name === 'lookup_move') return this.lookupOne('Move', value, { moves: [value] });
-    if (name === 'lookup_item') return this.lookupOne('Item', value, { items: [value] });
+    if (name === 'lookup_move') {
+      return this.formatLegalityError('move', value) ?? this.lookupOne('Move', value, { moves: [value] });
+    }
+    if (name === 'lookup_item') {
+      return this.formatLegalityError('item', value) ?? this.lookupOne('Item', value, { items: [value] });
+    }
     if (name === 'lookup_ability') return this.lookupOne('Ability', value, { abilities: [value] });
     if (name === 'lookup_nature') return this.lookupOne('Nature', value, { natures: [value] }, '- Stat alignment ');
     if (name === 'calculate_stats') return this.calculateStats(args);
@@ -736,8 +743,20 @@ export class ShowdownReference {
     return `Unknown tool: ${name}`;
   }
 
+  private formatLegalityError(kind: FormatDataKind, name: string): string | null {
+    if (!name.trim()) return null;
+    const data = kind === 'move' ? this.dex.moves.get(name) : this.dex.items.get(name);
+    if (!data.exists) return null;
+    const banned = this.battle.ruleTable.has(`-${kind}:${data.id}`);
+    return data.isNonstandard || banned ? `${data.name} is not legal in ${this.format}.` : null;
+  }
+
   private lookupSpecies(name: string, item?: unknown, nature?: unknown): string {
     if (!name.trim()) return 'Species name is required.';
+    if (typeof item === 'string') {
+      const error = this.formatLegalityError('item', item);
+      if (error) return error;
+    }
     const lines = this.render({
       speciesSets: [
         [
@@ -765,6 +784,8 @@ export class ShowdownReference {
     if (moveName.trim()) {
       const move = this.dex.moves.get(moveName);
       if (!move.exists) return `No move data for ${JSON.stringify(moveName)} in ${this.format}.`;
+      const error = this.formatLegalityError('move', moveName);
+      if (error) return error;
       if (move.id === 'ragingbull' && !attacker?.exists) return 'attacker is required to resolve Raging Bull typing.';
       attackType = speciesMoveType(move.id, move.type, attacker?.name ?? '');
       moveName = move.name;
@@ -818,6 +839,13 @@ export class ShowdownReference {
     if (!attacker.exists) return `No species data for ${JSON.stringify(attackerName)}.`;
     if (!defender.exists) return `No species data for ${JSON.stringify(defenderName)}.`;
     if (!move.exists) return `No move data for ${JSON.stringify(moveName)}.`;
+    const moveError = this.formatLegalityError('move', moveName);
+    if (moveError) return moveError;
+    for (const key of ['attacker_item', 'defender_item'] as const) {
+      const itemName = typeof args[key] === 'string' ? args[key] : '';
+      const itemError = this.formatLegalityError('item', itemName);
+      if (itemError) return itemError;
+    }
     if (move.category === 'Status' || !move.basePower)
       return `${move.name} is not a standard damaging move with a base power; no estimate.`;
 

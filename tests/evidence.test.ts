@@ -83,6 +83,34 @@ test('buildEvidence aggregates decision logs, rates, and luck', () => {
   fs.rmSync(runsDir, { recursive: true, force: true });
 });
 
+test('overall play evidence includes every mode and excludes the test pool', () => {
+  const modes: SeriesRecord['mode'][] = ['rotation', 'draft', 'tournament', 'exhibition'];
+  const rows = modes.map(
+    (mode, index) =>
+      ({
+        mode,
+        run_id: `run-${index}`,
+        series_id: `series-${index}`,
+        timestamp: `2026-07-24T12:00:0${index}.000Z`,
+        pool: mode === 'draft' ? undefined : 'regmb',
+        players: { p1: `provider:model-${index}`, p2: 'random' },
+        winner: `provider:model-${index}`,
+        score: { p1: 2, p2: 0 },
+        turns: 8,
+        games: [],
+        decision_stats: { p1: { decisions: 2 }, p2: {} },
+      }) as SeriesRecord,
+  );
+  rows.push({ ...rows[0]!, run_id: 'scratch', series_id: 'scratch', pool: 'test' });
+  const evidence = buildEvidence(rows, '/missing-runs', null);
+  assert.equal(evidence.count, 4);
+  assert.equal(evidence.decisions, 8);
+  assert.deepEqual(
+    evidence.models.map((model) => model.spec),
+    ['model-0', 'model-1', 'model-2', 'model-3'],
+  );
+});
+
 test('buildTournaments counts placements by distance from the final', () => {
   const match = (round: number, p1: string, p2: string, winner: string): SeriesRecord =>
     ({

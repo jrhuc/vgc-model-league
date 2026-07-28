@@ -85,7 +85,8 @@ test('scoping keeps the test pool out of overall views but selectable', () => {
   ];
   assert.deepEqual(
     scopeRows(rows).map((item) => item.players.p1),
-    ['a', 'legacy-a'],
+    ['a', 'legacy-a', 't1', 'e1'],
+    'overall play data includes every non-test mode',
   );
   assert.equal(scopeRows(rows, 'regmb-202607').length, 3);
   const rated = standings(scopeRows(rows, 'regmb-202607'));

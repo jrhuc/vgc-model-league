@@ -659,7 +659,7 @@ export function DataRoomView({
     };
   }, [models, evidence]);
   const poolOptions = [
-    { value: '', label: 'Overall', description: 'All pools except the test pool' },
+    { value: '', label: 'All play data', description: 'Every format and mode except the test pool' },
     ...(data?.pools ?? []).map((name) => ({ value: name, label: name })),
   ];
   const speedOptions = groups.map((entry) => ({
@@ -671,7 +671,7 @@ export function DataRoomView({
   const scopeText = data
     ? data.pool
       ? `${data.count} recorded series in pool ${data.pool}.${provenance}`
-      : `${data.count} recorded series across all pools except the test pool.${provenance}`
+      : `${data.count} recorded series across every format and mode except the test pool.${provenance}`
     : 'Loading records...';
   return (
     <>
@@ -683,8 +683,10 @@ export function DataRoomView({
           <h1>Records.</h1>
         </div>
         <p class="lede">
-          {SECTIONS.find((entry) => entry.id === section)?.blurb} The same model is merged across providers, battle
-          speeds are rated separately, and the test pool is excluded from the overall view.
+          {SECTIONS.find((entry) => entry.id === section)?.blurb}{' '}
+          {section === 'ladder'
+            ? 'Rotation ratings stay split by battle speed; test runs stay excluded.'
+            : 'Model behavior is merged across providers, formats, and modes; test runs stay excluded.'}
         </p>
       </div>
       <nav class="section-nav" aria-label="Data room sections">
@@ -737,7 +739,11 @@ export function DataRoomView({
         </div>
       ) : (
         <div class="stat-row">
-          <StatTile label="Rated series" value={String(evidence?.count ?? 0)} note="every battle speed in scope" />
+          <StatTile
+            label="Recorded series"
+            value={String(evidence?.count ?? 0)}
+            note="every format and battle speed in scope"
+          />
           <StatTile label="Decisions logged" value={String(totals.decisions)} note="engine decisions with evidence" />
           <StatTile
             label="Median decision"

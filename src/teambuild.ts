@@ -12,7 +12,7 @@ import type { RecoveryGate } from './recovery.js';
 import { ShowdownReference } from './reference.js';
 import type { ShowdownApi } from './showdown.js';
 import { loadShowdown } from './showdown.js';
-import { normalizePackedTeam } from './teams.js';
+import { normalizePackedTeam, validateTeam } from './teams.js';
 import type { Provider, ProviderFailure, ProviderMessage } from './types.js';
 
 const TEAMBUILD_PROMPT_POLICY = {
@@ -131,7 +131,9 @@ function legalMoves(dex: DexLike, mon: DraftBoardMon): string[] {
   const names: string[] = [];
   for (const id of pool) {
     const move = dex.moves.get(id);
-    if (move?.exists && !move.isNonstandard) names.push(move.name);
+    if (move?.exists && !move.isNonstandard) {
+      names.push(move.name);
+    }
   }
   return names.sort();
 }
@@ -379,13 +381,12 @@ function packSet(dex: DexLike, mon: DraftBoardMon, set: RawSet): string {
 
 export async function runTeambuild(request: TeambuildRequest, options: TeambuildOptions): Promise<TeambuildResult> {
   const psDir = options.psDir ?? defaultPsDir();
-  const { Dex, TeamValidator } = loadShowdown(psDir);
+  const { Dex } = loadShowdown(psDir);
   const format = Dex.formats.get(request.format);
   const dex = Dex.mod(format.mod || 'base') as unknown as DexLike;
   const ruleTable = Dex.formats.getRuleTable(format);
   const evLimit = ruleTable.evLimit ?? 508;
   const evMax = 32;
-  const validator = new TeamValidator(request.format);
   const reference = new ShowdownReference(request.format, psDir);
   fs.mkdirSync(options.logDir, { recursive: true });
   const logFile = path.join(
@@ -441,7 +442,7 @@ export async function runTeambuild(request: TeambuildRequest, options: Teambuild
         error = truncated ? 'the reply used its whole token budget before finishing the team' : parsed;
         lastError = error;
       } else {
-        const problems = validateCandidate(dex, validator, parsed.sets, owned, psDir);
+        const problems = validateCandidate(dex, request.format, parsed.sets, owned, psDir);
         if (problems.length) {
           error = problems.join('\n');
           lastError = error;
@@ -511,7 +512,7 @@ export async function runTeambuild(request: TeambuildRequest, options: Teambuild
 
   const problems = validateCandidate(
     dex,
-    validator,
+    request.format,
     repaired.map((entry) => entry.set),
     owned,
     psDir,
@@ -525,7 +526,7 @@ export async function runTeambuild(request: TeambuildRequest, options: Teambuild
     });
     const fallbackProblems = validateCandidate(
       dex,
-      validator,
+      request.format,
       repaired.map((entry) => entry.set),
       owned,
       psDir,
@@ -570,7 +571,7 @@ export async function runTeambuild(request: TeambuildRequest, options: Teambuild
 
 function validateCandidate(
   dex: DexLike,
-  validator: { validateTeam(team: unknown[]): string[] | null },
+  format: string,
   sets: RawSet[],
   owned: Map<string, DraftBoardMon>,
   psDir: string,
@@ -593,7 +594,11 @@ function validateCandidate(
   const packed = sets.map((set) => packSet(dex, owned.get(set.id)!, set)).join(']');
   const unpacked = Teams.unpack(packed);
   if (!unpacked) return [...problems, 'the sets could not be assembled into a team'];
-  for (const problem of validator.validateTeam(unpacked) ?? []) problems.push(problem);
+  try {
+    validateTeam(packed, format, psDir);
+  } catch (cause) {
+    problems.push(...(cause instanceof Error ? cause.message : String(cause)).split('\n'));
+  }
   return problems;
 }
 

@@ -367,6 +367,8 @@ textarea { min-height: 170px; resize: vertical; font: 12px/1.5 var(--mono); }
   .header-state { display: none; }
   .fixture-layout, .arena-grid, .results-grid { grid-template-columns: 1fr; }
   .stat-row { grid-template-columns: 1fr 1fr; }
+  .league-index-layout { grid-template-columns: 1fr; }
+  .draft-board-shelf { position: static; }
   .settings { position: static; }
   .arena-grid { display: flex; flex-direction: column-reverse; }
   .series-board, .battlefield { width: 100%; }
@@ -489,9 +491,10 @@ textarea { min-height: 170px; resize: vertical; font: 12px/1.5 var(--mono); }
 .bracket-match.archived { cursor: default; }
 .bracket-match.archived:hover { border-color: var(--line-strong); }
 
-.league-view { display: flex; flex-direction: column; gap: 18px; }
-.league-view .panel { margin: 0; padding: 0; overflow: hidden; }
-.league-heading { margin-bottom: 4px; }
+.league-view { display: flex; flex-direction: column; gap: 24px; }
+.league-view > .panel { margin: 0; padding: 0; overflow: hidden; }
+.league-heading { margin-bottom: 0; }
+.league-view > .stat-row, .league-view > .franchise-card-grid { margin-bottom: 0; }
 .empty-note { color: var(--ink-soft); font: 500 13px/1.5 var(--body); }
 .league-view > .panel > .empty-note { margin: 18px 24px; }
 .board-callout { margin: 18px 24px 0; padding: 12px 14px; border-left: 3px solid var(--blue); background: #edf3ff; color: var(--blue-dark); font-size: 12px; }
@@ -587,7 +590,7 @@ textarea { min-height: 170px; resize: vertical; font: 12px/1.5 var(--mono); }
 }
 
 /* Model marks */
-.mark { display: inline-block; vertical-align: -2px; image-rendering: pixelated; flex: 0 0 auto; }
+.mark { display: inline-block; vertical-align: -2px; image-rendering: auto; flex: 0 0 auto; }
 .mark-monogram { display: inline-grid; place-items: center; background: var(--navy); color: white; font: 800 9px/1 var(--mono); vertical-align: -2px; }
 .model-link { display: inline-flex; align-items: center; gap: 7px; border: 0; background: none; padding: 0; color: inherit; font: inherit; cursor: pointer; min-width: 0; }
 .model-link span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -596,6 +599,21 @@ textarea { min-height: 170px; resize: vertical; font: 12px/1.5 var(--mono); }
 .text-link:hover { color: var(--blue); text-decoration: underline; }
 .text-link.winner { font-weight: 700; }
 .event-link { margin-right: 12px; color: var(--blue); }
+
+.league-index-layout { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 20px; align-items: start; }
+.league-index-main { min-width: 0; }
+.draft-board-shelf { position: sticky; top: 88px; overflow: hidden; }
+.board-snapshot-list { display: flex; flex-direction: column; gap: 10px; padding: 14px; }
+.board-snapshot { width: 100%; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px 14px; align-items: start; padding: 14px; border: 1px solid var(--line); background: white; color: var(--ink); text-align: left; cursor: pointer; }
+.board-snapshot:hover { border-color: var(--blue); background: #f7f9fd; }
+.board-snapshot > span:first-child { min-width: 0; }
+.board-snapshot b, .board-snapshot small { display: block; }
+.board-snapshot b { font: 800 14px/1.15 var(--display); letter-spacing: .02em; text-transform: uppercase; }
+.board-snapshot small { margin-top: 5px; color: var(--ink-soft); font: 700 9px/1.3 var(--mono); overflow-wrap: anywhere; }
+.board-snapshot-count { color: var(--blue-dark); font: 900 22px/1 var(--display); text-align: right; }
+.board-snapshot-count small { text-transform: uppercase; }
+.board-snapshot-meta { grid-column: 1 / -1; padding-top: 8px; border-top: 1px solid var(--line); color: var(--ink-soft); font: 800 9px/1 var(--mono); letter-spacing: .06em; text-transform: uppercase; }
+.archive-board-view > .empty-note { margin: 18px 24px; }
 
 /* League archive */
 .league-card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; }
@@ -633,6 +651,9 @@ textarea { min-height: 170px; resize: vertical; font: 12px/1.5 var(--mono); }
 .franchise-card-foot .text-link { color: var(--blue); font: 800 10px/1 var(--mono); letter-spacing: .05em; text-transform: uppercase; }
 
 .schedule-table td { vertical-align: middle; }
+.usage-table td { vertical-align: middle; }
+.usage-mon { display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; }
+.usage-mon b { font-size: 12px; }
 .game-chips { display: inline-flex; gap: 3px; }
 .game-chip { display: inline-grid; place-items: center; width: 18px; height: 18px; border: 1px solid var(--line-strong); color: var(--ink-soft); font: 800 9px/1 var(--mono); }
 .game-chip.left { background: var(--navy); border-color: var(--navy); color: white; }

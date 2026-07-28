@@ -124,6 +124,11 @@ test('lookup tools return one entry and reject missing data', () => {
   assert.match(reference.lookup('lookup_move', { name: 'Earthquake' }), /Earthquake/);
   assert.match(reference.lookup('lookup_move', { name: 'Protect' }), /triples each time/);
   assert.match(reference.lookup('lookup_move', { name: 'NotAMove' }), /No move data/);
+  assert.match(reference.lookup('lookup_move', { name: 'Final Gambit' }), /Final Gambit/);
+  assert.equal(
+    reference.lookup('lookup_item', { name: 'Eviolite' }),
+    'Eviolite is not legal in gen9championsvgc2026regmb.',
+  );
   assert.equal(reference.lookup('lookup_species', { name: '' }), 'Species name is required.');
   assert.equal(reference.lookup('unknown'), 'Unknown tool: unknown');
   assert.deepEqual(DEX_TOOLS.find((tool) => tool.name === 'lookup_species')!.parameters.required, ['name']);
@@ -210,19 +215,19 @@ test('exact defender stats collapse the open-sheet range', () => {
   assert.ok(spread(exact) < spread(open), 'exact stats must narrow the damage range');
 });
 
-test('defender items model Assault Vest and Eviolite and disclose everything else', () => {
+test('damage tools reject items removed from the Champions format', () => {
   const reference = new ShowdownReference('gen9championsvgc2026regmb');
   const args = { attacker: 'Gengar', defender: 'Farigiraf', move: 'Sludge Bomb' };
   assert.match(reference.lookup('estimate_damage', args), /defender item 1x/);
-  assert.match(reference.lookup('estimate_damage', { ...args, defender_item: 'Assault Vest' }), /defender item 1\.5x/);
-  assert.match(
-    reference.lookup('estimate_damage', { ...args, move: 'Crunch', defender_item: 'Assault Vest' }),
-    /defender item 1x/,
+  assert.equal(
+    reference.lookup('estimate_damage', { ...args, defender_item: 'Assault Vest' }),
+    'Assault Vest is not legal in gen9championsvgc2026regmb.',
   );
-  assert.match(
-    reference.lookup('estimate_damage', { ...args, defender_item: 'Leftovers' }),
-    /defender item 1x.*other than Assault Vest\/Eviolite/s,
+  assert.equal(
+    reference.lookup('estimate_damage', { ...args, defender_item: 'Eviolite' }),
+    'Eviolite is not legal in gen9championsvgc2026regmb.',
   );
+  assert.match(reference.lookup('estimate_damage', { ...args, defender_item: 'Leftovers' }), /defender item 1x/);
 });
 
 test('damage estimates accept percentages only, reject zero exact stats, and label KO certainty', () => {

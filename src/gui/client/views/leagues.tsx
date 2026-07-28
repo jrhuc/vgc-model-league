@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'preact/hooks';
 
 import type {
+  BoardInfo,
   LeagueCardView,
   LeagueFranchiseView,
   LeagueResponse,
@@ -443,7 +444,41 @@ function LeaguePage({
     );
   }
 
-  const standings = [...league.franchises].sort((a, b) => b.w - a.w || b.gw - b.gl - (a.gw - a.gl));
+  const franchises = [...league.franchises].sort(
+    (a, b) =>
+      Number(b.entrant === league.champion?.entrant) - Number(a.entrant === league.champion?.entrant) ||
+      b.w - a.w ||
+      b.gw - b.gl - (a.gw - a.gl),
+  );
+  const seriesByIndex = new Map(league.series.map((series) => [series.seriesIndex, series] as const));
+  const usageByPick = new Map<
+    string,
+    { entrant: number; id: string; name: string; cost: number; matchups: number; w: number; l: number }
+  >();
+  for (const build of league.teambuilds) {
+    const franchise = league.franchises.find((entry) => entry.entrant === build.entrant);
+    const series = seriesByIndex.get(build.seriesIndex);
+    for (const id of build.brought) {
+      const pick = franchise?.roster.find((entry) => entry.id === id);
+      const key = `${build.entrant}:${id}`;
+      const usage = usageByPick.get(key) ?? {
+        entrant: build.entrant,
+        id,
+        name: pick?.name ?? id,
+        cost: pick?.cost ?? 0,
+        matchups: 0,
+        w: 0,
+        l: 0,
+      };
+      usage.matchups += 1;
+      if (series?.winner === build.entrant) usage.w += 1;
+      else if (series?.winner !== null && series?.winner !== undefined) usage.l += 1;
+      usageByPick.set(key, usage);
+    }
+  }
+  const usage = [...usageByPick.values()]
+    .sort((a, b) => b.matchups - a.matchups || b.w - a.w || b.cost - a.cost || a.name.localeCompare(b.name))
+    .slice(0, 8);
   return (
     <div class="league-view">
       <header class="page-heading league-heading">
@@ -490,7 +525,7 @@ function LeaguePage({
       </div>
 
       <div class="franchise-card-grid">
-        {league.franchises.map((franchise) => (
+        {franchises.map((franchise) => (
           <FranchiseCard
             key={franchise.entrant}
             franchise={franchise}
@@ -505,40 +540,53 @@ function LeaguePage({
         <section class="panel">
           <div class="section-head">
             <div>
-              <h2>Round-robin standings</h2>
-              <p>Series wins, then game difference.</p>
+              <h2>Most selected Pokémon</h2>
+              <p>How often each draft pick made the six built for a matchup, with its series record.</p>
             </div>
           </div>
           <div class="table-scroll">
-            <table class="data-table">
+            <table class="data-table usage-table">
               <thead>
                 <tr>
-                  <th />
+                  <th>Pokémon</th>
                   <th>Franchise</th>
+                  <th class="num">Cost</th>
+                  <th class="num">Matchups</th>
                   <th class="num">W-L</th>
-                  <th class="num">Games</th>
-                  <th>Finish</th>
                 </tr>
               </thead>
               <tbody>
-                {standings.map((franchise, index) => (
-                  <tr key={franchise.entrant}>
-                    <td>{index + 1}</td>
-                    <td>
-                      <button type="button" class="model-link" onClick={() => onOpenTeam(teamSlug(franchise.teamName))}>
-                        <Mark spec={franchise.model} size={14} />
-                        <span>{franchise.teamName}</span>
-                      </button>
-                    </td>
-                    <td class="num">
-                      {franchise.w}-{franchise.l}
-                    </td>
-                    <td class="num">
-                      {franchise.gw}-{franchise.gl}
-                    </td>
-                    <td class="muted">{franchise.finish}</td>
-                  </tr>
-                ))}
+                {usage.map((entry) => {
+                  const franchise = league.franchises.find((item) => item.entrant === entry.entrant);
+                  return (
+                    <tr key={`${entry.entrant}:${entry.id}`}>
+                      <td>
+                        <span class="usage-mon">
+                          <Sprite id={spriteFor(entry.id)} size={26} />
+                          <b>{entry.name}</b>
+                        </span>
+                      </td>
+                      <td>
+                        {franchise ? (
+                          <button
+                            type="button"
+                            class="text-link"
+                            onClick={() => onOpenTeam(teamSlug(franchise.teamName))}
+                          >
+                            {franchise.teamName}
+                          </button>
+                        ) : (
+                          '–'
+                        )}
+                      </td>
+                      <td class="num">{entry.cost || '–'}</td>
+                      <td class="num">{entry.matchups}</td>
+                      <td class="num">
+                        {entry.w}-{entry.l}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -583,6 +631,7 @@ function LeaguePage({
 export function LeaguesView({
   active,
   epoch,
+  boards,
   run,
   team,
   onOpenLeague,
@@ -590,6 +639,7 @@ export function LeaguesView({
   onOpenModel,
   onBack,
 }: {
+  boards: BoardInfo[];
   active: boolean;
   epoch: number;
   run: string | undefined;
@@ -602,6 +652,9 @@ export function LeaguesView({
   const [list, setList] = useState<LeaguesResponse | null>(null);
   const [league, setLeague] = useState<LeagueResponse | null>(null);
   const [error, setError] = useState('');
+  const [boardId, setBoardId] = useState('');
+  const { board: cleanBoard, error: cleanBoardError } = useBoard(run ? '' : boardId);
+  const noOwners = useMemo(() => new Map<string, number>(), []);
 
   useEffect(() => {
     if (!active || run) return;
@@ -652,17 +705,69 @@ export function LeaguesView({
         </p>
       </header>
       {error ? <div class="message error">Could not load the archive: {error}</div> : null}
-      {leagues.length === 0 && !error ? (
-        <section class="panel">
-          <div class="results-empty">
-            No draft leagues recorded yet. Start one from <b>New run</b>; finished seasons are archived here.
+      {boardId ? (
+        <section class="panel archive-board-view">
+          <div class="section-head">
+            <div>
+              <p class="eyebrow">Untouched board</p>
+              <h2>{boardId}</h2>
+              <p>No picks applied. Search the full board by Pokémon, type, or ability.</p>
+            </div>
+            <button type="button" class="button" onClick={() => setBoardId('')}>
+              ← League archive
+            </button>
           </div>
+          {cleanBoardError ? <p class="empty-note">Could not load the board: {cleanBoardError}</p> : null}
+          {cleanBoard ? (
+            <BoardBrowser board={cleanBoard.mons} owners={noOwners} coach={() => ''} />
+          ) : cleanBoardError ? null : (
+            <p class="empty-note">Loading the board…</p>
+          )}
         </section>
       ) : (
-        <div class="league-card-grid">
-          {leagues.map((card) => (
-            <LeagueCard key={card.runId} card={card} onOpen={() => onOpenLeague(card.runId)} />
-          ))}
+        <div class="league-index-layout">
+          <div class="league-index-main">
+            {leagues.length === 0 && !error ? (
+              <section class="panel">
+                <div class="results-empty">
+                  No draft leagues recorded yet. Start one from <b>New run</b>; finished seasons are archived here.
+                </div>
+              </section>
+            ) : (
+              <div class="league-card-grid">
+                {leagues.map((card) => (
+                  <LeagueCard key={card.runId} card={card} onOpen={() => onOpenLeague(card.runId)} />
+                ))}
+              </div>
+            )}
+          </div>
+          <aside class="panel draft-board-shelf">
+            <div class="section-head">
+              <div>
+                <p class="eyebrow">Reference</p>
+                <h2>Draft boards</h2>
+                <p>Browse any board before a season fills it in.</p>
+              </div>
+            </div>
+            <div class="board-snapshot-list">
+              {boards.map((board) => (
+                <button type="button" class="board-snapshot" key={board.id} onClick={() => setBoardId(board.id)}>
+                  <span>
+                    <b>{board.id}</b>
+                    <small>{board.format}</small>
+                  </span>
+                  <span class="board-snapshot-count">
+                    {board.monCount}
+                    <small>Pokémon</small>
+                  </span>
+                  <span class="board-snapshot-meta">
+                    {board.picks} picks · {board.budget} points
+                  </span>
+                </button>
+              ))}
+              {boards.length === 0 ? <p class="empty-note">No draft boards are installed.</p> : null}
+            </div>
+          </aside>
         </div>
       )}
     </div>
