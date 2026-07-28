@@ -516,8 +516,8 @@ test('untimed truncation records a legal fallback with the truncation summary', 
 });
 
 test('a decision cut off mid-reasoning blames the budget, not the model formatting', async () => {
-  // What an over-reasoning model actually returns: pages of deliberation, no
-  // closing JSON, and a provider that never sets finishReason: 'length'.
+  /** What an over-reasoning model actually returns: pages of deliberation, no closing JSON, and a provider
+   * that never sets finishReason: 'length'. */
   const rambled = (): Completion => ({
     text: 'Turn 6. I need to weigh Garchomp and Whimsicott. "choices" will follow once I finish',
     usage: { input_tokens: 10, output_tokens: 32_768 },

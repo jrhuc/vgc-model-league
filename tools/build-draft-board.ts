@@ -54,8 +54,8 @@ const REGMB_ADDITIONS: Array<{ name: string; cost: number; anchor: string }> = [
   { name: 'Qwilfish', cost: 2, anchor: 'unranked; cf. Sandaconda (2)' },
 ];
 
-// Reprice prior Reg M-A entries against Reg M-B ladder usage by quantile-matching
-// usage rank to the board's cost distribution and moving halfway to the target.
+/** Reprice prior Reg M-A entries against Reg M-B ladder usage by quantile-matching usage rank to the
+ * board's cost distribution and moving halfway to the target. */
 const USAGE_ADJUSTMENTS: Array<{ name: string; cost: number; usage: string }> = [
   { name: 'Farigiraf', cost: 18, usage: '#7 at 20.72%' },
   { name: 'Pelipper', cost: 18, usage: '#8 at 18.58%' },

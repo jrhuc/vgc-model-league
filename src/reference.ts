@@ -295,8 +295,8 @@ function effectivenessLabel(mod: number): string {
   return `${mod}x`;
 }
 
-// The per-type factors let a model with a wrong internal chart see exactly which pairing it misremembers
-// instead of dismissing the combined multiplier as a tool bug.
+/** The per-type factors let a model with a wrong internal chart see exactly which pairing it misremembers
+ * instead of dismissing the combined multiplier as a tool bug. */
 function effectivenessDetail(
   dex: {
     getImmunity: (source: string, target: string[]) => boolean;

@@ -229,9 +229,9 @@ test('field weather and screens render remaining turns', () => {
   ]);
   const rendered = state.render({});
   assert.match(rendered, /Trick Room \(4 turns? left\)/);
-  // Gen 9 ability weather also lasts 5 turns; Torkoal's item is unknown, so no Heat Rock extension.
+  /** Gen 9 ability weather also lasts 5 turns; Torkoal's item is unknown, so no Heat Rock extension. */
   assert.match(rendered, /SunnyDay \(4 turns? left\)/);
-  // Light Clay extends Reflect to 8; one turn has elapsed by the turn-2 decision.
+  /** Light Clay extends Reflect to 8; one turn has elapsed by the turn-2 decision. */
   assert.match(rendered, /Reflect \(7 turns? left\)/);
 });
 

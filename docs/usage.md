@@ -123,6 +123,22 @@ Without `--pool`, standings and reports exclude the disposable `test` pool.
 They use only rotation results. Different providers for the same model ID
 count as one player within a timer group.
 
+## Archive a run
+
+Run directories hold every trace, thought log, and game log. They are the full
+record of a season but only the published subset is ever queried, so cold runs
+do not belong on the production volume.
+
+```sh
+npm run archive-run -- <run-id> [<run-id>...]
+```
+
+Each run packs into `$VGC_RUN_ARCHIVE_DIR` (default `~/vgc-run-archive`) as a
+verified tarball with a checksum manifest. The source run is never deleted;
+remove it by hand after the archive lands wherever it is going. Sync the
+archive directory offsite with your own tooling, for example
+`rclone copy ~/vgc-run-archive <remote>:vgc-run-archive`.
+
 ## Publish local results
 
 `publish` sends completed results to a deployment. It sends result rows,

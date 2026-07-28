@@ -672,3 +672,33 @@ textarea { min-height: 170px; resize: vertical; font: 12px/1.5 var(--mono); }
 .live-tabs { margin-bottom: 22px; }
 
 .draft-feed-head .sprite { vertical-align: -6px; margin-right: 6px; }
+
+button.game-chip { padding: 0; background: var(--panel, white); cursor: pointer; }
+button.game-chip.left { background: var(--navy); }
+button.game-chip.right { background: var(--blue); }
+button.game-chip:hover { outline: 2px solid var(--blue); outline-offset: 1px; }
+.game-chip.on { border-color: var(--ink); color: var(--ink); font-weight: 800; }
+.game-switcher { display: inline-flex; align-items: center; gap: 10px; }
+.game-switcher .text-link { color: var(--blue); font: 800 10px/1 var(--mono); letter-spacing: .05em; text-transform: uppercase; }
+
+.game-timeline { display: flex; flex-direction: column; gap: 14px; font: 500 12px/1.5 var(--mono); }
+.game-turn { border-top: 1px solid var(--line); padding-top: 10px; }
+.game-turn:first-child { border-top: 0; padding-top: 0; }
+.game-decision { margin: 4px 0; border: 1px solid var(--line-strong); border-left-width: 4px; background: var(--panel, white); }
+.game-decision.side-0 { border-left-color: var(--navy); }
+.game-decision.side-1 { border-left-color: var(--blue); }
+.game-decision summary { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; padding: 6px 10px; cursor: pointer; }
+.game-decision summary b { font-size: 11px; white-space: nowrap; }
+.game-decision-choice { flex: 1; min-width: 180px; }
+.game-decision-flag { padding: 1px 6px; background: #fff3cd; color: #8a6d00; font: 800 9px/1.4 var(--mono); text-transform: uppercase; }
+.game-decision summary small { color: var(--ink-soft); white-space: nowrap; }
+.game-decision > p { margin: 0; padding: 2px 12px 10px; color: var(--ink-soft); }
+.game-decision-notebook { border-top: 1px dashed var(--line); font-style: italic; }
+
+.usage-strip { display: flex; flex-wrap: wrap; gap: 8px 22px; padding: 0 24px 12px; font: 500 11px/1.4 var(--mono); color: var(--ink-soft); }
+.usage-strip b { color: var(--ink); }
+.usage-scroll { max-height: 430px; overflow-y: auto; }
+.usage-bench { padding: 10px 24px 4px; margin: 0; font: 500 11px/1.5 var(--mono); color: var(--ink-soft); }
+
+.team-rates { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 6px 20px; padding: 14px 24px 6px; font: 500 11px/1.6 var(--mono); color: var(--ink-soft); }
+.team-rates b { float: right; color: var(--ink); font-variant-numeric: tabular-nums; }
