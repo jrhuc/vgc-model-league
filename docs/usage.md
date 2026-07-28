@@ -117,11 +117,7 @@ pick rationales, per-series builds, schedule, and the board), brackets under
 **Tournaments**, and cross-mode model profiles under **Data room**.
 
 Decision logs record `reasoning_tokens` and metered cost when the provider
-reports them. Patch logs from runs recorded before this field existed with:
-
-```sh
-npm run backfill-reasoning
-```
+reports them.
 
 Without `--pool`, standings and reports exclude the disposable `test` pool.
 They use only rotation results. Different providers for the same model ID

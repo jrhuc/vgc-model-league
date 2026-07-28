@@ -162,8 +162,7 @@ Local evidence uses files:
 draft-league archive (`/api/leagues`, `/api/league`) and model profiles
 (`/api/model`) from result rows joined with run files. Decision log rows carry
 `total_tokens`, `reasoning_tokens`, and metered `cost` where the provider
-reports them; `npm run backfill-reasoning` patches older logs from stored
-traces.
+reports them.
 
 Hosted SQLite stores users, sessions, OAuth flows, ownership, experiments, and
 audit events. Series, game, and decision evidence remains in append-only files.

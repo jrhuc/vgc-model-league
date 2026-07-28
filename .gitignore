@@ -21,3 +21,4 @@ boards/sources/
 .vscode/
 *.swp
 *~
+.audit-tmp/
