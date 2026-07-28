@@ -1173,7 +1173,7 @@ export class LLMEngine extends BaseEngine {
         } catch (caught) {
           error = caught instanceof Error ? caught.message : String(caught);
           if (attempt === 0) {
-            messages.push({ role: 'assistant', content: rawResponse });
+            messages.push({ role: 'assistant', content: rawResponse || '[the reply contained no visible text]' });
             messages.push({
               role: 'user',
               content: `Invalid review: ${error}. Reply with exactly the required JSON object.`,

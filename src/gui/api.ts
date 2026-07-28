@@ -435,16 +435,21 @@ export interface LeagueRosterSlotView {
   fallback: boolean;
 }
 
+export interface LeagueRecordView {
+  w: number;
+  l: number;
+  gw: number;
+  gl: number;
+}
+
 export interface LeagueFranchiseView {
   entrant: number;
   model: string;
   teamName: string;
   spent: number;
   budgetLeft: number;
-  w: number;
-  l: number;
-  gw: number;
-  gl: number;
+  overallRecord: LeagueRecordView;
+  roundRobinRecord: LeagueRecordView;
   finish: string;
   roster: LeagueRosterSlotView[];
 }

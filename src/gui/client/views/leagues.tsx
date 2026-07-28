@@ -112,10 +112,10 @@ function FranchiseCard({
         </div>
         <div class="franchise-card-record">
           <b>
-            {franchise.w}-{franchise.l}
+            {franchise.overallRecord.w}-{franchise.overallRecord.l}
           </b>
           <small>
-            games {franchise.gw}-{franchise.gl}
+            games {franchise.overallRecord.gw}-{franchise.overallRecord.gl}
           </small>
         </div>
       </header>
@@ -292,7 +292,9 @@ function TeamPage({
             <span>{franchise.model}</span>
           </button>
           <span>
-            {franchise.w}-{franchise.l} in series, {franchise.gw}-{franchise.gl} in games
+            {franchise.overallRecord.w}-{franchise.overallRecord.l} in series, {franchise.overallRecord.gw}-
+            {franchise.overallRecord.gl} in games · regular season {franchise.roundRobinRecord.w}-
+            {franchise.roundRobinRecord.l}
             {franchise.finish ? ` · ${franchise.finish.toLowerCase()}` : ''}
           </span>
         </div>
@@ -447,8 +449,8 @@ function LeaguePage({
   const franchises = [...league.franchises].sort(
     (a, b) =>
       Number(b.entrant === league.champion?.entrant) - Number(a.entrant === league.champion?.entrant) ||
-      b.w - a.w ||
-      b.gw - b.gl - (a.gw - a.gl),
+      b.roundRobinRecord.w - a.roundRobinRecord.w ||
+      b.roundRobinRecord.gw - b.roundRobinRecord.gl - (a.roundRobinRecord.gw - a.roundRobinRecord.gl),
   );
   const seriesByIndex = new Map(league.series.map((series) => [series.seriesIndex, series] as const));
   const usageByPick = new Map<

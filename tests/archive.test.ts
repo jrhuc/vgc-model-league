@@ -177,7 +177,9 @@ test('buildLeague joins config, rosters, draft, teambuilds, results, and spend',
   assert.equal(league.champion?.entrant, 1);
   const alpha = league.franchises[0]!;
   assert.equal(alpha.teamName, 'Alpha Aces');
-  assert.deepEqual([alpha.w, alpha.l, alpha.gw, alpha.gl], [1, 0, 2, 1], 'standings count round robin only');
+  assert.deepEqual(alpha.overallRecord, { w: 1, l: 1, gw: 2, gl: 3 });
+  assert.deepEqual(alpha.roundRobinRecord, { w: 1, l: 0, gw: 2, gl: 1 });
+  assert.deepEqual(league.franchises[1]!.overallRecord, { w: 1, l: 1, gw: 3, gl: 2 });
   assert.equal(alpha.finish, 'Runner-up');
   assert.equal(league.franchises[1]!.finish, 'Champion');
   const slot = alpha.roster[0]!;

@@ -5,6 +5,7 @@ import type {
   LeagueCardView,
   LeagueChampionView,
   LeagueFranchiseView,
+  LeagueRecordView,
   LeagueResponse,
   LeagueRosterSlotView,
   LeagueSeriesView,
@@ -244,6 +245,26 @@ function ordinal(rank: number): string {
   return `${rank}${suffix}`;
 }
 
+function recordCompletedSeries(
+  recordA: LeagueRecordView,
+  recordB: LeagueRecordView,
+  winner: number,
+  entrantA: number,
+  score: Record<Pid, number> | undefined,
+): void {
+  if (winner === entrantA) {
+    recordA.w += 1;
+    recordB.l += 1;
+  } else {
+    recordB.w += 1;
+    recordA.l += 1;
+  }
+  recordA.gw += count(score?.p1);
+  recordA.gl += count(score?.p2);
+  recordB.gw += count(score?.p2);
+  recordB.gl += count(score?.p1);
+}
+
 export function buildLeague(allRows: SeriesRecord[], runsDir: string, runId: string): LeagueResponse | null {
   if (!SAFE_SEGMENT.test(runId)) return null;
   const rows = draftRuns(allRows).get(runId);
@@ -253,7 +274,8 @@ export function buildLeague(allRows: SeriesRecord[], runsDir: string, runId: str
   const progress = leagueProgress(rows, identity);
   const rosters = readRosters(runsDir, runId, identity);
 
-  const table = identity.models.map(() => ({ w: 0, l: 0, gw: 0, gl: 0 }));
+  const roundRobinRecords: LeagueRecordView[] = identity.models.map(() => ({ w: 0, l: 0, gw: 0, gl: 0 }));
+  const overallRecords: LeagueRecordView[] = identity.models.map(() => ({ w: 0, l: 0, gw: 0, gl: 0 }));
   const series: LeagueSeriesView[] = [];
   for (const row of rows) {
     const a = sideEntrant(row, 'p1', identity);
@@ -265,14 +287,11 @@ export function buildLeague(allRows: SeriesRecord[], runsDir: string, runId: str
       winner: game.winner_side === 'p1' ? a : game.winner_side === 'p2' ? b : null,
       turns: count(game.turns),
     }));
-    if (row.stage === 'roundrobin' && winner !== null) {
-      const loser = winner === a ? b : a;
-      table[winner]!.w += 1;
-      table[loser]!.l += 1;
-      table[a]!.gw += count(score?.p1);
-      table[a]!.gl += count(score?.p2);
-      table[b]!.gw += count(score?.p2);
-      table[b]!.gl += count(score?.p1);
+    if (winner !== null) {
+      recordCompletedSeries(overallRecords[a]!, overallRecords[b]!, winner, a, score);
+      if (row.stage === 'roundrobin') {
+        recordCompletedSeries(roundRobinRecords[a]!, roundRobinRecords[b]!, winner, a, score);
+      }
     }
     series.push({
       seriesIndex: count(row.series_index),
@@ -291,8 +310,8 @@ export function buildLeague(allRows: SeriesRecord[], runsDir: string, runId: str
   const ranks = identity.models
     .map((_, entrant) => entrant)
     .sort((first, second) => {
-      const a = table[first]!;
-      const b = table[second]!;
+      const a = roundRobinRecords[first]!;
+      const b = roundRobinRecords[second]!;
       return b.w - a.w || b.gw - b.gl - (a.gw - a.gl) || first - second;
     });
   const rankOf = new Map(ranks.map((entrant, index) => [entrant, index + 1]));
@@ -304,7 +323,8 @@ export function buildLeague(allRows: SeriesRecord[], runsDir: string, runId: str
     teamName: entry.teamName,
     spent: entry.spent,
     budgetLeft: entry.budgetLeft,
-    ...table[entrant]!,
+    overallRecord: overallRecords[entrant]!,
+    roundRobinRecord: roundRobinRecords[entrant]!,
     finish: finishLabel(entrant, progress, rankOf.get(entrant) ?? entrant + 1, playoffsSeen),
     roster: entry.roster,
   }));

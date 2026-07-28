@@ -548,7 +548,10 @@ export async function runDraft(models: string[], board: DraftBoard, options: Run
           if (typeof parsed === 'string') {
             error = truncated ? `the reply used its whole token budget before naming a pick` : parsed;
             lastError = error;
-            messages.push({ role: 'assistant', content: truncated ? '[reply cut off before a pick]' : response });
+            messages.push({
+              role: 'assistant',
+              content: truncated ? '[reply cut off before a pick]' : response || '[the reply contained no visible text]',
+            });
             messages.push({
               role: 'user',
               content: truncated

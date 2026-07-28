@@ -454,7 +454,7 @@ export async function runTeambuild(request: TeambuildRequest, options: Teambuild
       if (error) {
         messages.push({
           role: 'assistant',
-          content: truncated ? '[reply cut off before the team was finished]' : response,
+          content: truncated ? '[reply cut off before the team was finished]' : response || '[the reply contained no visible text]',
         });
         messages.push({
           role: 'user',
