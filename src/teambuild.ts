@@ -12,7 +12,7 @@ import type { RecoveryGate } from './recovery.js';
 import { ShowdownReference } from './reference.js';
 import type { ShowdownApi } from './showdown.js';
 import { loadShowdown } from './showdown.js';
-import { normalizePackedTeam } from './teams.js';
+import { normalizePackedTeam, validateTeam } from './teams.js';
 import type { Provider, ProviderFailure, ProviderMessage } from './types.js';
 
 const TEAMBUILD_PROMPT_POLICY = {
@@ -20,7 +20,7 @@ const TEAMBUILD_PROMPT_POLICY = {
     'You are {{model}}, coach of {{team}} in a Pokémon VGC draft league, format {{format}}.',
     '',
     'You drafted a roster of {{picks}} Pokémon and keep it all season. Before every match you choose exactly 6 of them',
-    'and build each set from scratch. Nothing carries over from the draft except which Pokémon you own.',
+    'and build each set from scratch. Your private draft note is supplied below as revisable context, not a constraint.',
     '',
     'FORMAT RULES',
     '- Doubles. Both coaches register 6 and bring 4 to each game; team sheets are open, so your opponent sees your sets.',
@@ -49,7 +49,8 @@ const TEAMBUILD_PROMPT_POLICY = {
   ],
   rosterHeading: 'YOUR ROSTER (board id | name | types | base stats | abilities | legal moves):',
   opponentHeading: 'OPPONENT ROSTER — {{model}} of {{team}} (they pick 6 of these):',
-  historyHeading: 'YOUR SEASON SO FAR:',
+  draftNoteHeading: 'YOUR PRIVATE NOTE AT THE END OF THE DRAFT:',
+  playoffContextHeading: 'YOUR PRIVATE CONTEXT FROM EARLIER LEAGUE MATCHES:',
   lockedItem: 'MUST hold {{item}}',
   noMega: 'cannot hold a Mega Stone',
   rejectionTemplate: 'That team was rejected:\n{{error}}\nReply again with only the JSON object.',
@@ -100,13 +101,15 @@ export interface TeambuildRequest {
   seriesIndex: number;
   entrant: number;
   opponent: number;
+  stage: 'roundrobin' | 'playoff';
   model: string;
   opponentModel: string;
   teamName: string;
   opponentTeamName: string;
   roster: DraftBoardMon[];
   opponentRoster: DraftBoardMon[];
-  history: string[];
+  draftNote: string;
+  playoffContext: string[];
   format: string;
 }
 
@@ -128,7 +131,9 @@ function legalMoves(dex: DexLike, mon: DraftBoardMon): string[] {
   const names: string[] = [];
   for (const id of pool) {
     const move = dex.moves.get(id);
-    if (move?.exists && !move.isNonstandard) names.push(move.name);
+    if (move?.exists && !move.isNonstandard) {
+      names.push(move.name);
+    }
   }
   return names.sort();
 }
@@ -202,6 +207,7 @@ function systemPrompt(request: TeambuildRequest, dex: DexLike, evLimit: number, 
 function userPrompt(request: TeambuildRequest, dex: DexLike): string {
   const lines: string[] = [TEAMBUILD_PROMPT_POLICY.rosterHeading];
   lines.push(...rosterBlock(dex, request.roster, true));
+  if (request.draftNote) lines.push('', TEAMBUILD_PROMPT_POLICY.draftNoteHeading, request.draftNote);
   lines.push(
     '',
     TEAMBUILD_PROMPT_POLICY.opponentHeading
@@ -209,8 +215,12 @@ function userPrompt(request: TeambuildRequest, dex: DexLike): string {
       .replace('{{team}}', request.opponentTeamName || request.opponentModel),
   );
   lines.push(...rosterBlock(dex, request.opponentRoster, false));
-  if (request.history.length) {
-    lines.push('', TEAMBUILD_PROMPT_POLICY.historyHeading, ...request.history.map((entry) => `- ${entry}`));
+  if (request.stage === 'playoff' && request.playoffContext.length) {
+    lines.push(
+      '',
+      TEAMBUILD_PROMPT_POLICY.playoffContextHeading,
+      ...request.playoffContext.map((entry) => `- ${entry}`),
+    );
   }
   return lines.join('\n');
 }
@@ -371,13 +381,12 @@ function packSet(dex: DexLike, mon: DraftBoardMon, set: RawSet): string {
 
 export async function runTeambuild(request: TeambuildRequest, options: TeambuildOptions): Promise<TeambuildResult> {
   const psDir = options.psDir ?? defaultPsDir();
-  const { Dex, TeamValidator } = loadShowdown(psDir);
+  const { Dex } = loadShowdown(psDir);
   const format = Dex.formats.get(request.format);
   const dex = Dex.mod(format.mod || 'base') as unknown as DexLike;
   const ruleTable = Dex.formats.getRuleTable(format);
   const evLimit = ruleTable.evLimit ?? 508;
   const evMax = 32;
-  const validator = new TeamValidator(request.format);
   const reference = new ShowdownReference(request.format, psDir);
   fs.mkdirSync(options.logDir, { recursive: true });
   const logFile = path.join(
@@ -433,7 +442,7 @@ export async function runTeambuild(request: TeambuildRequest, options: Teambuild
         error = truncated ? 'the reply used its whole token budget before finishing the team' : parsed;
         lastError = error;
       } else {
-        const problems = validateCandidate(dex, validator, parsed.sets, owned, psDir);
+        const problems = validateCandidate(dex, request.format, parsed.sets, owned, psDir);
         if (problems.length) {
           error = problems.join('\n');
           lastError = error;
@@ -445,7 +454,7 @@ export async function runTeambuild(request: TeambuildRequest, options: Teambuild
       if (error) {
         messages.push({
           role: 'assistant',
-          content: truncated ? '[reply cut off before the team was finished]' : response,
+          content: truncated ? '[reply cut off before the team was finished]' : response || '[the reply contained no visible text]',
         });
         messages.push({
           role: 'user',
@@ -503,7 +512,7 @@ export async function runTeambuild(request: TeambuildRequest, options: Teambuild
 
   const problems = validateCandidate(
     dex,
-    validator,
+    request.format,
     repaired.map((entry) => entry.set),
     owned,
     psDir,
@@ -517,7 +526,7 @@ export async function runTeambuild(request: TeambuildRequest, options: Teambuild
     });
     const fallbackProblems = validateCandidate(
       dex,
-      validator,
+      request.format,
       repaired.map((entry) => entry.set),
       owned,
       psDir,
@@ -562,7 +571,7 @@ export async function runTeambuild(request: TeambuildRequest, options: Teambuild
 
 function validateCandidate(
   dex: DexLike,
-  validator: { validateTeam(team: unknown[]): string[] | null },
+  format: string,
   sets: RawSet[],
   owned: Map<string, DraftBoardMon>,
   psDir: string,
@@ -585,7 +594,11 @@ function validateCandidate(
   const packed = sets.map((set) => packSet(dex, owned.get(set.id)!, set)).join(']');
   const unpacked = Teams.unpack(packed);
   if (!unpacked) return [...problems, 'the sets could not be assembled into a team'];
-  for (const problem of validator.validateTeam(unpacked) ?? []) problems.push(problem);
+  try {
+    validateTeam(packed, format, psDir);
+  } catch (cause) {
+    problems.push(...(cause instanceof Error ? cause.message : String(cause)).split('\n'));
+  }
   return problems;
 }
 

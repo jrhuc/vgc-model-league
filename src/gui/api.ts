@@ -402,6 +402,160 @@ export interface TournamentsResponse {
   tournaments: TournamentArchiveView[];
 }
 
+export interface LeagueChampionView {
+  entrant: number;
+  model: string;
+  team: string;
+}
+
+export interface LeagueCardView {
+  runId: string;
+  when: string;
+  board: string | null;
+  format: string | null;
+  entrants: string[];
+  teamNames: string[];
+  weeks: number | null;
+  seriesCount: number;
+  phase: 'roundrobin' | 'playoffs' | 'complete';
+  week: number;
+  champion: LeagueChampionView | null;
+}
+
+export interface LeaguesResponse {
+  leagues: LeagueCardView[];
+}
+
+export interface LeagueRosterSlotView {
+  id: string;
+  name: string;
+  cost: number;
+  pick: number | null;
+  rationale: string;
+  fallback: boolean;
+}
+
+export interface LeagueRecordView {
+  w: number;
+  l: number;
+  gw: number;
+  gl: number;
+}
+
+export interface LeagueFranchiseView {
+  entrant: number;
+  model: string;
+  teamName: string;
+  spent: number;
+  budgetLeft: number;
+  overallRecord: LeagueRecordView;
+  roundRobinRecord: LeagueRecordView;
+  finish: string;
+  roster: LeagueRosterSlotView[];
+}
+
+export interface LeagueGameView {
+  winner: number | null;
+  turns: number;
+}
+
+export interface LeagueSeriesView {
+  seriesIndex: number;
+  seriesId: string;
+  stage: 'roundrobin' | 'playoff';
+  round: number;
+  timestamp: string;
+  sides: [number, number];
+  score: [number, number];
+  winner: number | null;
+  turns: number;
+  games: LeagueGameView[];
+}
+
+export interface LeagueTeambuildView {
+  seriesIndex: number;
+  entrant: number;
+  opponent: number;
+  brought: string[];
+  sets: TeambuildSetView[];
+  rationale: string;
+  attempts: number;
+}
+
+export interface LeagueSpendView {
+  decisions: number;
+  tokens: number | null;
+  reasoningTokens: number | null;
+  cost: number | null;
+}
+
+export interface LeagueResponse {
+  runId: string;
+  when: string;
+  lastPlayed: string | null;
+  board: string | null;
+  format: string | null;
+  budget: number | null;
+  picksPerEntrant: number | null;
+  weeks: number | null;
+  phase: 'roundrobin' | 'playoffs' | 'complete';
+  week: number;
+  champion: LeagueChampionView | null;
+  franchises: LeagueFranchiseView[];
+  series: LeagueSeriesView[];
+  teambuilds: LeagueTeambuildView[];
+  spend: LeagueSpendView;
+}
+
+export interface QuartileView {
+  median: number;
+  p25: number;
+  p75: number;
+  max: number;
+}
+
+export interface ModeRecordView {
+  mode: string;
+  series: number;
+  w: number;
+  l: number;
+  runs: Array<{ runId: string; when: string }>;
+}
+
+export interface ModelProfileResponse {
+  id: string;
+  providers: string[];
+  firstSeen: string | null;
+  lastSeen: string | null;
+  series: number;
+  games: number;
+  decisions: number;
+  reflections: number;
+  totalTokens: number;
+  reasoningTokens: number | null;
+  cost: number | null;
+  latency: QuartileView | null;
+  tokensPerDecision: QuartileView | null;
+  rates: {
+    fallback: number;
+    parseFailure: number;
+    providerRetry: number;
+    abandoned: number;
+    switch: number;
+    protect: number;
+    spread: number;
+    allyTarget: number;
+    megaPerGame: number;
+    toolLookups: number;
+    repeatedActions: number;
+    bringChanges: number | null;
+    leadChanges: number | null;
+    threatConversion: number | null;
+    reflectionFallback: number | null;
+  };
+  modes: ModeRecordView[];
+}
+
 export interface ImportRequest {
   row: Record<string, unknown>;
   logs?: Partial<Record<Pid, string>>;

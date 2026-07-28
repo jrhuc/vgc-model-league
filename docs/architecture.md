@@ -54,6 +54,10 @@ Pick validation enforces exclusivity, one entry for each base species, and the
 point budget. It also reserves enough points to fill the remaining roster
 slots.
 
+Each drafter maintains a private, full-replacement roster note across its own
+picks. The final draft note is supplied to every matchup build as revisable
+context.
+
 Before each series, a coach selects six roster members and builds their sets.
 Showdown validates format rules. The league validates rules that Showdown does
 not know, such as the Mega lock. A failed team build gets another attempt. The
@@ -61,8 +65,15 @@ league makes a minimal repair after the final failed attempt and records each
 repair.
 
 The draft and team builder use the same bounded dex tools as the battle engine.
-The league records each lookup. The season uses weekly round-robin rounds and
-then playoffs.
+The league records each lookup. The stat tool delegates exact spread
+calculation to the selected Showdown format, including Champions Stat Points
+and fixed IVs.
+
+Round-robin matchups are built blind and may run concurrently. A matchup's
+teambuild plan initializes its private battle notebook and persists across the
+games in that series. Round-robin builds, sets, results, and final battle notes
+are stored in `coaching.jsonl`, but enter model context only for coaches that
+reach the playoffs. Later playoff rounds also receive earlier playoff context.
 
 ### Exhibition
 
@@ -83,8 +94,10 @@ For each decision, `LLMEngine` sends the model:
 - numbered menus for each legal joint action;
 - references for the active matchup.
 
-Optional tools provide species, move, item, ability, nature, type, and damage
-information. The tools expose only information that is legal in the match.
+Optional tools provide species, move, item, ability, nature, type, exact
+format-aware stats, and damage information. Explicit item and ability lookups
+return the simulator's full mechanics descriptions. The tools expose only
+information that is legal in the match.
 
 The model returns one JSON object:
 
@@ -98,10 +111,12 @@ The model returns one JSON object:
 }
 ```
 
-A malformed decision gets one retry. A second failure produces a recorded
-legal fallback. Provider failure during a timed decision abandons that
-decision and lets the Showdown timer act. Simulator, reference, and team
-validation failures stop the run.
+Malformed decisions are retried according to the decision policy; an exhausted
+untimed decision produces a recorded model-choice default. Game evidence keeps
+model-choice defaults, simulator substitutions, and timer autodefaults
+separate. Provider failure during a timed decision abandons that decision and
+lets the Showdown timer act. Simulator, reference, and team validation failures
+stop the run.
 
 After each game, both models review the game and record an adjustment. This
 step occurs outside the battle clock. The final review remains in the evidence
@@ -141,6 +156,14 @@ Local evidence uses files:
 - `runs/` stores configuration, decisions, traces, and mode-specific logs.
 - `records/results.jsonl` stores one row for each completed series.
 - `teams/` and `boards/` store immutable input snapshots.
+
+`src/records.ts` caches parsed result rows by file modification time.
+`src/evidence.ts` derives data-room views and `src/archive.ts` derives the
+draft-league archive (`/api/leagues`, `/api/league`) and model profiles
+(`/api/model`) from result rows joined with run files. Decision log rows carry
+`total_tokens`, `reasoning_tokens`, and metered `cost` where the provider
+reports them; `npm run backfill-reasoning` patches older logs from stored
+traces.
 
 Hosted SQLite stores users, sessions, OAuth flows, ownership, experiments, and
 audit events. Series, game, and decision evidence remains in append-only files.

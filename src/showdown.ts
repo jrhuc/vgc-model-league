@@ -3,11 +3,12 @@ import fs from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 
-import type { BattleStream, Dex, Teams, TeamValidator } from 'pokemon-showdown';
+import type { Battle, BattleStream, Dex, Teams, TeamValidator } from 'pokemon-showdown';
 
 import { defaultPsDir, PINNED_PS_DIR, REPO_ROOT } from './paths.js';
 
 export interface ShowdownApi {
+  Battle: typeof Battle;
   BattleStream: typeof BattleStream;
   Dex: typeof Dex;
   Teams: typeof Teams;

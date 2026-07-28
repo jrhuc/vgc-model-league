@@ -10,6 +10,7 @@ import { makeProvider, parseSpec, reasoningForModel } from './providers.js';
 import { seededRng } from './random.js';
 import type { RecoveryGate } from './recovery.js';
 import { ShowdownReference } from './reference.js';
+import { loadShowdown } from './showdown.js';
 import { SimBattle } from './sim.js';
 import type { Team } from './teams.js';
 import { DEFAULT_TIMER_SCALE } from './timer.js';
@@ -25,6 +26,7 @@ export interface ExperimentOptions extends ModelReasoningConfig {
   signal?: AbortSignal;
   contributor?: ContributorAttribution;
   recovery?: RecoveryGate;
+  closedSheets?: boolean;
 }
 
 export async function mapLimit<T, R>(
@@ -73,6 +75,7 @@ export function makeEngine(
   signal?: AbortSignal,
   apiKey?: string,
   recovery?: RecoveryGate,
+  initialNotebook?: string,
 ): RandomEngine | LLMEngine {
   if (spec === 'random') return new RandomEngine(pid, seed);
   return new LLMEngine(pid, spec, {
@@ -88,6 +91,7 @@ export function makeEngine(
     ...(reference === undefined ? {} : { reference }),
     ...(signal === undefined ? {} : { signal }),
     ...(recovery === undefined ? {} : { recovery }),
+    ...(initialNotebook === undefined ? {} : { initialNotebook }),
   });
 }
 
@@ -165,6 +169,9 @@ export async function playBo3(context: Bo3Context): Promise<Bo3Result> {
     const gameNumber = index + 1;
     const gameId = `${seriesId}-${gameNumber}`;
     const start: GameStart = { gameId, gameNumber, seriesId, seriesScore: { ...score } };
+    const modelFallbacksAtStart = Object.fromEntries(
+      (['p1', 'p2'] as const).map((pid) => [pid, engines[pid].decisionStats().fallbacks ?? 0]),
+    ) as Record<Pid, number>;
     for (const engine of Object.values(engines)) engine.beginGame(start);
     context.onGameStart?.(gameNumber);
     const players: Record<Pid, PlayerOptions> = {
@@ -184,6 +191,12 @@ export async function playBo3(context: Bo3Context): Promise<Bo3Result> {
     context.signal?.throwIfAborted();
     const winnerSide = (['p1', 'p2'] as const).find((pid) => names[pid] === outcome.winner);
     if (winnerSide) score[winnerSide] += 1;
+    const modelChoiceFallbacks = Object.fromEntries(
+      (['p1', 'p2'] as const).map((pid) => [
+        pid,
+        (engines[pid].decisionStats().fallbacks ?? 0) - modelFallbacksAtStart[pid],
+      ]),
+    ) as Record<Pid, number>;
     await Promise.all(
       (['p1', 'p2'] as const).map(async (pid) => {
         const end: GameEnd = {
@@ -194,7 +207,9 @@ export async function playBo3(context: Bo3Context): Promise<Bo3Result> {
             turns: outcome.turns,
             pov_lines: outcome.pov[pid],
             errors: outcome.errors[pid],
-            fallbacks: outcome.fallbacks[pid],
+            model_choice_fallbacks: modelChoiceFallbacks[pid],
+            simulator_substitutions: outcome.simulatorSubstitutions[pid],
+            timer_autodefaults: outcome.timerAutodefaults[pid],
           },
           gameNumber,
           seriesScore: { ...score },
@@ -211,7 +226,9 @@ export async function playBo3(context: Bo3Context): Promise<Bo3Result> {
       turns: outcome.turns,
       seed: gameSeed,
       errors: outcome.errors,
-      fallbacks: outcome.fallbacks,
+      model_choice_fallbacks: modelChoiceFallbacks,
+      simulator_substitutions: outcome.simulatorSubstitutions,
+      timer_autodefaults: outcome.timerAutodefaults,
       luck: gameLuck(outcome.log),
       log: relative(logPath),
     });
@@ -234,6 +251,7 @@ export interface RecordedSeriesContext extends ModelReasoningConfig {
   players: Record<Pid, string>;
   teams: Record<Pid, Team>;
   gameSeeds: Array<[number, number, number, number]>;
+  initialNotebooks?: Partial<Record<Pid, string>>;
   engineSeeds: Record<Pid, number>;
   format: string;
   psDir: string;
@@ -246,6 +264,7 @@ export interface RecordedSeriesContext extends ModelReasoningConfig {
   requireWinner?: boolean;
   timerScale?: TimerScale;
   recovery?: RecoveryGate;
+  closedSheets?: boolean;
 }
 
 interface RecordedSeriesFields extends JsonObject {
@@ -268,6 +287,7 @@ interface RecordedSeriesFields extends JsonObject {
 }
 
 export interface RecordedSeries {
+  coachNotes: Record<Pid, string>;
   winnerSide: Pid | undefined;
   fields: RecordedSeriesFields;
 }
@@ -311,9 +331,11 @@ export async function playRecordedSeries(context: RecordedSeriesContext): Promis
         context.signal,
         context.apiKeys?.[context.players[pid]],
         context.recovery,
+        context.initialNotebooks?.[pid],
       ),
     ]),
   ) as Record<Pid, RandomEngine | LLMEngine>;
+  const battleFormat = context.closedSheets ? closedSheetsFormat(context.format, context.psDir) : context.format;
   const { score, games, winnerSide } = await playBo3({
     engines,
     names,
@@ -322,7 +344,7 @@ export async function playRecordedSeries(context: RecordedSeriesContext): Promis
     gameSeeds: context.gameSeeds,
     seriesId,
     seriesDir,
-    format: context.format,
+    format: battleFormat,
     psDir: context.psDir,
     ...(context.requireWinner === undefined ? {} : { requireWinner: context.requireWinner }),
     timerScale,
@@ -335,6 +357,10 @@ export async function playRecordedSeries(context: RecordedSeriesContext): Promis
     (['p1', 'p2'] as const).map((pid) => [pid, engines[pid].decisionStats()]),
   ) as JsonObject;
   return {
+    coachNotes: Object.fromEntries((['p1', 'p2'] as const).map((pid) => [pid, engines[pid].coachingNote()])) as Record<
+      Pid,
+      string
+    >,
     winnerSide,
     fields: {
       timestamp: new Date().toISOString(),
@@ -350,6 +376,7 @@ export async function playRecordedSeries(context: RecordedSeriesContext): Promis
       games,
       engine_seeds: context.engineSeeds,
       timer_scale: timerScale,
+      ...(context.closedSheets ? { closed_sheets: true } : {}),
       reasoning: context.reasoning ?? null,
       ...(context.reasoningByModel === undefined
         ? {}
@@ -357,6 +384,16 @@ export async function playRecordedSeries(context: RecordedSeriesContext): Promis
       decision_stats: stats,
     },
   };
+}
+
+export function closedSheetsFormat(format: string, psDir: string): string {
+  const { Dex } = loadShowdown(psDir);
+  const ruleTable = Dex.formats.getRuleTable(Dex.formats.get(format));
+  const repeals = [
+    ...(ruleTable.has('forceopenteamsheets') ? ['!Force Open Team Sheets'] : []),
+    ...(ruleTable.has('openteamsheets') ? ['!Open Team Sheets'] : []),
+  ];
+  return repeals.length ? `${format}@@@${repeals.join(',')}` : format;
 }
 
 function relative(file: string): string {

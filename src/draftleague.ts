@@ -19,7 +19,7 @@ import { DEFAULT_TIMER_SCALE } from './timer.js';
 import type { TournamentEvent } from './tournament.js';
 import type { Pid } from './types.js';
 
-export const DRAFT_PROTOCOL_VERSION = 2;
+export const DRAFT_PROTOCOL_VERSION = 3;
 
 export type DraftLeagueEvent = TournamentEvent | { type: 'draft'; draft: DraftView };
 
@@ -29,6 +29,7 @@ export interface DraftLeagueOptions extends ExperimentOptions {
   onEvent?: (event: DraftLeagueEvent) => void;
   throughWeek?: number;
   resume?: boolean;
+  sequentialWeeks?: boolean;
 }
 
 interface SeriesPlanned {
@@ -38,6 +39,24 @@ interface SeriesPlanned {
   entrants: [number, number] | null;
   gameSeeds: Array<[number, number, number, number]>;
   engineSeeds: Record<Pid, number>;
+}
+function builtTeamSummary(build: TeambuildView): string {
+  const sets = build.sets.map((set) => {
+    const evs = Object.entries(set.evs)
+      .filter(([, value]) => Number(value) > 0)
+      .map(([stat, value]) => `${stat} ${value}`)
+      .join('/');
+    return `${set.species} @ ${set.item}; ${set.ability}; ${set.nature}; ${set.moves.join('/')}; ${evs || '0 investment'}`;
+  });
+  return `Plan: ${build.rationale || '(none)'} Registered sets: ${sets.join(' | ')}`;
+}
+
+function initialBattleNotebook(build: TeambuildView): string {
+  return `Matchup build carried from teambuilding. ${builtTeamSummary(build)}`.slice(0, 1_600);
+}
+
+function playoffReview(summary: string, build: TeambuildView, notebook: string): string {
+  return `${summary}. ${builtTeamSummary(build)} Final private battle note: ${notebook || '(empty)'}`.slice(0, 3_200);
 }
 
 export function roundRobinWeeks(entrants: number): Array<Array<[number, number]>> {
@@ -125,7 +144,21 @@ export async function runDraftLeague(
 
   const table: DraftTableRow[] = entrants.map((_, entrant) => ({ entrant, w: 0, l: 0, gw: 0, gl: 0 }));
   const teambuilds: TeambuildView[] = [];
-  const history: string[][] = entrants.map(() => []);
+  const coachingPath = path.join(runDir, 'coaching.jsonl');
+  const playoffContext = entrants.map(() => new Map<number, string>());
+  for (const row of loadRows(coachingPath)) {
+    const entrant = Number(row.entrant);
+    const seriesIndex = Number(row.series_index);
+    if (
+      Number.isInteger(entrant) &&
+      playoffContext[entrant] &&
+      Number.isInteger(seriesIndex) &&
+      typeof row.context === 'string'
+    ) {
+      playoffContext[entrant].set(seriesIndex, row.context);
+    }
+  }
+  let draftNotes: string[] = entrants.map(() => '');
   let phase: DraftView['phase'] = 'draft';
   let week = 0;
   let rosters: DraftBoardMon[][] = entrants.map(() => []);
@@ -174,6 +207,7 @@ export async function runDraftLeague(
     );
     budgets = rosters.map((roster) => board.budget - roster.reduce((sum, mon) => sum + mon.cost, 0));
     teamNames = stored.teamNames;
+    draftNotes = stored.draftNotes;
   } else {
     const outcome = await runDraft(entrants, board, {
       psDir,
@@ -195,6 +229,7 @@ export async function runDraftLeague(
     rosters = outcome.rosters;
     budgets = outcome.budgets;
     teamNames = outcome.teamNames;
+    draftNotes = outcome.notebooks;
   }
 
   if (!stored) {
@@ -230,10 +265,13 @@ export async function runDraftLeague(
           timer_scale: timerScale,
           board: board.id,
           format: board.format,
+          sequential_weeks: options.sequentialWeeks === true || options.throughWeek !== undefined,
+          closed_sheets: options.closedSheets === true,
           entrants,
           team_names: teamNames,
           weeks: weeks.length,
           rosters: rosters.map((roster) => roster.map((mon) => mon.id)),
+          draft_notes: draftNotes,
           contributor: options.contributor ?? null,
         },
         null,
@@ -252,13 +290,18 @@ export async function runDraftLeague(
         seriesIndex: plan.index,
         entrant,
         opponent,
+        stage: plan.stage,
         model: entrants[entrant]!,
         opponentModel: entrants[opponent]!,
         teamName: teamNames[entrant]!,
         opponentTeamName: teamNames[opponent]!,
         roster: rosters[entrant]!,
         opponentRoster: rosters[opponent]!,
-        history: history[entrant]!,
+        draftNote: draftNotes[entrant]!,
+        playoffContext:
+          plan.stage === 'playoff'
+            ? [...playoffContext[entrant]!.entries()].sort(([a], [b]) => a - b).map(([, context]) => context)
+            : [],
         format: board.format,
       },
       {
@@ -286,11 +329,15 @@ export async function runDraftLeague(
     options.onEvent?.({ type: 'series-players', index: plan.index, players });
     const [home, away] = await Promise.all([teambuildFor(plan, a, b, signal), teambuildFor(plan, b, a, signal)]);
     options.onEvent?.({ type: 'series-start', index: plan.index });
-    const { winnerSide, fields } = await playRecordedSeries({
+    const { winnerSide, fields, coachNotes } = await playRecordedSeries({
       players,
       teams: {
         p1: { id: `${teamNames[a] || entrants[a]} wk${plan.round}`, packed: home.packed },
         p2: { id: `${teamNames[b] || entrants[b]} wk${plan.round}`, packed: away.packed },
+      },
+      initialNotebooks: {
+        p1: initialBattleNotebook(home.view),
+        p2: initialBattleNotebook(away.view),
       },
       gameSeeds: plan.gameSeeds,
       engineSeeds: plan.engineSeeds,
@@ -299,6 +346,7 @@ export async function runDraftLeague(
       runDir,
       signal,
       ...(plan.stage === 'playoff' ? { requireWinner: true } : {}),
+      ...(options.closedSheets === true ? { closedSheets: true } : {}),
       ...(options.reasoning === undefined ? {} : { reasoning: options.reasoning }),
       ...(options.apiKeys === undefined ? {} : { apiKeys: options.apiKeys }),
       ...(options.recovery === undefined ? {} : { recovery: options.recovery }),
@@ -331,12 +379,19 @@ export async function runDraftLeague(
       ...fields,
     } as SeriesRecord;
     appendRow(recordsPath, row);
-    applyOutcome(plan, row);
+    applyOutcome(plan, row, {
+      p1: { build: home.view, notebook: coachNotes.p1 },
+      p2: { build: away.view, notebook: coachNotes.p2 },
+    });
     options.onEvent?.({ type: 'series-end', index: plan.index, record: row });
     return row;
   };
 
-  const applyOutcome = (plan: SeriesPlanned, row: SeriesRecord): void => {
+  const applyOutcome = (
+    plan: SeriesPlanned,
+    row: SeriesRecord,
+    coaching?: Record<Pid, { build: TeambuildView; notebook: string }>,
+  ): void => {
     const [a, b] = plan.entrants!;
     const winnerSide = (row.winner_side ?? undefined) as Pid | undefined;
     const score = row.score as Record<Pid, number>;
@@ -346,10 +401,16 @@ export async function runDraftLeague(
     ] as const) {
       const won = winnerSide === side;
       const result = winnerSide ? (won ? 'beat' : 'lost to') : 'drew with';
-      history[entrant]!.push(
-        `${plan.stage === 'playoff' ? 'Playoffs' : `Week ${plan.round}`}: ${result} ` +
-          `${teamNames[opponent] || entrants[opponent]} ${score[side]}-${score[side === 'p1' ? 'p2' : 'p1']}`,
-      );
+      const summary =
+        `${plan.stage === 'playoff' ? `Playoff round ${plan.round}` : `Round-robin week ${plan.round}`}: ${result} ` +
+        `${teamNames[opponent] || entrants[opponent]} ${score[side]}-${score[side === 'p1' ? 'p2' : 'p1']}`;
+      const context = coaching ? playoffReview(summary, coaching[side].build, coaching[side].notebook) : summary;
+      if (coaching || !playoffContext[entrant]!.has(plan.index)) {
+        playoffContext[entrant]!.set(plan.index, context);
+      }
+      if (coaching) {
+        appendRow(coachingPath, { series_index: plan.index, entrant, context });
+      }
     }
     if (plan.stage === 'roundrobin') {
       table[a]!.gw += score.p1;
@@ -374,22 +435,33 @@ export async function runDraftLeague(
   }
 
   const stopWeek = options.throughWeek;
-  for (const index of weeks.keys()) {
-    if (options.signal?.aborted) return sorted(results);
-    week = index + 1;
+  if (options.sequentialWeeks === true || stopWeek !== undefined) {
+    for (const index of weeks.keys()) {
+      if (options.signal?.aborted) return sorted(results);
+      week = index + 1;
+      options.onEvent?.({ type: 'draft', draft: draftView(true) });
+      const scheduled = plans.filter(
+        (plan) => plan.stage === 'roundrobin' && plan.round === week && !completed.has(plan.index),
+      );
+      results.push(
+        ...(await mapLimit(scheduled, options.concurrency ?? 2, options.signal, (plan, signal) =>
+          playSeries(plan, signal),
+        )),
+      );
+      if (stopWeek !== undefined && week >= stopWeek) {
+        options.onEvent?.({ type: 'draft', draft: draftView(true) });
+        return sorted(results);
+      }
+    }
+  } else {
+    week = weeks.length;
     options.onEvent?.({ type: 'draft', draft: draftView(true) });
-    const scheduled = plans.filter(
-      (plan) => plan.stage === 'roundrobin' && plan.round === week && !completed.has(plan.index),
-    );
+    const scheduled = plans.filter((plan) => plan.stage === 'roundrobin' && !completed.has(plan.index));
     results.push(
       ...(await mapLimit(scheduled, options.concurrency ?? 2, options.signal, (plan, signal) =>
         playSeries(plan, signal),
       )),
     );
-    if (stopWeek !== undefined && week >= stopWeek) {
-      options.onEvent?.({ type: 'draft', draft: draftView(true) });
-      return sorted(results);
-    }
   }
   if (options.signal?.aborted) return sorted(results);
 
@@ -477,6 +549,7 @@ interface StoredLeague {
   entrants: string[];
   teamNames: string[];
   rosterIds: string[][];
+  draftNotes: string[];
 }
 
 function loadStoredLeague(runDir: string): StoredLeague {
@@ -487,11 +560,16 @@ function loadStoredLeague(runDir: string): StoredLeague {
     entrants?: string[];
     team_names?: string[];
     rosters?: string[][];
+    draft_notes?: string[];
   };
   if (config.mode !== 'draft' || !config.entrants || !config.team_names || !config.rosters) {
     throw new Error(`${runDir} is not a completed-draft league run`);
   }
-  return { entrants: config.entrants, teamNames: config.team_names, rosterIds: config.rosters };
+  const draftNotes =
+    config.draft_notes?.length === config.entrants.length
+      ? config.draft_notes.map((note) => (typeof note === 'string' ? note : ''))
+      : config.entrants.map(() => '');
+  return { entrants: config.entrants, teamNames: config.team_names, rosterIds: config.rosters, draftNotes };
 }
 
 function rankedTable(table: DraftTableRow[]): DraftTableRow[] {

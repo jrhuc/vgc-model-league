@@ -47,7 +47,8 @@ export interface BattleOutcome {
   log: string[];
   pov: Record<Pid, string[]>;
   errors: Record<Pid, number>;
-  fallbacks: Record<Pid, number>;
+  simulatorSubstitutions: Record<Pid, number>;
+  timerAutodefaults: Record<Pid, number>;
 }
 
 export interface ToolDefinition {
@@ -70,6 +71,7 @@ export interface Completion {
   toolCalls: ToolCall[];
   finishReason?: string;
   reasoning?: string;
+  provider?: string;
   /** AI SDK response messages, replayed verbatim so provider metadata (e.g. Gemini thought signatures) survives. */
   responseMessages?: JsonObject[];
 }

@@ -8,6 +8,7 @@ import type { BattleStream } from 'pokemon-showdown';
 import { RandomEngine } from '../src/battle-agent.js';
 import { defaultPsDir } from '../src/paths.js';
 import { runRotation } from '../src/rotation.js';
+import { closedSheetsFormat } from '../src/series.js';
 import type { RoomBattleTimerSettings } from '../src/showdown.js';
 import { routeUpdateLines, SimBattle } from '../src/sim.js';
 import { BattleState } from '../src/state.js';
@@ -45,6 +46,35 @@ test('seeded random VGC battle completes untimed by default without protocol err
   assert.match(state.render({}), /Opponent side/);
 });
 
+test('closed sheets strip the open-team-sheet rules while the stock format keeps them', async () => {
+  const pool = loadPool();
+  const players = {
+    p1: { name: 'A-random', team: pool.teams[0]!.packed },
+    p2: { name: 'B-random', team: pool.teams[1]!.packed },
+  };
+  const open = await new SimBattle(pool.format, players, [1, 2, 3, 4]).run({
+    p1: new RandomEngine('p1', 10),
+    p2: new RandomEngine('p2', 20),
+  });
+  assert.ok(
+    open.log.some((line) => line.startsWith('|showteam|')),
+    'the stock Champions Bo3 format publishes team sheets',
+  );
+
+  const stripped = closedSheetsFormat(pool.format, defaultPsDir());
+  assert.match(stripped, /@@@!Force Open Team Sheets/);
+  const closed = await new SimBattle(stripped, players, [1, 2, 3, 4]).run({
+    p1: new RandomEngine('p1', 10),
+    p2: new RandomEngine('p2', 20),
+  });
+  assert.ok(
+    closed.log.every((line) => !line.startsWith('|showteam|')),
+    'closed sheets publish nothing at team preview',
+  );
+  assert.ok(closed.turns > 0);
+  assert.deepEqual(closed.errors, { p1: 0, p2: 0 });
+});
+
 test('Showdown timer defaults a slow decision', { timeout: 25_000 }, async () => {
   const pool = loadPool();
   class SlowEngine extends RandomEngine {
@@ -68,7 +98,7 @@ test('Showdown timer defaults a slow decision', { timeout: 25_000 }, async () =>
     1,
   );
   const outcome = await battle.run({ p1: new SlowEngine('p1', 1), p2: new RandomEngine('p2', 2) });
-  assert.ok(outcome.fallbacks.p1 >= 1);
+  assert.ok(outcome.timerAutodefaults.p1 >= 1);
   assert.ok(outcome.pov.p1.includes('|timer|autodefault'));
 });
 

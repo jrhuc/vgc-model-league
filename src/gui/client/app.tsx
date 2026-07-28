@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'preact/hooks';
+import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 
 import type { AppState, AuthView, BattleMessage, PoolInfo, RunSnapshot, ServerEvent } from '../api';
 import { api, configureCsrf } from './http';
@@ -7,7 +7,10 @@ import { ArenaView } from './views/arena';
 import type { DataRoomSection } from './views/dataroom';
 import { DataRoomView, isDataRoomSection } from './views/dataroom';
 import { FixturesView } from './views/fixtures';
-import { LeagueView } from './views/league';
+import { DraftRoomView } from './views/league';
+import { LeaguesView } from './views/leagues';
+import { ModelProfileView } from './views/model';
+import { TournamentsView } from './views/tournaments';
 
 const NAV_SETS = [
   [
@@ -15,8 +18,9 @@ const NAV_SETS = [
     { id: 'arena', label: 'Live run' },
   ],
   [
-    { id: 'league', label: 'Draft room' },
-    { id: 'results', label: 'Data room' },
+    { id: 'leagues', label: 'Draft leagues' },
+    { id: 'tournaments', label: 'Tournaments' },
+    { id: 'data', label: 'Data room' },
   ],
 ] as const;
 const NAV = NAV_SETS.flat();
@@ -26,16 +30,28 @@ export type ViewId = (typeof NAV)[number]['id'];
 interface Route {
   view: ViewId;
   section: DataRoomSection;
+  run?: string;
+  team?: string;
+  model?: string;
 }
 
 function routeFromHash(): Route {
-  const hash = window.location.hash.slice(1);
-  if (hash === 'tournaments') return { view: 'results', section: 'brackets' };
-  const [head, tail = ''] = hash.split('/');
-  return {
-    view: NAV.some((item) => item.id === head) ? (head as ViewId) : 'fixtures',
-    section: isDataRoomSection(tail) ? tail : 'ladder',
-  };
+  const hash = decodeURIComponent(window.location.hash.slice(1));
+  const [head = '', second = '', third = ''] = hash.split('/');
+  if (head === 'leagues') {
+    return { view: 'leagues', section: 'play', ...(second ? { run: second } : {}), ...(third ? { team: third } : {}) };
+  }
+  if (head === 'tournaments') return { view: 'tournaments', section: 'play', ...(second ? { run: second } : {}) };
+  if (head === 'data') {
+    if (second && !isDataRoomSection(second)) return { view: 'data', section: 'play', model: second };
+    return { view: 'data', section: isDataRoomSection(second) ? second : 'play' };
+  }
+  if (head === 'arena' || head === 'league') return { view: 'arena', section: 'play' };
+  if (head === 'results') {
+    if (second === 'brackets') return { view: 'tournaments', section: 'play' };
+    return { view: 'data', section: isDataRoomSection(second) ? second : 'play' };
+  }
+  return { view: 'fixtures', section: 'play' };
 }
 
 function isFresherBattle(candidate: BattleMessage, current: BattleMessage | undefined): boolean {
@@ -96,6 +112,7 @@ export function App() {
   const [battles, setBattles] = useState<Record<number, StoredBattle>>({});
   const [selected, setSelected] = useState<number | null>(null);
   const [route, setRoute] = useState<Route>(routeFromHash);
+  const [liveTab, setLiveTab] = useState<'arena' | 'draft'>('arena');
   const [recordsEpoch, setRecordsEpoch] = useState(0);
   const [, setClockTick] = useState(0);
   const runWasLive = useRef(false);
@@ -109,6 +126,7 @@ export function App() {
         setRun(state.run);
         runWasLive.current = isActiveRunState(state.run?.state);
         runIdRef.current = state.run?.runId ?? null;
+        if (state.run?.mode === 'draft' && state.run.draft?.phase === 'draft') setLiveTab('draft');
       })
       .catch((error: Error) => setBootError(error.message));
   }, []);
@@ -160,12 +178,26 @@ export function App() {
 
   const view = route.view;
 
-  const navigate = (next: ViewId, section: DataRoomSection = 'ladder') => {
+  const navigate = (next: ViewId, section: DataRoomSection = 'play') => {
     setRoute({ view: next, section });
-    const hash = next === 'fixtures' ? '#' : section === 'ladder' ? `#${next}` : `#${next}/${section}`;
+    const hash =
+      next === 'fixtures'
+        ? '#'
+        : next === 'data' && section !== 'play'
+          ? `#data/${section}`
+          : `#${next === 'data' ? 'data' : next}`;
     history.replaceState(null, '', hash);
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    window.scrollTo(0, 0);
   };
+
+  const drill = (hash: string) => {
+    window.location.hash = hash;
+    window.scrollTo(0, 0);
+  };
+  const openLeague = (runId: string) => drill(runId ? `leagues/${runId}` : 'leagues');
+  const openTeam = (runId: string, slug: string) => drill(`leagues/${runId}/${slug}`);
+  const openTournament = (runId: string) => drill(runId ? `tournaments/${runId}` : 'tournaments');
+  const openModel = (id: string) => drill(`data/${id}`);
 
   const fetchBattle = (index: number) => {
     api<BattleMessage>(`${contribute ? '/api/battle' : '/api/battle/public'}?index=${index}`)
@@ -188,7 +220,8 @@ export function App() {
 
   const onStarted = (startedRun: RunSnapshot) => {
     acceptRun(startedRun);
-    navigate(startedRun.mode === 'draft' ? 'league' : 'arena');
+    setLiveTab(startedRun.mode === 'draft' ? 'draft' : 'arena');
+    navigate('arena');
   };
 
   const onPools = (pools: PoolInfo[]) => {
@@ -203,6 +236,22 @@ export function App() {
         window.location.assign('/');
       });
   };
+
+  const fixturesSection = useMemo(
+    () =>
+      app ? (
+        contribute ? (
+          <FixturesView app={app} run={run} onStarted={onStarted} onPools={onPools} />
+        ) : (
+          <AccessGate auth={app.auth} />
+        )
+      ) : null,
+    [app, run, contribute],
+  );
+  const draftRoomSection = useMemo(
+    () => (run?.mode === 'draft' && run.draft ? <DraftRoomView run={run} /> : null),
+    [run],
+  );
 
   if (bootError) {
     return (
@@ -225,6 +274,8 @@ export function App() {
   const paused = run?.state === 'paused';
   const user = app.auth.user;
   const headerLabel = running ? 'Run in progress' : paused ? 'Run paused' : run ? `Last run ${run.state}` : 'Idle';
+  const showLiveTabs = Boolean(run?.mode === 'draft' && run.draft);
+  const liveShowsDraft = showLiveTabs && liveTab === 'draft';
   return (
     <>
       <header class="app-header">
@@ -278,35 +329,86 @@ export function App() {
         </div>
       </header>
       <main class="shell">
-        <section class={`view ${view === 'fixtures' ? 'on' : ''}`}>
-          {contribute ? (
-            <FixturesView app={app} run={run} onStarted={onStarted} onPools={onPools} />
-          ) : (
-            <AccessGate auth={app.auth} />
-          )}
-        </section>
+        <section class={`view ${view === 'fixtures' ? 'on' : ''}`}>{fixturesSection}</section>
         <section class={`view ${view === 'arena' ? 'on' : ''}`}>
-          <ArenaView
-            run={run}
-            battles={battles}
-            selected={selected}
-            onSelect={selectBattle}
-            onLoadGame={loadGame}
-            onFetchBattle={fetchBattle}
-            onGoFixtures={() => navigate('fixtures')}
-          />
+          {showLiveTabs ? (
+            <nav class="section-nav live-tabs" aria-label="Live run sections">
+              <button
+                type="button"
+                class={`section-tab ${liveTab === 'arena' ? 'on' : ''}`}
+                onClick={() => setLiveTab('arena')}
+              >
+                Arena
+              </button>
+              <button
+                type="button"
+                class={`section-tab ${liveTab === 'draft' ? 'on' : ''}`}
+                onClick={() => setLiveTab('draft')}
+              >
+                Draft room
+              </button>
+            </nav>
+          ) : null}
+          <div style={liveShowsDraft ? 'display:none' : ''}>
+            <ArenaView
+              run={run}
+              battles={battles}
+              selected={selected}
+              onSelect={selectBattle}
+              onLoadGame={loadGame}
+              onFetchBattle={fetchBattle}
+              onGoFixtures={() => navigate('fixtures')}
+            />
+          </div>
+          {liveShowsDraft ? draftRoomSection : null}
         </section>
-        <section class={`view ${view === 'league' ? 'on' : ''}`}>
-          <LeagueView app={app} run={run} active={view === 'league'} />
-        </section>
-        <section class={`view ${view === 'results' ? 'on' : ''}`}>
-          <DataRoomView
-            active={view === 'results'}
-            epoch={recordsEpoch}
-            section={route.section}
-            onSection={(next) => navigate('results', next)}
-          />
-        </section>
+        {view === 'leagues' ? (
+          <section class="view on">
+            <LeaguesView
+              active
+              epoch={recordsEpoch}
+              boards={app.boards}
+              run={route.run}
+              team={route.team}
+              onOpenLeague={openLeague}
+              onOpenTeam={openTeam}
+              onOpenModel={openModel}
+              onBack={() => openLeague('')}
+            />
+          </section>
+        ) : null}
+        {view === 'tournaments' ? (
+          <section class="view on">
+            <TournamentsView
+              active
+              epoch={recordsEpoch}
+              run={route.run}
+              onOpenRun={openTournament}
+              onOpenModel={openModel}
+            />
+          </section>
+        ) : null}
+        {view === 'data' ? (
+          <section class="view on">
+            {route.model ? (
+              <ModelProfileView
+                active
+                model={route.model}
+                onBack={() => navigate('data')}
+                onOpenLeague={openLeague}
+                onOpenTournament={openTournament}
+              />
+            ) : (
+              <DataRoomView
+                active
+                epoch={recordsEpoch}
+                section={route.section}
+                onSection={(next) => navigate('data', next)}
+                onOpenModel={openModel}
+              />
+            )}
+          </section>
+        ) : null}
       </main>
     </>
   );

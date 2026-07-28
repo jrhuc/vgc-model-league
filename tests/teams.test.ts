@@ -114,3 +114,19 @@ test('packed teams that still name a Mega forme fail validation loudly', () => {
     /base formes/,
   );
 });
+
+test('Champions validation applies each species’ current learnset', () => {
+  assert.throws(
+    () =>
+      validateTeam('Annihilape||SitrusBerry|Defiant|FinalGambit,Protect|Jolly|||||50|', 'gen9championsvgc2026regmbbo3'),
+    /can't learn Final Gambit/,
+  );
+  assert.throws(
+    () =>
+      validateTeam(
+        'Incineroar||SitrusBerry|Intimidate|KnockOff,FakeOut|Careful|||||50|',
+        'gen9championsvgc2026regmbbo3',
+      ),
+    /can't learn Knock Off/,
+  );
+});

@@ -1,8 +1,10 @@
 import { createHash } from 'node:crypto';
-import type { Dex } from 'pokemon-showdown';
+import type { Battle, Dex } from 'pokemon-showdown';
 import { defaultPsDir } from './paths.js';
 import { loadShowdown, showdownCommit } from './showdown.js';
 import type { ToolDefinition } from './types.js';
+
+type FormatDataKind = 'move' | 'item';
 
 function tool(
   name: string,
@@ -42,6 +44,28 @@ export const DEX_TOOLS: ToolDefinition[] = [
     'name',
   ]),
   tool(
+    'calculate_stats',
+    'Calculate exact raw stats for a proposed spread using this format simulator, including Champions Stat Points and fixed maximum IVs.',
+    {
+      species: { type: 'string' },
+      nature: { type: 'string' },
+      evs: {
+        type: 'object',
+        description: 'Format investment values: Stat Points in Champions, EVs elsewhere. Omitted stats are 0.',
+        properties: {
+          hp: { type: 'integer', minimum: 0 },
+          atk: { type: 'integer', minimum: 0 },
+          def: { type: 'integer', minimum: 0 },
+          spa: { type: 'integer', minimum: 0 },
+          spd: { type: 'integer', minimum: 0 },
+          spe: { type: 'integer', minimum: 0 },
+        },
+        additionalProperties: false,
+      },
+    },
+    ['species', 'nature', 'evs'],
+  ),
+  tool(
     'lookup_matchup',
     'Look up type-chart effectiveness for an attacking move or type into a defending species. Returns immunity/SE/NVE multipliers only, not damage.',
     {
@@ -57,7 +81,7 @@ export const DEX_TOOLS: ToolDefinition[] = [
   ),
   tool(
     'estimate_damage',
-    "Estimate Gen 9 level-50 damage in doubles as a percentage range from base stats, STAB, type chart, weather, common items, and spread reduction. Ignores abilities, boosts, burn, screens, and terrain. Supply your own Pokémon's exact battle stats on whichever side is yours to narrow the range; opposing stats use legal IV/EV ranges from the open team sheet nature only. Never invent hidden IVs/EVs or raw HP.",
+    "Estimate Gen 9 level-50 damage in doubles as a percentage range from base stats, STAB, type chart, weather, common items, and spread reduction. Ignores abilities, boosts, burn, screens, and terrain. Supply your own Pokémon's exact battle stats on whichever side is yours to narrow the range; opposing stats use format-legal investment ranges from the open team sheet nature only. Never invent hidden investment or raw HP.",
     {
       attacker: { type: 'string' },
       defender: { type: 'string' },
@@ -194,22 +218,71 @@ function baseStats(stats: Dex.StatsTable): string {
   return `base stats HP ${stats.hp}, Attack ${stats.atk}, Defense ${stats.def}, Special Attack ${stats.spa}, Special Defense ${stats.spd}, Speed ${stats.spe}`;
 }
 
-function statRange(
-  base: number,
-  nature: { plus?: string; minus?: string } | undefined,
-  statName: 'atk' | 'def' | 'spa' | 'spd' | 'spe',
-): [number, number] {
-  const modifier = nature ? (nature.plus === statName ? 1.1 : nature.minus === statName ? 0.9 : 1) : undefined;
-  const stat = (iv: number, ev: number, multiplier: number) =>
-    Math.floor((Math.floor(((2 * base + iv + Math.floor(ev / 4)) * 50) / 100) + 5) * multiplier);
-  return modifier === undefined
-    ? [stat(0, 0, 0.9), stat(31, 252, 1.1)]
-    : [stat(0, 0, modifier), stat(31, 252, modifier)];
+const STAT_IDS = ['hp', 'atk', 'def', 'spa', 'spd', 'spe'] as const;
+type StatId = (typeof STAT_IDS)[number];
+type BattleStatCalculator = Pick<Battle, 'dex' | 'ruleTable' | 'statModify'>;
+type PokemonSet = Parameters<Battle['statModify']>[1];
+
+function investmentLimits(battle: BattleStatCalculator): { perStat: number; total: number | null; fixedIvs: boolean } {
+  const champions = battle.dex.currentMod.startsWith('champions');
+  const total = battle.ruleTable.evLimit;
+  return {
+    perStat: champions ? 32 : total === 0 ? 0 : Math.min(252, total ?? 252),
+    total,
+    fixedIvs: champions,
+  };
 }
 
-function hpRange(base: number): [number, number] {
-  const hp = (iv: number, ev: number) => Math.floor(((2 * base + iv + Math.floor(ev / 4)) * 50) / 100) + 50 + 10;
-  return [hp(0, 0), hp(31, 252)];
+function statSet(battle: BattleStatCalculator, nature: string, evs: Dex.StatsTable, ivs: Dex.StatsTable): PokemonSet {
+  const level =
+    battle.ruleTable.adjustLevel ??
+    battle.ruleTable.adjustLevelDown ??
+    battle.ruleTable.defaultLevel ??
+    battle.ruleTable.maxLevel ??
+    100;
+  return { name: '', species: '', item: '', ability: '', moves: [], nature, gender: '', evs, ivs, level };
+}
+
+function statRange(
+  battle: BattleStatCalculator,
+  baseStats: Dex.StatsTable,
+  nature: { name: string } | undefined,
+  statName: Exclude<StatId, 'hp'>,
+): [number, number] {
+  const limits = investmentLimits(battle);
+  const natures = battle.dex.natures.all();
+  const lowNature =
+    nature?.name ??
+    natures.find((entry: { minus?: string; name: string }) => entry.minus === statName)?.name ??
+    'Serious';
+  const highNature =
+    nature?.name ??
+    natures.find((entry: { plus?: string; name: string }) => entry.plus === statName)?.name ??
+    'Serious';
+  const lowEvs = Object.fromEntries(STAT_IDS.map((stat) => [stat, 0])) as Dex.StatsTable;
+  const highEvs = Object.fromEntries(
+    STAT_IDS.map((stat) => [stat, stat === statName ? limits.perStat : 0]),
+  ) as Dex.StatsTable;
+  const lowIvs = Object.fromEntries(STAT_IDS.map((stat) => [stat, limits.fixedIvs ? 31 : 0])) as Dex.StatsTable;
+  const highIvs = Object.fromEntries(STAT_IDS.map((stat) => [stat, 31])) as Dex.StatsTable;
+  return [
+    battle.statModify(baseStats, statSet(battle, lowNature, lowEvs, lowIvs), statName),
+    battle.statModify(baseStats, statSet(battle, highNature, highEvs, highIvs), statName),
+  ];
+}
+
+function hpRange(battle: BattleStatCalculator, baseStats: Dex.StatsTable): [number, number] {
+  const limits = investmentLimits(battle);
+  const lowEvs = Object.fromEntries(STAT_IDS.map((stat) => [stat, 0])) as Dex.StatsTable;
+  const highEvs = Object.fromEntries(
+    STAT_IDS.map((stat) => [stat, stat === 'hp' ? limits.perStat : 0]),
+  ) as Dex.StatsTable;
+  const lowIvs = Object.fromEntries(STAT_IDS.map((stat) => [stat, limits.fixedIvs ? 31 : 0])) as Dex.StatsTable;
+  const highIvs = Object.fromEntries(STAT_IDS.map((stat) => [stat, 31])) as Dex.StatsTable;
+  return [
+    battle.statModify(baseStats, statSet(battle, 'Serious', lowEvs, lowIvs), 'hp'),
+    battle.statModify(baseStats, statSet(battle, 'Serious', highEvs, highIvs), 'hp'),
+  ];
 }
 
 function effectivenessLabel(mod: number): string {
@@ -337,12 +410,16 @@ const TARGET_TAGS: Record<string, string> = {
 
 export class ShowdownReference {
   private readonly dex;
+  private readonly battle: Battle;
 
   constructor(
     readonly format: string,
     readonly psDir = defaultPsDir(),
   ) {
-    this.dex = loadShowdown(psDir).Dex.forFormat(format);
+    const { Battle, Dex } = loadShowdown(psDir);
+    const resolvedFormat = Dex.formats.get(format);
+    this.dex = Dex.forFormat(resolvedFormat);
+    this.battle = new Battle({ formatid: resolvedFormat.id, format: resolvedFormat });
   }
 
   get revision(): string {
@@ -362,6 +439,7 @@ export class ShowdownReference {
       ShowdownReference.prototype.lookup,
       prototype.lookupSpecies,
       prototype.lookupOne,
+      prototype.formatLegalityError,
       prototype.lookupMatchup,
       prototype.estimateDamage,
       id,
@@ -371,6 +449,8 @@ export class ShowdownReference {
       baseStats,
       statRange,
       hpRange,
+      investmentLimits,
+      statSet,
       effectivenessLabel,
       effectivenessDetail,
       typeModifier,
@@ -418,7 +498,7 @@ export class ShowdownReference {
     if (!species.exists) return undefined;
     const nature = mon.nature ? this.dex.natures.get(mon.nature) : undefined;
     const knownNature = nature?.exists ? nature : undefined;
-    const [low, high] = statRange(species.baseStats.spe, knownNature, 'spe');
+    const [low, high] = statRange(this.battle, species.baseStats, knownNature, 'spe');
     const moves = Object.fromEntries(
       uniqueNames(mon.moves ?? []).flatMap((moveName) => {
         const move = this.dex.moves.get(moveName);
@@ -442,7 +522,7 @@ export class ShowdownReference {
         if (!forme.exists || !/^Mega(?:-|$)/.test(forme.forme)) continue;
         const target = typeof item.megaStone === 'string' ? item.megaStone : item.megaStone[species.name];
         if (id(target ?? '') !== id(forme.name)) continue;
-        const [megaLow, megaHigh] = statRange(forme.baseStats.spe, knownNature, 'spe');
+        const [megaLow, megaHigh] = statRange(this.battle, forme.baseStats, knownNature, 'spe');
         mega.push(
           `if Mega Evolved -> ${forme.name}: ${forme.types.join('/')}, ability ${uniqueNames(Object.values(forme.abilities)).join('/')}, ${baseStats(forme.baseStats)}, raw Speed ${megaLow}-${megaHigh}`,
         );
@@ -463,7 +543,7 @@ export class ShowdownReference {
     const exact = Number.isInteger(input.exact) && input.exact! > 0 ? input.exact : undefined;
     const raw: [number, number] =
       exact === undefined
-        ? statRange(species.baseStats.spe, nature?.exists ? nature : undefined, 'spe')
+        ? statRange(this.battle, species.baseStats, nature?.exists ? nature : undefined, 'spe')
         : [exact, exact];
     const stage = Math.max(-6, Math.min(6, Math.trunc(input.boost ?? 0)));
     let effective = stage >= 0 ? modifyRange(raw, 2 + stage, 2) : modifyRange(raw, 2, 2 - stage);
@@ -558,6 +638,7 @@ export class ShowdownReference {
         group.sets.push(set);
       speciesGroups.set(species.id, group);
     }
+    const fixedIvs = investmentLimits(this.battle).fixedIvs;
     for (const { species, sets } of [...speciesGroups.values()].sort((a, b) =>
       id(a.species.name).localeCompare(id(b.species.name)),
     )) {
@@ -571,10 +652,10 @@ export class ShowdownReference {
       for (const [, , natureName] of sets) {
         const nature = natureName ? this.dex.natures.get(natureName) : undefined;
         const knownNature = nature?.exists ? nature : undefined;
-        const [low, high] = statRange(species.baseStats.spe, knownNature, 'spe');
+        const [low, high] = statRange(this.battle, species.baseStats, knownNature, 'spe');
         const detail = knownNature
-          ? `raw Speed ${low}-${high} with ${knownNature.name} alignment (full legal IV/EV range)`
-          : `raw Speed ${low}-${high} (full legal IV/EV/nature range)`;
+          ? `raw Speed ${low}-${high} with ${knownNature.name} alignment (${fixedIvs ? 'fixed maximum IV/Stat Point range' : 'full legal IV/EV range'})`
+          : `raw Speed ${low}-${high} (${fixedIvs ? 'fixed maximum IV/Stat Point/nature range' : 'full legal IV/EV/nature range'})`;
         if (!details.includes(detail)) details.push(detail);
       }
       for (const itemName of uniqueNames(sets.map((set) => set[1]))) {
@@ -589,7 +670,7 @@ export class ShowdownReference {
             if (id(visibleItem ?? '') !== id(itemName)) return [];
             const nature = natureName ? this.dex.natures.get(natureName) : undefined;
             const knownNature = nature?.exists ? nature : undefined;
-            const [low, high] = statRange(mega.baseStats.spe, knownNature, 'spe');
+            const [low, high] = statRange(this.battle, mega.baseStats, knownNature, 'spe');
             return [`raw Speed ${low}-${high}${knownNature ? ` with ${knownNature.name} alignment` : ''}`];
           });
           const megaAbilities = uniqueNames(Object.values(mega.abilities));
@@ -625,12 +706,12 @@ export class ShowdownReference {
     }
     for (const name of items) {
       const item = this.dex.items.get(name);
-      const description = item.exists ? cleanDescription(item.shortDesc || item.desc) : '';
+      const description = item.exists ? cleanDescription(item.desc || item.shortDesc) : '';
       if (description) lines.push(`- Item ${item.name}: ${description}`);
     }
     for (const name of abilities) {
       const ability = this.dex.abilities.get(name);
-      const description = ability.exists ? cleanDescription(ability.shortDesc || ability.desc) : '';
+      const description = ability.exists ? cleanDescription(ability.desc || ability.shortDesc) : '';
       if (description) lines.push(`- Ability ${ability.name}: ${description}`);
     }
     for (const name of natures) {
@@ -648,17 +729,34 @@ export class ShowdownReference {
   lookup(name: string, args: Record<string, unknown> = {}): string {
     const value = typeof args.name === 'string' ? args.name : '';
     if (name === 'lookup_species') return this.lookupSpecies(value, args.item, args.nature);
-    if (name === 'lookup_move') return this.lookupOne('Move', value, { moves: [value] });
-    if (name === 'lookup_item') return this.lookupOne('Item', value, { items: [value] });
+    if (name === 'lookup_move') {
+      return this.formatLegalityError('move', value) ?? this.lookupOne('Move', value, { moves: [value] });
+    }
+    if (name === 'lookup_item') {
+      return this.formatLegalityError('item', value) ?? this.lookupOne('Item', value, { items: [value] });
+    }
     if (name === 'lookup_ability') return this.lookupOne('Ability', value, { abilities: [value] });
     if (name === 'lookup_nature') return this.lookupOne('Nature', value, { natures: [value] }, '- Stat alignment ');
+    if (name === 'calculate_stats') return this.calculateStats(args);
     if (name === 'lookup_matchup') return this.lookupMatchup(args);
     if (name === 'estimate_damage') return this.estimateDamage(args);
     return `Unknown tool: ${name}`;
   }
 
+  private formatLegalityError(kind: FormatDataKind, name: string): string | null {
+    if (!name.trim()) return null;
+    const data = kind === 'move' ? this.dex.moves.get(name) : this.dex.items.get(name);
+    if (!data.exists) return null;
+    const banned = this.battle.ruleTable.has(`-${kind}:${data.id}`);
+    return data.isNonstandard || banned ? `${data.name} is not legal in ${this.format}.` : null;
+  }
+
   private lookupSpecies(name: string, item?: unknown, nature?: unknown): string {
     if (!name.trim()) return 'Species name is required.';
+    if (typeof item === 'string') {
+      const error = this.formatLegalityError('item', item);
+      if (error) return error;
+    }
     const lines = this.render({
       speciesSets: [
         [
@@ -686,6 +784,8 @@ export class ShowdownReference {
     if (moveName.trim()) {
       const move = this.dex.moves.get(moveName);
       if (!move.exists) return `No move data for ${JSON.stringify(moveName)} in ${this.format}.`;
+      const error = this.formatLegalityError('move', moveName);
+      if (error) return error;
       if (move.id === 'ragingbull' && !attacker?.exists) return 'attacker is required to resolve Raging Bull typing.';
       attackType = speciesMoveType(move.id, move.type, attacker?.name ?? '');
       moveName = move.name;
@@ -695,6 +795,36 @@ export class ShowdownReference {
     if (!type.exists) return `No type data for ${JSON.stringify(attackType)}.`;
     const source = moveName ? `${moveName} (${type.name})` : type.name;
     return `${source} into ${defender.name} (${defender.types.join('/')}): ${effectivenessDetail(this.dex, type.name, defender.types)}.`;
+  }
+
+  private calculateStats(args: Record<string, unknown>): string {
+    const speciesName = typeof args.species === 'string' ? args.species : '';
+    const natureName = typeof args.nature === 'string' ? args.nature : '';
+    if (!speciesName.trim() || !natureName.trim() || !args.evs || typeof args.evs !== 'object') {
+      return 'species, nature, and evs are required.';
+    }
+    const species = this.dex.species.get(speciesName);
+    if (!species.exists) return `No species data for ${JSON.stringify(speciesName)} in ${this.format}.`;
+    const nature = this.dex.natures.get(natureName);
+    if (!nature.exists) return `No nature data for ${JSON.stringify(natureName)} in ${this.format}.`;
+    const raw = args.evs as Record<string, unknown>;
+    const limits = investmentLimits(this.battle);
+    const evs = Object.fromEntries(
+      STAT_IDS.map((stat) => [stat, raw[stat] === undefined ? 0 : Number(raw[stat])]),
+    ) as Dex.StatsTable;
+    for (const stat of STAT_IDS) {
+      if (!Number.isInteger(evs[stat]) || evs[stat] < 0 || evs[stat] > limits.perStat) {
+        return `${stat} investment must be an integer from 0 to ${limits.perStat}.`;
+      }
+    }
+    const total = STAT_IDS.reduce((sum, stat) => sum + evs[stat], 0);
+    if (limits.total !== null && total > limits.total) {
+      return `Total investment ${total} exceeds this format's limit of ${limits.total}.`;
+    }
+    const ivs = Object.fromEntries(STAT_IDS.map((stat) => [stat, 31])) as Dex.StatsTable;
+    const stats = this.battle.spreadModify(species.baseStats, statSet(this.battle, nature.name, evs, ivs));
+    const label = limits.fixedIvs ? 'Stat Points' : 'EVs';
+    return `${species.name} (${nature.name}; ${label} ${total}${limits.total === null ? '' : `/${limits.total}`}): HP ${stats.hp}, Attack ${stats.atk}, Defense ${stats.def}, Special Attack ${stats.spa}, Special Defense ${stats.spd}, Speed ${stats.spe}.`;
   }
 
   private estimateDamage(args: Record<string, unknown>): string {
@@ -709,6 +839,13 @@ export class ShowdownReference {
     if (!attacker.exists) return `No species data for ${JSON.stringify(attackerName)}.`;
     if (!defender.exists) return `No species data for ${JSON.stringify(defenderName)}.`;
     if (!move.exists) return `No move data for ${JSON.stringify(moveName)}.`;
+    const moveError = this.formatLegalityError('move', moveName);
+    if (moveError) return moveError;
+    for (const key of ['attacker_item', 'defender_item'] as const) {
+      const itemName = typeof args[key] === 'string' ? args[key] : '';
+      const itemError = this.formatLegalityError('item', itemName);
+      if (itemError) return itemError;
+    }
     if (move.category === 'Status' || !move.basePower)
       return `${move.name} is not a standard damaging move with a base power; no estimate.`;
 
@@ -724,7 +861,7 @@ export class ShowdownReference {
     const [atkLow, atkHigh] =
       exactAttack !== undefined
         ? [exactAttack, exactAttack]
-        : statRange(attacker.baseStats[attackStat], attackerNature?.exists ? attackerNature : undefined, attackStat);
+        : statRange(this.battle, attacker.baseStats, attackerNature?.exists ? attackerNature : undefined, attackStat);
     const defenderItemName = typeof args.defender_item === 'string' ? args.defender_item : '';
     const defenderItem = defenderItemName ? this.dex.items.get(defenderItemName) : undefined;
     let defenderItemMod = 1;
@@ -741,10 +878,10 @@ export class ShowdownReference {
     let [defLow, defHigh] =
       exactDefense !== undefined
         ? [exactDefense, exactDefense]
-        : statRange(defender.baseStats[defenseStat], defenderNature?.exists ? defenderNature : undefined, defenseStat);
+        : statRange(this.battle, defender.baseStats, defenderNature?.exists ? defenderNature : undefined, defenseStat);
     defLow = Math.floor(defLow * defenderItemMod);
     defHigh = Math.floor(defHigh * defenderItemMod);
-    const [hpLow, hpHigh] = exactHp !== undefined ? [exactHp, exactHp] : hpRange(defender.baseStats.hp);
+    const [hpLow, hpHigh] = exactHp !== undefined ? [exactHp, exactHp] : hpRange(this.battle, defender.baseStats);
     const suppliedHpPercent = asFinite(args.defender_hp_percent);
     const hpPercent = suppliedHpPercent === undefined ? undefined : Math.max(0, Math.min(100, suppliedHpPercent));
 
