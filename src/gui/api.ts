@@ -197,6 +197,7 @@ export interface AppState {
   boards: BoardInfo[];
   auth: AuthView;
   run: RunSnapshot | null;
+  externalRun: { runId: string; mode: 'draft' } | null;
 }
 
 export interface MonView {
@@ -408,6 +409,8 @@ export interface LeagueChampionView {
   team: string;
 }
 
+export type LeaguePhase = 'drafting' | 'building' | 'roundrobin' | 'playoffs' | 'complete';
+
 export interface LeagueCardView {
   runId: string;
   when: string;
@@ -417,9 +420,11 @@ export interface LeagueCardView {
   teamNames: string[];
   weeks: number | null;
   seriesCount: number;
-  phase: 'roundrobin' | 'playoffs' | 'complete';
+  phase: LeaguePhase;
   week: number;
   champion: LeagueChampionView | null;
+  live: boolean;
+  picks: number | null;
 }
 
 export interface LeaguesResponse {
@@ -572,6 +577,14 @@ export interface LeagueGameResponse {
   decisions: LeagueGameDecisionView[];
 }
 
+export interface LeagueLiveSeriesView {
+  seriesId: string;
+  game: number;
+  turn: number;
+  decisions: number;
+  sides: [number, number] | null;
+}
+
 export interface LeagueResponse {
   runId: string;
   when: string;
@@ -581,9 +594,11 @@ export interface LeagueResponse {
   budget: number | null;
   picksPerEntrant: number | null;
   weeks: number | null;
-  phase: 'roundrobin' | 'playoffs' | 'complete';
+  phase: LeaguePhase;
   week: number;
   champion: LeagueChampionView | null;
+  live: boolean;
+  liveSeries: LeagueLiveSeriesView[];
   franchises: LeagueFranchiseView[];
   series: LeagueSeriesView[];
   teambuilds: LeagueTeambuildView[];

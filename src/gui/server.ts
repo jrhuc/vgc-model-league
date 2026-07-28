@@ -6,14 +6,14 @@ import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { buildLeague, buildLeagueGame, buildLeagues, buildModelProfile } from '../archive.js';
+import { buildLeague, buildLeagueGame, buildLeagues, buildModelProfile, findLiveDraftRun } from '../archive.js';
 import type { AuthService, AuthSession, AuthUser } from '../auth.js';
 import { AuthError } from '../auth.js';
 import { describeBoardMon, listBoards, loadBoard } from '../draft.js';
 import type { DraftLeagueEvent } from '../draftleague.js';
 import { DRAFT_PROTOCOL_VERSION, runDraftLeague } from '../draftleague.js';
 import { buildEvidence, buildTournaments } from '../evidence.js';
-import { ImportError, importSeries, isImported } from '../import.js';
+import { ImportError, importSeries, isImported, removeImportedRun } from '../import.js';
 import { discoverModels } from '../model-catalog.js';
 import { DATA_DIR, makeRunDirectory, prepareDataDirectories, RESULTS_PATH, RUNS_DIR, TEAMS_DIR } from '../paths.js';
 import { PROVIDER_OPTIONS, providerOption } from '../provider-registry.js';
@@ -173,6 +173,8 @@ interface RunConfig extends ModelReasoningConfig {
   board?: string;
   seed?: number;
   timerScale?: TimerScale;
+  closedSheets?: boolean;
+  sequentialWeeks?: boolean;
 }
 
 function isActiveRunState(state: RunSnapshot['state']): state is 'running' | 'paused' {
@@ -546,6 +548,13 @@ export class GuiServer {
       return;
     }
 
+    if (key === 'POST /api/import/remove') {
+      this.authorizeImport(request);
+      this.consumeRateLimit('import', 'operator', 600, 60 * 60_000);
+      this.json(response, 200, this.importRemoveBody(await this.readJson(request)));
+      return;
+    }
+
     let actor: AuthUser | undefined;
     if (MUTATING_METHODS[method]) {
       const origin = request.headers.origin;
@@ -865,7 +874,14 @@ export class GuiServer {
           }
         : { mode: this.publicOrigin ? 'read-only' : 'local', user: null, csrfToken: null },
       run: this.runBody(!this.canViewPrivateRun(session?.user)),
+      externalRun: this.externalRunBody(),
     };
+  }
+
+  private externalRunBody(): AppState['externalRun'] {
+    if (this.run && isActiveRunState(this.run.state)) return null;
+    const runId = findLiveDraftRun(this.options.runsDir ?? RUNS_DIR);
+    return runId ? { runId, mode: 'draft' } : null;
   }
 
   private boardBody(id: string): BoardResponse {
@@ -918,6 +934,27 @@ export class GuiServer {
     const expected = createHash('sha256').update(configured).digest();
     const received = createHash('sha256').update(offered).digest();
     if (!offered || !timingSafeEqual(expected, received)) throw new HttpError(401, 'invalid import token');
+  }
+
+  private importRemoveBody(body: Record<string, unknown>): JsonObject {
+    try {
+      const result = removeImportedRun(String(body.runId ?? ''), {
+        recordsPath: this.options.recordsPath ?? RESULTS_PATH,
+        runsDir: this.options.runsDir ?? RUNS_DIR,
+        teamsDir: this.options.teamsDir ?? TEAMS_DIR,
+      });
+      this.options.logger?.({
+        timestamp: new Date().toISOString(),
+        level: 'info',
+        event: 'imported_run_removed',
+        run: String(body.runId ?? ''),
+        series: String(result.removed),
+      });
+      return result as unknown as JsonObject;
+    } catch (error) {
+      if (error instanceof ImportError) throw new HttpError(400, error.message);
+      throw error;
+    }
   }
 
   private importBody(body: Record<string, unknown>): JsonObject {
@@ -1186,6 +1223,8 @@ export class GuiServer {
       ...(reasoning === undefined ? {} : { reasoning }),
       ...(Object.keys(reasoningByModel).length ? { reasoningByModel } : {}),
       ...(timerScale === undefined ? {} : { timerScale }),
+      ...(mode === 'draft' && body.closedSheets === true ? { closedSheets: true } : {}),
+      ...(mode === 'draft' && body.sequentialWeeks === true ? { sequentialWeeks: true } : {}),
     };
     const run = new ActiveRun(config, apiKeys, owner, this.options.runsDir);
     if (owner && this.options.auth) {
@@ -1302,6 +1341,8 @@ export class GuiServer {
         await (this.options.draftRunner ?? runDraftLeague)(run.config.models, run.runDir, {
           ...commonOptions,
           ...(run.config.board === undefined ? {} : { board: run.config.board }),
+          ...(run.config.closedSheets === true ? { closedSheets: true } : {}),
+          ...(run.config.sequentialWeeks === true ? { sequentialWeeks: true } : {}),
         });
       } else if (run.config.mode === 'tournament') {
         await (this.options.tournamentRunner ?? runTournament)(run.config.models, run.runDir, {

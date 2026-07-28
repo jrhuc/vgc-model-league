@@ -298,6 +298,11 @@ export async function playRecordedSeries(context: RecordedSeriesContext): Promis
   const seriesId = randomUUID().replaceAll('-', '').slice(0, 12);
   const seriesDir = path.join(context.runDir, 'series', seriesId);
   fs.mkdirSync(seriesDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(seriesDir, 'series.json'),
+    `${JSON.stringify({ players: context.players, started: new Date().toISOString() })}\n`,
+    'utf8',
+  );
   const names: Record<Pid, string> = { p1: `p1-${context.players.p1}`, p2: `p2-${context.players.p2}` };
   const reference = Object.values(context.players).some((player) => player !== 'random')
     ? new ShowdownReference(context.format, context.psDir)

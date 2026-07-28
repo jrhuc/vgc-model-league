@@ -5,7 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { GuiServer } from '../src/gui/server.js';
-import { importSeries } from '../src/import.js';
+import { importSeries, removeImportedRun } from '../src/import.js';
 import { loadRows } from '../src/records.js';
 
 const TOKEN = 'test-import-token';
@@ -80,6 +80,33 @@ test('importSeries stores a row with its decision logs and stamps provenance', (
       'a series already held is reported, not appended twice',
     );
     assert.equal(loadRows(store.paths.recordsPath).length, 1);
+  } finally {
+    store.dispose();
+  }
+});
+
+test('removeImportedRun deletes imported rows and mirrors but refuses local results', () => {
+  const store = scratch();
+  try {
+    importSeries({ row: bundleRow(), games: { 'game-1.log': '|start\n' } }, store.paths);
+    const runDir = path.join(store.paths.runsDir, '20260725T000000.000000Z-abcd1234');
+    assert.ok(fs.existsSync(runDir));
+
+    const result = removeImportedRun('20260725T000000.000000Z-abcd1234', store.paths);
+    assert.equal(result.removed, 1);
+    assert.equal(loadRows(store.paths.recordsPath).length, 0);
+    assert.equal(fs.existsSync(runDir), false, 'the imported run mirror is deleted with its rows');
+
+    assert.throws(() => removeImportedRun('20260725T000000.000000Z-abcd1234', store.paths), /no series held/);
+
+    const local = bundleRow({ run_id: '20260725T111111.000000Z-eeee5678' });
+    fs.mkdirSync(path.dirname(store.paths.recordsPath), { recursive: true });
+    fs.appendFileSync(store.paths.recordsPath, `${JSON.stringify(local)}\n`);
+    assert.throws(
+      () => removeImportedRun('20260725T111111.000000Z-eeee5678', store.paths),
+      /refusing to remove locally recorded results/,
+    );
+    assert.equal(loadRows(store.paths.recordsPath).length, 1, 'local rows survive');
   } finally {
     store.dispose();
   }

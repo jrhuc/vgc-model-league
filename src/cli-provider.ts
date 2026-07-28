@@ -44,7 +44,6 @@ function runCli(bin: string, args: string[], label: string, cwd: string, options
   });
 }
 
-/** Runs completions through a local agent CLI in print mode; one subprocess per call. */
 export class CliProvider implements Provider {
   constructor(
     private readonly flavor: 'omp' | 'claude-cli',

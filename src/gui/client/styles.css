@@ -702,3 +702,29 @@ button.game-chip:hover { outline: 2px solid var(--blue); outline-offset: 1px; }
 
 .team-rates { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 6px 20px; padding: 14px 24px 6px; font: 500 11px/1.6 var(--mono); color: var(--ink-soft); }
 .team-rates b { float: right; color: var(--ink); font-variant-numeric: tabular-nums; }
+
+.live-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 6px;
+  border-radius: 50%;
+  background: #e5484d;
+  animation: live-pulse 1.6s ease-in-out infinite;
+  vertical-align: baseline;
+}
+@keyframes live-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+.live-now { border-left: 3px solid #e5484d; }
+.live-feed {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+.live-feed li { font-size: 0.92rem; }
+.live-note { margin: 10px 0 0; font-size: 0.92rem; }
+.phase-pill.drafting, .phase-pill.building { background: #fdeaea; color: #b3261e; }

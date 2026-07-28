@@ -4,12 +4,6 @@ export function configureCsrf(token: string | null | undefined): void {
   csrfToken = token ?? '';
 }
 
-/**
- * Archive reads (finished runs, immutable boards, records) serve stale from a
- * session cache while revalidating in the background: remote deployments sit
- * behind ~0.5s round trips, and without this every tab switch re-pays them.
- * Live routes (state, battle, events, run control) must never be cached.
- */
 const CACHEABLE =
   /^\/api\/(?:leagues|league|league\/game|tournaments|board|records|evidence|model|pool\/teams)(?:\?|$)/;
 const CACHE_TTL_MS = 300_000;
@@ -47,4 +41,10 @@ export async function api<T>(pathname: string, body?: unknown): Promise<T> {
     return hit.data as T;
   }
   return revalidate<T>(pathname);
+}
+
+export async function apiFresh<T>(pathname: string): Promise<T> {
+  const data = await request<T>(pathname);
+  if (CACHEABLE.test(pathname)) cache.set(pathname, { at: Date.now(), data });
+  return data;
 }

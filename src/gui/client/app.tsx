@@ -352,12 +352,14 @@ export function App() {
           <div style={liveShowsDraft ? 'display:none' : ''}>
             <ArenaView
               run={run}
+              externalRun={app?.externalRun ?? null}
               battles={battles}
               selected={selected}
               onSelect={selectBattle}
               onLoadGame={loadGame}
               onFetchBattle={fetchBattle}
               onGoFixtures={() => navigate('fixtures')}
+              onOpenLeague={openLeague}
             />
           </div>
           {liveShowsDraft ? draftRoomSection : null}

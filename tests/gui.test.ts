@@ -1147,11 +1147,15 @@ test('hosted tournament runs execute in the worker and stream the bracket', asyn
 });
 
 test('gui starts draft runs, validates the board, and mirrors draft state', async () => {
-  let received: { board?: string } | undefined;
+  let received: { board?: string; closedSheets?: boolean; sequentialWeeks?: boolean } | undefined;
   const gui = new GuiServer({
     runsDir: RUNS_SCRATCH,
     draftRunner: async (_models, _runDir, options = {}) => {
-      received = { ...(options.board ? { board: options.board } : {}) };
+      received = {
+        ...(options.board ? { board: options.board } : {}),
+        ...(options.closedSheets === true ? { closedSheets: true } : {}),
+        ...(options.sequentialWeeks === true ? { sequentialWeeks: true } : {}),
+      };
       options.onEvent?.({
         type: 'draft',
         draft: {
@@ -1208,6 +1212,8 @@ test('gui starts draft runs, validates the board, and mirrors draft state', asyn
       mode: 'draft',
       models: ['random', 'random'],
       board: 'regmb-202607',
+      closedSheets: true,
+      sequentialWeeks: true,
     });
     assert.equal(started.status, 200, JSON.stringify(started.data));
     let run = (await apiJson(`${base}api/state`)).data.run as Record<string, unknown>;
@@ -1219,6 +1225,8 @@ test('gui starts draft runs, validates the board, and mirrors draft state', asyn
     assert.equal(run.mode, 'draft');
     assert.equal(run.board, 'regmb-202607');
     assert.equal(received?.board, 'regmb-202607');
+    assert.equal(received?.closedSheets, true, 'closed team sheets reach the draft runner');
+    assert.equal(received?.sequentialWeeks, true, 'sequential weeks reach the draft runner');
     const draft = run.draft as Record<string, unknown>;
     assert.equal(draft.phase, 'draft');
     const picks = draft.picks as Array<Record<string, unknown>>;
