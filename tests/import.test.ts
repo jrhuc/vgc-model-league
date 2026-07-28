@@ -85,6 +85,32 @@ test('importSeries stores a row with its decision logs and stamps provenance', (
   }
 });
 
+test('importSeries stores game logs, backfilling rows it already holds', () => {
+  const store = scratch();
+  try {
+    const games = { 'game-1.log': '|start\n|turn|1\n', 'game-2.log': '|start\n|turn|1\n|win|Testers\n' };
+    const first = importSeries({ row: bundleRow(), games }, store.paths);
+    assert.equal(first.imported, true);
+    assert.deepEqual(first.games?.sort(), ['game-1.log', 'game-2.log']);
+
+    const seriesDir = path.join(store.paths.runsDir, '20260725T000000.000000Z-abcd1234', 'series', 'aaaabbbbcccc');
+    assert.match(fs.readFileSync(path.join(seriesDir, 'game-2.log'), 'utf8'), /win\|Testers/);
+
+    const later = { ...games, 'game-3.log': '|start\n' };
+    const backfill = importSeries({ row: bundleRow(), games: later }, store.paths);
+    assert.equal(backfill.duplicate, true);
+    assert.deepEqual(backfill.games, ['game-3.log'], 'only missing logs are written for a known series');
+    assert.ok(fs.existsSync(path.join(seriesDir, 'game-3.log')));
+
+    assert.throws(
+      () => importSeries({ row: bundleRow({ series_id: 'ddddeeeeffff' }), games: { '../evil.log': '' } }, store.paths),
+      /unsafe name/,
+    );
+  } finally {
+    store.dispose();
+  }
+});
+
 test('importSeries stores league assets, even for rows it already holds', () => {
   const store = scratch();
   try {

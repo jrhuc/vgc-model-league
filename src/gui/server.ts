@@ -603,7 +603,9 @@ export class GuiServer {
       );
     else if (key === 'GET /api/model') this.json(response, 200, this.modelBody(url.searchParams.get('id') ?? ''));
     else if (key === 'GET /api/board') {
-      this.json(response, 200, this.boardBody(url.searchParams.get('id') ?? ''));
+      const board = this.boardBody(url.searchParams.get('id') ?? '');
+      response.setHeader('cache-control', 'public, max-age=3600');
+      this.json(response, 200, board);
     } else if (key === 'GET /api/pool/teams') {
       this.json(response, 200, this.poolTeamsBody(url.searchParams.get('name') ?? ''));
     } else if (key === 'GET /api/reasoning') {

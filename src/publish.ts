@@ -51,6 +51,24 @@ function readLog(runsDir: string, row: SeriesRecord, pid: Pid): string | undefin
   }
 }
 
+function readGameLogs(runsDir: string, row: SeriesRecord): Record<string, string> | undefined {
+  const dir = path.join(runsDir, String(row.run_id ?? ''), 'series', String(row.series_id ?? ''));
+  let names: string[];
+  try {
+    names = fs.readdirSync(dir);
+  } catch {
+    return undefined;
+  }
+  const games: Record<string, string> = {};
+  for (const name of names) {
+    if (!/^game-\d+\.log$/.test(name)) continue;
+    try {
+      games[name] = fs.readFileSync(path.join(dir, name), 'utf8');
+    } catch {}
+  }
+  return Object.keys(games).length > 0 ? games : undefined;
+}
+
 function readRunConfig(runsDir: string, runId: string): Record<string, unknown> | undefined {
   try {
     return JSON.parse(fs.readFileSync(path.join(runsDir, runId, 'config.json'), 'utf8')) as Record<string, unknown>;
@@ -122,6 +140,7 @@ export async function publishRecords(options: PublishOptions): Promise<PublishSu
   const remotePools = new Set(remote.pools.map((entry) => entry.name));
   const summary: PublishSummary = { published: 0, duplicates: 0, poolsCreated: [] };
   const sentConfigs = new Set<string>();
+  let warnedGames = false;
   for (const row of rows) {
     const runId = String(row.run_id ?? '');
     const label = `${row.players.p1} vs ${row.players.p2} (${String(row.mode ?? 'rotation')}, ${runId.slice(0, 15)})`;
@@ -132,6 +151,8 @@ export async function publishRecords(options: PublishOptions): Promise<PublishSu
       if (text !== undefined) logs[pid] = text;
     }
     if (Object.keys(logs).length > 0) bundle.logs = logs;
+    const games = readGameLogs(options.runsDir, row);
+    if (games) bundle.games = games;
     if (!sentConfigs.has(runId)) {
       const config = readRunConfig(options.runsDir, runId);
       if (config) bundle.runConfig = config;
@@ -154,11 +175,19 @@ export async function publishRecords(options: PublishOptions): Promise<PublishSu
     }
     if (result.imported) summary.published += 1;
     else summary.duplicates += 1;
-    log(`${result.imported ? 'published' : 'already there'}: ${label}`);
+    log(
+      `${result.imported ? 'published' : 'already there'}: ${label}${
+        result.games?.length ? ` (+${result.games.length} game logs)` : ''
+      }`,
+    );
     if (bundle.league) {
       if (!Array.isArray(result.league))
         log(`WARNING: server ignored league assets for ${runId} — deploy a newer server and re-publish`);
       else if (result.league.length > 0) log(`league assets stored: ${result.league.join(', ')}`);
+    }
+    if (bundle.games && result.games === undefined && !warnedGames) {
+      log('WARNING: server ignored game logs — deploy a newer server and re-publish');
+      warnedGames = true;
     }
   }
   if (options.dryRun) log(`${rows.length} series selected; nothing sent`);
