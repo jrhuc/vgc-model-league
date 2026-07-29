@@ -967,6 +967,20 @@ test('a draft league checkpoints after a week and resumes to a champion', async 
   assert.equal(first.length, 2, 'week one is two series');
   assert.ok(first.every((row) => row.stage === 'roundrobin' && row.round === 1));
 
+  const teambuildLog = path.join(directory, 'teambuild', 'teambuild.jsonl');
+  const storedBuilds = fs
+    .readFileSync(teambuildLog, 'utf8')
+    .trim()
+    .split('\n')
+    .map((line) => JSON.parse(line) as Record<string, unknown>);
+  for (let entrant = 0; entrant < 4; entrant += 1) {
+    const donor = storedBuilds.find((row) => row.entrant === entrant)!;
+    fs.appendFileSync(
+      teambuildLog,
+      `${JSON.stringify({ ...donor, seriesIndex: 2, opponent: (entrant + 1) % 4, rationale: 'prebuilt before the crash' })}\n`,
+    );
+  }
+
   const resumed = await runDraftLeague(models, directory, {
     recordsPath,
     seed: 11,
@@ -979,6 +993,17 @@ test('a draft league checkpoints after a week and resumes to a champion', async 
   const final = resumed[resumed.length - 1]!;
   assert.equal(final.stage, 'playoff');
   assert.ok(final.advanced, 'the resumed league crowns a champion');
+
+  const buildsAfter = fs
+    .readFileSync(teambuildLog, 'utf8')
+    .trim()
+    .split('\n')
+    .map((line) => JSON.parse(line) as Record<string, unknown>);
+  assert.equal(
+    buildsAfter.filter((row) => row.seriesIndex === 2).length,
+    4,
+    'series with stored teambuilds reuse them instead of rebuilding',
+  );
 });
 
 test('a two-coach league plays one week and a single final', async (t) => {
