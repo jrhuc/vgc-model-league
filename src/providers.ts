@@ -627,6 +627,18 @@ export class SdkProvider implements Provider {
         });
         if (result.warnings?.some((warning) => warning.type === 'unsupported' && warning.feature === 'temperature'))
           this.supportsTemperature = false;
+        const debugTarget = process.env.VGC_DEBUG_PROVIDER_ERRORS;
+        if (debugTarget && !result.text.trim() && result.toolCalls.length === 0) {
+          let raw = '(unavailable)';
+          try {
+            raw = JSON.stringify(result.response.body ?? null).slice(0, 2000);
+          } catch {}
+          const line =
+            `[provider-debug] ${this.spec.provider}:${this.model} empty-response ` +
+            `finish=${result.finishReason} usage=${JSON.stringify(result.usage)} response=${raw}`;
+          if (debugTarget === '1') console.error(line);
+          else appendFileSync(debugTarget, `${line}\n`);
+        }
         const reasoningText = result.reasoningText?.trim() ?? '';
         const reasoningTokens = result.usage.outputTokenDetails?.reasoningTokens ?? 0;
         return {
