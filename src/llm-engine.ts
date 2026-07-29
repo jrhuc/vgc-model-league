@@ -16,6 +16,7 @@ import {
   classifyProviderFailure,
   makeProvider,
   parseSpec,
+  resolveSpecOverride,
   toolResultMessage,
 } from './providers.js';
 import type { RecoveryGate } from './recovery.js';
@@ -82,6 +83,7 @@ interface PendingDecision extends JsonObject {
 
 export interface LLMEngineOptions {
   provider?: Provider;
+  apiKey?: string;
   decisionLog?: DecisionLog;
   traceLog?: DecisionLog;
   format?: string;
@@ -320,7 +322,8 @@ function isRetryableError(error: unknown): boolean {
 }
 
 export class LLMEngine extends BaseEngine {
-  readonly provider: Provider;
+  provider: Provider;
+  private resolvedSpec: string;
   readonly reference: ShowdownReference;
   private state: BattleState;
   private transcript: string[] = [];
@@ -371,12 +374,30 @@ export class LLMEngine extends BaseEngine {
     private readonly options: LLMEngineOptions = {},
   ) {
     super(pid);
-    this.provider = options.provider ?? makeProvider(parseSpec(spec), { reasoning: options.reasoning });
+    this.resolvedSpec = options.provider ? spec : resolveSpecOverride(spec);
+    this.provider = options.provider ?? this.buildProvider(this.resolvedSpec);
     this.reference =
       options.reference ?? new ShowdownReference(options.format ?? 'gen9championsvgc2026regmbbo3', options.psDir);
     this.state = new BattleState(pid);
     this.notebook = options.initialNotebook?.trim().slice(0, DECISION_NOTE_LIMIT) ?? '';
     this.gameId = spec;
+  }
+
+  private buildProvider(resolved: string): Provider {
+    return makeProvider(parseSpec(resolved), {
+      ...(this.options.reasoning === undefined ? {} : { reasoning: this.options.reasoning }),
+      ...(resolved === this.spec && this.options.apiKey !== undefined ? { apiKey: this.options.apiKey } : {}),
+    });
+  }
+
+  /** An explicit key belongs to the seat's own spec, so a rerouted seat falls back to environment
+   * keys for its replacement provider. */
+  private refreshProvider(): void {
+    if (this.options.provider) return;
+    const resolved = resolveSpecOverride(this.spec);
+    if (resolved === this.resolvedSpec) return;
+    this.resolvedSpec = resolved;
+    this.provider = this.buildProvider(resolved);
   }
 
   override beginGame(context: GameStart): void {
@@ -801,6 +822,7 @@ export class LLMEngine extends BaseEngine {
       runSignal && operationSignal ? AbortSignal.any([runSignal, operationSignal]) : (runSignal ?? operationSignal);
     while (true) {
       await this.options.recovery?.wait(signal);
+      this.refreshProvider();
       try {
         return await this.completeWithRetry(messages, options, generation, system, deadline?.(), operationSignal);
       } catch (error) {

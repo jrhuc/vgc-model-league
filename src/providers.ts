@@ -1,4 +1,4 @@
-import { appendFileSync } from 'node:fs';
+import { appendFileSync, readFileSync, statSync } from 'node:fs';
 import { createAnthropic } from '@ai-sdk/anthropic';
 import { createDeepSeek } from '@ai-sdk/deepseek';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
@@ -391,6 +391,38 @@ function openRouterFetch(
     }
     return response;
   };
+}
+
+let overridesCache: { file: string; mtimeMs: number; models: Record<string, string> } | undefined;
+
+/** Reroutes a seat's calls to another provider spec while a run is live: the file named by
+ * VGC_MODEL_OVERRIDES maps {"models": {"<spec>": "<replacement>"}} and is re-read whenever it
+ * changes on disk. Meant for the same model on a different route; records keep the seat's spec. */
+export function resolveSpecOverride(spec: string): string {
+  const file = process.env.VGC_MODEL_OVERRIDES;
+  if (!file) return spec;
+  let mtimeMs: number;
+  try {
+    mtimeMs = statSync(file).mtimeMs;
+  } catch {
+    return spec;
+  }
+  if (!overridesCache || overridesCache.file !== file || overridesCache.mtimeMs !== mtimeMs) {
+    let models: Record<string, string> = {};
+    try {
+      const parsed = JSON.parse(readFileSync(file, 'utf8')) as JsonObject;
+      if (isRecord(parsed.models)) {
+        for (const [from, to] of Object.entries(parsed.models)) {
+          if (typeof to === 'string' && to) models[from] = to;
+        }
+      }
+    } catch (error) {
+      models = {};
+      console.error(`ignoring ${file}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    overridesCache = { file, mtimeMs, models };
+  }
+  return overridesCache.models[spec] ?? spec;
 }
 
 export function nitroSpec(spec: string): string {

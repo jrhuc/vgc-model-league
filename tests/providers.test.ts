@@ -549,3 +549,34 @@ test('Anthropic maps adaptive reasoning without temperature', async () => {
   const lastPart = messages[messages.length - 1]?.content.at(-1);
   assert.deepEqual(lastPart?.cache_control, { type: 'ephemeral' }, 'the conversation tail is a cache breakpoint');
 });
+
+test('model overrides reroute specs and follow file edits', async (t) => {
+  const { resolveSpecOverride } = await import('../src/providers.js');
+  const os = await import('node:os');
+  const fs = await import('node:fs');
+  const path = await import('node:path');
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-overrides-'));
+  const file = path.join(directory, 'overrides.json');
+  const previous = process.env.VGC_MODEL_OVERRIDES;
+  process.env.VGC_MODEL_OVERRIDES = file;
+  t.after(() => {
+    if (previous === undefined) delete process.env.VGC_MODEL_OVERRIDES;
+    else process.env.VGC_MODEL_OVERRIDES = previous;
+    fs.rmSync(directory, { recursive: true, force: true });
+  });
+
+  assert.equal(resolveSpecOverride('opencode-go:kimi-k3'), 'opencode-go:kimi-k3', 'no file means no rerouting');
+
+  fs.writeFileSync(file, JSON.stringify({ models: { 'opencode-go:kimi-k3': 'openrouter:moonshotai/kimi-k3' } }));
+  assert.equal(resolveSpecOverride('opencode-go:kimi-k3'), 'openrouter:moonshotai/kimi-k3');
+  assert.equal(resolveSpecOverride('opencode-go:glm-5.2'), 'opencode-go:glm-5.2', 'unlisted specs pass through');
+
+  const future = new Date(Date.now() + 5000);
+  fs.writeFileSync(file, JSON.stringify({ models: {} }));
+  fs.utimesSync(file, future, future);
+  assert.equal(resolveSpecOverride('opencode-go:kimi-k3'), 'opencode-go:kimi-k3', 'edits apply without a restart');
+
+  fs.writeFileSync(file, 'not json');
+  fs.utimesSync(file, new Date(Date.now() + 10_000), new Date(Date.now() + 10_000));
+  assert.equal(resolveSpecOverride('opencode-go:kimi-k3'), 'opencode-go:kimi-k3', 'a malformed file reroutes nothing');
+});

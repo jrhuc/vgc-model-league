@@ -6,7 +6,7 @@ import type { DraftBoardMon } from './draft.js';
 import type { TeambuildSetView, TeambuildView } from './gui/api.js';
 import { defaultPsDir } from './paths.js';
 import type { ModelReasoningConfig, ReasoningLevel } from './providers.js';
-import { classifyProviderFailure, makeProvider, parseSpec, reasoningForModel } from './providers.js';
+import { classifyProviderFailure, makeProvider, parseSpec, reasoningForModel, resolveSpecOverride } from './providers.js';
 import { type Rng, shuffle } from './random.js';
 import type { RecoveryGate } from './recovery.js';
 import { ShowdownReference } from './reference.js';
@@ -397,13 +397,16 @@ export async function runTeambuild(request: TeambuildRequest, options: Teambuild
   const system = systemPrompt(request, dex, evLimit, evMax);
   const messages: ProviderMessage[] = [{ role: 'user', content: userPrompt(request, dex) }];
   const reasoning = reasoningForModel(request.model, options);
+  const resolvedModel = resolveSpecOverride(request.model);
   const provider =
     request.model === 'random'
       ? undefined
       : (options.makeTeambuildProvider?.(request.model, options.apiKeys?.[request.model], reasoning) ??
-        makeProvider(parseSpec(request.model), {
+        makeProvider(parseSpec(resolvedModel), {
           ...(reasoning === undefined ? {} : { reasoning }),
-          ...(options.apiKeys?.[request.model] === undefined ? {} : { apiKey: options.apiKeys[request.model] }),
+          ...(resolvedModel === request.model && options.apiKeys?.[request.model] !== undefined
+            ? { apiKey: options.apiKeys[request.model] }
+            : {}),
         }));
 
   const owned = new Map(request.roster.map((mon) => [mon.id, mon]));
