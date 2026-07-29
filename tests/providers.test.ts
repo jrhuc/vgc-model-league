@@ -6,6 +6,7 @@ import {
   assistantToolMessage,
   classifyProviderFailure,
   makeProvider,
+  nitroSpec,
   parseSpec,
   reasoningLevels,
   SdkProvider,
@@ -333,6 +334,14 @@ test('OpenRouter requests buy usage accounting and surface cost and upstream pro
   assert.equal(completion.usage.cost, 0.00123);
   assert.equal(completion.usage.input_tokens, 4);
   assert.equal(completion.usage.output_tokens, 2);
+});
+
+test('nitroSpec adds routing only to unrouted OpenRouter specs', () => {
+  assert.equal(nitroSpec('openrouter:z-ai/glm-5.2'), 'openrouter:z-ai/glm-5.2:nitro');
+  assert.equal(nitroSpec('openrouter:z-ai/glm-5.2:nitro'), 'openrouter:z-ai/glm-5.2:nitro');
+  assert.equal(nitroSpec('openrouter:deepseek/deepseek-v4:floor'), 'openrouter:deepseek/deepseek-v4:floor');
+  assert.equal(nitroSpec('opencode-go:kimi-k3'), 'opencode-go:kimi-k3');
+  assert.equal(nitroSpec('anthropic:claude-opus-5'), 'anthropic:claude-opus-5');
 });
 
 test('OpenRouter requests for Anthropic models carry cache breakpoints, others stay untouched', async () => {

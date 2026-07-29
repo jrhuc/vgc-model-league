@@ -7,7 +7,7 @@ import { AuthService } from './auth.js';
 import { GuiServer } from './gui/server.js';
 import { AUTH_DB_PATH, makeRunDirectory, prepareDataDirectories, RESULTS_PATH, RUNS_DIR, TEAMS_DIR } from './paths.js';
 import type { ReasoningLevel } from './providers.js';
-import { REASONING_LEVELS } from './providers.js';
+import { nitroSpec, REASONING_LEVELS } from './providers.js';
 import type { SeriesRecord } from './records.js';
 import { loadRows, ratingGroups, scopeRows, TEST_POOL } from './records.js';
 import { RecoveryGate } from './recovery.js';
@@ -25,6 +25,7 @@ const EXPERIMENT_CLI_OPTIONS = {
   reasoning: { type: 'string' },
   'timer-scale': { type: 'string' },
   'auto-resume': { type: 'boolean', default: false },
+  nitro: { type: 'boolean', default: false },
 } as const;
 
 interface ExperimentCliValues {
@@ -33,6 +34,7 @@ interface ExperimentCliValues {
   reasoning?: string;
   'timer-scale'?: string;
   'auto-resume': boolean;
+  nitro: boolean;
 }
 
 const HELP = `Usage: vgcleague <command>
@@ -45,14 +47,14 @@ Commands:
   selfcheck                           run one random-vs-random series through the simulator
   rotation --models <spec> <spec>...  run the controlled team-rotation protocol
       [--series-per-pair <n>] [--pool <name>] [--seed <n>] [--concurrency <n>] [--reasoning <level>]
-      [--timer-scale <n|off>] [--auto-resume]
+      [--timer-scale <n|off>] [--auto-resume] [--nitro]
   tournament --models <spec> <spec>...  play a single-elimination BO3 bracket; each model keeps one team
       [--pool <name>] [--seed <n>] [--concurrency <n>] [--reasoning <level>] [--timer-scale <n|off>]
-      [--auto-resume]
+      [--auto-resume] [--nitro]
   draft --models <spec> <spec>...     snake-draft rosters from a board, then a weekly round robin and playoffs
       each coach drafts 10 within a 100-point budget, then picks 6 and builds every set before each match
       [--board <name>] [--seed <n>] [--concurrency <n>] [--reasoning <level>] [--timer-scale <n|off>]
-      [--auto-resume] [--through-week <n>] [--resume <run-dir>] [--sequential-weeks] [--closed-sheets]
+      [--auto-resume] [--nitro] [--through-week <n>] [--resume <run-dir>] [--sequential-weeks] [--closed-sheets]
       --through-week stops cleanly after that round-robin week; --resume continues a stored league
       round-robin series run concurrently with blind teambuilds; --sequential-weeks restores
       week-by-week play (implied by --through-week); --closed-sheets hides opposing team sheets
@@ -68,6 +70,10 @@ Commands:
 --auto-resume keeps a run alive through transient provider failures (rate limits,
 upstream outages, exhausted quotas): the run pauses, then retries with backoff
 instead of failing. Credential and request errors still fail fast.
+
+--nitro adds the :nitro throughput-routing variant to every OpenRouter spec that
+does not already carry a routing variant. Faster, usually pricier; skip it when
+slower seats set the pace anyway.
 
 publish needs VGC_LEAGUE_PUBLISH_ORIGIN (or --to) and VGC_LEAGUE_IMPORT_TOKEN, which must
 match the token the deployment runs with. It is idempotent: series the deployment already
@@ -108,10 +114,15 @@ function timerScaleOption(value: string | undefined): TimerScale | undefined {
   }
 }
 
-function experimentModels(command: string, models: string[] | undefined, positionals: string[]): string[] {
+function experimentModels(
+  command: string,
+  models: string[] | undefined,
+  positionals: string[],
+  nitro = false,
+): string[] {
   const selected = [...(models ?? []), ...positionals];
   if (selected.length < 2) throw new Error(`${command} requires at least two --models`);
-  return selected;
+  return nitro ? selected.map(nitroSpec) : selected;
 }
 
 function experimentExecution(values: ExperimentCliValues) {
@@ -257,7 +268,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
         pool: { type: 'string', default: 'test' },
       },
     });
-    const models = experimentModels(command, values.models, positionals);
+    const models = experimentModels(command, values.models, positionals, values.nitro);
     const execution = experimentExecution(values);
     const runDir = makeRunDirectory();
     const rows = await withRunStatus(runDir, () =>
@@ -279,7 +290,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
         pool: { type: 'string', default: 'test' },
       },
     });
-    const models = experimentModels(command, values.models, positionals);
+    const models = experimentModels(command, values.models, positionals, values.nitro);
     const execution = experimentExecution(values);
     const { runTournament } = await import('./tournament.js');
     const runDir = makeRunDirectory();
@@ -322,7 +333,9 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
           closed_sheets?: boolean;
         })
       : undefined;
-    const models = storedConfig ? storedConfig.models : experimentModels(command, values.models, positionals);
+    const models = storedConfig
+      ? storedConfig.models
+      : experimentModels(command, values.models, positionals, values.nitro);
     let execution: ReturnType<typeof experimentExecution>;
     if (storedConfig) {
       const storedReasoning = storedConfig.reasoning ? reasoningLevel(storedConfig.reasoning) : undefined;
