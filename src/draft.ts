@@ -41,9 +41,10 @@ const DRAFT_PROMPT_POLICY = {
     '{{board}}',
   ],
   firstTurnInstruction:
-    'This is your first pick, so also choose your franchise name. Make it distinctively yours — a pun, a theme, ' +
-    'an attitude, a piece of lore. It does not need to mention any Pokémon, and naming it after this pick is the ' +
-    'least imaginative option. Reply with a single JSON object ' +
+    'This is your first pick, so also choose your franchise name. Good names carry a second layer beyond naming ' +
+    'a Pokémon — wordplay on an ability, your own identity, or a real franchise: "Moonshot Shadowtags" (Gengar\'s ' +
+    'ability plus its coach\'s lab), "Unburdened Sneaslers" (Sneasler\'s ability doubled as a mood), "Golden State ' +
+    'Gholdengos" (an NBA pun). A plain "<coach name> <first pick>s" is the lazy floor. Reply with a single JSON object ' +
     '{"pick": "<board-id>", "team_name": "<your franchise name>", "reasoning": "<2-4 sentences>", ' +
     '"notebook": "<concise full roster plan and needs to carry to your next pick>"} and nothing else.',
   turnInstruction:
