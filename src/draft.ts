@@ -41,8 +41,9 @@ const DRAFT_PROMPT_POLICY = {
     '{{board}}',
   ],
   firstTurnInstruction:
-    'This is your first pick, so also choose your franchise name: a personalised team name, such as ' +
-    '"DeepSeek Wailords", "Golden State Gholdengos" or "Mega-Claude Gaming". Reply with a single JSON object ' +
+    'This is your first pick, so also choose your franchise name. Make it distinctively yours — a pun, a theme, ' +
+    'an attitude, a piece of lore. It does not need to mention any Pokémon, and naming it after this pick is the ' +
+    'least imaginative option. Reply with a single JSON object ' +
     '{"pick": "<board-id>", "team_name": "<your franchise name>", "reasoning": "<2-4 sentences>", ' +
     '"notebook": "<concise full roster plan and needs to carry to your next pick>"} and nothing else.',
   turnInstruction:
