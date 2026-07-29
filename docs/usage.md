@@ -77,7 +77,10 @@ share notes or results; playoff coaches receive their own earlier builds,
 results, and final battle notes.
 
 OpenRouter model specs pass variant suffixes through unchanged, so
-`openrouter:<model>:nitro` requests throughput-sorted routing. Set
+`openrouter:<model>:nitro` requests throughput-sorted routing. `--nitro` (or
+the OpenRouter routing select in the GUI) applies that variant to every
+OpenRouter spec that does not already carry one — faster and usually pricier,
+so skip it when slower seats set the pace anyway. Set
 `VGC_OPENROUTER_PROVIDER` to a JSON routing object (for example
 `{"order":["deepinfra"],"ignore":["novita"]}`) to pin or exclude upstream
 providers. Every OpenRouter response also records its upstream provider and

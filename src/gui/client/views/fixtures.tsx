@@ -317,6 +317,7 @@ export function FixturesView({ app, run, onStarted, onPools }: FixturesProps) {
   const [concurrency, setConcurrency] = useState('2');
   const [closedSheets, setClosedSheets] = useState(false);
   const [sequentialWeeks, setSequentialWeeks] = useState(false);
+  const [nitro, setNitro] = useState(false);
   const [reasoning, setReasoning] = useState('');
   const [sharedReasoning, setSharedReasoning] = useState(true);
   const [reasoningByModel, setReasoningByModel] = useState<Record<string, string>>({});
@@ -561,6 +562,7 @@ export function FixturesView({ app, run, onStarted, onPools }: FixturesProps) {
       apiKeys,
       seed: seed.trim(),
       ...reasoningRequest,
+      ...(nitro ? { nitro: true } : {}),
       timerScale: timerScale === 'off' ? 'off' : Number(timerScale),
       ...(mode === 'match'
         ? {
@@ -1163,6 +1165,19 @@ export function FixturesView({ app, run, onStarted, onPools }: FixturesProps) {
                   />
                 </div>
               )}
+              <div class="field">
+                <label class="field-label" for="nitroToggle">
+                  OpenRouter routing
+                </label>
+                <select
+                  id="nitroToggle"
+                  value={nitro ? 'nitro' : 'default'}
+                  onChange={(event) => setNitro(event.currentTarget.value === 'nitro')}
+                >
+                  <option value="default">Default — cheapest available upstream</option>
+                  <option value="nitro">Nitro — throughput-sorted, faster and usually pricier</option>
+                </select>
+              </div>
               <div class="setting-stack wide">
                 <div class="reasoning-heading">
                   <span class="field-label">Reasoning assignment</span>

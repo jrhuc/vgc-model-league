@@ -393,6 +393,12 @@ function openRouterFetch(
   };
 }
 
+export function nitroSpec(spec: string): string {
+  if (!spec.startsWith('openrouter:')) return spec;
+  if (/:(?:nitro|floor|free)$/.test(spec)) return spec;
+  return `${spec}:nitro`;
+}
+
 /** Anthropic caches nothing without explicit breakpoints; OpenRouter forwards them only as content-part fields. */
 function markCacheBreakpoints(body: JsonObject): void {
   if (!Array.isArray(body.messages)) return;

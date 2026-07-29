@@ -20,6 +20,7 @@ import { PROVIDER_OPTIONS, providerOption } from '../provider-registry.js';
 import type { ModelReasoningConfig, ReasoningLevel } from '../providers.js';
 import {
   classifyProviderFailure,
+  nitroSpec,
   parseSpec,
   REASONING_LEVELS,
   reasoningLevels,
@@ -1100,7 +1101,8 @@ export class GuiServer {
           : undefined
     ) as ExperimentMode | undefined;
     if (!mode) throw new HttpError(400, 'unknown run mode');
-    const models = Array.isArray(body.models) ? body.models.map(String).filter(Boolean) : [];
+    const rawModels = Array.isArray(body.models) ? body.models.map(String).filter(Boolean) : [];
+    const models = body.nitro === true ? rawModels.map(nitroSpec) : rawModels;
     const maximumModels = this.publicOrigin && mode === 'rotation' ? 4 : 8;
     if (models.length < 2) throw new HttpError(400, 'a run needs at least two model specs');
     if (models.length > maximumModels) {
