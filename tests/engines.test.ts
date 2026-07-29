@@ -90,6 +90,40 @@ class ScriptedProvider implements Provider {
   }
 }
 
+test('a decision written only in the reasoning channel is salvaged without a retry', async () => {
+  const provider = new ScriptedProvider([
+    {
+      text: '',
+      reasoning: `Let me weigh the options carefully. Protect risks a double-up. Final answer: ${decision([1], 'salvaged from reasoning', 'noted')}`,
+      usage: { input_tokens: 10, output_tokens: 900, reasoning_tokens: 899 },
+      toolCalls: [],
+    },
+  ]);
+  const decisions: Record<string, unknown>[] = [];
+  const engine = new LLMEngine('p1', 'scripted', { provider, decisionLog: decisions });
+  assert.equal(await engine.act(request(), { povLines: ['|turn|1'] }), 'move 2');
+  assert.equal(provider.calls.length, 1, 'the answer already paid for is used instead of a retry');
+  assert.equal(decisions[0]!.fallback, false);
+  assert.equal(decisions[0]!.rationale, 'salvaged from reasoning');
+});
+
+test('reasoning with no parseable decision still follows the empty-response retry path', async () => {
+  const provider = new ScriptedProvider([
+    {
+      text: '',
+      reasoning: 'I pondered at length and reached no conclusion.',
+      usage: { input_tokens: 10, output_tokens: 50, reasoning_tokens: 50 },
+      toolCalls: [],
+    },
+    decision([1]),
+  ]);
+  const decisions: Record<string, unknown>[] = [];
+  const engine = new LLMEngine('p1', 'scripted', { provider, decisionLog: decisions });
+  assert.equal(await engine.act(request(), { povLines: ['|turn|1'] }), 'move 2');
+  assert.equal(provider.calls.length, 2);
+  assert.equal(decisions[0]!.fallback, false);
+});
+
 test('LLM choices parse prose, retry, and record fallbacks', async () => {
   const cases: Array<[Array<string>, string, boolean, number, number]> = [
     [[decision([1], 'remember speed', 'remember speed')], 'move 2', false, 1, 0],

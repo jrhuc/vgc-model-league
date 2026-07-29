@@ -437,6 +437,10 @@ export async function runTeambuild(request: TeambuildRequest, options: Teambuild
       response = completion.text;
       usage = completion.usage;
       const truncated = completion.finishReason === 'length';
+      if (!response.trim() && !truncated && completion.reasoning) {
+        const salvaged = parseSets(completion.reasoning, request.roster);
+        if (typeof salvaged !== 'string') response = completion.reasoning;
+      }
       const parsed = parseSets(response, request.roster);
       if (typeof parsed === 'string') {
         error = truncated ? 'the reply used its whole token budget before finishing the team' : parsed;

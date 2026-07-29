@@ -564,6 +564,31 @@ test('transient upstream failures never spend a compliance attempt', async (t) =
   assert.equal(outcome.rosters[0]![0]!.id, 'garchomp');
 });
 
+test('a pick written only in the reasoning channel is salvaged without another attempt', async (t) => {
+  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-draft-salvage-'));
+  t.after(() => fs.rmSync(logDir, { recursive: true, force: true }));
+  let calls = 0;
+  const outcome = await runDraft(['fake:model', 'random'], { ...BOARD, picks: 4 }, {
+    logDir,
+    rng: seededRng(4),
+    makeDraftProvider: () => ({
+      complete(): Promise<Completion> {
+        calls += 1;
+        return Promise.resolve({
+          text: '',
+          reasoning:
+            'Garchomp anchors the roster. Committing: {"pick": "garchomp", "team_name": "Salvage Sneaslers", "reasoning": "Best value.", "notebook": "Build around Garchomp."}',
+          usage: { total_tokens: 400 },
+          toolCalls: [],
+        });
+      },
+    }),
+  });
+  assert.equal(outcome.rosters[0]![0]!.id, 'garchomp');
+  assert.equal(outcome.picks[0]!.fallback, false, 'the pick inside the reasoning is used directly');
+  assert.equal(calls, 10, 'the first pick salvages in one call; later picks reject the taken mon as usual');
+});
+
 test('a quota failure pauses for recovery and resumes where it left off', async (t) => {
   const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-draft-recovery-'));
   t.after(() => fs.rmSync(logDir, { recursive: true, force: true }));

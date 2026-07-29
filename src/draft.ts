@@ -549,6 +549,10 @@ export async function runDraft(models: string[], board: DraftBoard, options: Run
           response = completion.text;
           usage = completion.usage;
           const truncated = completion.finishReason === 'length';
+          if (!response.trim() && !truncated && completion.reasoning) {
+            const salvaged = parsePick(completion.reasoning, legal, state, drafter);
+            if (typeof salvaged !== 'string') response = completion.reasoning;
+          }
           const parsed = parsePick(response, legal, state, drafter);
           if (typeof parsed === 'string') {
             error = truncated ? `the reply used its whole token budget before naming a pick` : parsed;
