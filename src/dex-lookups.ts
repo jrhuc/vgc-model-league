@@ -40,7 +40,7 @@ const delay = (ms: number, signal?: AbortSignal): Promise<void> =>
 
 async function completeOnce(request: DexToolRequest, options: { tools: boolean; final: boolean }): Promise<Completion> {
   for (let attempt = 0; ; attempt += 1) {
-    await request.recovery?.wait(request.signal);
+    await request.recovery?.wait(request.spec, request.signal);
     try {
       return await request.provider.complete(request.system, request.messages, {
         maxTokens: request.policy.maxTokens,

@@ -800,7 +800,7 @@ export class LLMEngine extends BaseEngine {
     const signal =
       runSignal && operationSignal ? AbortSignal.any([runSignal, operationSignal]) : (runSignal ?? operationSignal);
     while (true) {
-      await this.options.recovery?.wait(signal);
+      await this.options.recovery?.wait(this.spec, signal);
       try {
         return await this.completeWithRetry(messages, options, generation, system, deadline?.(), operationSignal);
       } catch (error) {
