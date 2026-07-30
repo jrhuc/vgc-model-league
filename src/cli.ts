@@ -150,20 +150,24 @@ function armModelOverrides(runDir: string): void {
 
 function autoResumeGate(): RecoveryGate {
   const gate = new RecoveryGate();
-  let streak = 0;
-  let lastPause = 0;
+  const scheduled = new Set<string>();
+  const streaks = new Map<string, { count: number; lastPause: number }>();
   gate.onChange((pause) => {
-    if (!pause) return;
+    if (!pause || scheduled.has(pause.scope)) return;
+    scheduled.add(pause.scope);
     const now = Date.now();
-    if (now - lastPause > 10 * 60_000) streak = 0;
-    lastPause = now;
+    const streak = streaks.get(pause.scope);
+    const count = streak && now - streak.lastPause <= 10 * 60_000 ? streak.count : 0;
+    streaks.set(pause.scope, { count: count + 1, lastPause: now });
     const ceiling = pause.kind === 'rate_limit' ? 60_000 : 5 * 60_000;
-    const delay = Math.min(ceiling, 30_000 * 2 ** streak);
-    streak += 1;
+    const delay = Math.min(ceiling, 30_000 * 2 ** count);
     console.error(
-      `run paused on ${pause.model} (${pause.kind}): ${pause.message} auto-resume in ${Math.round(delay / 1000)}s`,
+      `paused ${pause.scope} on ${pause.model} (${pause.kind}): ${pause.message} auto-resume in ${Math.round(delay / 1000)}s`,
     );
-    setTimeout(() => gate.resume(), delay);
+    setTimeout(() => {
+      scheduled.delete(pause.scope);
+      gate.resume(pause.scope);
+    }, delay);
   });
   return gate;
 }

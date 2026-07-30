@@ -180,6 +180,26 @@ function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
+function sseResponse(events: unknown[], options: { done?: boolean } = {}): Response {
+  const frames = events.map((event) => `data: ${JSON.stringify(event)}\n\n`);
+  if (options.done) frames.push('data: [DONE]\n\n');
+  return new Response(frames.join(''), {
+    status: 200,
+    headers: { 'content-type': 'text/event-stream' },
+  });
+}
+
+function chatStream(text: string, final: Record<string, unknown> = {}): Response {
+  const base = { id: 'gen_1', object: 'chat.completion.chunk', created: 1, model: 'stub' };
+  return sseResponse(
+    [
+      { ...base, choices: [{ index: 0, delta: { role: 'assistant', content: text }, finish_reason: null }] },
+      { ...base, choices: [{ index: 0, delta: {}, finish_reason: 'stop' }], ...final },
+    ],
+    { done: true },
+  );
+}
+
 test('OpenAI uses Responses API with reasoning and tools', async () => {
   let url = '';
   let authorization: string | null = null;
@@ -188,26 +208,40 @@ test('OpenAI uses Responses API with reasoning and tools', async () => {
     url = String(input);
     authorization = new Headers(init?.headers).get('authorization');
     body = JSON.parse(String(init?.body));
-    return jsonResponse({
-      id: 'resp_1',
-      model: 'gpt-5.6-luna',
-      output: [
-        {
-          type: 'message',
-          role: 'assistant',
-          id: 'msg_1',
-          content: [{ type: 'output_text', text: 'hello', annotations: [] }],
-        },
-        {
-          type: 'function_call',
-          id: 'fc_1',
-          call_id: 'call_1',
-          name: 'lookup_move',
-          arguments: '{"name":"Protect"}',
-        },
-      ],
-      usage: { input_tokens: 10, output_tokens: 5 },
-    });
+    const message = {
+      type: 'message',
+      role: 'assistant',
+      id: 'msg_1',
+      status: 'completed',
+      content: [{ type: 'output_text', text: 'hello', annotations: [] }],
+    };
+    const functionCall = {
+      type: 'function_call',
+      id: 'fc_1',
+      call_id: 'call_1',
+      name: 'lookup_move',
+      arguments: '{"name":"Protect"}',
+      status: 'completed',
+    };
+    const response = { id: 'resp_1', created_at: 1, model: 'gpt-5.6-luna', output: [] };
+    return sseResponse([
+      { type: 'response.created', response },
+      { type: 'response.output_item.added', output_index: 0, item: { ...message, content: [] } },
+      { type: 'response.output_text.delta', item_id: 'msg_1', output_index: 0, content_index: 0, delta: 'hello' },
+      { type: 'response.output_item.done', output_index: 0, item: message },
+      { type: 'response.output_item.added', output_index: 1, item: { ...functionCall, arguments: '' } },
+      {
+        type: 'response.function_call_arguments.delta',
+        item_id: 'fc_1',
+        output_index: 1,
+        delta: '{"name":"Protect"}',
+      },
+      { type: 'response.output_item.done', output_index: 1, item: functionCall },
+      {
+        type: 'response.completed',
+        response: { ...response, output: [message, functionCall], usage: { input_tokens: 10, output_tokens: 5 } },
+      },
+    ]);
   }) as typeof globalThis.fetch;
   const provider = makeProvider(parseSpec('openai:gpt-5.6-luna'), {
     apiKey: 'openai-key',
@@ -257,18 +291,20 @@ test('Gemini thought signatures round-trip through replayed tool calls', async (
   let body: Record<string, unknown> = {};
   const fetch = (async (_input, init) => {
     body = JSON.parse(String(init?.body));
-    return jsonResponse({
-      candidates: [
-        {
-          content: {
-            role: 'model',
-            parts: [{ functionCall: { name: 'estimate_damage', args: { move: 'Surf' } }, thoughtSignature: 'sig-2' }],
+    return sseResponse([
+      {
+        candidates: [
+          {
+            content: {
+              role: 'model',
+              parts: [{ functionCall: { name: 'estimate_damage', args: { move: 'Surf' } }, thoughtSignature: 'sig-2' }],
+            },
+            finishReason: 'STOP',
           },
-          finishReason: 'STOP',
-        },
-      ],
-      usageMetadata: { promptTokenCount: 12, candidatesTokenCount: 4, totalTokenCount: 16 },
-    });
+        ],
+        usageMetadata: { promptTokenCount: 12, candidatesTokenCount: 4, totalTokenCount: 16 },
+      },
+    ]);
   }) as typeof globalThis.fetch;
   const provider = makeProvider(parseSpec('google:gemini-3.1-flash-lite'), { apiKey: 'google-key', fetch });
 
@@ -317,10 +353,8 @@ test('OpenRouter requests buy usage accounting and surface cost and upstream pro
   let body: Record<string, unknown> = {};
   const fetch = (async (_input, init) => {
     body = JSON.parse(String(init?.body));
-    return jsonResponse({
-      id: 'gen_1',
+    return chatStream('ok', {
       provider: 'DeepInfra',
-      choices: [{ message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' }],
       usage: { prompt_tokens: 4, completion_tokens: 2, total_tokens: 6, cost: 0.00123 },
     });
   }) as typeof globalThis.fetch;
@@ -348,10 +382,7 @@ test('OpenRouter requests for Anthropic models carry cache breakpoints, others s
   let body: Record<string, unknown> = {};
   const fetch = (async (_input, init) => {
     body = JSON.parse(String(init?.body));
-    return jsonResponse({
-      choices: [{ message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' }],
-      usage: { prompt_tokens: 4, completion_tokens: 2, total_tokens: 6 },
-    });
+    return chatStream('ok', { usage: { prompt_tokens: 4, completion_tokens: 2, total_tokens: 6 } });
   }) as typeof globalThis.fetch;
 
   const claude = makeProvider(parseSpec('openrouter:anthropic/claude-opus-5'), { apiKey: 'or-key', fetch });
@@ -377,10 +408,7 @@ test('OpenRouter routing preferences come from the environment and must be JSON'
     let body: Record<string, unknown> = {};
     const fetch = (async (_input, init) => {
       body = JSON.parse(String(init?.body));
-      return jsonResponse({
-        choices: [{ message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' }],
-        usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
-      });
+      return chatStream('ok', { usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 } });
     }) as typeof globalThis.fetch;
     const provider = makeProvider(parseSpec('openrouter:qwen/qwen3.7-plus'), { apiKey: 'or-key', fetch });
     const completion = await provider.complete('system', [{ role: 'user', content: 'hello' }]);
@@ -401,11 +429,7 @@ test('compat provider uses chat completions', async () => {
   const fetch = (async (input, init) => {
     url = String(input);
     body = JSON.parse(String(init?.body));
-    return jsonResponse({
-      id: 'chatcmpl_1',
-      choices: [{ message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' }],
-      usage: { prompt_tokens: 4, completion_tokens: 2, total_tokens: 6 },
-    });
+    return chatStream('ok', { usage: { prompt_tokens: 4, completion_tokens: 2, total_tokens: 6 } });
   }) as typeof globalThis.fetch;
   const provider = makeProvider(parseSpec('kimi:kimi-k3'), { apiKey: 'moonshot-key', fetch });
 
@@ -430,10 +454,7 @@ test('temperature is dropped after a 400 response', async () => {
     bodies.push(JSON.parse(String(init?.body)));
     if (bodies.length === 1)
       return jsonResponse({ error: { message: 'temperature is not supported', type: 'invalid_request_error' } }, 400);
-    return jsonResponse({
-      choices: [{ message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' }],
-      usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
-    });
+    return chatStream('ok', { usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 } });
   }) as typeof globalThis.fetch;
   const provider = makeProvider(parseSpec('kimi:kimi-k3'), { apiKey: 'moonshot-key', fetch });
 
@@ -459,10 +480,7 @@ test('a masked OpenCode upstream 400 retries without temperature', async () => {
         },
         400,
       );
-    return jsonResponse({
-      choices: [{ message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' }],
-      usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
-    });
+    return chatStream('ok', { usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 } });
   }) as typeof globalThis.fetch;
   const provider = makeProvider(parseSpec('opencode-go:kimi-k3'), { apiKey: 'zen-key', fetch });
 
@@ -492,12 +510,14 @@ test('API call errors map to ApiError without leaking credentials', async () => 
 
 test('OpenRouter preserves in-band error status after generation starts', async () => {
   const fetch = (async () =>
-    jsonResponse({
-      error: {
-        code: 502,
-        message: 'ResourceExhausted: Worker local total request limit reached (33/32)',
+    sseResponse([
+      {
+        error: {
+          code: 502,
+          message: 'ResourceExhausted: Worker local total request limit reached (33/32)',
+        },
       },
-    })) as typeof globalThis.fetch;
+    ])) as typeof globalThis.fetch;
   const provider = makeProvider(parseSpec('openrouter:nvidia/nemotron-3-super-120b-a12b:free'), {
     apiKey: 'openrouter-key',
     fetch,
@@ -519,15 +539,26 @@ test('Anthropic maps adaptive reasoning without temperature', async () => {
   const fetch = (async (input, init) => {
     url = String(input);
     body = JSON.parse(String(init?.body));
-    return jsonResponse({
-      type: 'message',
-      id: 'msg_1',
-      model: 'claude-opus-4-10',
-      content: [{ type: 'text', text: 'hello' }],
-      stop_reason: 'end_turn',
-      stop_sequence: null,
-      usage: { input_tokens: 6, output_tokens: 3 },
-    });
+    return sseResponse([
+      {
+        type: 'message_start',
+        message: {
+          type: 'message',
+          id: 'msg_1',
+          role: 'assistant',
+          model: 'claude-opus-4-10',
+          content: [],
+          stop_reason: null,
+          stop_sequence: null,
+          usage: { input_tokens: 6, output_tokens: 0 },
+        },
+      },
+      { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } },
+      { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'hello' } },
+      { type: 'content_block_stop', index: 0 },
+      { type: 'message_delta', delta: { stop_reason: 'end_turn', stop_sequence: null }, usage: { output_tokens: 3 } },
+      { type: 'message_stop' },
+    ]);
   }) as typeof globalThis.fetch;
   const provider = makeProvider(parseSpec('anthropic:claude-opus-4-10'), {
     apiKey: 'anthropic-key',

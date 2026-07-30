@@ -136,6 +136,7 @@ export interface Bo3Context {
   onGameEnd?: (game: number, winner: string | null, turns: number, score: Record<Pid, number>) => void;
   requireWinner?: boolean;
   recovery?: RecoveryGate;
+  completedGames?: JsonObject[];
   runBattle?: (
     seed: [number, number, number, number],
     onUpdate: (lines: string[], publicLines: string[]) => void,
@@ -156,11 +157,27 @@ export async function playBo3(context: Bo3Context): Promise<Bo3Result> {
     throw new Error('single-elimination series require exactly three regulation game seeds');
   }
   const score: Record<Pid, number> = { p1: 0, p2: 0 };
-  const games: JsonObject[] = [];
+  const games: JsonObject[] = [...(context.completedGames ?? [])];
   const gameSeeds = [...context.gameSeeds];
   const tiebreakRandom = seededRng(JSON.stringify(context.gameSeeds));
+  for (const game of games) {
+    if (game.winner_side === 'p1' || game.winner_side === 'p2') score[game.winner_side as Pid] += 1;
+  }
+  while (
+    gameSeeds.length < games.length ||
+    (context.requireWinner === true &&
+      gameSeeds.length === games.length &&
+      games.length >= context.gameSeeds.length &&
+      games.length < SINGLE_ELIMINATION_GAME_LIMIT &&
+      score.p1 === score.p2 &&
+      games.length > 0)
+  ) {
+    gameSeeds.push(
+      Array.from({ length: 4 }, () => 1 + Math.floor(tiebreakRandom() * 0xffff)) as [number, number, number, number],
+    );
+  }
 
-  for (let index = 0; index < gameSeeds.length; index += 1) {
+  for (let index = games.length; index < gameSeeds.length && Math.max(score.p1, score.p2) < 2; index += 1) {
     const gameSeed = gameSeeds[index]!;
     context.signal?.throwIfAborted();
     const gameNumber = index + 1;
@@ -248,6 +265,9 @@ export interface RecordedSeriesContext extends ModelReasoningConfig {
   players: Record<Pid, string>;
   teams: Record<Pid, Team>;
   gameSeeds: Array<[number, number, number, number]>;
+  /** League schedule slot; lets a resumed run adopt the prior attempt's series directory and replay
+   * only the games that never finished. */
+  seriesIndex?: number;
   initialNotebooks?: Partial<Record<Pid, string>>;
   engineSeeds: Record<Pid, number>;
   format: string;
@@ -289,15 +309,146 @@ export interface RecordedSeries {
   fields: RecordedSeriesFields;
 }
 
+interface AdoptedSeries {
+  seriesId: string;
+  seriesDir: string;
+  started: string | undefined;
+  games: JsonObject[];
+  decisions: Record<Pid, JsonObject[]>;
+  notebooks: Partial<Record<Pid, string>>;
+}
+
+function adoptSeriesDir(context: RecordedSeriesContext): AdoptedSeries | undefined {
+  const root = path.join(context.runDir, 'series');
+  let entries: string[];
+  try {
+    entries = fs.readdirSync(root);
+  } catch {
+    return undefined;
+  }
+  let best: AdoptedSeries | undefined;
+  for (const seriesId of entries) {
+    const seriesDir = path.join(root, seriesId);
+    let meta: JsonObject;
+    try {
+      meta = JSON.parse(fs.readFileSync(path.join(seriesDir, 'series.json'), 'utf8')) as JsonObject;
+    } catch {
+      continue;
+    }
+    if (meta.series_index !== context.seriesIndex) continue;
+    const candidate = reconstructAdoptedSeries(
+      context,
+      seriesId,
+      seriesDir,
+      typeof meta.started === 'string' ? meta.started : undefined,
+    );
+    if (!best || candidate.games.length > best.games.length) best = candidate;
+  }
+  if (best) pruneDecisionFiles(best);
+  return best;
+}
+
+/** A game log is trusted as finished only when it carries a win or tie line; everything after the last
+ * finished game (a mid-game log, decision rows from the abandoned attempt) is replayed fresh. */
+function reconstructAdoptedSeries(
+  context: RecordedSeriesContext,
+  seriesId: string,
+  seriesDir: string,
+  started: string | undefined,
+): AdoptedSeries {
+  const games: JsonObject[] = [];
+  const score: Record<Pid, number> = { p1: 0, p2: 0 };
+  for (let number = 1; score.p1 < 2 && score.p2 < 2; number += 1) {
+    const logPath = path.join(seriesDir, `game-${number}.log`);
+    let lines: string[];
+    try {
+      lines = fs.readFileSync(logPath, 'utf8').split('\n');
+    } catch {
+      break;
+    }
+    const sides = new Map<string, Pid>();
+    for (const line of lines) {
+      const match = /^\|player\|(p[12])\|([^|]+)\|/.exec(line);
+      if (match) sides.set(match[2]!, match[1] as Pid);
+    }
+    const winLine = lines.find((line) => line.startsWith('|win|'));
+    const tied = lines.some((line) => line.startsWith('|tie|') || line === '|tie');
+    if (winLine === undefined && !tied) break;
+    const winnerSide = winLine === undefined ? undefined : sides.get(winLine.slice(5).trim());
+    if (winLine !== undefined && winnerSide === undefined) break;
+    if (winnerSide) score[winnerSide] += 1;
+    let turns = 0;
+    for (const line of lines) {
+      if (line.startsWith('|turn|')) turns = Math.max(turns, Number(line.slice(6)) || 0);
+    }
+    games.push({
+      number,
+      winner: winnerSide ? context.players[winnerSide] : null,
+      winner_side: winnerSide ?? null,
+      turns,
+      seed: context.gameSeeds[number - 1] ?? null,
+      errors: { p1: [], p2: [] },
+      model_choice_fallbacks: { p1: 0, p2: 0 },
+      simulator_substitutions: { p1: 0, p2: 0 },
+      timer_autodefaults: { p1: 0, p2: 0 },
+      luck: gameLuck(lines),
+      log: relative(logPath),
+      resumed: true,
+    });
+  }
+  const decisions: Record<Pid, JsonObject[]> = { p1: [], p2: [] };
+  const notebooks: Partial<Record<Pid, string>> = {};
+  for (const pid of ['p1', 'p2'] as const) {
+    let raw: string;
+    try {
+      raw = fs.readFileSync(path.join(seriesDir, `${pid}-decisions.jsonl`), 'utf8');
+    } catch {
+      continue;
+    }
+    for (const line of raw.split('\n')) {
+      if (!line.trim()) continue;
+      let row: JsonObject;
+      try {
+        row = JSON.parse(line) as JsonObject;
+      } catch {
+        continue;
+      }
+      if (Number(row.game_number) > games.length) continue;
+      decisions[pid].push(row);
+      if (row.kind === 'decision' && typeof row.notebook === 'string' && row.notebook.trim()) {
+        notebooks[pid] = row.notebook;
+      }
+    }
+  }
+  return { seriesId, seriesDir, started, games, decisions, notebooks };
+}
+
+function pruneDecisionFiles(adopted: AdoptedSeries): void {
+  for (const pid of ['p1', 'p2'] as const) {
+    const file = path.join(adopted.seriesDir, `${pid}-decisions.jsonl`);
+    const rows = adopted.decisions[pid];
+    if (!rows.length) {
+      fs.rmSync(file, { force: true });
+      continue;
+    }
+    fs.writeFileSync(file, `${rows.map((row) => JSON.stringify(row)).join('\n')}\n`, 'utf8');
+  }
+}
+
 export async function playRecordedSeries(context: RecordedSeriesContext): Promise<RecordedSeries> {
   context.signal?.throwIfAborted();
   const timerScale = context.timerScale ?? DEFAULT_TIMER_SCALE;
-  const seriesId = randomUUID().replaceAll('-', '').slice(0, 12);
-  const seriesDir = path.join(context.runDir, 'series', seriesId);
+  const adopted = context.seriesIndex === undefined ? undefined : adoptSeriesDir(context);
+  const seriesId = adopted?.seriesId ?? randomUUID().replaceAll('-', '').slice(0, 12);
+  const seriesDir = adopted?.seriesDir ?? path.join(context.runDir, 'series', seriesId);
   fs.mkdirSync(seriesDir, { recursive: true });
   fs.writeFileSync(
     path.join(seriesDir, 'series.json'),
-    `${JSON.stringify({ players: context.players, started: new Date().toISOString() })}\n`,
+    `${JSON.stringify({
+      players: context.players,
+      started: adopted?.started ?? new Date().toISOString(),
+      ...(context.seriesIndex === undefined ? {} : { series_index: context.seriesIndex }),
+    })}\n`,
     'utf8',
   );
   const names: Record<Pid, string> = { p1: `p1-${context.players.p1}`, p2: `p2-${context.players.p2}` };
@@ -308,7 +459,10 @@ export async function playRecordedSeries(context: RecordedSeriesContext): Promis
     p1: reasoningForModel(context.players.p1, context),
     p2: reasoningForModel(context.players.p2, context),
   };
-  const decisionRows: Record<Pid, JsonObject[]> = { p1: [], p2: [] };
+  const decisionRows: Record<Pid, JsonObject[]> = {
+    p1: [...(adopted?.decisions.p1 ?? [])],
+    p2: [...(adopted?.decisions.p2 ?? [])],
+  };
   const decisionSink = (pid: Pid): DecisionLog => {
     const file = path.join(seriesDir, `${pid}-decisions.jsonl`);
     return (row) => {
@@ -333,7 +487,7 @@ export async function playRecordedSeries(context: RecordedSeriesContext): Promis
         context.signal,
         context.apiKeys?.[context.players[pid]],
         context.recovery,
-        context.initialNotebooks?.[pid],
+        adopted?.notebooks[pid] ?? context.initialNotebooks?.[pid],
       ),
     ]),
   ) as Record<Pid, RandomEngine | LLMEngine>;
@@ -348,6 +502,7 @@ export async function playRecordedSeries(context: RecordedSeriesContext): Promis
     seriesDir,
     format: battleFormat,
     psDir: context.psDir,
+    ...(adopted?.games.length ? { completedGames: adopted.games } : {}),
     ...(context.requireWinner === undefined ? {} : { requireWinner: context.requireWinner }),
     timerScale,
     ...(context.signal === undefined ? {} : { signal: context.signal }),

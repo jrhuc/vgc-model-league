@@ -568,7 +568,7 @@ export async function runTeambuild(request: TeambuildRequest, options: Teambuild
   };
   fs.appendFileSync(
     path.join(options.logDir, 'teambuild.jsonl'),
-    `${JSON.stringify({ model: request.model, team_name: request.teamName, ...view, timestamp: new Date().toISOString() })}\n`,
+    `${JSON.stringify({ model: request.model, team_name: request.teamName, ...view, packed, timestamp: new Date().toISOString() })}\n`,
     'utf8',
   );
   return { packed, view };

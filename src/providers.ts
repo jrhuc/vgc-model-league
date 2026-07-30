@@ -7,11 +7,11 @@ import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { createXai } from '@ai-sdk/xai';
 import {
   APICallError,
-  generateText,
   type JSONSchema7,
   jsonSchema,
   type LanguageModel,
   type ModelMessage,
+  streamText,
   type ToolCallPart,
   type ToolSet,
   tool,
@@ -382,12 +382,19 @@ function openRouterFetch(
       } catch {}
     }
     const response = await inner(input, request);
-    if (response.ok && (response.headers.get('content-type') ?? '').includes('json')) {
+    const contentType = response.headers.get('content-type') ?? '';
+    if (response.ok && contentType.includes('json')) {
       try {
         const payload = (await response.clone().json()) as JsonObject;
-        if (typeof payload.provider === 'string' && payload.provider) meta.provider = payload.provider;
-        if (isRecord(payload.usage) && typeof payload.usage.cost === 'number') meta.cost = payload.usage.cost;
+        collectGatewayMeta(payload, meta);
       } catch {}
+    }
+    if (response.ok && contentType.includes('event-stream') && response.body) {
+      return new Response(response.body.pipeThrough(gatewayMetaScanner(meta)), {
+        status: response.status,
+        statusText: response.statusText,
+        headers: response.headers,
+      });
     }
     return response;
   };
@@ -423,6 +430,42 @@ export function resolveSpecOverride(spec: string): string {
     overridesCache = { file, mtimeMs, models };
   }
   return overridesCache.models[spec] ?? spec;
+}
+
+function collectGatewayMeta(payload: JsonObject, meta: GatewayResponseMeta): void {
+  if (typeof payload.provider === 'string' && payload.provider) meta.provider = payload.provider;
+  if (isRecord(payload.usage) && typeof payload.usage.cost === 'number') meta.cost = payload.usage.cost;
+}
+
+/** OpenRouter reports cost and upstream provider inside SSE data lines, so a streaming response has to
+ * be scanned as it passes through; the model consumer still receives the exact bytes it expects. */
+function gatewayMetaScanner(meta: GatewayResponseMeta): TransformStream<Uint8Array, Uint8Array> {
+  const decoder = new TextDecoder();
+  let pending = '';
+  const scanLine = (line: string): void => {
+    if (!line.startsWith('data:')) return;
+    const data = line.slice(5).trim();
+    if (!data || data === '[DONE]' || (!data.includes('"provider"') && !data.includes('"usage"'))) return;
+    try {
+      const payload = JSON.parse(data) as JsonObject;
+      collectGatewayMeta(payload, meta);
+    } catch {}
+  };
+  return new TransformStream<Uint8Array, Uint8Array>({
+    transform(chunk, controller) {
+      controller.enqueue(chunk);
+      pending += decoder.decode(chunk, { stream: true });
+      let newline = pending.indexOf('\n');
+      while (newline !== -1) {
+        scanLine(pending.slice(0, newline).trimEnd());
+        pending = pending.slice(newline + 1);
+        newline = pending.indexOf('\n');
+      }
+    },
+    flush() {
+      scanLine(pending.trimEnd());
+    },
+  });
 }
 
 export function nitroSpec(spec: string): string {
@@ -599,6 +642,18 @@ export class SdkProvider implements Provider {
     })(this.model);
   }
 
+  /** Providers deliver mid-stream failures as bare error values (OpenRouter's in-band `{code, message}`
+   * among them), which would dodge the ApiError classification that drives retry and pause decisions. */
+  private materializeStreamError(error: unknown, apiKey: string): unknown {
+    if (error instanceof Error) return error;
+    if (isRecord(error)) {
+      const status = typeof error.code === 'number' ? error.code : typeof error.status === 'number' ? error.status : 0;
+      const detail = redactSecrets(typeof error.message === 'string' ? error.message : JSON.stringify(error), [apiKey]);
+      return new ApiError(status, `${this.spec.provider}:${this.model} ${status}: ${detail}`);
+    }
+    return new Error(`${this.spec.provider}:${this.model} stream failed: ${String(error)}`);
+  }
+
   async complete(system: string, messages: ProviderMessage[], options: CompleteOptions = {}): Promise<Completion> {
     const seconds = options.timeout ?? DEFAULT_TIMEOUT;
     const timeout = AbortSignal.timeout(Math.max(100, Math.round(seconds * 1000)));
@@ -639,7 +694,10 @@ export class SdkProvider implements Provider {
       const sendToolChoice = Boolean(options.toolChoice) && this.supportsToolChoice;
       const suppressTools = options.toolChoice === 'none' && !this.supportsToolChoice;
       try {
-        const result = await generateText({
+        /** streamText parks stream failures in onError instead of rejecting, so the first captured
+         * error is rethrown here to reach the same classification path generateText errors took. */
+        let streamError: unknown;
+        const stream = streamText({
           model,
           system:
             this.spec.provider === 'anthropic'
@@ -656,46 +714,59 @@ export class SdkProvider implements Provider {
           ...(mappedProviderOptions ? { providerOptions: mappedProviderOptions } : {}),
           maxRetries: 0,
           abortSignal,
+          onError: ({ error }) => {
+            if (streamError === undefined) streamError = error;
+          },
         });
-        if (result.warnings?.some((warning) => warning.type === 'unsupported' && warning.feature === 'temperature'))
+        await stream.consumeStream();
+        if (streamError !== undefined) throw this.materializeStreamError(streamError, apiKey);
+        abortSignal.throwIfAborted();
+        const [text, finishReason, usage, warnings, streamToolCalls, rawReasoningText, response] = await Promise.all([
+          stream.text,
+          stream.finishReason,
+          stream.usage,
+          stream.warnings,
+          stream.toolCalls,
+          stream.reasoningText,
+          stream.response,
+        ]);
+        if (warnings?.some((warning) => warning.type === 'unsupported' && warning.feature === 'temperature'))
           this.supportsTemperature = false;
         const debugTarget = process.env.VGC_DEBUG_PROVIDER_ERRORS;
-        if (debugTarget && !result.text.trim() && result.toolCalls.length === 0) {
+        if (debugTarget && !text.trim() && streamToolCalls.length === 0) {
           let raw = '(unavailable)';
           try {
-            raw = JSON.stringify(result.response.body ?? null).slice(0, 2000);
+            raw = JSON.stringify((response as { body?: unknown }).body ?? null).slice(0, 2000);
           } catch {}
           const line =
             `[provider-debug] ${this.spec.provider}:${this.model} empty-response ` +
-            `finish=${result.finishReason} usage=${JSON.stringify(result.usage)} response=${raw}`;
+            `finish=${finishReason} usage=${JSON.stringify(usage)} response=${raw}`;
           if (debugTarget === '1') console.error(line);
           else appendFileSync(debugTarget, `${line}\n`);
         }
-        const reasoningText = result.reasoningText?.trim() ?? '';
-        const reasoningTokens = result.usage.outputTokenDetails?.reasoningTokens ?? 0;
+        const reasoningText = rawReasoningText?.trim() ?? '';
+        const reasoningTokens = usage.outputTokenDetails?.reasoningTokens ?? 0;
         return {
-          text: result.text,
-          finishReason: result.finishReason,
+          text,
+          finishReason,
           usage: {
-            input_tokens: result.usage.inputTokens ?? 0,
-            output_tokens: result.usage.outputTokens ?? 0,
+            input_tokens: usage.inputTokens ?? 0,
+            output_tokens: usage.outputTokens ?? 0,
             ...(reasoningTokens > 0 ? { reasoning_tokens: reasoningTokens } : {}),
-            ...((result.usage.inputTokenDetails?.cacheReadTokens ?? 0) > 0
-              ? { cached_input_tokens: result.usage.inputTokenDetails.cacheReadTokens as number }
+            ...((usage.inputTokenDetails?.cacheReadTokens ?? 0) > 0
+              ? { cached_input_tokens: usage.inputTokenDetails?.cacheReadTokens as number }
               : {}),
             ...(this.gatewayMeta?.cost !== undefined ? { cost: this.gatewayMeta.cost } : {}),
           },
           ...(this.gatewayMeta?.provider ? { provider: this.gatewayMeta.provider } : {}),
-          toolCalls: result.toolCalls.map((call) => ({
+          toolCalls: streamToolCalls.map((call) => ({
             id: call.toolCallId,
             name: call.toolName,
             arguments: parseToolArguments(call.input),
             ...(call.providerMetadata ? { providerMetadata: call.providerMetadata as JsonObject } : {}),
           })),
           ...(reasoningText ? { reasoning: reasoningText } : {}),
-          ...(result.response.messages.length
-            ? { responseMessages: result.response.messages as unknown as JsonObject[] }
-            : {}),
+          ...(response.messages.length ? { responseMessages: response.messages as unknown as JsonObject[] } : {}),
         };
       } catch (error) {
         if (options.signal?.aborted) throw error;
