@@ -75,6 +75,12 @@ instead of failing. Credential and request errors still fail fast.
 does not already carry a routing variant. Faster, usually pricier; skip it when
 slower seats set the pace anyway.
 
+While a run is live, writing {"models": {"<spec>": "<replacement>"}} to
+<run-dir>/overrides.json reroutes that seat's calls to the replacement provider
+from its next decision on — no restart, nothing replayed. Meant for moving the
+same model to a healthier route (a rerouted seat uses environment API keys);
+records keep the seat's original spec. Delete the entry to route it back.
+
 publish needs VGC_LEAGUE_PUBLISH_ORIGIN (or --to) and VGC_LEAGUE_IMPORT_TOKEN, which must
 match the token the deployment runs with. It is idempotent: series the deployment already
 holds are reported and skipped.
@@ -136,6 +142,10 @@ function experimentExecution(values: ExperimentCliValues) {
     ...(timerScale === undefined ? {} : { timerScale }),
     ...(values['auto-resume'] ? { recovery: autoResumeGate() } : {}),
   };
+}
+
+function armModelOverrides(runDir: string): void {
+  process.env.VGC_MODEL_OVERRIDES ??= path.join(runDir, 'overrides.json');
 }
 
 function autoResumeGate(): RecoveryGate {
@@ -275,6 +285,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
     const models = experimentModels(command, values.models, positionals, values.nitro);
     const execution = experimentExecution(values);
     const runDir = makeRunDirectory();
+    armModelOverrides(runDir);
     const rows = await withRunStatus(runDir, () =>
       runRotation(models, positiveInteger('series-per-pair', values['series-per-pair']), runDir, {
         pool: values.pool,
@@ -298,6 +309,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
     const execution = experimentExecution(values);
     const { runTournament } = await import('./tournament.js');
     const runDir = makeRunDirectory();
+    armModelOverrides(runDir);
     const rows = await withRunStatus(runDir, () =>
       runTournament(models, runDir, {
         pool: values.pool,
@@ -356,6 +368,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
     const throughWeek =
       values['through-week'] === undefined ? undefined : positiveInteger('through-week', values['through-week']);
     const runDir = resumeDir ?? makeRunDirectory();
+    armModelOverrides(runDir);
     let lastTeambuilds = 0;
     const rows = await withRunStatus(runDir, () =>
       runDraftLeague(models, runDir, {

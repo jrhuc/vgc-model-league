@@ -6,7 +6,7 @@ import { completeWithDexTools } from './dex-lookups.js';
 import type { BoardInfo, DraftBoardMonView, DraftPickView } from './gui/api.js';
 import { BOARDS_DIR, defaultPsDir } from './paths.js';
 import type { ModelReasoningConfig, ReasoningLevel } from './providers.js';
-import { classifyProviderFailure, makeProvider, parseSpec, reasoningForModel } from './providers.js';
+import { classifyProviderFailure, makeProvider, parseSpec, reasoningForModel, resolveSpecOverride } from './providers.js';
 import type { Rng } from './random.js';
 import type { RecoveryGate } from './recovery.js';
 import { ShowdownReference } from './reference.js';
@@ -491,11 +491,13 @@ export async function runDraft(models: string[], board: DraftBoard, options: Run
     if (model === 'random') return undefined;
     const make =
       options.makeDraftProvider ??
-      ((spec: string, apiKey: string | undefined, reasoning: ReasoningLevel | undefined) =>
-        makeProvider(parseSpec(spec), {
+      ((spec: string, apiKey: string | undefined, reasoning: ReasoningLevel | undefined) => {
+        const resolved = resolveSpecOverride(spec);
+        return makeProvider(parseSpec(resolved), {
           ...(reasoning === undefined ? {} : { reasoning }),
-          ...(apiKey === undefined ? {} : { apiKey }),
-        }));
+          ...(resolved === spec && apiKey !== undefined ? { apiKey } : {}),
+        });
+      });
     return make(model, options.apiKeys?.[model], reasoningForModel(model, options));
   });
   const reference = new ShowdownReference(board.format, psDir);

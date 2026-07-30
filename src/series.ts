@@ -6,7 +6,7 @@ import { RandomEngine } from './battle-agent.js';
 import { LLMEngine } from './llm-engine.js';
 import { REPO_ROOT } from './paths.js';
 import type { ModelReasoningConfig, ReasoningLevel } from './providers.js';
-import { makeProvider, parseSpec, reasoningForModel } from './providers.js';
+import { reasoningForModel } from './providers.js';
 import { seededRng } from './random.js';
 import type { RecoveryGate } from './recovery.js';
 import { ShowdownReference } from './reference.js';
@@ -79,10 +79,7 @@ export function makeEngine(
 ): RandomEngine | LLMEngine {
   if (spec === 'random') return new RandomEngine(pid, seed);
   return new LLMEngine(pid, spec, {
-    provider: makeProvider(parseSpec(spec), {
-      reasoning,
-      ...(apiKey === undefined ? {} : { apiKey }),
-    }),
+    ...(apiKey === undefined ? {} : { apiKey }),
     decisionLog,
     traceLog,
     format,
