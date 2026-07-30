@@ -284,7 +284,17 @@ export async function runDraftLeague(
   phase = 'roundrobin';
   options.onEvent?.({ type: 'draft', draft: draftView(true) });
 
+  const storedTeambuilds = stored ? loadStoredTeambuilds(path.join(runDir, 'teambuild'), entrants) : new Map();
   const teambuildFor = async (plan: SeriesPlanned, entrant: number, opponent: number, signal: AbortSignal) => {
+    const reused = storedTeambuilds.get(`${plan.index}:${entrant}`);
+    if (reused) {
+      try {
+        validateTeam(reused.packed, board.format, psDir);
+        teambuilds.push(reused.view);
+        options.onEvent?.({ type: 'draft', draft: draftView(true) });
+        return reused;
+      } catch {}
+    }
     const result = await runTeambuild(
       {
         seriesIndex: plan.index,
@@ -330,6 +340,7 @@ export async function runDraftLeague(
     const [home, away] = await Promise.all([teambuildFor(plan, a, b, signal), teambuildFor(plan, b, a, signal)]);
     options.onEvent?.({ type: 'series-start', index: plan.index });
     const { winnerSide, fields, coachNotes } = await playRecordedSeries({
+      seriesIndex: plan.index,
       players,
       teams: {
         p1: { id: `${teamNames[a] || entrants[a]} wk${plan.round}`, packed: home.packed },
@@ -550,6 +561,26 @@ interface StoredLeague {
   teamNames: string[];
   rosterIds: string[][];
   draftNotes: string[];
+}
+
+/** A resume re-buys nothing a prior attempt already built: completed teambuilds are replayed from the
+ * teambuild log, keyed to the schedule slot and guarded by the seat's current model so a swapped seat
+ * still builds its own team. */
+function loadStoredTeambuilds(
+  teambuildDir: string,
+  entrants: readonly string[],
+): Map<string, { packed: string; view: TeambuildView }> {
+  const reusable = new Map<string, { packed: string; view: TeambuildView }>();
+  for (const row of loadRows(path.join(teambuildDir, 'teambuild.jsonl'))) {
+    const { model, team_name: _teamName, packed, timestamp: _timestamp, ...view } = row;
+    const entrant = Number(view.entrant);
+    const seriesIndex = Number(view.seriesIndex);
+    if (!Number.isInteger(entrant) || !Number.isInteger(seriesIndex)) continue;
+    if (typeof packed !== 'string' || !packed) continue;
+    if (model !== entrants[entrant]) continue;
+    reusable.set(`${seriesIndex}:${entrant}`, { packed, view: view as unknown as TeambuildView });
+  }
+  return reusable;
 }
 
 function loadStoredLeague(runDir: string): StoredLeague {
