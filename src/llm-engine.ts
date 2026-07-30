@@ -740,6 +740,14 @@ export class LLMEngine extends BaseEngine {
         }
         if (!completion.text && !completion.toolCalls.length && truncatedBudget) break;
         rawResponse = completion.text;
+        /** Some reasoning models via gateways finish with every token in the reasoning channel and an
+         * empty text field; the decision they wrote is salvaged rather than bought again on a retry. */
+        if (!rawResponse && !completion.toolCalls.length && completion.reasoning) {
+          try {
+            LLMEngine.extractChoices(completion.reasoning, menus);
+            rawResponse = completion.reasoning;
+          } catch {}
+        }
         break;
       }
       if (!rawResponse) {
@@ -854,7 +862,12 @@ export class LLMEngine extends BaseEngine {
             : { ...withSignal, timeout: Math.max(1, (deadline - performance.now()) / 1000 + 1) };
         const startedAt = performance.now();
         const completion = await this.provider.complete(system, messages, attemptOptions);
-        if (!completion.text && !completion.toolCalls.length && completion.finishReason !== 'length')
+        if (
+          !completion.text &&
+          !completion.toolCalls.length &&
+          !completion.reasoning?.trim() &&
+          completion.finishReason !== 'length'
+        )
           throw new ApiError(0, 'empty response');
         this.observedTokensPerSecond = updatedPace(
           this.observedTokensPerSecond,
@@ -1189,6 +1202,12 @@ export class LLMEngine extends BaseEngine {
           usage[key] = (usage[key] ?? 0) + (key === 'cost' ? value : Math.trunc(value));
         }
         rawResponse = completion.text;
+        if (!rawResponse.trim() && completion.reasoning) {
+          try {
+            LLMEngine.extractReflection(completion.reasoning);
+            rawResponse = completion.reasoning;
+          } catch {}
+        }
         try {
           parsed = LLMEngine.extractReflection(rawResponse);
           error = undefined;
