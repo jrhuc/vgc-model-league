@@ -73,6 +73,7 @@ interface PendingDecision extends JsonObject {
   error?: string;
   latencyMs?: number;
   toolCalls?: ToolTrace[];
+  failedAttempts?: { response: string; error: string }[];
   parseFailures?: number;
   toolRounds?: number;
   providerRetries?: number;
@@ -122,7 +123,9 @@ const PACE_SAMPLE_MIN_MS = 2000;
 const DECISION_MAX_TOOL_ROUNDS = 2;
 const DECISION_MAX_STANDARD_TOOL_CALLS = 2;
 const DECISION_MAX_ORDER_TOOL_CALLS = 1;
-const UNTIMED_MAX_TOOL_ROUNDS = 4;
+/** Generous enough that reaching it signals a looping model, not an interrupted analysis: at the old cap
+ * of 4 every parse failure in the 2026-08-02 audit came from analyses forced to finish tool-less. */
+const UNTIMED_MAX_TOOL_ROUNDS = 12;
 const UNTIMED_MAX_STANDARD_TOOL_CALLS = 4;
 const UNTIMED_MAX_ORDER_TOOL_CALLS = 2;
 const DECISION_PARSE_ATTEMPTS = 2;
@@ -560,6 +563,7 @@ export class LLMEngine extends BaseEngine {
     let toolRounds = 0;
     this.callRetries = 0;
     const toolCalls: ToolTrace[] = [];
+    const failedAttempts: { response: string; error: string }[] = [];
     const reasoningParts: string[] = [];
     const upstreamProviders = new Set<string>();
     const messages: ProviderMessage[] = [{ role: 'user', content: prompt }];
@@ -630,6 +634,7 @@ export class LLMEngine extends BaseEngine {
         max_tokens: maxTokens,
         tokens_per_second: this.observedTokensPerSecond ? Math.round(this.observedTokensPerSecond) : null,
         tool_calls: toolCalls,
+        ...(failedAttempts.length ? { failed_attempts: failedAttempts } : {}),
         fallback: true,
         failure_kind: failure.kind,
         error_summary: failure.summary,
@@ -752,6 +757,7 @@ export class LLMEngine extends BaseEngine {
       }
       if (!rawResponse) {
         error = truncatedBudget ? `reasoning exhausted the ${truncatedBudget}-token response budget` : 'empty response';
+        failedAttempts.push({ response: '', error });
         if (request.timer) return failDecision(new Error(error));
         if (truncatedBudget) {
           parseFailures += 1;
@@ -777,6 +783,7 @@ export class LLMEngine extends BaseEngine {
           error =
             'the response wrote tool-call markup as plain text, which nothing executes. Call tools through the API tool interface or reply with the required JSON object';
         }
+        failedAttempts.push({ response: rawResponse, error });
         parseFailures += 1;
       }
     }
@@ -807,6 +814,7 @@ export class LLMEngine extends BaseEngine {
           fallback && truncatedBudget ? classifyProviderFailure(new Error(error), this.spec).summary : undefined,
         latencyMs: performance.now() - started,
         toolCalls,
+        ...(failedAttempts.length ? { failedAttempts } : {}),
         parseFailures,
         toolRounds,
         providerRetries: this.callRetries,
@@ -990,6 +998,7 @@ export class LLMEngine extends BaseEngine {
       max_tokens: pending.maxTokens ?? null,
       tokens_per_second: this.observedTokensPerSecond ? Math.round(this.observedTokensPerSecond) : null,
       tool_calls: pending.toolCalls ?? [],
+      ...(pending.failedAttempts?.length ? { failed_attempts: pending.failedAttempts } : {}),
       fallback: pending.fallback ?? false,
       error: pending.error ?? null,
       ...(pending.errorSummary ? { error_summary: pending.errorSummary } : {}),

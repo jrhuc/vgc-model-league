@@ -13,7 +13,7 @@ import { ShowdownReference } from './reference.js';
 import type { ShowdownApi } from './showdown.js';
 import { loadShowdown } from './showdown.js';
 import { normalizePackedTeam, validateTeam } from './teams.js';
-import type { Provider, ProviderFailure, ProviderMessage } from './types.js';
+import type { JsonObject, Provider, ProviderFailure, ProviderMessage } from './types.js';
 
 const TEAMBUILD_PROMPT_POLICY = {
   systemTemplate: [
@@ -61,7 +61,7 @@ const TEAMBUILD_PROMPT_POLICY = {
   attempts: 5,
   providerRetries: 4,
   retryBaseMs: 2_000,
-  toolRounds: 4,
+  toolRounds: 8,
   maxCallsPerRound: 8,
 } as const;
 
@@ -424,7 +424,7 @@ export async function runTeambuild(request: TeambuildRequest, options: Teambuild
     let error: string | undefined;
     let terminalError: Error | undefined;
     let pauseFailure: ProviderFailure | undefined;
-    const lookups: string[] = [];
+    const lookups: { name: string; arguments: JsonObject; result: string }[] = [];
     try {
       const completion = await completeWithDexTools({
         provider,
@@ -435,7 +435,7 @@ export async function runTeambuild(request: TeambuildRequest, options: Teambuild
         policy: TEAMBUILD_PROMPT_POLICY,
         ...(options.recovery === undefined ? {} : { recovery: options.recovery }),
         ...(options.signal === undefined ? {} : { signal: options.signal }),
-        onLookup: (call) => lookups.push(call.name),
+        onLookup: (call) => lookups.push(call),
       });
       response = completion.text;
       usage = completion.usage;

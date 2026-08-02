@@ -688,7 +688,7 @@ test('transient API errors retry before falling back', async () => {
   assert.equal(persistentProvider.calls.length, 3);
 });
 
-test('untimed tool batches allow wide verification across four rounds', async () => {
+test('untimed tool batches allow wide verification across many rounds', async () => {
   const batch = (ids: number[], name: string) => ({
     text: '',
     usage: { input_tokens: 1 },
@@ -706,8 +706,9 @@ test('untimed tool batches allow wide verification across four rounds', async ()
   assert.equal(await engine.act(request(), { povLines: [] }), 'move 2');
   assert.equal(provider.calls.length, 5);
   assert.equal(provider.calls[0]!.options.maxTokens, 32_768);
-  for (const call of provider.calls.slice(0, 4)) assert.equal(call.options.toolChoice, 'auto');
-  assert.equal(provider.calls[4]!.options.toolChoice, 'none', 'round budget exhausted forces the final answer');
+  for (const call of provider.calls) {
+    assert.equal(call.options.toolChoice, 'auto', 'four rounds sit well under the untimed cap');
+  }
   const toolTrace = traces[0]!.tool_calls as Array<Record<string, unknown>>;
   assert.equal(toolTrace.length, 9, 'the untimed cap keeps four standard calls of the five-call batch');
   assert.equal(traces[0]!.tool_rounds, 4);

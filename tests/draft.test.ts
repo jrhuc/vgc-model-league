@@ -382,7 +382,10 @@ test('drafters can look up the dex before committing a pick', async (t) => {
     .trim()
     .split('\n')
     .map((line) => JSON.parse(line) as Record<string, unknown>);
-  assert.deepEqual(rows[0]!.tool_lookups, ['lookup_species'], 'lookups are logged for the audit trail');
+  const lookups = rows[0]!.tool_lookups as Array<Record<string, unknown>>;
+  assert.equal(lookups.length, 1, 'lookups are logged for the audit trail');
+  assert.equal(lookups[0]!.name, 'lookup_species');
+  assert.match(String(lookups[0]!.result), /Blastoise-Mega/, 'the result content is preserved for audits');
 });
 
 test('teambuilders can look up the dex while writing sets', async (t) => {
