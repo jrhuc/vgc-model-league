@@ -24,7 +24,6 @@ const EXPERIMENT_CLI_OPTIONS = {
   concurrency: { type: 'string', default: '2' },
   reasoning: { type: 'string' },
   'timer-scale': { type: 'string' },
-  'auto-resume': { type: 'boolean', default: false },
   nitro: { type: 'boolean', default: false },
 } as const;
 
@@ -33,7 +32,6 @@ interface ExperimentCliValues {
   concurrency: string;
   reasoning?: string;
   'timer-scale'?: string;
-  'auto-resume': boolean;
   nitro: boolean;
 }
 
@@ -47,14 +45,14 @@ Commands:
   selfcheck                           run one random-vs-random series through the simulator
   rotation --models <spec> <spec>...  run the controlled team-rotation protocol
       [--series-per-pair <n>] [--pool <name>] [--seed <n>] [--concurrency <n>] [--reasoning <level>]
-      [--timer-scale <n|off>] [--auto-resume] [--nitro]
+      [--timer-scale <n|off>] [--nitro]
   tournament --models <spec> <spec>...  play a single-elimination BO3 bracket; each model keeps one team
       [--pool <name>] [--seed <n>] [--concurrency <n>] [--reasoning <level>] [--timer-scale <n|off>]
-      [--auto-resume] [--nitro]
+      [--nitro]
   draft --models <spec> <spec>...     snake-draft rosters from a board, then a weekly round robin and playoffs
       each coach drafts 10 within a 100-point budget, then picks 6 and builds every set before each match
       [--board <name>] [--seed <n>] [--concurrency <n>] [--reasoning <level>] [--timer-scale <n|off>]
-      [--auto-resume] [--nitro] [--through-week <n>] [--resume <run-dir>] [--sequential-weeks] [--closed-sheets]
+      [--nitro] [--through-week <n>] [--resume <run-dir>] [--sequential-weeks] [--closed-sheets]
       --through-week stops cleanly after that round-robin week; --resume continues a stored league
       round-robin series run concurrently with blind teambuilds; --sequential-weeks restores
       week-by-week play (implied by --through-week); --closed-sheets hides opposing team sheets
@@ -67,9 +65,9 @@ Commands:
   publish [--to <origin>] [--pool <name>] [--include-test] [--dry-run]
       send completed local series, their decision logs, and any missing team pool to a deployment
 
---auto-resume keeps a run alive through transient provider failures (rate limits,
-upstream outages, exhausted quotas): the run pauses, then retries with backoff
-instead of failing. Credential and request errors still fail fast.
+Runs stay alive through transient provider failures (rate limits, upstream
+outages, exhausted quotas): the affected seat pauses, then retries with backoff
+instead of failing the run. Credential and request errors still fail fast.
 
 --nitro adds the :nitro throughput-routing variant to every OpenRouter spec that
 does not already carry a routing variant. Faster, usually pricier; skip it when
@@ -140,7 +138,7 @@ function experimentExecution(values: ExperimentCliValues) {
     ...(seed === undefined ? {} : { seed }),
     ...(reasoning === undefined ? {} : { reasoning }),
     ...(timerScale === undefined ? {} : { timerScale }),
-    ...(values['auto-resume'] ? { recovery: autoResumeGate() } : {}),
+    recovery: autoResumeGate(),
   };
 }
 
@@ -360,7 +358,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
         seed: storedConfig.seed,
         ...(storedReasoning === undefined ? {} : { reasoning: storedReasoning }),
         ...(storedConfig.timer_scale === undefined ? {} : { timerScale: storedConfig.timer_scale }),
-        ...(values['auto-resume'] ? { recovery: autoResumeGate() } : {}),
+        recovery: autoResumeGate(),
       };
     } else {
       execution = experimentExecution(values);
