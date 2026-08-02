@@ -235,6 +235,23 @@ test('field weather and screens render remaining turns', () => {
   assert.match(rendered, /Reflect \(7 turns? left\)/);
 });
 
+test('hazards persist without a timer', () => {
+  const state = new BattleState('p1');
+  state.feed([
+    '|switch|p1a: Garchomp|Garchomp, L50|183/183',
+    '|turn|1',
+    '|-sidestart|p1: p1|move: Toxic Spikes',
+    '|-sidestart|p2: p2|move: Stealth Rock',
+    '|-sidestart|p2: p2|Tailwind',
+    '|turn|8',
+  ]);
+  const rendered = state.render({});
+  assert.match(rendered, /Toxic Spikes(?! \()/);
+  assert.match(rendered, /Stealth Rock(?! \()/);
+  assert.doesNotMatch(rendered, /Toxic Spikes \(|Stealth Rock \(/);
+  assert.match(rendered, /Tailwind \(0 turns left\)/);
+});
+
 test('Protect success reduction is tracked for the next menu', () => {
   const state = new BattleState('p1');
   state.feed([

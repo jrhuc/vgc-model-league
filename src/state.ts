@@ -19,7 +19,7 @@ export interface LastMove {
 export interface TimedEffect {
   name: string;
   startedTurn: number;
-  duration: number;
+  duration?: number;
 }
 
 export class MonState {
@@ -77,6 +77,18 @@ const STAT_LABELS: Record<string, string> = {
 
 const CHOICE_ITEMS = new Set(['choiceband', 'choicescarf', 'choicespecs']);
 const SCREEN_MOVES = new Set(['reflect', 'lightscreen', 'auroraveil']);
+
+/** Side conditions the simulator expires on its own; anything absent (hazards) persists until removed
+ * and must render without a timer. */
+const TIMED_SIDE_CONDITIONS = new Map<string, number>([
+  ['tailwind', 4],
+  ['reflect', 5],
+  ['lightscreen', 5],
+  ['auroraveil', 5],
+  ['safeguard', 5],
+  ['mist', 5],
+  ['luckychant', 5],
+]);
 
 const WEATHER_ROCKS: Record<string, string> = {
   raindance: 'damprock',
@@ -240,14 +252,18 @@ export class BattleState {
         const effect = this.effect(args[1]!);
         const key = this.speciesKey(effect);
         if (kind === '-sidestart') {
-          let duration = key === 'tailwind' ? 4 : 5;
+          let duration = TIMED_SIDE_CONDITIONS.get(key);
           if (SCREEN_MOVES.has(key)) {
             const setter =
               this.lastMoveUserThisTurn(key, side) ??
               [...this.sides[side].mons.values()].find((mon) => mon.item && this.speciesKey(mon.item) === 'lightclay');
             if (setter?.item && this.speciesKey(setter.item) === 'lightclay') duration = 8;
           }
-          this.sides[side].conditions.set(key, { name: effect, startedTurn: Math.max(1, this.turn), duration });
+          this.sides[side].conditions.set(key, {
+            name: effect,
+            startedTurn: Math.max(1, this.turn),
+            ...(duration === undefined ? {} : { duration }),
+          });
         } else this.sides[side].conditions.delete(key);
       }
     } else if (kind === '-item' && args.length >= 2) {
@@ -609,6 +625,7 @@ export class BattleState {
 
   private formatTimed(effect: TimedEffect | undefined): string {
     if (!effect) return 'none';
+    if (effect.duration === undefined) return effect.name;
     const elapsed = Math.max(0, this.turn - effect.startedTurn);
     const remaining = Math.max(0, effect.duration - elapsed);
     return `${effect.name} (${remaining} turn${remaining === 1 ? '' : 's'} left)`;

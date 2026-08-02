@@ -11,7 +11,7 @@ import type { Rng } from './random.js';
 import type { RecoveryGate } from './recovery.js';
 import { ShowdownReference } from './reference.js';
 import { loadShowdown } from './showdown.js';
-import type { Provider, ProviderFailure, ProviderMessage } from './types.js';
+import type { JsonObject, Provider, ProviderFailure, ProviderMessage } from './types.js';
 import { text } from './value.js';
 
 const BOARD_SLUG = /^[a-z0-9][a-z0-9-]{0,63}$/;
@@ -54,8 +54,8 @@ const DRAFT_PROMPT_POLICY = {
     'Reply with a single JSON object {"pick": "<board-id>", "reasoning": "<2-4 sentences>", ' +
     '"notebook": "<updated concise full roster plan and needs to carry to your next pick>"} and nothing else.',
   turnTemplate:
-    'Overall pick {{pick}} of {{total}}. You have {{budget}} points and {{remaining}} left, so you must keep ' +
-    '{{reserve}} points back for the rest of your roster: the most you can spend now is {{affordable}}.',
+    'Overall pick {{pick}} of {{total}}. You have {{budget}} points and {{remaining}} left; the most you can ' +
+    'spend on this pick and still fill your remaining slots is {{affordable}}.',
   boardHeading: 'DRAFT BOARD (id | cost | name | types | base stats | abilities):',
   takenHeading: 'ALREADY DRAFTED:',
   nothingTaken: '- (nothing yet; you have the first pick)',
@@ -70,7 +70,7 @@ const DRAFT_PROMPT_POLICY = {
   attempts: 3,
   providerRetries: 4,
   retryBaseMs: 2_000,
-  toolRounds: 3,
+  toolRounds: 8,
   maxCallsPerRound: 6,
 } as const;
 
@@ -289,7 +289,7 @@ interface DraftSeatLog {
   user: string;
   response: string;
   usage?: Record<string, number>;
-  tool_lookups?: string[];
+  tool_lookups?: { name: string; arguments: JsonObject; result: string }[];
   error?: string;
 }
 
@@ -379,7 +379,6 @@ function draftUserPrompt(
       .replace('{{total}}', String(models.length * state.board.picks))
       .replace('{{budget}}', String(state.budgets[drafter]))
       .replace('{{remaining}}', `${slotsLeft} ${slotsLeft === 1 ? 'pick' : 'picks'}`)
-      .replace('{{reserve}}', String(state.budgets[drafter]! - affordable))
       .replace('{{affordable}}', `${affordable} ${affordable === 1 ? 'point' : 'points'}`),
   );
 
@@ -534,7 +533,7 @@ export async function runDraft(models: string[], board: DraftBoard, options: Run
         let error: string | undefined;
         let terminalError: Error | undefined;
         let pauseFailure: ProviderFailure | undefined;
-        const lookups: string[] = [];
+        const lookups: { name: string; arguments: JsonObject; result: string }[] = [];
         try {
           response = '';
           const completion = await completeWithDexTools({
@@ -546,7 +545,7 @@ export async function runDraft(models: string[], board: DraftBoard, options: Run
             policy: DRAFT_PROMPT_POLICY,
             ...(options.recovery === undefined ? {} : { recovery: options.recovery }),
             ...(options.signal === undefined ? {} : { signal: options.signal }),
-            onLookup: (call) => lookups.push(call.name),
+            onLookup: (call) => lookups.push(call),
           });
           response = completion.text;
           usage = completion.usage;
