@@ -120,7 +120,10 @@ stop the run.
 
 After each game, both models review the game and record an adjustment. This
 step occurs outside the battle clock. The final review remains in the evidence
-and has `series_over` set.
+and has `series_over` set. In draft leagues the final review also receives the
+full ten-Pokémon roster with the registered six marked, and its instructions
+extend to the preparation itself: whether the six registered fit the opponent
+and whether anything left behind would have.
 
 Reference opponents implement `BattleAgent`. They do not use model notebooks,
 reflections, or tools.

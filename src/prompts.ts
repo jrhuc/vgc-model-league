@@ -20,7 +20,8 @@ export const TIMED_SYSTEM = [
   RETURN_JSON,
 ].join('\n');
 
-const REFLECTION_EVIDENCE = 'Use only the supplied private battle evidence and authoritative outcome. Do not invent hidden information.';
+const REFLECTION_EVIDENCE =
+  'Use only the supplied private battle evidence and authoritative outcome. Do not invent hidden information.';
 const REFLECTION_PREVIEW_PLAN =
   'Question the team-preview plan itself — whether the four brought, and which Mega Stone holder (if any) you evolved, suited this opponent — not only how the game was piloted.';
 const REFLECTION_CONCISE = 'Give concise conclusions.';
@@ -35,14 +36,32 @@ export const REFLECTION_SYSTEM = [
   'Respond with exactly one JSON object: {"summary":"why the game was won or lost","adjustment":"what to do better next game","notebook":"updated durable series notes"}.',
 ].join('\n');
 
+const SERIES_REFLECTION_OVER =
+  'You are reviewing the final game of a best-of-three VGC series that is now over: the stated result and final score are authoritative, and there is no next game against this opponent in this series.';
+const SERIES_REFLECTION_RESULT =
+  'Identify the main reason for the game and series result, including whether your between-game adjustments helped or backfired.';
+const SERIES_REFLECTION_SHAPE =
+  'Respond with exactly one JSON object: {"summary":"why the game and series were won or lost","adjustment":"what you would change against this opponent in a future series","notebook":"durable notes for a future rematch"}.';
+
 export const SERIES_REFLECTION_SYSTEM = [
-  'You are reviewing the final game of a best-of-three VGC series that is now over: the stated result and final score are authoritative, and there is no next game against this opponent in this series.',
+  SERIES_REFLECTION_OVER,
   REFLECTION_EVIDENCE,
-  'Identify the main reason for the game and series result, including whether your between-game adjustments helped or backfired.',
+  SERIES_REFLECTION_RESULT,
   REFLECTION_PREVIEW_PLAN,
   'Rewrite the private notebook for a possible future rematch: only durable opponent tendencies and revealed strategic facts worth carrying forward; omit current HP, active positions, turn recaps, and repeated roster facts.',
   REFLECTION_CONCISE,
-  'Respond with exactly one JSON object: {"summary":"why the game and series were won or lost","adjustment":"what you would change against this opponent in a future series","notebook":"durable notes for a future rematch"}.',
+  SERIES_REFLECTION_SHAPE,
+].join('\n');
+
+export const DRAFT_SERIES_REFLECTION_SYSTEM = [
+  SERIES_REFLECTION_OVER,
+  REFLECTION_EVIDENCE,
+  SERIES_REFLECTION_RESULT,
+  REFLECTION_PREVIEW_PLAN,
+  'Also review the preparation for this series: whether the six you registered from your full draft roster, and the sets you built for them, fit this opponent, and whether any Pokémon you left behind would have. Judge what your prep got right as well as what it got wrong.',
+  'Rewrite the private notebook for a possible future rematch: durable opponent tendencies, revealed strategic facts, and brief prep conclusions worth carrying forward; omit current HP, active positions, turn recaps, and repeated roster facts.',
+  REFLECTION_CONCISE,
+  SERIES_REFLECTION_SHAPE,
 ].join('\n');
 
 export interface DecisionPrompt {

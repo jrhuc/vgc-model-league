@@ -18,7 +18,7 @@ import type { AuthService, AuthSession, AuthUser } from '../auth.js';
 import { AuthError } from '../auth.js';
 import { describeBoardMon, listBoards, loadBoard } from '../draft.js';
 import type { DraftLeagueEvent } from '../draftleague.js';
-import { DRAFT_PROTOCOL_VERSION, runDraftLeague } from '../draftleague.js';
+import { DRAFT_PROTOCOL_VERSION, roundRobinWeeks, runDraftLeague } from '../draftleague.js';
 import { buildEvidence, buildTournaments } from '../evidence.js';
 import { ImportError, importSeries, isImported, removeImportedRun } from '../import.js';
 import { discoverModels } from '../model-catalog.js';
@@ -45,6 +45,7 @@ import type { Team, TeamDraft } from '../teams.js';
 import { createPool, inspectTeam, listPools, loadPool, packTeam, validateTeam } from '../teams.js';
 import { parseTimerScale } from '../timer.js';
 import { runTournament, TOURNAMENT_PROTOCOL_VERSION } from '../tournament.js';
+import type { TradeWindowConfig } from '../trade-window.js';
 import type { ExperimentMode, JsonObject, Pid, TimerScale } from '../types.js';
 import { isRecord } from '../value.js';
 import type {
@@ -187,6 +188,7 @@ interface RunConfig extends ModelReasoningConfig {
   timerScale?: TimerScale;
   closedSheets?: boolean;
   sequentialWeeks?: boolean;
+  tradeWindow?: TradeWindowConfig | null;
 }
 
 function isActiveRunState(state: RunSnapshot['state']): state is 'running' | 'paused' {
@@ -1143,6 +1145,23 @@ export class GuiServer {
     } catch (error) {
       throw new HttpError(400, error instanceof Error ? error.message : String(error));
     }
+    let tradeWindow: TradeWindowConfig | null | undefined;
+    if (mode === 'draft') {
+      const weeks = roundRobinWeeks(models.length).length;
+      if (body.tradeWindow === undefined) {
+        tradeWindow = { afterWeek: Math.min(3, weeks) };
+      } else if (body.tradeWindow === null) {
+        tradeWindow = null;
+      } else if (isRecord(body.tradeWindow)) {
+        const afterWeek = Number(body.tradeWindow.afterWeek);
+        if (!Number.isSafeInteger(afterWeek) || afterWeek < 1 || afterWeek > weeks) {
+          throw new HttpError(400, `trade window week must be between 1 and ${weeks}`);
+        }
+        tradeWindow = { afterWeek };
+      } else {
+        throw new HttpError(400, 'tradeWindow must be null or an object with afterWeek');
+      }
+    }
     const maximumSeriesPerPair = this.publicOrigin ? 4 : 20;
     const maximumConcurrency = this.publicOrigin ? 2 : 8;
     const config: RunConfig = {
@@ -1166,6 +1185,7 @@ export class GuiServer {
       ...(timerScale === undefined ? {} : { timerScale }),
       ...(mode === 'draft' && body.closedSheets === true ? { closedSheets: true } : {}),
       ...(mode === 'draft' && body.sequentialWeeks === true ? { sequentialWeeks: true } : {}),
+      ...(mode === 'draft' ? { tradeWindow: tradeWindow! } : {}),
     };
     const run = new ActiveRun(config, apiKeys, owner, this.options.runsDir);
     if (owner && this.options.auth) {
@@ -1284,6 +1304,7 @@ export class GuiServer {
           ...(run.config.board === undefined ? {} : { board: run.config.board }),
           ...(run.config.closedSheets === true ? { closedSheets: true } : {}),
           ...(run.config.sequentialWeeks === true ? { sequentialWeeks: true } : {}),
+          ...(run.config.tradeWindow === undefined ? {} : { tradeWindow: run.config.tradeWindow }),
         });
       } else if (run.config.mode === 'tournament') {
         await (this.options.tournamentRunner ?? runTournament)(run.config.models, run.runDir, {
@@ -1503,6 +1524,9 @@ export class GuiServer {
       ...(run.config.reasoning === undefined ? {} : { reasoning: run.config.reasoning }),
       ...(run.config.reasoningByModel === undefined ? {} : { reasoningByModel: run.config.reasoningByModel }),
       ...(run.config.timerScale === undefined ? {} : { timerScale: run.config.timerScale }),
+      ...(run.config.closedSheets === true ? { closedSheets: true } : {}),
+      ...(run.config.sequentialWeeks === true ? { sequentialWeeks: true } : {}),
+      ...(run.config.tradeWindow === undefined ? {} : { tradeWindow: run.config.tradeWindow }),
       ...(run.owner
         ? {
             contributor: {

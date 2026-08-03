@@ -8,7 +8,14 @@ import { BaseEngine } from './battle-agent.js';
 import { summarizeBattleEvents } from './battle-transcript.js';
 import type { MenuHints, SlotMenu, TargetNames } from './choices.js';
 import { buildMenus } from './choices.js';
-import { REFLECTION_SYSTEM, renderDecision, SERIES_REFLECTION_SYSTEM, SYSTEM, TIMED_SYSTEM } from './prompts.js';
+import {
+  DRAFT_SERIES_REFLECTION_SYSTEM,
+  REFLECTION_SYSTEM,
+  renderDecision,
+  SERIES_REFLECTION_SYSTEM,
+  SYSTEM,
+  TIMED_SYSTEM,
+} from './prompts.js';
 import type { ReasoningLevel } from './providers.js';
 import {
   ApiError,
@@ -90,6 +97,9 @@ export interface LLMEngineOptions {
   signal?: AbortSignal;
   recovery?: RecoveryGate;
   initialNotebook?: string;
+  /** Full draft roster with the registered six marked; its presence switches the series-final
+   * reflection to the draft variant that also reviews the registration itself. */
+  draftRoster?: string;
 }
 
 const RETRY_ATTEMPTS = 3;
@@ -293,6 +303,7 @@ export function scaffoldRevision(): string {
         timedSystem: TIMED_SYSTEM,
         reflection: REFLECTION_SYSTEM,
         seriesReflection: SERIES_REFLECTION_SYSTEM,
+        draftSeriesReflection: DRAFT_SERIES_REFLECTION_SYSTEM,
         tools: DECISION_TOOLS,
         decisionPolicy: {
           minTokens: DECISION_MIN_TOKENS,
@@ -721,7 +732,8 @@ export class LLMEngine extends BaseEngine {
         if (completion.reasoning) reasoningParts.push(completion.reasoning);
         if (completion.toolCalls.length && !finalRound) {
           toolRounds += 1;
-          const standardMax = deadline === undefined ? UNTIMED_MAX_STANDARD_TOOL_CALLS : DECISION_MAX_STANDARD_TOOL_CALLS;
+          const standardMax =
+            deadline === undefined ? UNTIMED_MAX_STANDARD_TOOL_CALLS : DECISION_MAX_STANDARD_TOOL_CALLS;
           const orderMax = deadline === undefined ? UNTIMED_MAX_ORDER_TOOL_CALLS : DECISION_MAX_ORDER_TOOL_CALLS;
           const { kept: calls, dropped } = boundedToolCalls(completion.toolCalls, standardMax, orderMax);
           messages.push(assistantToolMessage(completion));
@@ -1160,9 +1172,11 @@ export class LLMEngine extends BaseEngine {
     const mine = this.seriesScore[this.pid];
     const theirs = this.seriesScore[this.pid === 'p1' ? 'p2' : 'p1'];
     const seriesResult = mine > theirs ? 'won' : mine < theirs ? 'lost' : 'drew';
+    const draftRoster = seriesOver ? this.options.draftRoster : undefined;
     const prompt = [
       `Series ${this.seriesId ?? '?'}; game ${context.gameNumber}; result: ${result}; series score ${this.scoreText()}.`,
       ...(seriesOver ? [`The series is over: you ${seriesResult} it ${mine}-${theirs} (you are ${this.pid}).`] : []),
+      ...(draftRoster ? [`Your full draft roster this season: ${draftRoster}`] : []),
       `Turns: ${String(context.outcome.turns ?? '?')}. Decision errors: ${String(context.outcome.errors ?? 0)}. Model-choice defaults: ${String(context.outcome.model_choice_fallbacks ?? 0)}. Simulator substitutions: ${String(context.outcome.simulator_substitutions ?? 0)}. Timer autodefaults: ${String(context.outcome.timer_autodefaults ?? 0)}.`,
       '',
       'Final authoritative state:',
@@ -1189,7 +1203,7 @@ export class LLMEngine extends BaseEngine {
           messages,
           { maxTokens: REFLECTION_MAX_TOKENS, temperature: DECISION_TEMPERATURE, timeout: REFLECTION_TIMEOUT_S },
           this.generation,
-          seriesOver ? SERIES_REFLECTION_SYSTEM : REFLECTION_SYSTEM,
+          draftRoster ? DRAFT_SERIES_REFLECTION_SYSTEM : seriesOver ? SERIES_REFLECTION_SYSTEM : REFLECTION_SYSTEM,
         );
         for (const [key, value] of Object.entries(completion.usage)) {
           usage[key] = (usage[key] ?? 0) + (key === 'cost' ? value : Math.trunc(value));

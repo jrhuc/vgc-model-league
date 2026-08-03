@@ -31,6 +31,44 @@ const MODES: Array<{ id: RunMode; label: string; hint: string }> = [
   { id: 'draft', label: 'Draft league', hint: 'Snake draft, round robin, playoffs' },
   { id: 'rotation', label: 'Rotation', hint: 'Mirrored round robin for ratings' },
 ];
+const TEAM_SHEET_OPTIONS = [
+  {
+    value: 'open',
+    label: 'Open team sheets',
+    description: 'Both sides read opposing sets at preview.',
+  },
+  {
+    value: 'closed',
+    label: 'Closed team sheets',
+    description: 'Sets stay hidden and must be deduced through play.',
+  },
+];
+
+const DRAFT_SCHEDULE_OPTIONS = [
+  {
+    value: 'parallel',
+    label: 'Parallel weeks',
+    description: 'Round-robin games run concurrently and builds stay blind.',
+  },
+  {
+    value: 'sequential',
+    label: 'Sequential weeks',
+    description: 'Weeks play in order for adaptation data.',
+  },
+];
+
+const OPENROUTER_ROUTING_OPTIONS = [
+  {
+    value: 'default',
+    label: 'Default routing',
+    description: 'Use the cheapest available upstream.',
+  },
+  {
+    value: 'nitro',
+    label: 'Nitro routing',
+    description: 'Sort by throughput; usually faster and pricier.',
+  },
+];
 
 function pairings(models: string[]): Array<[string, string]> {
   const pairs: Array<[string, string]> = [];
@@ -317,6 +355,7 @@ export function FixturesView({ app, run, onStarted, onPools }: FixturesProps) {
   const [concurrency, setConcurrency] = useState('2');
   const [closedSheets, setClosedSheets] = useState(false);
   const [sequentialWeeks, setSequentialWeeks] = useState(false);
+  const [tradeWindow, setTradeWindow] = useState('default');
   const [nitro, setNitro] = useState(false);
   const [reasoning, setReasoning] = useState('');
   const [sharedReasoning, setSharedReasoning] = useState(true);
@@ -328,6 +367,26 @@ export function FixturesView({ app, run, onStarted, onPools }: FixturesProps) {
   const provider = providers.find((item) => item.id === providerId) ?? null;
   const curated = Boolean(provider && provider.models.length > 0);
   const maxModels = mode === 'match' ? 2 : mode === 'draft' ? Math.min(8, board?.maxEntrants ?? 8) : 8;
+  const draftWeeks = models.length < 2 ? 7 : models.length % 2 === 0 ? models.length - 1 : models.length;
+  const tradeWindowOptions = [
+    {
+      value: 'default',
+      label: 'Mid-season free agency (default)',
+      description: 'Opens after week 3, or the final round-robin week in a shorter league.',
+    },
+    {
+      value: 'off',
+      label: 'Locked rosters',
+      description: 'Keep draft-night rosters for the whole season.',
+    },
+    ...Array.from({ length: draftWeeks }, (_, index) => index + 1)
+      .filter((week) => week !== 3)
+      .map((week) => ({
+        value: String(week),
+        label: `Free agency after week ${week}`,
+        description: 'Lowest seed chooses first; each coach may make up to six free-agent swaps.',
+      })),
+  ];
   const teamsMode = mode === 'match' || (mode === 'tournament' && teamSource === 'custom');
   const lineupRef = useRef({ models, maxModels, mode });
   lineupRef.current = { models, maxModels, mode };
@@ -587,6 +646,9 @@ export function FixturesView({ app, run, onStarted, onPools }: FixturesProps) {
                 concurrency: Number(concurrency),
                 ...(closedSheets ? { closedSheets: true } : {}),
                 ...(sequentialWeeks ? { sequentialWeeks: true } : {}),
+                ...(tradeWindow === 'default'
+                  ? {}
+                  : { tradeWindow: tradeWindow === 'off' ? null : { afterWeek: Number(tradeWindow) } }),
               }
             : { pool, seriesPerPair: Number(series), concurrency: Number(concurrency) }),
     };
@@ -1106,32 +1168,27 @@ export function FixturesView({ app, run, onStarted, onPools }: FixturesProps) {
                     </span>
                   </div>
                 </div>
-                <div class="field">
-                  <label class="field-label" for="teamSheets">
-                    Team sheets
-                  </label>
-                  <select
-                    id="teamSheets"
-                    value={closedSheets ? 'closed' : 'open'}
-                    onChange={(event) => setClosedSheets(event.currentTarget.value === 'closed')}
-                  >
-                    <option value="open">Open — both sides read opposing sets at preview</option>
-                    <option value="closed">Closed — sets stay hidden, deduce through play</option>
-                  </select>
-                </div>
-                <div class="field">
-                  <label class="field-label" for="schedule">
-                    Schedule
-                  </label>
-                  <select
-                    id="schedule"
-                    value={sequentialWeeks ? 'sequential' : 'parallel'}
-                    onChange={(event) => setSequentialWeeks(event.currentTarget.value === 'sequential')}
-                  >
-                    <option value="parallel">Parallel — round-robin weeks run concurrently, builds stay blind</option>
-                    <option value="sequential">Sequential — weeks play in order for adaptation data</option>
-                  </select>
-                </div>
+                <Dropdown
+                  id="teamSheets"
+                  label="Team sheets"
+                  options={TEAM_SHEET_OPTIONS}
+                  value={closedSheets ? 'closed' : 'open'}
+                  onChange={(value) => setClosedSheets(value === 'closed')}
+                />
+                <Dropdown
+                  id="schedule"
+                  label="Schedule"
+                  options={DRAFT_SCHEDULE_OPTIONS}
+                  value={sequentialWeeks ? 'sequential' : 'parallel'}
+                  onChange={(value) => setSequentialWeeks(value === 'sequential')}
+                />
+                <Dropdown
+                  id="tradeWindow"
+                  label="Roster changes"
+                  options={tradeWindowOptions}
+                  value={tradeWindow}
+                  onChange={setTradeWindow}
+                />
               </div>
             )}
             <div class="setting-grid">
@@ -1165,19 +1222,13 @@ export function FixturesView({ app, run, onStarted, onPools }: FixturesProps) {
                   />
                 </div>
               )}
-              <div class="field">
-                <label class="field-label" for="nitroToggle">
-                  OpenRouter routing
-                </label>
-                <select
-                  id="nitroToggle"
-                  value={nitro ? 'nitro' : 'default'}
-                  onChange={(event) => setNitro(event.currentTarget.value === 'nitro')}
-                >
-                  <option value="default">Default — cheapest available upstream</option>
-                  <option value="nitro">Nitro — throughput-sorted, faster and usually pricier</option>
-                </select>
-              </div>
+              <Dropdown
+                id="nitroToggle"
+                label="OpenRouter routing"
+                options={OPENROUTER_ROUTING_OPTIONS}
+                value={nitro ? 'nitro' : 'default'}
+                onChange={(value) => setNitro(value === 'nitro')}
+              />
               <div class="setting-stack wide">
                 <div class="reasoning-heading">
                   <span class="field-label">Reasoning assignment</span>

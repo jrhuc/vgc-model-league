@@ -893,7 +893,7 @@ export function DataRoomView({
               <div>
                 <h2>Play profile</h2>
                 <p>
-                  How each model plays, not how well: action mix and threat conversion, shaded against the column
+                  How each model plays, not how well: action mix, speed, and tool use, shaded against each column's
                   maximum. Ordered by Elo.
                 </p>
               </div>

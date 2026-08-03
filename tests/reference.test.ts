@@ -227,15 +227,19 @@ test('exact defender stats collapse the open-sheet range', () => {
     return Number(match[2]) - Number(match[1]);
   };
   assert.ok(spread(exact) < spread(open), 'exact stats must narrow the damage range');
+  const fixed = reference.lookup('estimate_damage', {
+    attacker: 'Maushold',
+    defender: 'Farigiraf',
+    move: 'Super Fang',
+    defender_stats: { hp: 217, def: 121 },
+  });
+  assert.match(fixed, /49\.8-49\.8% of maximum HP/);
 });
 
 test('damage tools reject items removed from the Champions format', () => {
   const reference = new ShowdownReference('gen9championsvgc2026regmb');
   const args = { attacker: 'Gengar', defender: 'Farigiraf', move: 'Sludge Bomb' };
-  assert.match(
-    reference.lookup('estimate_damage', args),
-    /no abilities, items, status, or field effects applied/,
-  );
+  assert.match(reference.lookup('estimate_damage', args), /no abilities, items, status, or field effects applied/);
   assert.equal(
     reference.lookup('estimate_damage', { ...args, defender_item: 'Assault Vest' }),
     'Assault Vest is not legal in gen9championsvgc2026regmb.',
@@ -337,9 +341,7 @@ test('damage estimates apply abilities, stages, burn, screens, and terrain throu
   assert.ok(near(burned / base, 0.5), `burn must halve physical damage (${base} -> ${burned})`);
   const boosted = maxPercent(reference.lookup('estimate_damage', { ...args, attacker_boosts: { atk: 2 } }));
   assert.ok(near(boosted / base, 2), `+2 atk must double damage (${base} -> ${boosted})`);
-  const screened = maxPercent(
-    reference.lookup('estimate_damage', { ...args, defender_screens: ['reflect'] }),
-  );
+  const screened = maxPercent(reference.lookup('estimate_damage', { ...args, defender_screens: ['reflect'] }));
   assert.ok(near(screened / base, 2732 / 4096), `Reflect in doubles is a 1/3 cut (${base} -> ${screened})`);
   const intimidated = maxPercent(reference.lookup('estimate_damage', { ...args, attacker_boosts: { atk: -1 } }));
   assert.ok(intimidated < base, 'negative stages must reduce damage');
@@ -358,8 +360,47 @@ test('damage estimates apply abilities, stages, burn, screens, and terrain throu
   );
   assert.ok(grounded > 0, 'terrain-dependent moves must compute under the supplied terrain');
   assert.match(
-    reference.lookup('estimate_damage', { attacker: 'Azumarill', defender: 'Dragonite', move: 'Play Rough', attacker_ability: 'Huge Power' }),
+    reference.lookup('estimate_damage', {
+      attacker: 'Azumarill',
+      defender: 'Dragonite',
+      move: 'Play Rough',
+      attacker_ability: 'Huge Power',
+    }),
     /applied attacker ability Huge Power/,
+  );
+  const partialBoosts = reference.lookup('estimate_damage', {
+    ...args,
+    defender_ability: 'Intimidate',
+    attacker_boosts: { spe: 1 },
+  });
+  const explicitNeutralAttack = reference.lookup('estimate_damage', {
+    ...args,
+    defender_ability: 'Intimidate',
+    attacker_boosts: { atk: 0, spe: 1 },
+  });
+  assert.equal(
+    maxPercent(partialBoosts),
+    maxPercent(explicitNeutralAttack),
+    'unspecified current stat stages must stay neutral after ability activation',
+  );
+  const sunny = reference.lookup('estimate_damage', {
+    attacker: 'Torkoal',
+    defender: 'Gholdengo',
+    move: 'Heat Wave',
+    attacker_ability: 'Drought',
+  });
+  assert.equal(
+    maxPercent(sunny),
+    maxPercent(
+      reference.lookup('estimate_damage', {
+        attacker: 'Torkoal',
+        defender: 'Gholdengo',
+        move: 'Heat Wave',
+        attacker_ability: 'Drought',
+        weather: 'sun',
+      }),
+    ),
+    'ability-created weather must remain active when no explicit weather is supplied',
   );
 });
 

@@ -174,9 +174,7 @@ test('adopted completed games fast-forward the series and only remaining games p
       [5, 6, 7, 8],
       [9, 10, 11, 12],
     ],
-    completedGames: [
-      { number: 1, winner: 'model-one', winner_side: 'p1', turns: 9, resumed: true },
-    ],
+    completedGames: [{ number: 1, winner: 'model-one', winner_side: 'p1', turns: 9, resumed: true }],
     seriesId: 'fastforward',
     seriesDir: directory,
     format: 'test',

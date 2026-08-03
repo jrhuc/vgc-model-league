@@ -622,11 +622,27 @@ test('model overrides reroute specs and follow file edits', async (t) => {
 
 function anthropicStream(): Response {
   const frames = [
-    ['message_start', { type: 'message_start', message: { id: 'm', type: 'message', role: 'assistant', content: [], model: 'claude-opus-5', usage: { input_tokens: 1, output_tokens: 0 } } }],
+    [
+      'message_start',
+      {
+        type: 'message_start',
+        message: {
+          id: 'm',
+          type: 'message',
+          role: 'assistant',
+          content: [],
+          model: 'claude-opus-5',
+          usage: { input_tokens: 1, output_tokens: 0 },
+        },
+      },
+    ],
     ['content_block_start', { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } }],
     ['content_block_delta', { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'ok' } }],
     ['content_block_stop', { type: 'content_block_stop', index: 0 }],
-    ['message_delta', { type: 'message_delta', delta: { stop_reason: 'end_turn', stop_sequence: null }, usage: { output_tokens: 1 } }],
+    [
+      'message_delta',
+      { type: 'message_delta', delta: { stop_reason: 'end_turn', stop_sequence: null }, usage: { output_tokens: 1 } },
+    ],
     ['message_stop', { type: 'message_stop' }],
   ]
     .map(([event, data]) => `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)
@@ -656,7 +672,12 @@ const REPLAYED_TOOL_LOOP: ProviderMessage[] = [
 const LOOKUP_TOOL = {
   name: 'lookup_species',
   description: 'look up',
-  parameters: { type: 'object', properties: { name: { type: 'string' } }, required: ['name'], additionalProperties: false },
+  parameters: {
+    type: 'object',
+    properties: { name: { type: 'string' } },
+    required: ['name'],
+    additionalProperties: false,
+  },
 };
 
 test('anthropic strips replayed thinking blocks unless thinking is enabled', async () => {
@@ -668,7 +689,9 @@ test('anthropic strips replayed thinking blocks unless thinking is enabled', asy
 
   const plain = makeProvider(parseSpec('anthropic:claude-opus-5'), { apiKey: 'ant-key', fetch });
   await plain.complete('system', REPLAYED_TOOL_LOOP, { tools: [LOOKUP_TOOL] });
-  const assistant = (bodies[0]!.messages as { role: string; content: unknown[] }[]).find((m) => m.role === 'assistant')!;
+  const assistant = (bodies[0]!.messages as { role: string; content: unknown[] }[]).find(
+    (m) => m.role === 'assistant',
+  )!;
   assert.deepEqual(
     (assistant.content as { type: string }[]).map((part) => part.type),
     ['tool_use'],
@@ -676,9 +699,15 @@ test('anthropic strips replayed thinking blocks unless thinking is enabled', asy
   const lastMessage = (bodies[0]!.messages as { content: { cache_control?: unknown }[] }[]).at(-1)!;
   assert.ok(lastMessage.content.at(-1)?.cache_control, 'trailing cache breakpoint survives the strip');
 
-  const thinking = makeProvider(parseSpec('anthropic:claude-opus-5.1'), { apiKey: 'ant-key', fetch, reasoning: 'medium' });
+  const thinking = makeProvider(parseSpec('anthropic:claude-opus-5.1'), {
+    apiKey: 'ant-key',
+    fetch,
+    reasoning: 'medium',
+  });
   await thinking.complete('system', REPLAYED_TOOL_LOOP, { tools: [LOOKUP_TOOL] });
-  const kept = (bodies[1]!.messages as { role: string; content: { type: string }[] }[]).find((m) => m.role === 'assistant')!;
+  const kept = (bodies[1]!.messages as { role: string; content: { type: string }[] }[]).find(
+    (m) => m.role === 'assistant',
+  )!;
   assert.ok(
     kept.content.some((part) => part.type === 'thinking' || part.type === 'redacted_thinking'),
     'enabled thinking keeps replayed blocks',

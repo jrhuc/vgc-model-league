@@ -1,5 +1,6 @@
 import type { TargetedFocusEvent } from 'preact';
-import { useEffect, useRef, useState } from 'preact/hooks';
+import { createPortal } from 'preact/compat';
+import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 
 const LIMIT = 50;
 
@@ -60,6 +61,8 @@ export function Dropdown({
   const [highlight, setHighlight] = useState(0);
   const [query, setQuery] = useState('');
   const rootRef = useRef<HTMLDivElement>(null);
+  const popRef = useRef<HTMLDivElement>(null);
+  const [position, setPosition] = useState<{ left: number; top: number; width: number } | null>(null);
   const typeaheadRef = useRef({ text: '', time: 0 });
   const unavailable = disabled || options.length === 0;
   const interactiveSearch = searchable || filterable;
@@ -71,14 +74,47 @@ export function Dropdown({
 
   useEffect(() => {
     const onPointerDown = (event: PointerEvent) => {
-      if (rootRef.current && !rootRef.current.contains(event.target as Node)) setOpen(false);
+      const target = event.target as Node;
+      if (!rootRef.current?.contains(target) && !popRef.current?.contains(target)) setOpen(false);
     };
     document.addEventListener('pointerdown', onPointerDown);
     return () => document.removeEventListener('pointerdown', onPointerDown);
   }, []);
 
+  useLayoutEffect(() => {
+    if (!open) {
+      setPosition(null);
+      return;
+    }
+    const place = () => {
+      const control = rootRef.current?.querySelector<HTMLElement>('[role="combobox"]');
+      const pop = popRef.current;
+      if (!control || !pop) return;
+      const rect = control.getBoundingClientRect();
+      const inset = 8;
+      const gap = 4;
+      const width = Math.min(rect.width, window.innerWidth - inset * 2);
+      const left = Math.min(Math.max(inset, rect.left), window.innerWidth - width - inset);
+      const height = pop.offsetHeight;
+      const below = window.innerHeight - rect.bottom - inset;
+      const above = rect.top - inset;
+      const top =
+        height > below && above > below
+          ? Math.max(inset, rect.top - gap - height)
+          : Math.min(rect.bottom + gap, window.innerHeight - height - inset);
+      setPosition({ left, top, width });
+    };
+    place();
+    window.addEventListener('resize', place);
+    window.addEventListener('scroll', place, true);
+    return () => {
+      window.removeEventListener('resize', place);
+      window.removeEventListener('scroll', place, true);
+    };
+  }, [open, matches.length]);
+
   useEffect(() => {
-    rootRef.current?.querySelector('.dropdown-option.hot')?.scrollIntoView({ block: 'nearest' });
+    popRef.current?.querySelector('.dropdown-option.hot')?.scrollIntoView({ block: 'nearest' });
   }, [highlight]);
 
   const pick = (option: DropdownOption) => {
@@ -129,7 +165,10 @@ export function Dropdown({
   };
 
   const onBlur = (event: TargetedFocusEvent<HTMLElement>) => {
-    if (!(event.relatedTarget instanceof Node) || !rootRef.current?.contains(event.relatedTarget)) setOpen(false);
+    const target = event.relatedTarget;
+    if (!(target instanceof Node) || (!rootRef.current?.contains(target) && !popRef.current?.contains(target))) {
+      setOpen(false);
+    }
   };
 
   return (
@@ -192,34 +231,48 @@ export function Dropdown({
           <span class="dropdown-arrow" aria-hidden="true" />
         </button>
       )}
-      {open && !unavailable && (
-        <div id={listId} class="dropdown-pop" role="listbox" aria-label={label}>
-          {shown.length ? (
-            shown.map((option, index) => (
-              <div
-                id={`${id}-option-${index}`}
-                key={option.value}
-                class={`dropdown-option ${index === clamped ? 'hot' : ''}`}
-                role="option"
-                tabIndex={-1}
-                aria-selected={option.value === value}
-                onPointerDown={(event) => {
-                  event.preventDefault();
-                  pick(option);
-                }}
-              >
-                <span class="dropdown-value">{option.label}</span>
-                {option.description && option.description !== option.label && <small>{option.description}</small>}
-              </div>
-            ))
-          ) : (
-            <div class="dropdown-empty">{emptyText}</div>
-          )}
-          {matches.length > shown.length && (
-            <div class="dropdown-empty">+ {matches.length - shown.length} more. Keep typing to narrow.</div>
-          )}
-        </div>
-      )}
+      {open &&
+        !unavailable &&
+        createPortal(
+          <div
+            id={listId}
+            class="dropdown-pop"
+            role="listbox"
+            aria-label={label}
+            ref={popRef}
+            style={
+              position
+                ? `left:${position.left}px;top:${position.top}px;width:${position.width}px`
+                : 'left:0;top:0;visibility:hidden'
+            }
+          >
+            {shown.length ? (
+              shown.map((option, index) => (
+                <div
+                  id={`${id}-option-${index}`}
+                  key={option.value}
+                  class={`dropdown-option ${index === clamped ? 'hot' : ''}`}
+                  role="option"
+                  tabIndex={-1}
+                  aria-selected={option.value === value}
+                  onPointerDown={(event) => {
+                    event.preventDefault();
+                    pick(option);
+                  }}
+                >
+                  <span class="dropdown-value">{option.label}</span>
+                  {option.description && option.description !== option.label && <small>{option.description}</small>}
+                </div>
+              ))
+            ) : (
+              <div class="dropdown-empty">{emptyText}</div>
+            )}
+            {matches.length > shown.length && (
+              <div class="dropdown-empty">+ {matches.length - shown.length} more. Keep typing to narrow.</div>
+            )}
+          </div>,
+          document.body,
+        )}
     </div>
   );
 }

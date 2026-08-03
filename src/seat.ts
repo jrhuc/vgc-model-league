@@ -3,7 +3,7 @@ import type { IncomingMessage, Server, ServerResponse } from 'node:http';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 
-import { REFLECTION_SYSTEM, SERIES_REFLECTION_SYSTEM } from './prompts.js';
+import { DRAFT_SERIES_REFLECTION_SYSTEM, REFLECTION_SYSTEM, SERIES_REFLECTION_SYSTEM } from './prompts.js';
 import { DEX_TOOLS } from './reference.js';
 import type { Completion, JsonObject, Provider, ProviderMessage } from './types.js';
 import { isRecord, text } from './value.js';
@@ -84,7 +84,10 @@ export class SeatBridge {
     const { promise, resolve, reject } = Promise.withResolvers<Completion>();
     this.exchange = {
       id: ++this.sequence,
-      phase: system === REFLECTION_SYSTEM || system === SERIES_REFLECTION_SYSTEM ? 'reflection' : 'decision',
+      phase:
+        system === REFLECTION_SYSTEM || system === SERIES_REFLECTION_SYSTEM || system === DRAFT_SERIES_REFLECTION_SYSTEM
+          ? 'reflection'
+          : 'decision',
       system,
       messages,
       resolve,

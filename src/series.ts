@@ -76,6 +76,7 @@ export function makeEngine(
   apiKey?: string,
   recovery?: RecoveryGate,
   initialNotebook?: string,
+  draftRoster?: string,
 ): RandomEngine | LLMEngine {
   if (spec === 'random') return new RandomEngine(pid, seed);
   return new LLMEngine(pid, spec, {
@@ -89,6 +90,7 @@ export function makeEngine(
     ...(signal === undefined ? {} : { signal }),
     ...(recovery === undefined ? {} : { recovery }),
     ...(initialNotebook === undefined ? {} : { initialNotebook }),
+    ...(draftRoster === undefined ? {} : { draftRoster }),
   });
 }
 
@@ -276,6 +278,7 @@ export interface RecordedSeriesContext extends ModelReasoningConfig {
    * only the games that never finished. */
   seriesIndex?: number;
   initialNotebooks?: Partial<Record<Pid, string>>;
+  draftRosters?: Partial<Record<Pid, string>>;
   engineSeeds: Record<Pid, number>;
   format: string;
   psDir: string;
@@ -512,6 +515,7 @@ export async function playRecordedSeries(context: RecordedSeriesContext): Promis
         context.apiKeys?.[context.players[pid]],
         context.recovery,
         adopted?.notebooks[pid] ?? context.initialNotebooks?.[pid],
+        context.draftRosters?.[pid],
       ),
     ]),
   ) as Record<Pid, RandomEngine | LLMEngine>;

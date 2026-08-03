@@ -2,6 +2,7 @@ import type { DraftLeagueEvent } from '../draftleague.js';
 import type { ModelReasoningConfig } from '../providers.js';
 import type { RecoveryPause } from '../recovery.js';
 import type { Team } from '../teams.js';
+import type { TradeWindowConfig } from '../trade-window.js';
 import type { ContributorAttribution, TimerScale } from '../types.js';
 
 export interface RunWorkerStart extends ModelReasoningConfig {
@@ -19,6 +20,9 @@ export interface RunWorkerStart extends ModelReasoningConfig {
   board?: string;
   seed?: number;
   timerScale?: TimerScale;
+  closedSheets?: boolean;
+  sequentialWeeks?: boolean;
+  tradeWindow?: TradeWindowConfig | null;
   contributor?: ContributorAttribution;
 }
 

@@ -18,12 +18,20 @@ import {
 import type { DraftLeagueEvent } from '../src/draftleague.js';
 import { DRAFT_PROTOCOL_VERSION, roundRobinWeeks, runDraftLeague } from '../src/draftleague.js';
 import { scaffoldRevision } from '../src/llm-engine.js';
+import { defaultPsDir } from '../src/paths.js';
 import { ApiError } from '../src/providers.js';
 import { seededRng } from '../src/random.js';
 import { loadRows } from '../src/records.js';
 import { RecoveryGate } from '../src/recovery.js';
 import { loadShowdown } from '../src/showdown.js';
 import { runTeambuild, teambuildScaffoldRevision } from '../src/teambuild.js';
+import {
+  applyTradeDecision,
+  parseTradeDecision,
+  runTradeWindow,
+  type TradeWindowState,
+  tradeWindowScaffoldRevision,
+} from '../src/trade-window.js';
 import type { Completion, Provider, ProviderMessage } from '../src/types.js';
 
 const BOARD = loadBoard('regmb-202607');
@@ -45,12 +53,13 @@ function freshState(overrides: Partial<DraftState> = {}): DraftState {
 }
 
 test('scaffold identities are distinct and stable', () => {
-  for (const revision of [draftScaffoldRevision(), teambuildScaffoldRevision()]) {
+  for (const revision of [draftScaffoldRevision(), teambuildScaffoldRevision(), tradeWindowScaffoldRevision()]) {
     assert.match(revision, /^[0-9a-f]{12}$/);
   }
   assert.equal(draftScaffoldRevision(), draftScaffoldRevision());
   assert.notEqual(draftScaffoldRevision(), scaffoldRevision());
   assert.notEqual(draftScaffoldRevision(), teambuildScaffoldRevision());
+  assert.notEqual(tradeWindowScaffoldRevision(), draftScaffoldRevision());
 });
 
 test('the bundled board fits eight coaches', () => {
@@ -161,6 +170,154 @@ test('the round robin pairs every coach once and plays one match a week', () => 
     }
     assert.equal(seen.size, (size * (size - 1)) / 2, `${size}: every pair meets exactly once`);
   }
+});
+
+test('trade-window swaps are atomic and may upgrade a base entry to its Mega', () => {
+  const tyranitar = mon('tyranitar');
+  const megaTyranitar = mon('tyranitar-mega');
+  const mrRime = mon('mr-rime');
+  const absol = mon('absol');
+  const excluded = new Set([tyranitar.base, mrRime.base, absol.base]);
+  const support: DraftBoardMon[] = [];
+  for (const candidate of [...BOARD.mons].sort((a, b) => a.cost - b.cost)) {
+    if (excluded.has(candidate.base)) continue;
+    excluded.add(candidate.base);
+    support.push(candidate);
+    if (support.length === 8) break;
+  }
+  const roster = [tyranitar, mrRime, ...support];
+  const spent = roster.reduce((sum, entry) => sum + entry.cost, 0);
+  const state: TradeWindowState = {
+    board: { ...BOARD, budget: spent },
+    models: ['openrouter:opus', 'random'],
+    teamNames: ['Opus', 'Rival'],
+    rosters: [roster, []],
+    budgets: [0, spent],
+    notebooks: ['Tyranitar is the endgame.', ''],
+    standings: [
+      { entrant: 1, w: 2, l: 0, gw: 4, gl: 1 },
+      { entrant: 0, w: 0, l: 2, gw: 1, gl: 4 },
+    ],
+    results: [[], []],
+    reflections: [[], []],
+  };
+
+  const overBudget = parseTradeDecision(
+    JSON.stringify({
+      swaps: [{ drop: tyranitar.id, add: megaTyranitar.id }],
+      reasoning: 'Upgrade Tyranitar.',
+      notebook: 'Mega Tyranitar is the endgame.',
+    }),
+    state,
+    0,
+  );
+  assert.match(String(overBudget), /above the .* budget/);
+  assert.ok(state.rosters[0]!.includes(tyranitar), 'a rejected list mutates nothing');
+
+  const parsed = parseTradeDecision(
+    JSON.stringify({
+      swaps: [
+        { drop: tyranitar.id, add: megaTyranitar.id },
+        { drop: mrRime.id, add: absol.id },
+      ],
+      reasoning: 'Trade depth for the Mega upgrade.',
+      notebook: 'Mega Tyranitar is now the endgame.',
+    }),
+    state,
+    0,
+  );
+  assert.notEqual(typeof parsed, 'string', String(parsed));
+  if (typeof parsed === 'string') return;
+  applyTradeDecision(state, 0, parsed);
+  assert.equal(state.rosters[0]!.length, BOARD.picks);
+  assert.equal(state.budgets[0], 0);
+  assert.ok(state.rosters[0]!.some((entry) => entry.id === megaTyranitar.id));
+  assert.ok(state.rosters[0]!.some((entry) => entry.id === absol.id));
+  assert.ok(!state.rosters[0]!.some((entry) => entry.id === tyranitar.id || entry.id === mrRime.id));
+});
+
+test('the trade window runs lowest seed first and replays completed seats', async (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-trade-window-'));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const cheap: DraftBoardMon[] = [];
+  const bases = new Set<string>();
+  for (const candidate of BOARD.mons) {
+    if (candidate.cost !== 1 || bases.has(candidate.base)) continue;
+    bases.add(candidate.base);
+    cheap.push(candidate);
+    if (cheap.length === 31) break;
+  }
+  assert.equal(cheap.length, 31);
+  const initial = [cheap.slice(0, 10), cheap.slice(10, 20), cheap.slice(20, 30)];
+  const freeAgent = cheap[30]!;
+  const models = ['test:best', 'test:middle', 'test:worst'];
+  const responses = new Map([
+    [
+      models[2]!,
+      {
+        swaps: [{ drop: initial[2]![0]!.id, add: freeAgent.id }],
+        reasoning: 'Use the first claim.',
+        notebook: 'Updated worst-seed plan.',
+      },
+    ],
+    [
+      models[1]!,
+      {
+        swaps: [{ drop: initial[1]![0]!.id, add: initial[2]![0]!.id }],
+        reasoning: 'Claim the newly released option.',
+        notebook: 'Updated middle-seed plan.',
+      },
+    ],
+    [models[0]!, { swaps: [], reasoning: 'The roster is sound.', notebook: 'Keep the best-seed plan.' }],
+  ]);
+  const createState = (): TradeWindowState => ({
+    board: BOARD,
+    models,
+    teamNames: ['Best', 'Middle', 'Worst'],
+    rosters: initial.map((roster) => [...roster]),
+    budgets: [90, 90, 90],
+    notebooks: ['best plan', 'middle plan', 'worst plan'],
+    standings: [
+      { entrant: 0, w: 2, l: 0, gw: 4, gl: 0 },
+      { entrant: 1, w: 1, l: 1, gw: 2, gl: 2 },
+      { entrant: 2, w: 0, l: 2, gw: 0, gl: 4 },
+    ],
+    results: [[], [], []],
+    reflections: [[], [], []],
+  });
+  const calls: string[] = [];
+  const firstState = createState();
+  const artifact = await runTradeWindow(firstState, {
+    runDir: directory,
+    psDir: defaultPsDir(),
+    afterWeek: 2,
+    makeTradeProvider: (spec) => ({
+      complete(): Promise<Completion> {
+        calls.push(spec);
+        return Promise.resolve({ text: JSON.stringify(responses.get(spec)), usage: {}, toolCalls: [] });
+      },
+    }),
+  });
+  assert.deepEqual(artifact.order, [2, 1, 0]);
+  assert.deepEqual(calls, [models[2], models[1], models[0]]);
+  assert.equal(firstState.rosters[1]![9]?.id, initial[2]![0]!.id, 'an earlier drop becomes available immediately');
+  assert.ok(fs.existsSync(path.join(directory, 'window.json')));
+  assert.equal(loadRows(path.join(directory, 'window.jsonl')).length, 3);
+
+  let replayCalls = 0;
+  const replayed = await runTradeWindow(createState(), {
+    runDir: directory,
+    psDir: defaultPsDir(),
+    afterWeek: 2,
+    makeTradeProvider: () => ({
+      complete(): Promise<Completion> {
+        replayCalls += 1;
+        throw new Error('replayed decisions must not call a provider');
+      },
+    }),
+  });
+  assert.equal(replayCalls, 0);
+  assert.deepEqual(replayed.decisions, artifact.decisions);
 });
 
 test('legal picks enforce exclusivity and one entry per base species', () => {
@@ -571,22 +728,26 @@ test('a pick written only in the reasoning channel is salvaged without another a
   const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-draft-salvage-'));
   t.after(() => fs.rmSync(logDir, { recursive: true, force: true }));
   let calls = 0;
-  const outcome = await runDraft(['fake:model', 'random'], { ...BOARD, picks: 4 }, {
-    logDir,
-    rng: seededRng(4),
-    makeDraftProvider: () => ({
-      complete(): Promise<Completion> {
-        calls += 1;
-        return Promise.resolve({
-          text: '',
-          reasoning:
-            'Garchomp anchors the roster. Committing: {"pick": "garchomp", "team_name": "Salvage Sneaslers", "reasoning": "Best value.", "notebook": "Build around Garchomp."}',
-          usage: { total_tokens: 400 },
-          toolCalls: [],
-        });
-      },
-    }),
-  });
+  const outcome = await runDraft(
+    ['fake:model', 'random'],
+    { ...BOARD, picks: 4 },
+    {
+      logDir,
+      rng: seededRng(4),
+      makeDraftProvider: () => ({
+        complete(): Promise<Completion> {
+          calls += 1;
+          return Promise.resolve({
+            text: '',
+            reasoning:
+              'Garchomp anchors the roster. Committing: {"pick": "garchomp", "team_name": "Salvage Sneaslers", "reasoning": "Best value.", "notebook": "Build around Garchomp."}',
+            usage: { total_tokens: 400 },
+            toolCalls: [],
+          });
+        },
+      }),
+    },
+  );
   assert.equal(outcome.rosters[0]![0]!.id, 'garchomp');
   assert.equal(outcome.picks[0]!.fallback, false, 'the pick inside the reasoning is used directly');
   assert.equal(calls, 10, 'the first pick salvages in one call; later picks reject the taken mon as usual');
@@ -1030,6 +1191,8 @@ test('a full draft league drafts, plays weekly rounds, and crowns a champion', a
     assert.equal(row.board, 'regmb-202607');
     assert.equal(row.draft_scaffold, draftScaffoldRevision());
     assert.equal(row.teambuild_scaffold, teambuildScaffoldRevision());
+    assert.equal(row.window_scaffold, tradeWindowScaffoldRevision());
+    assert.deepEqual(row.trade_window, { after_week: 3 });
   }
 
   const config = JSON.parse(fs.readFileSync(path.join(directory, 'config.json'), 'utf8')) as Record<string, unknown>;
@@ -1037,6 +1200,7 @@ test('a full draft league drafts, plays weekly rounds, and crowns a champion', a
   assert.equal(config.weeks, 3);
   assert.equal(config.sequential_weeks, false, 'round-robin series run concurrently by default');
   assert.equal(config.closed_sheets, false, 'the stock format keeps its open team sheets by default');
+  assert.deepEqual(config.trade_window, { after_week: 3 }, 'mid-season free agency is the default');
   assert.deepEqual(config.draft_notes, ['', '', '', '']);
   const rosters = config.rosters as string[][];
   assert.equal(rosters.length, 4);
@@ -1047,6 +1211,15 @@ test('a full draft league drafts, plays weekly rounds, and crowns a champion', a
     Record<string, unknown>
   >;
   for (const entry of stored) assert.ok((entry.spent as number) <= 100, 'no coach overspends');
+  const window = JSON.parse(fs.readFileSync(path.join(directory, 'window.json'), 'utf8')) as {
+    after_week: number;
+    order: number[];
+    decisions: Array<{ swaps: unknown[] }>;
+  };
+  assert.equal(window.after_week, 3);
+  assert.equal(window.decisions.length, 4);
+  assert.ok(window.decisions.every((decision) => decision.swaps.length === 0));
+  assert.equal(window.order.length, 4);
 
   const teambuilds = fs
     .readFileSync(path.join(directory, 'teambuild', 'teambuild.jsonl'), 'utf8')
@@ -1065,6 +1238,10 @@ test('a full draft league drafts, plays weekly rounds, and crowns a champion', a
 
   const draftEvents = events.filter(
     (event): event is Extract<DraftLeagueEvent, { type: 'draft' }> => event.type === 'draft',
+  );
+  assert.ok(
+    draftEvents.some((event) => event.draft.phase === 'window'),
+    'the live UI exposes the barrier',
   );
   const finalDraft = draftEvents[draftEvents.length - 1]!.draft;
   assert.equal(finalDraft.phase, 'done');
@@ -1086,6 +1263,7 @@ test('a draft league checkpoints after a week and resumes to a champion', async 
   });
   assert.equal(first.length, 2, 'week one is two series');
   assert.ok(first.every((row) => row.stage === 'roundrobin' && row.round === 1));
+  assert.ok(!fs.existsSync(path.join(directory, 'window.jsonl')), 'pausing before the barrier does not open it');
 
   const teambuildLog = path.join(directory, 'teambuild', 'teambuild.jsonl');
   const storedBuilds = fs
@@ -1113,6 +1291,7 @@ test('a draft league checkpoints after a week and resumes to a champion', async 
   const final = resumed[resumed.length - 1]!;
   assert.equal(final.stage, 'playoff');
   assert.ok(final.advanced, 'the resumed league crowns a champion');
+  assert.ok(fs.existsSync(path.join(directory, 'window.json')), 'resume completes the default trade window');
 
   const buildsAfter = fs
     .readFileSync(teambuildLog, 'utf8')
@@ -1143,6 +1322,7 @@ test('a two-coach league plays one week and a single final', async (t) => {
   const config = JSON.parse(fs.readFileSync(path.join(directory, 'config.json'), 'utf8')) as Record<string, unknown>;
   assert.equal(config.sequential_weeks, true);
   assert.equal(config.closed_sheets, true);
+  assert.deepEqual(config.trade_window, { after_week: 1 }, 'short leagues clamp the default to their final week');
   for (const row of rows) assert.equal(row.closed_sheets, true, 'series records carry the sheet rule');
   const gameLog = fs.readFileSync(path.join(directory, 'series', String(rows[0]!.series_id), 'game-1.log'), 'utf8');
   assert.ok(!gameLog.includes('|showteam|'), 'closed-sheet games publish no team sheets');

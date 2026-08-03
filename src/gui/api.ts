@@ -120,7 +120,7 @@ export interface DraftView {
   teambuilds: TeambuildView[];
   week: number;
   weeks: number;
-  phase: 'draft' | 'roundrobin' | 'playoffs' | 'done';
+  phase: 'draft' | 'roundrobin' | 'window' | 'playoffs' | 'done';
 }
 
 export interface BracketEntrantView {
@@ -408,7 +408,7 @@ export interface LeagueChampionView {
   team: string;
 }
 
-export type LeaguePhase = 'drafting' | 'building' | 'roundrobin' | 'playoffs' | 'complete';
+export type LeaguePhase = 'drafting' | 'building' | 'roundrobin' | 'window' | 'playoffs' | 'complete';
 
 export interface LeagueCardView {
   runId: string;
@@ -422,6 +422,7 @@ export interface LeagueCardView {
   phase: LeaguePhase;
   week: number;
   champion: LeagueChampionView | null;
+  tradeWindowAfterWeek: number | null;
   live: boolean;
   picks: number | null;
 }
@@ -475,6 +476,7 @@ export interface LeagueFranchiseView {
   roundRobinRecord: LeagueRecordView;
   finish: string;
   roster: LeagueRosterSlotView[];
+  draftRoster: LeagueRosterSlotView[];
   stats: LeagueFranchiseStatsView;
 }
 
@@ -559,6 +561,7 @@ export interface LeagueGameReflectionView {
   adjustment: string;
   notebook: string;
   fallback: boolean;
+  seriesOver: boolean;
 }
 
 export interface LeagueGameResponse {
@@ -590,6 +593,19 @@ export interface LeagueLiveSeriesView {
   sides: [number, number] | null;
 }
 
+export interface LeagueTradeWindowDecisionView {
+  entrant: number;
+  swaps: Array<{ drop: string; add: string }>;
+  reasoning: string;
+  fallback: boolean;
+}
+
+export interface LeagueTradeWindowView {
+  afterWeek: number;
+  complete: boolean;
+  decisions: LeagueTradeWindowDecisionView[];
+}
+
 export interface LeagueResponse {
   runId: string;
   when: string;
@@ -604,6 +620,7 @@ export interface LeagueResponse {
   champion: LeagueChampionView | null;
   live: boolean;
   liveSeries: LeagueLiveSeriesView[];
+  tradeWindow: LeagueTradeWindowView | null;
   franchises: LeagueFranchiseView[];
   series: LeagueSeriesView[];
   teambuilds: LeagueTeambuildView[];
@@ -673,6 +690,7 @@ export interface LeagueAssets {
   rosters?: unknown[];
   draft?: string;
   teambuild?: string;
+  window?: Record<string, unknown>;
 }
 
 export interface ImportResponse {
