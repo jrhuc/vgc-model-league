@@ -1122,7 +1122,14 @@ export function buildLeagueGame(
   if (live && !/^\|(?:win\||tie\b)/m.test(raw)) {
     const state = new BattleState('p1');
     state.feed(raw.split('\n'));
-    snapshot = snapshotBattle(state, { p1: identity.models[sides[0]]!, p2: identity.models[sides[1]]! }, []);
+    const spendFor = (side: 0 | 1) => ({
+      ms: decisions.reduce((total, entry) => total + (entry.side === side ? (entry.latencyMs ?? 0) : 0), 0),
+      tokens: decisions.reduce((total, entry) => total + (entry.side === side ? (entry.totalTokens ?? 0) : 0), 0),
+    });
+    snapshot = snapshotBattle(state, { p1: identity.models[sides[0]]!, p2: identity.models[sides[1]]! }, [], [], {
+      p1: spendFor(0),
+      p2: spendFor(1),
+    });
   }
 
   const gameRows = row && Array.isArray(row.games) ? (row.games as Record<string, unknown>[]) : [];

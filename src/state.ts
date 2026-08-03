@@ -121,6 +121,9 @@ export class BattleState {
   fields = new Map<string, TimedEffect>();
   sides: Record<Pid, SideState> = { p1: new SideState(), p2: new SideState() };
   timers: Record<Pid, SideTimer | undefined> = { p1: undefined, p2: undefined };
+  /** Wall-clock of the last |t:| line, so replaying a streamed log anchors
+   * running timers to when thinking actually started, not parse time. */
+  private logClockMs: number | undefined;
 
   constructor(readonly pid: Pid) {}
 
@@ -287,11 +290,17 @@ export class BattleState {
       mon.formes.add(this.speciesKey(args[1]!));
       mon.ability = undefined;
     } else if (kind === 'showteam' && args.length >= 2) this.showTeam(args[0]!, args.slice(1).join('|'));
+    else if (kind === 't:' && Number.isFinite(Number(args[0]))) this.logClockMs = Number(args[0]) * 1000;
     else if (kind === '-vgctimer' && (args[0] === 'p1' || args[0] === 'p2')) {
       const parse = (value: string | undefined) => (value && Number.isFinite(Number(value)) ? Number(value) : null);
-      this.timers[args[0]] = { seconds: parse(args[1]), turnSeconds: parse(args[2]), at: Date.now(), running: true };
+      this.timers[args[0]] = {
+        seconds: parse(args[1]),
+        turnSeconds: parse(args[2]),
+        at: this.logClockMs ?? Date.now(),
+        running: true,
+      };
     } else if (kind === '-vgcdeciding' && (args[0] === 'p1' || args[0] === 'p2')) {
-      this.timers[args[0]] = { seconds: null, turnSeconds: null, at: Date.now(), running: true };
+      this.timers[args[0]] = { seconds: null, turnSeconds: null, at: this.logClockMs ?? Date.now(), running: true };
     } else if ((kind === '-vgctimerstop' || kind === '-vgctimeout') && (args[0] === 'p1' || args[0] === 'p2')) {
       this.stopTimer(args[0]);
     } else if (kind === 'win' || kind === 'tie') {

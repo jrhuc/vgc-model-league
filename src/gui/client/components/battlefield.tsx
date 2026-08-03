@@ -1,4 +1,5 @@
 import type { ComponentChildren } from 'preact';
+import { useEffect, useState } from 'preact/hooks';
 import type { BattleSnapshot, MonView, SideTimerView, SideView, SpendView } from '../../api';
 import { Mark } from './mark';
 import { Sprite } from './sprite';
@@ -60,9 +61,9 @@ function timerInfo(
   if (!timer || timer.seconds === null) {
     const thinking = timer?.running && typeof timer.elapsedSeconds === 'number' ? timer.elapsedSeconds + drained : null;
     const total = (spend?.seconds ?? 0) + (thinking ?? 0);
-    if (thinking === null && !total && !spend?.tokens) return null;
+    if (!spend && thinking === null && !total) return null;
     const parts = [
-      ...(thinking === null ? [] : [`Thinking ${clockText(thinking)}`]),
+      thinking === null ? 'Decided' : `Thinking ${clockText(thinking)}`,
       `Total ${clockText(total)}`,
       ...(spend?.tokens ? [`${tokenText(spend.tokens)} tokens`] : []),
     ];
@@ -102,6 +103,12 @@ export function Side({
   warning: string;
   player?: string | undefined;
 }) {
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    if (!timer?.running) return;
+    const interval = setInterval(() => setTick((count) => count + 1), 1000);
+    return () => clearInterval(interval);
+  }, [timer?.running, receivedAt]);
   const clock = timerInfo(timer, spend, receivedAt);
   const mons = [...side.mons].sort((a, b) => monRank(a) - monRank(b));
   const warningLabel =
