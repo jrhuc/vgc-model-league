@@ -104,15 +104,19 @@ export function Side({
 }) {
   const clock = timerInfo(timer, spend, receivedAt);
   const mons = [...side.mons].sort((a, b) => monRank(a) - monRank(b));
+  const warningLabel =
+    warning && !/latest model decision used a fallback/i.test(warning)
+      ? `Latest model decision used a fallback. ${warning}`
+      : warning;
   return (
     <div class={`side ${right ? 'right' : ''}`}>
       <div class="side-name">
         <div class="side-model">
-          {warning && (
+          {warningLabel && (
             <span
               class="side-fallback-warning"
               role="img"
-              aria-label={warning}
+              aria-label={warningLabel}
               title={warning}
             />
           )}
