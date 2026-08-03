@@ -651,6 +651,8 @@ textarea { min-height: 170px; resize: vertical; font: 12px/1.5 var(--mono); }
 .franchise-card-foot .text-link { color: var(--blue); font: 800 10px/1 var(--mono); letter-spacing: .05em; text-transform: uppercase; }
 
 .schedule-table td { vertical-align: middle; }
+.schedule-table td.matchup { white-space: normal; }
+.schedule-table td.matchup .text-link { white-space: nowrap; }
 .live-schedule-row { background: #fff8f8; }
 .live-status { display: inline-flex; align-items: center; color: var(--red); font: 800 9px/1 var(--mono); letter-spacing: .06em; text-transform: uppercase; }
 .live-status .live-dot { margin-right: 6px; background: var(--red); animation: pulse 1.6s ease-out infinite; }

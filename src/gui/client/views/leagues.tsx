@@ -222,7 +222,7 @@ function ScheduleTable({
           {league.series.map((series) => (
             <tr key={series.seriesIndex}>
               <td class="muted">{seriesLabel(series, maxPlayoffRound)}</td>
-              <td>
+              <td class="matchup">
                 {series.sides.map((entrant, index) => (
                   <span key={entrant}>
                     {index > 0 ? <span class="muted"> vs </span> : null}
@@ -266,7 +266,7 @@ function ScheduleTable({
                     Live
                   </span>
                 </td>
-                <td>
+                <td class="matchup">
                   {series.sides.map((entrant, index) => (
                     <span key={entrant}>
                       {index > 0 ? <span class="muted"> vs </span> : null}
