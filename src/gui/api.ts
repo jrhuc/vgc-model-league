@@ -559,6 +559,7 @@ export interface LeagueGameReflectionView {
   adjustment: string;
   notebook: string;
   fallback: boolean;
+  seriesOver: boolean;
 }
 
 export interface LeagueGameResponse {

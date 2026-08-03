@@ -1,4 +1,5 @@
-import type { MonView, SideTimerView, SideView, SpendView } from '../../api';
+import type { ComponentChildren } from 'preact';
+import type { BattleSnapshot, MonView, SideTimerView, SideView, SpendView } from '../../api';
 import { Mark } from './mark';
 import { Sprite } from './sprite';
 
@@ -90,6 +91,7 @@ export function Side({
   spend,
   receivedAt,
   warning,
+  player,
 }: {
   pid: string;
   side: SideView;
@@ -98,6 +100,7 @@ export function Side({
   spend: SpendView | undefined;
   receivedAt: number;
   warning: string;
+  player?: string | undefined;
 }) {
   const clock = timerInfo(timer, spend, receivedAt);
   const mons = [...side.mons].sort((a, b) => monRank(a) - monRank(b));
@@ -109,12 +112,12 @@ export function Side({
             <span
               class="side-fallback-warning"
               role="img"
-              aria-label={`Latest model decision used a fallback. ${warning}`}
+              aria-label={warning}
               title={warning}
             />
           )}
           <Mark spec={side.player} size={16} />
-          <b>{side.player}</b>
+          <b>{player ?? side.player}</b>
         </div>
         <span>
           {pid.toUpperCase()} · {side.conditions.length ? side.conditions.join(' · ') : 'No side conditions'}
@@ -139,5 +142,56 @@ export function Side({
         </div>
       )}
     </div>
+  );
+}
+
+export function Battlefield({
+  snapshot,
+  receivedAt,
+  players,
+  warnings,
+  meta,
+}: {
+  snapshot: BattleSnapshot;
+  receivedAt: number;
+  players?: Partial<Record<'p1' | 'p2', string>>;
+  warnings?: Partial<Record<'p1' | 'p2', string>>;
+  meta?: ComponentChildren;
+}) {
+  return (
+    <>
+      <div class="field-meta">
+        {meta}
+        <span class={snapshot.weather === 'none' ? '' : 'condition-active'}>
+          {snapshot.weather === 'none' ? 'Clear skies' : snapshot.weather}
+        </span>
+        <span class={snapshot.fields.length ? 'condition-active' : ''}>
+          {snapshot.fields.join(' · ') || 'Open field'}
+        </span>
+      </div>
+      <div class="field-surface">
+        <Side
+          pid="p1"
+          side={snapshot.sides.p1}
+          right={false}
+          timer={snapshot.timers?.p1}
+          spend={snapshot.spend?.p1}
+          receivedAt={receivedAt}
+          warning={warnings?.p1 ?? ''}
+          player={players?.p1}
+        />
+        <div class="center-mark">VS</div>
+        <Side
+          pid="p2"
+          side={snapshot.sides.p2}
+          right={true}
+          timer={snapshot.timers?.p2}
+          spend={snapshot.spend?.p2}
+          receivedAt={receivedAt}
+          warning={warnings?.p2 ?? ''}
+          player={players?.p2}
+        />
+      </div>
+    </>
   );
 }

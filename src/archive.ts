@@ -1026,6 +1026,7 @@ export function buildLeagueGame(
           adjustment: typeof entry.adjustment === 'string' ? entry.adjustment : '',
           notebook: typeof entry.notebook === 'string' ? entry.notebook : '',
           fallback: entry.fallback === true,
+          seriesOver: entry.series_over === true,
         });
         continue;
       }
@@ -1050,7 +1051,6 @@ export function buildLeagueGame(
   if (!gameNumbers.has(game)) return null;
   decisions.sort((first, second) => first.turn - second.turn || first.side - second.side);
 
-  /** An unfinished game has no log yet unless the run streamed one; an empty timeline still renders decisions. */
   let raw = '';
   try {
     raw = fs.readFileSync(path.join(runsDir, runId, 'series', seriesId, `game-${game}.log`), 'utf8');
@@ -1059,11 +1059,9 @@ export function buildLeagueGame(
   }
   const battleLog = new BattleLog(10_000);
   battleLog.feed(raw.split('\n'));
-  /** A run predating log streaming writes the log only at game end, so an empty log means the
-   * battlefield state is unknown rather than at team preview. */
   const live = !row && isRunLive(runsDir, runId);
   let snapshot: BattleSnapshot | null = null;
-  if (live && raw !== '' && !/^\|(?:win\||tie\b)/m.test(raw)) {
+  if (live && !/^\|(?:win\||tie\b)/m.test(raw)) {
     const state = new BattleState('p1');
     state.feed(raw.split('\n'));
     snapshot = snapshotBattle(state, { p1: identity.models[sides[0]]!, p2: identity.models[sides[1]]! }, []);

@@ -7,7 +7,7 @@ import type {
   RunSnapshot,
   SeriesRowView,
 } from '../../api';
-import { Side } from '../components/battlefield';
+import { Battlefield } from '../components/battlefield';
 import { Mark } from '../components/mark';
 import { api } from '../http';
 
@@ -578,40 +578,25 @@ export function ArenaView({
                   ? ` ${shown.snapshot.log[shown.snapshot.log.length - 1]?.text ?? ''}`
                   : ''}
               </div>
-              <div class="field-meta">
-                <span>Game {shown.game} · Bo3</span>
-                <span class="series-score">
-                  {row.score.p1}-{row.score.p2}
-                </span>
-                <span class="turn-badge">{shown.snapshot.turn ? `Turn ${shown.snapshot.turn}` : 'Team preview'}</span>
-                <span class={shown.snapshot.weather === 'none' ? '' : 'condition-active'}>
-                  {shown.snapshot.weather === 'none' ? 'Clear skies' : shown.snapshot.weather}
-                </span>
-                <span class={shown.snapshot.fields.length ? 'condition-active' : ''}>
-                  {shown.snapshot.fields.join(' · ') || 'Open field'}
-                </span>
-              </div>
-              <div class="field-surface">
-                <Side
-                  pid="p1"
-                  side={shown.snapshot.sides.p1}
-                  right={false}
-                  timer={shown.snapshot.timers?.p1}
-                  spend={shown.snapshot.spend?.p1}
-                  receivedAt={shown.receivedAt}
-                  warning={latestFallback(shown.snapshot.decisions, 'p1')}
-                />
-                <div class="center-mark">VS</div>
-                <Side
-                  pid="p2"
-                  side={shown.snapshot.sides.p2}
-                  right={true}
-                  timer={shown.snapshot.timers?.p2}
-                  spend={shown.snapshot.spend?.p2}
-                  receivedAt={shown.receivedAt}
-                  warning={latestFallback(shown.snapshot.decisions, 'p2')}
-                />
-              </div>
+              <Battlefield
+                snapshot={shown.snapshot}
+                receivedAt={shown.receivedAt}
+                warnings={{
+                  p1: latestFallback(shown.snapshot.decisions, 'p1'),
+                  p2: latestFallback(shown.snapshot.decisions, 'p2'),
+                }}
+                meta={
+                  <>
+                    <span>Game {shown.game} · Bo3</span>
+                    <span class="series-score">
+                      {row.score.p1}-{row.score.p2}
+                    </span>
+                    <span class="turn-badge">
+                      {shown.snapshot.turn ? `Turn ${shown.snapshot.turn}` : 'Team preview'}
+                    </span>
+                  </>
+                }
+              />
               <TurnLog
                 log={shown.snapshot.log ?? []}
                 decisions={shown.snapshot.decisions ?? []}

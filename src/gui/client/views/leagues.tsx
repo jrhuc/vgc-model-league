@@ -10,7 +10,7 @@ import type {
   LeaguesResponse,
   LeagueTeambuildView,
 } from '../../api';
-import { Side } from '../components/battlefield';
+import { Battlefield } from '../components/battlefield';
 import { BoardBrowser, STAT_ORDER, useBoard } from '../components/boardbrowser';
 import { StatTile } from '../components/chartkit';
 import { Mark } from '../components/mark';
@@ -65,6 +65,10 @@ function phaseLabel(card: Pick<LeagueCardView, 'phase' | 'week' | 'weeks'> & { p
     return `Round robin · week ${card.week}${card.weeks ? ` of ${card.weeks}` : ''}`;
   }
   return PHASE_LABELS[card.phase];
+}
+
+function pickLabel(pick: number): string {
+  return `Pick ${pick}`;
 }
 
 function LeagueCard({ card, onOpen }: { card: LeagueCardView; onOpen: () => void }) {
@@ -158,10 +162,10 @@ function FranchiseCard({
       {slot ? (
         <div class="franchise-pick">
           <span class="draft-feed-head">
-            {slot.pick !== null ? `Pick ${slot.pick} · ` : ''}
-            {slot.name} · {slot.cost} pts{slot.fallback ? ' · fallback pick' : ''}
+            {slot.pick !== null ? `${pickLabel(slot.pick)} · ` : ''}
+            {slot.name} · {slot.cost} pts{slot.fallback ? ' · fallback' : ''}
           </span>
-          <p>{slot.rationale || 'No stored rationale for this pick.'}</p>
+          <p>{slot.rationale || 'No stored rationale.'}</p>
         </div>
       ) : null}
       <footer class="franchise-card-foot">
@@ -250,6 +254,44 @@ function ScheduleTable({
               <td class="num">{series.turns}</td>
             </tr>
           ))}
+          {league.liveSeries.map((series) =>
+            series.sides ? (
+              <tr class="live-schedule-row" key={`live:${series.seriesId}`}>
+                <td>
+                  <span class="live-status">
+                    <span class="live-dot" aria-hidden="true" />
+                    Live
+                  </span>
+                </td>
+                <td>
+                  {series.sides.map((entrant, index) => (
+                    <span key={entrant}>
+                      {index > 0 ? <span class="muted"> vs </span> : null}
+                      <button type="button" class="text-link" onClick={() => onOpenTeam(entrant)}>
+                        {name(entrant)}
+                      </button>
+                    </span>
+                  ))}
+                </td>
+                <td class="num">–</td>
+                <td>
+                  {series.seriesIndex === null ? (
+                    `Game ${series.game}`
+                  ) : (
+                    <button
+                      type="button"
+                      class="game-chip live"
+                      title={`Watch game ${series.game}`}
+                      onClick={() => onOpenGame(series.seriesIndex!, series.game)}
+                    >
+                      {series.game}
+                    </button>
+                  )}
+                </td>
+                <td class="num">{series.turn > 0 ? `T${series.turn}` : 'Preview'}</td>
+              </tr>
+            ) : null,
+          )}
         </tbody>
       </table>
     </div>
@@ -316,10 +358,11 @@ function GamePage({
     for (let index = view.decisions.length - 1; index >= 0; index -= 1) {
       const decision = view.decisions[index]!;
       if (decision.side !== side || decision.automatic) continue;
-      return decision.fallback ? 'The latest model decision used a fallback.' : '';
+      return decision.fallback ? 'Latest model decision used a fallback.' : '';
     }
     return '';
   };
+  const seriesOver = view.reflections.some((reflection) => reflection.seriesOver);
   return (
     <div class="league-view">
       <header class="page-heading league-heading">
@@ -365,35 +408,23 @@ function GamePage({
 
       {view.snapshot ? (
         <section class="panel battlefield">
-          <div class="field-meta">
-            <span class="turn-badge">{view.snapshot.turn ? `Turn ${view.snapshot.turn}` : 'Team preview'}</span>
-            <span class={view.snapshot.weather === 'none' ? '' : 'condition-active'}>
-              {view.snapshot.weather === 'none' ? 'Clear skies' : view.snapshot.weather}
-            </span>
-            <span class={view.snapshot.fields.length ? 'condition-active' : ''}>
-              {view.snapshot.fields.join(' · ') || 'Open field'}
-            </span>
-          </div>
+          <Battlefield
+            snapshot={view.snapshot}
+            receivedAt={view.receivedAt}
+            players={{ p1: view.teamNames[0], p2: view.teamNames[1] }}
+            warnings={{ p1: sideWarning(0), p2: sideWarning(1) }}
+            meta={
+              <span class="turn-badge">{view.snapshot.turn ? `Turn ${view.snapshot.turn}` : 'Team preview'}</span>
+            }
+          />
+        </section>
+      ) : view.live ? (
+        <section class="panel battlefield">
           <div class="field-surface">
-            <Side
-              pid="p1"
-              side={view.snapshot.sides.p1}
-              right={false}
-              timer={view.snapshot.timers?.p1}
-              spend={view.snapshot.spend?.p1}
-              receivedAt={view.receivedAt}
-              warning={sideWarning(0)}
-            />
-            <div class="center-mark">VS</div>
-            <Side
-              pid="p2"
-              side={view.snapshot.sides.p2}
-              right={true}
-              timer={view.snapshot.timers?.p2}
-              spend={view.snapshot.spend?.p2}
-              receivedAt={view.receivedAt}
-              warning={sideWarning(1)}
-            />
+            <div class="field-empty" aria-live="polite">
+              <h2>Battle starting</h2>
+              <p>Waiting for the first team-preview event.</p>
+            </div>
           </div>
         </section>
       ) : null}
@@ -406,6 +437,7 @@ function GamePage({
           </div>
         </div>
         <div class="game-timeline">
+          {turns.length === 0 ? <p class="empty-note">Waiting for the first battle event.</p> : null}
           {turns.map((turn) => (
             <div class="game-turn" key={turn}>
               {view.decisions
@@ -446,8 +478,12 @@ function GamePage({
         <section class="panel">
           <div class="section-head">
             <div>
-              <h2>Post-game reflections</h2>
-              <p>What each coach took from this game, and how they plan to adapt.</p>
+              <h2>{seriesOver ? 'Series reflections' : 'Post-game reflections'}</h2>
+              <p>
+                {seriesOver
+                  ? 'What each coach learned from the series and would change in a rematch.'
+                  : 'What each coach took from this game and plans to change in the next.'}
+              </p>
             </div>
           </div>
           <div class="reflection-grid">
@@ -462,7 +498,7 @@ function GamePage({
                 {reflection.adjustment ? <p class="reflection-adjustment">{reflection.adjustment}</p> : null}
                 {reflection.notebook ? (
                   <details>
-                    <summary>Notebook carried forward</summary>
+                    <summary>{seriesOver ? 'Notes for a rematch' : 'Notebook carried forward'}</summary>
                     <p class="game-decision-notebook">{reflection.notebook}</p>
                   </details>
                 ) : null}
@@ -568,12 +604,57 @@ function TeamStats({ franchise, seriesPlayed }: { franchise: LeagueFranchiseView
   );
 }
 
+function LiveSeriesFeed({
+  league,
+  entries,
+  onOpenTeam,
+  onOpenGame,
+}: {
+  league: LeagueResponse;
+  entries: LeagueResponse['liveSeries'];
+  onOpenTeam: (entrant: number) => void;
+  onOpenGame: (seriesIndex: number, game: number) => void;
+}) {
+  return (
+    <ul class="live-feed">
+      {entries.map((entry) => (
+        <li class="live-series" key={entry.seriesId}>
+          <span class="live-series-matchup">
+            {entry.sides ? (
+              <>
+                <button type="button" class="text-link" onClick={() => onOpenTeam(entry.sides![0])}>
+                  {league.franchises[entry.sides[0]]?.teamName ?? '?'}
+                </button>
+                <span class="muted"> vs </span>
+                <button type="button" class="text-link" onClick={() => onOpenTeam(entry.sides![1])}>
+                  {league.franchises[entry.sides[1]]?.teamName ?? '?'}
+                </button>
+              </>
+            ) : (
+              <b>Series {entry.seriesId.slice(0, 6)}…</b>
+            )}
+          </span>
+          <span class="live-series-state">
+            Game {entry.game} · {entry.turn > 0 ? `turn ${entry.turn}` : 'team preview'} · {entry.decisions} decisions
+          </span>
+          {entry.seriesIndex !== null ? (
+            <button type="button" class="button" onClick={() => onOpenGame(entry.seriesIndex!, entry.game)}>
+              Watch live
+            </button>
+          ) : null}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 function TeamPage({
   league,
   franchise,
   spriteFor,
   onBack,
   onOpenGame,
+  onOpenTeam,
   onOpenModel,
 }: {
   league: LeagueResponse;
@@ -581,6 +662,7 @@ function TeamPage({
   spriteFor: (id: string) => string;
   onBack: () => void;
   onOpenGame: (seriesIndex: number, game: number) => void;
+  onOpenTeam: (entrant: number) => void;
   onOpenModel: () => void;
 }) {
   const builds = league.teambuilds
@@ -589,6 +671,7 @@ function TeamPage({
   const bySeries = new Map(league.series.map((series) => [series.seriesIndex, series] as const));
   const picks = [...franchise.roster].sort((a, b) => (a.pick ?? 99) - (b.pick ?? 99));
   const name = (entrant: number) => league.franchises[entrant]?.teamName ?? `Coach ${entrant + 1}`;
+  const liveSeries = league.liveSeries.filter((entry) => entry.sides?.includes(franchise.entrant));
   return (
     <div class="league-view">
       <header class="page-heading league-heading">
@@ -614,6 +697,25 @@ function TeamPage({
         </div>
       </header>
 
+      {liveSeries.length > 0 ? (
+        <section class="panel live-now team-live">
+          <div class="section-head">
+            <div>
+              <p class="eyebrow">
+                <span class="live-dot" aria-hidden="true" /> Live now
+              </p>
+              <h2>Match in progress</h2>
+              <p>Watch this franchise's current battle.</p>
+            </div>
+          </div>
+          <LiveSeriesFeed
+            league={league}
+            entries={liveSeries}
+            onOpenTeam={onOpenTeam}
+            onOpenGame={onOpenGame}
+          />
+        </section>
+      ) : null}
       <TeamStats franchise={franchise} seriesPlayed={franchise.overallRecord.w + franchise.overallRecord.l} />
 
       <section class="panel">
@@ -631,7 +733,7 @@ function TeamPage({
             <div class="draft-feed-item" key={entry.id}>
               <span class="draft-feed-head">
                 <Sprite id={spriteFor(entry.id)} size={24} />
-                {entry.pick !== null ? `#${entry.pick} · ` : ''}
+                {entry.pick !== null ? `${pickLabel(entry.pick)} · ` : ''}
                 {entry.name} · {entry.cost} pts
                 {entry.fallback ? ' · fallback' : ''}
               </span>
@@ -652,6 +754,7 @@ function TeamPage({
         <div class="teambuild-list">
           {builds.map((build, index) => {
             const series = bySeries.get(build.seriesIndex);
+            const live = league.liveSeries.find((entry) => entry.seriesIndex === build.seriesIndex);
             const changes = setDiff(builds[index - 1], build);
             const won = series?.winner === franchise.entrant;
             return (
@@ -665,6 +768,8 @@ function TeamPage({
                         ? `${series.score[0]}–${series.score[1]}`
                         : `${series.score[1]}–${series.score[0]}`}
                     </span>
+                  ) : live ? (
+                    <span class="series-result live">in progress</span>
                   ) : null}
                   <span class="muted">
                     {' '}
@@ -676,7 +781,7 @@ function TeamPage({
                         <button
                           key={gameIndex}
                           type="button"
-                          class={`game-chip ${entry.winner === franchise.entrant ? 'left' : entry.winner === null ? '' : 'right'}`}
+                          class={`game-chip ${entry.winner === series.sides[0] ? 'left' : entry.winner === series.sides[1] ? 'right' : ''}`}
                           title={`Open game ${gameIndex + 1}`}
                           onClick={(event) => {
                             event.preventDefault();
@@ -686,6 +791,20 @@ function TeamPage({
                           {gameIndex + 1}
                         </button>
                       ))}
+                    </span>
+                  ) : live?.seriesIndex !== null && live?.seriesIndex !== undefined ? (
+                    <span class="game-chips">
+                      <button
+                        type="button"
+                        class="game-chip live"
+                        title={`Watch game ${live.game}`}
+                        onClick={(event) => {
+                          event.preventDefault();
+                          onOpenGame(live.seriesIndex!, live.game);
+                        }}
+                      >
+                        {live.game}
+                      </button>
                     </span>
                   ) : null}
                 </summary>
@@ -755,9 +874,9 @@ function LiveNow({
       <div class="section-head">
         <div>
           <p class="eyebrow">
-            <span class="live-dot" aria-label="live" /> Live
+            <span class="live-dot" aria-hidden="true" /> Live
           </p>
-          <h2>{PHASE_LABELS[league.phase]} in progress</h2>
+          <h2>{phaseLabel(league)}</h2>
           <p>This page refreshes itself while the run is playing.</p>
         </div>
       </div>
@@ -765,7 +884,7 @@ function LiveNow({
         <ul class="live-feed">
           {recentPicks.map((entry) => (
             <li key={`${entry.pick}`}>
-              <b>Pick {entry.pick}</b> · {entry.team} takes {entry.name} ({entry.cost} pts)
+              <b>{pickLabel(entry.pick)}</b> · {entry.team} takes {entry.name} ({entry.cost} pts)
             </li>
           ))}
           {recentPicks.length === 0 ? <li>Waiting for the first pick…</li> : null}
@@ -778,34 +897,14 @@ function LiveNow({
         </p>
       ) : null}
       {league.liveSeries.length > 0 ? (
-        <ul class="live-feed">
-          {league.liveSeries.map((entry) => (
-            <li key={entry.seriesId}>
-              {entry.sides ? (
-                <>
-                  <button type="button" class="text-link" onClick={() => onOpenTeam(entry.sides![0])}>
-                    {league.franchises[entry.sides[0]]?.teamName ?? '?'}
-                  </button>
-                  {' vs '}
-                  <button type="button" class="text-link" onClick={() => onOpenTeam(entry.sides![1])}>
-                    {league.franchises[entry.sides[1]]?.teamName ?? '?'}
-                  </button>
-                </>
-              ) : (
-                <b>Series {entry.seriesId.slice(0, 6)}…</b>
-              )}{' '}
-              ·{' '}
-              {entry.seriesIndex !== null ? (
-                <button type="button" class="text-link" onClick={() => onOpenGame(entry.seriesIndex!, entry.game)}>
-                  watch game {entry.game}
-                </button>
-              ) : (
-                `game ${entry.game}`
-              )}
-              {entry.turn > 0 ? ` · turn ${entry.turn}` : ''} · {entry.decisions} decisions
-            </li>
-          ))}
-        </ul>
+        <LiveSeriesFeed
+          league={league}
+          entries={league.liveSeries}
+          onOpenTeam={onOpenTeam}
+          onOpenGame={onOpenGame}
+        />
+      ) : league.phase === 'roundrobin' || league.phase === 'playoffs' ? (
+        <p class="live-note">Between series · waiting for the next matchup to begin.</p>
       ) : null}
     </section>
   );
@@ -870,6 +969,7 @@ function LeaguePage({
         spriteFor={spriteFor}
         onBack={onBack}
         onOpenGame={openGame}
+        onOpenTeam={openEntrant}
         onOpenModel={() => onOpenModel(modelKeyOf(selected.model))}
       />
     );
