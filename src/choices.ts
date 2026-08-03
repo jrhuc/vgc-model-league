@@ -3,7 +3,7 @@ import type { BattleRequest, JsonObject } from './types.js';
 
 import { afterColon, asRecords, text } from './value.js';
 
-type MenuKind = 'move' | 'switch' | 'team' | 'pass';
+type MenuKind = 'move' | 'switch' | 'team' | 'pass' | 'forfeit';
 interface MenuItem {
   label: string;
   part: string;
@@ -133,7 +133,7 @@ export function buildMenus(request: BattleRequest, hints?: MenuHints): SlotMenu[
   }
   if (request.active) {
     const activePokemon = pokemon.filter((mon) => mon.active);
-    return request.active.map((active, slotIndex): SlotMenu => {
+    const menus = request.active.map((active, slotIndex): SlotMenu => {
       const slot = slotIndex + 1;
       const current = activePokemon[slotIndex] ?? {};
       if (!active || current.commanding || text(current.condition).endsWith(' fnt')) {
@@ -158,6 +158,9 @@ export function buildMenus(request: BattleRequest, hints?: MenuHints): SlotMenu[
       if (!active.trapped) menu.push(...switches(request));
       return menu.length ? menu : [{ label: 'Pass', part: 'pass', kind: 'pass' }];
     });
+    if (menus.some((menu) => menu.some((item) => item.kind !== 'pass')))
+      menus[0]!.push({ label: 'Forfeit the game (concede the loss)', part: 'forfeit', kind: 'forfeit' });
+    return menus;
   }
   return [[{ label: 'Pass', part: 'pass', kind: 'pass' }]];
 }
