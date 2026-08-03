@@ -36,6 +36,15 @@ const TRADE_WINDOW_PROMPT_POLICY = {
     '',
     'You have the same Showdown dex tools as during the draft. Use them only where the supplied evidence and board do not answer the question.',
   ],
+  standingsHeading: 'LEAGUE STANDINGS (rank | team | W-L | games):',
+  resultsHeading: 'YOUR ROUND-ROBIN RESULTS:',
+  wordsHeading: 'YOUR PRIVATE WORDS:',
+  rostersHeading: 'PUBLIC CURRENT ROSTERS:',
+  freeAgentsHeading: 'UNDRAFTED FREE AGENTS (id | cost | name | types | base stats | abilities):',
+  replyTemplate: [
+    'Reply with one JSON object {"swaps":[{"drop":"<board-id>","add":"<board-id>"},...],"reasoning":"<2-4 sentences>","notebook":"<updated private plan>"}, where "swaps" may instead be [].',
+    'The populated list and {"swaps":[],"reasoning":"<2-4 sentences>","notebook":"<updated private plan>"} are equally complete responses.',
+  ],
   rejectionTemplate: 'That transaction list was rejected: {{error}} Reply again with only the JSON object.',
   truncatedTemplate:
     'Your previous reply used the whole {{budget}}-token budget before completing the JSON object. Reply now with only the JSON object.',
@@ -262,13 +271,13 @@ function rosterLine(roster: readonly DraftBoardMon[]): string {
 function userPrompt(state: TradeWindowState, entrant: number, psDir: string): string {
   const owners = ownerMap(state);
   const available = state.board.mons.filter((mon) => !owners.has(mon.id));
-  const lines = ['LEAGUE STANDINGS (rank | team | W-L | games):'];
+  const lines: string[] = [TRADE_WINDOW_PROMPT_POLICY.standingsHeading];
   for (const [rank, row] of state.standings.entries()) {
     lines.push(
       `${rank + 1}. ${state.teamNames[row.entrant] || state.models[row.entrant]} | ${row.w}-${row.l} | ${row.gw}-${row.gl}`,
     );
   }
-  lines.push('', 'YOUR ROUND-ROBIN RESULTS:');
+  lines.push('', TRADE_WINDOW_PROMPT_POLICY.resultsHeading);
   const results = state.results[entrant] ?? [];
   if (!results.length) lines.push('- (none recorded)');
   for (const result of results) {
@@ -277,29 +286,23 @@ function userPrompt(state: TradeWindowState, entrant: number, psDir: string): st
         `${result.score[0]}-${result.score[1]}; opposing roster: ${result.opponentRoster}`,
     );
   }
-  lines.push('', 'YOUR PRIVATE WORDS:');
+  lines.push('', TRADE_WINDOW_PROMPT_POLICY.wordsHeading);
   lines.push(`- Final draft notebook: ${state.notebooks[entrant] || '(empty)'}`);
   for (const [index, reflection] of (state.reflections[entrant] ?? []).entries()) {
     lines.push(`- Series reflection ${index + 1}: ${reflection || '(empty)'}`);
   }
-  lines.push('', 'PUBLIC CURRENT ROSTERS:');
+  lines.push('', TRADE_WINDOW_PROMPT_POLICY.rostersHeading);
   for (const [index, roster] of state.rosters.entries()) {
     lines.push(`- ${state.teamNames[index] || state.models[index]}: ${rosterLine(roster)}`);
   }
   lines.push(
     '',
-    draftBoardTable(
-      state.board,
-      psDir,
-      available,
-      'UNDRAFTED FREE AGENTS (id | cost | name | types | base stats | abilities):',
-    ),
+    draftBoardTable(state.board, psDir, available, TRADE_WINDOW_PROMPT_POLICY.freeAgentsHeading),
     '',
     `YOUR ROSTER: ${rosterLine(state.rosters[entrant]!)}`,
     `Budget: ${state.board.budget - state.budgets[entrant]!}/${state.board.budget} spent; each drop refunds its listed price.`,
     '',
-    'Reply with one JSON object {"swaps":[{"drop":"<board-id>","add":"<board-id>"},...],"reasoning":"<roster diagnosis>","notebook":"<updated private plan>"}, where "swaps" may instead be [].',
-    'The populated list and {"swaps":[],"reasoning":"<roster diagnosis>","notebook":"<updated private plan>"} are equally complete responses.',
+    ...TRADE_WINDOW_PROMPT_POLICY.replyTemplate,
   );
   return lines.join('\n');
 }
