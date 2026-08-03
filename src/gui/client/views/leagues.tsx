@@ -366,6 +366,10 @@ function GamePage({
     return '';
   };
   const seriesOver = view.reflections.some((reflection) => reflection.seriesOver);
+  const modelLabel = (side: 0 | 1): string => {
+    const model = league.franchises[view.sides[side] ?? -1]?.model;
+    return model ? displaySpec(model) : (view.teamNames[side] ?? '');
+  };
   return (
     <div class="league-view">
       <header class="page-heading league-heading">
@@ -414,7 +418,7 @@ function GamePage({
           <Battlefield
             snapshot={view.snapshot}
             receivedAt={view.receivedAt}
-            players={{ p1: view.teamNames[0], p2: view.teamNames[1] }}
+            players={{ p1: modelLabel(0), p2: modelLabel(1) }}
             warnings={{ p1: sideWarning(0), p2: sideWarning(1) }}
             meta={<span class="turn-badge">{view.snapshot.turn ? `Turn ${view.snapshot.turn}` : 'Team preview'}</span>}
           />
