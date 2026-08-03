@@ -227,6 +227,13 @@ test('exact defender stats collapse the open-sheet range', () => {
     return Number(match[2]) - Number(match[1]);
   };
   assert.ok(spread(exact) < spread(open), 'exact stats must narrow the damage range');
+  const fixed = reference.lookup('estimate_damage', {
+    attacker: 'Maushold',
+    defender: 'Farigiraf',
+    move: 'Super Fang',
+    defender_stats: { hp: 217, def: 121 },
+  });
+  assert.match(fixed, /49\.8-49\.8% of maximum HP/);
 });
 
 test('damage tools reject items removed from the Champions format', () => {
@@ -360,6 +367,40 @@ test('damage estimates apply abilities, stages, burn, screens, and terrain throu
   assert.match(
     reference.lookup('estimate_damage', { attacker: 'Azumarill', defender: 'Dragonite', move: 'Play Rough', attacker_ability: 'Huge Power' }),
     /applied attacker ability Huge Power/,
+  );
+  const partialBoosts = reference.lookup('estimate_damage', {
+    ...args,
+    defender_ability: 'Intimidate',
+    attacker_boosts: { spe: 1 },
+  });
+  const explicitNeutralAttack = reference.lookup('estimate_damage', {
+    ...args,
+    defender_ability: 'Intimidate',
+    attacker_boosts: { atk: 0, spe: 1 },
+  });
+  assert.equal(
+    maxPercent(partialBoosts),
+    maxPercent(explicitNeutralAttack),
+    'unspecified current stat stages must stay neutral after ability activation',
+  );
+  const sunny = reference.lookup('estimate_damage', {
+    attacker: 'Torkoal',
+    defender: 'Gholdengo',
+    move: 'Heat Wave',
+    attacker_ability: 'Drought',
+  });
+  assert.equal(
+    maxPercent(sunny),
+    maxPercent(
+      reference.lookup('estimate_damage', {
+        attacker: 'Torkoal',
+        defender: 'Gholdengo',
+        move: 'Heat Wave',
+        attacker_ability: 'Drought',
+        weather: 'sun',
+      }),
+    ),
+    'ability-created weather must remain active when no explicit weather is supplied',
   );
 });
 

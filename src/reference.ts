@@ -114,7 +114,7 @@ export const DEX_TOOLS: ToolDefinition[] = [
       defender_stats: {
         type: 'object',
         description:
-          'Optional exact raw stats when the defender is your own Pokémon. Only hp and the stat this move targets are read; other keys are ignored, so never pad unknown stats with placeholder values.',
+          'Optional exact raw stats when the defender is your own Pokémon. HP also drives fixed and HP-scaled damage; other keys beyond hp and the stat this move targets are ignored.',
         properties: {
           hp: { type: 'number', exclusiveMinimum: 0 },
           atk: { type: 'number', exclusiveMinimum: 0 },
@@ -1183,6 +1183,7 @@ export class ShowdownReference {
         defenderBoosts: boosts.defender,
         attackerStatus: statuses.attacker,
         defenderStatus: statuses.defender,
+        defenderMaxHp: exactHp,
         screens,
         weather: weatherId,
         terrain: terrainId,
@@ -1297,6 +1298,7 @@ export class ShowdownReference {
     };
     attackerBoosts: Partial<Record<Exclude<StatId, 'hp'>, number>>;
     defenderBoosts: Partial<Record<Exclude<StatId, 'hp'>, number>>;
+    defenderMaxHp?: number | undefined;
     attackerStatus?: string | undefined;
     defenderStatus?: string | undefined;
     screens: string[];
@@ -1343,14 +1345,18 @@ export class ShowdownReference {
       offHolder.storedStats[cfg.pins.offStat] = cfg.pins.offValue;
       def.storedStats[cfg.pins.defStat] = cfg.pins.defValue;
       if (cfg.weather) battle.field.setWeather(cfg.weather, 'debug');
-      else battle.field.clearWeather();
       if (cfg.terrain) battle.field.setTerrain(cfg.terrain, 'debug');
-      else battle.field.clearTerrain();
+      for (const stat of Object.keys(att.boosts) as Array<keyof typeof att.boosts>) att.boosts[stat] = 0;
+      for (const stat of Object.keys(def.boosts) as Array<keyof typeof def.boosts>) def.boosts[stat] = 0;
+      Object.assign(att.boosts, cfg.attackerBoosts);
+      Object.assign(def.boosts, cfg.defenderBoosts);
+      if (cfg.defenderMaxHp !== undefined) {
+        def.maxhp = cfg.defenderMaxHp;
+        def.hp = cfg.defenderMaxHp;
+      }
       for (const screen of cfg.screens) def.side.addSideCondition(screen, 'debug');
       if (cfg.attackerStatus) (att as unknown as { status: string }).status = cfg.attackerStatus;
       if (cfg.defenderStatus) (def as unknown as { status: string }).status = cfg.defenderStatus;
-      Object.assign(att.boosts, cfg.attackerBoosts);
-      Object.assign(def.boosts, cfg.defenderBoosts);
       if (cfg.helpingHand) att.addVolatile('helpinghand');
       if (cfg.attackerHpPercent !== undefined)
         att.hp = Math.max(1, Math.round((att.maxhp * cfg.attackerHpPercent) / 100));

@@ -6,7 +6,7 @@ import test from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
 import type { BattleStream } from 'pokemon-showdown';
 import { RandomEngine } from '../src/battle-agent.js';
-import type { SlotMenu } from '../src/choices.js';
+import { buildMenus, type SlotMenu } from '../src/choices.js';
 import { defaultPsDir } from '../src/paths.js';
 import { runRotation } from '../src/rotation.js';
 import { closedSheetsFormat } from '../src/series.js';
@@ -16,6 +16,20 @@ import { BattleState } from '../src/state.js';
 import { loadPool } from '../src/teams.js';
 import { parseTimerScale, TimerAdapter } from '../src/timer.js';
 import type { BattleRequest, TimerScale } from '../src/types.js';
+
+test('forced-switch menus retain the neutral forfeit option', () => {
+  const menus = buildMenus({
+    forceSwitch: [true],
+    side: {
+      pokemon: [
+        { active: true, condition: '0 fnt', details: 'Garchomp, L50' },
+        { active: false, condition: '100/100', details: 'Incineroar, L50' },
+      ],
+    },
+  });
+  assert.ok(menus[0]?.some((item) => item.kind === 'switch'));
+  assert.ok(menus[0]?.some((item) => item.kind === 'forfeit'));
+});
 
 test('the forfeit menu option concedes the game to the opponent', async () => {
   const pool = loadPool();

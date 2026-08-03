@@ -129,6 +129,8 @@ export function buildMenus(request: BattleRequest, hints?: MenuHints): SlotMenu[
         if (!menu.some((item) => item.kind === 'pass')) menu.push({ label: 'Pass', part: 'pass', kind: 'pass' });
       }
     }
+    if (menus.some((menu) => menu.some((item) => item.kind === 'switch')))
+      menus[0]!.push({ label: 'Forfeit the game (concede the loss)', part: 'forfeit', kind: 'forfeit' });
     return menus;
   }
   if (request.active) {
