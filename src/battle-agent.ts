@@ -41,7 +41,9 @@ export abstract class BaseEngine implements BattleAgent {
   async act(request: BattleRequest, context: AgentContext): Promise<string> {
     const menus = buildMenus(request, this.menuHints(request));
     if (!menus.length) return '';
-    let automatic = menus.every((menu) => menu.length === 1);
+    /** Forfeit is always present on real turns, so it must not turn a single-option forced turn into a
+     * model consultation; the concession option is only meaningful when there is also a real choice. */
+    let automatic = menus.every((menu) => menu.filter((item) => item.kind !== 'forfeit').length === 1);
     let choices = automatic ? menus.map(() => 0) : await this.decideJoint(menus, request, context);
     let parts: string[];
     let substitution: ChoiceSubstitution | undefined;
@@ -53,6 +55,7 @@ export abstract class BaseEngine implements BattleAgent {
       automatic = false;
     }
     this.actionCommitted(request, context, menus, choices, parts, automatic, substitution);
+    if (parts.includes('forfeit')) return 'forfeit';
     return request.teamPreview ? `team ${parts.join('')}` : parts.join(', ');
   }
 
@@ -150,7 +153,9 @@ export class RandomEngine extends BaseEngine {
         parts.push('pass');
         continue;
       }
-      const weights = candidates.map((item) => (item.part.endsWith(' mega') ? 0.25 : 1));
+      const weights: number[] = candidates.map((item) =>
+        item.kind === 'forfeit' ? 0 : item.part.endsWith(' mega') ? 0.25 : 1,
+      );
       const target = this.random() * weights.reduce((sum, value) => sum + value, 0);
       let total = 0;
       let index = 0;

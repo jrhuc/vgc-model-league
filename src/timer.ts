@@ -154,6 +154,9 @@ export class TimerAdapter {
     const player = this.bySlot[pid];
     if (player.request.isWait) return;
     player.request.isWait = true;
+    /** A concession is a stream-level command, not a battle choice: the sim has no "forfeit" choice
+     * string, so the menu option maps to forcelose for the conceding side. */
+    if (choice === 'forfeit') return this.stream.write(`>forcelose ${pid}`);
     return this.stream.write(`>${pid} ${choice}`);
   }
 

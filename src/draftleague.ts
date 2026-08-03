@@ -52,11 +52,11 @@ function builtTeamSummary(build: TeambuildView): string {
 }
 
 function initialBattleNotebook(build: TeambuildView): string {
-  return `Matchup build carried from teambuilding. ${builtTeamSummary(build)}`.slice(0, 1_600);
+  return `Matchup build carried from teambuilding. ${builtTeamSummary(build)}`;
 }
 
 function playoffReview(summary: string, build: TeambuildView, notebook: string): string {
-  return `${summary}. ${builtTeamSummary(build)} Final private battle note: ${notebook || '(empty)'}`.slice(0, 3_200);
+  return `${summary}. ${builtTeamSummary(build)} Final private battle note: ${notebook || '(empty)'}`;
 }
 
 export function roundRobinWeeks(entrants: number): Array<Array<[number, number]>> {

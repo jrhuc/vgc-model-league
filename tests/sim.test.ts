@@ -6,6 +6,7 @@ import test from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
 import type { BattleStream } from 'pokemon-showdown';
 import { RandomEngine } from '../src/battle-agent.js';
+import type { SlotMenu } from '../src/choices.js';
 import { defaultPsDir } from '../src/paths.js';
 import { runRotation } from '../src/rotation.js';
 import { closedSheetsFormat } from '../src/series.js';
@@ -15,6 +16,28 @@ import { BattleState } from '../src/state.js';
 import { loadPool } from '../src/teams.js';
 import { parseTimerScale, TimerAdapter } from '../src/timer.js';
 import type { BattleRequest, TimerScale } from '../src/types.js';
+
+test('the forfeit menu option concedes the game to the opponent', async () => {
+  const pool = loadPool();
+  class ConcedingEngine extends RandomEngine {
+    protected override decideJoint(menus: SlotMenu[]): number[] {
+      const forfeit = menus[0]?.findIndex((item) => item.kind === 'forfeit') ?? -1;
+      if (forfeit >= 0) return menus.map((_, slot) => (slot === 0 ? forfeit : 0));
+      return super.decideJoint(menus);
+    }
+  }
+  const battle = new SimBattle(
+    pool.format,
+    {
+      p1: { name: 'A-conceder', team: pool.teams[0]!.packed },
+      p2: { name: 'B-random', team: pool.teams[1]!.packed },
+    },
+    [1, 2, 3, 4],
+  );
+  const outcome = await battle.run({ p1: new ConcedingEngine('p1', 10), p2: new RandomEngine('p2', 20) });
+  assert.equal(outcome.winner, 'B-random', 'the conceding side loses immediately');
+  assert.deepEqual(outcome.errors, { p1: 0, p2: 0 });
+});
 
 test('seeded random VGC battle completes untimed by default without protocol errors', async () => {
   const pool = loadPool();

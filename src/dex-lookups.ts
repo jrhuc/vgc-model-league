@@ -79,6 +79,15 @@ async function completeOnce(request: DexToolRequest, options: { tools: boolean; 
 
 export async function completeWithDexTools(request: DexToolRequest): Promise<Completion> {
   const usage: Record<string, number> = {};
+  const seenToolResults = new Map<string, string>();
+  const lookup = (name: string, args: JsonObject): string => {
+    const seenKey = `${name} ${JSON.stringify(args)}`;
+    const cached = seenToolResults.get(seenKey);
+    if (cached !== undefined) return `[identical to an earlier call this reply] ${cached}`;
+    const result = request.reference.lookup(name, args);
+    seenToolResults.set(seenKey, result);
+    return result;
+  };
   for (let round = 0; ; round += 1) {
     request.signal?.throwIfAborted();
     const final = round >= request.policy.toolRounds;
@@ -87,13 +96,13 @@ export async function completeWithDexTools(request: DexToolRequest): Promise<Com
     }
     const completion = await completeOnce(request, { tools: true, final });
     for (const [key, value] of Object.entries(completion.usage)) {
-      usage[key] = (usage[key] ?? 0) + Math.trunc(value);
+      usage[key] = (usage[key] ?? 0) + (key === 'cost' ? value : Math.trunc(value));
     }
     if (!completion.toolCalls.length || final) {
       const salvaged = final ? undefined : textToolCall(completion.text);
       if (salvaged) {
         request.messages.push({ role: 'assistant', content: completion.text });
-        const result = request.reference.lookup(salvaged.name, salvaged.arguments);
+        const result = lookup(salvaged.name, salvaged.arguments);
         request.onLookup?.({ name: salvaged.name, arguments: salvaged.arguments, result });
         request.messages.push({
           role: 'user',
@@ -111,15 +120,15 @@ export async function completeWithDexTools(request: DexToolRequest): Promise<Com
     }
 
     const calls = completion.toolCalls.slice(0, request.policy.maxCallsPerRound);
-    request.messages.push(
-      assistantToolMessage(
-        calls.length === completion.toolCalls.length
-          ? completion
-          : { ...completion, toolCalls: calls, responseMessages: [] },
-      ),
-    );
+    const dropped = completion.toolCalls.slice(request.policy.maxCallsPerRound);
+    request.messages.push(assistantToolMessage(completion));
+    for (const call of dropped) {
+      const result = `Not executed: this round exceeded its budget of ${request.policy.maxCallsPerRound} calls. Re-issue the call next round if you still need it.`;
+      request.onLookup?.({ name: call.name, arguments: call.arguments, result });
+      request.messages.push(toolResultMessage(call.id, result));
+    }
     for (const call of calls) {
-      const result = request.reference.lookup(call.name, call.arguments);
+      const result = lookup(call.name, call.arguments);
       request.onLookup?.({ name: call.name, arguments: call.arguments, result });
       request.messages.push(toolResultMessage(call.id, result));
     }
