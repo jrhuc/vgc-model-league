@@ -3,6 +3,7 @@ import test from 'node:test';
 import type { ChoiceSubstitution } from '../src/battle-agent.js';
 import { BaseEngine, RandomEngine } from '../src/battle-agent.js';
 import { decisionTokenBudget, LLMEngine, updatedPace } from '../src/llm-engine.js';
+import { DRAFT_SERIES_REFLECTION_SYSTEM, REFLECTION_SYSTEM, SERIES_REFLECTION_SYSTEM } from '../src/prompts.js';
 import { ApiError } from '../src/providers.js';
 import { RecoveryGate } from '../src/recovery.js';
 import { SimBattle } from '../src/sim.js';
@@ -451,6 +452,36 @@ test('empty reflections fail the run after retries', async () => {
   assert.equal(provider.calls.length, 3);
   assert.equal(decisions[0]!.kind, 'game_reflection');
   assert.equal(decisions[0]!.failure_kind, 'upstream');
+});
+
+test('a draft roster switches only the series-final reflection to the prep-review variant', async () => {
+  const reflection = JSON.stringify({ summary: 's', adjustment: 'a', notebook: 'n' });
+  const roster = 'registered for this series: Ampharos, Beartic; left behind: Corviknight.';
+  const finalGame = {
+    gameNumber: 3,
+    outcome: { winner: 'opponent', won: false, turns: 9 },
+    seriesScore: { p1: 1, p2: 2 } as Record<'p1' | 'p2', number>,
+  };
+
+  const draftFinal = new ScriptedProvider([reflection]);
+  await new LLMEngine('p1', 'scripted', { provider: draftFinal, decisionLog: [], draftRoster: roster }).endGame(
+    finalGame,
+  );
+  assert.equal(draftFinal.calls[0]!.system, DRAFT_SERIES_REFLECTION_SYSTEM);
+  assert.match(draftFinal.calls[0]!.messages[0]!.content ?? '', /left behind: Corviknight/);
+
+  const draftMidSeries = new ScriptedProvider([reflection]);
+  await new LLMEngine('p1', 'scripted', { provider: draftMidSeries, decisionLog: [], draftRoster: roster }).endGame({
+    gameNumber: 1,
+    outcome: { winner: 'opponent', won: false, turns: 9 },
+    seriesScore: { p1: 0, p2: 1 },
+  });
+  assert.equal(draftMidSeries.calls[0]!.system, REFLECTION_SYSTEM);
+  assert.doesNotMatch(draftMidSeries.calls[0]!.messages[0]!.content ?? '', /left behind/);
+
+  const constructedFinal = new ScriptedProvider([reflection]);
+  await new LLMEngine('p1', 'scripted', { provider: constructedFinal, decisionLog: [] }).endGame(finalGame);
+  assert.equal(constructedFinal.calls[0]!.system, SERIES_REFLECTION_SYSTEM);
 });
 
 const lengthTruncated = (): Completion => ({

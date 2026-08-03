@@ -64,6 +64,15 @@ function initialBattleNotebook(build: TeambuildView): string {
   return `Matchup build carried from teambuilding. ${builtTeamSummary(build)}`;
 }
 
+function draftRosterSummary(roster: readonly DraftBoardMon[], build: TeambuildView): string {
+  const registered = new Set(build.brought);
+  const names = (mons: readonly DraftBoardMon[]) => mons.map((mon) => mon.name).join(', ') || '(none)';
+  return (
+    `registered for this series: ${names(roster.filter((mon) => registered.has(mon.id)))}; ` +
+    `left behind: ${names(roster.filter((mon) => !registered.has(mon.id)))}.`
+  );
+}
+
 function playoffReview(summary: string, build: TeambuildView, notebook: string): string {
   return `${summary}. ${builtTeamSummary(build)} Final private battle note: ${notebook || '(empty)'}`;
 }
@@ -408,6 +417,10 @@ export async function runDraftLeague(
       initialNotebooks: {
         p1: initialBattleNotebook(home.view),
         p2: initialBattleNotebook(away.view),
+      },
+      draftRosters: {
+        p1: draftRosterSummary(rosters[a]!, home.view),
+        p2: draftRosterSummary(rosters[b]!, away.view),
       },
       gameSeeds: plan.gameSeeds,
       engineSeeds: plan.engineSeeds,
