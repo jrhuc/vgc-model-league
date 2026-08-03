@@ -96,7 +96,7 @@ export async function completeWithDexTools(request: DexToolRequest): Promise<Com
     }
     const completion = await completeOnce(request, { tools: true, final });
     for (const [key, value] of Object.entries(completion.usage)) {
-      usage[key] = (usage[key] ?? 0) + Math.trunc(value);
+      usage[key] = (usage[key] ?? 0) + (key === 'cost' ? value : Math.trunc(value));
     }
     if (!completion.toolCalls.length || final) {
       const salvaged = final ? undefined : textToolCall(completion.text);

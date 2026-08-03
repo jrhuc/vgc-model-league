@@ -59,6 +59,29 @@ test('tool calls written as text are executed instead of failing the attempt', a
   assert.match(String(followUp.content), /Tool result for lookup_species: - Species Basculegion:/);
 });
 
+test('fractional provider cost survives usage accumulation across tool rounds', async () => {
+  const reference = new ShowdownReference('gen9championsvgc2026regmb');
+  const calls: { messages: ProviderMessage[]; options?: CompleteOptions }[] = [];
+  const toolCall = { id: 'call-1', name: 'lookup_species', arguments: { name: 'Gengar' } };
+  const provider = scriptedProvider(
+    [
+      reply({ toolCalls: [toolCall], usage: { input_tokens: 100, output_tokens: 50, cost: 0.031 } }),
+      reply({ text: '{"sets": []}', usage: { input_tokens: 200, output_tokens: 80, cost: 0.0205 } }),
+    ],
+    calls,
+  );
+  const completion = await completeWithDexTools({
+    provider,
+    system: 'sys',
+    messages: [{ role: 'user', content: 'build' }],
+    spec: 'openrouter:moonshotai/kimi-k3',
+    reference,
+    policy: POLICY,
+  });
+  assert.ok(Math.abs((completion.usage.cost ?? 0) - 0.0515) < 1e-9, 'sub-dollar costs must not truncate to zero');
+  assert.equal(completion.usage.input_tokens, 300);
+});
+
 test('exhausting the tool budget is announced before the forced-text round', async () => {
   const reference = new ShowdownReference('gen9championsvgc2026regmb');
   const calls: { messages: ProviderMessage[]; options?: CompleteOptions }[] = [];
