@@ -79,6 +79,15 @@ async function completeOnce(request: DexToolRequest, options: { tools: boolean; 
 
 export async function completeWithDexTools(request: DexToolRequest): Promise<Completion> {
   const usage: Record<string, number> = {};
+  const seenToolResults = new Map<string, string>();
+  const lookup = (name: string, args: JsonObject): string => {
+    const seenKey = `${name} ${JSON.stringify(args)}`;
+    const cached = seenToolResults.get(seenKey);
+    if (cached !== undefined) return `[identical to an earlier call this reply] ${cached}`;
+    const result = request.reference.lookup(name, args);
+    seenToolResults.set(seenKey, result);
+    return result;
+  };
   for (let round = 0; ; round += 1) {
     request.signal?.throwIfAborted();
     const final = round >= request.policy.toolRounds;
@@ -93,7 +102,7 @@ export async function completeWithDexTools(request: DexToolRequest): Promise<Com
       const salvaged = final ? undefined : textToolCall(completion.text);
       if (salvaged) {
         request.messages.push({ role: 'assistant', content: completion.text });
-        const result = request.reference.lookup(salvaged.name, salvaged.arguments);
+        const result = lookup(salvaged.name, salvaged.arguments);
         request.onLookup?.({ name: salvaged.name, arguments: salvaged.arguments, result });
         request.messages.push({
           role: 'user',
@@ -119,7 +128,7 @@ export async function completeWithDexTools(request: DexToolRequest): Promise<Com
       ),
     );
     for (const call of calls) {
-      const result = request.reference.lookup(call.name, call.arguments);
+      const result = lookup(call.name, call.arguments);
       request.onLookup?.({ name: call.name, arguments: call.arguments, result });
       request.messages.push(toolResultMessage(call.id, result));
     }

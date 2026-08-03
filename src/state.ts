@@ -430,15 +430,24 @@ export class BattleState {
     if (!firstProfile || !secondProfile) return 'Speed data is unavailable for one of the selected Pokémon.';
     const firstMove = typeof args.first_move === 'string' ? args.first_move.trim() : '';
     const secondMove = typeof args.second_move === 'string' ? args.second_move.trim() : '';
-    const firstPriority = firstMove ? reference.movePriority(firstMove) : 0;
-    const secondPriority = secondMove ? reference.movePriority(secondMove) : 0;
+    const switchKeys = new Set(['switch', 'switchout', 'switching', 'swap']);
+    const firstIsSwitch = switchKeys.has(this.speciesKey(firstMove));
+    const secondIsSwitch = switchKeys.has(this.speciesKey(secondMove));
+    const firstPriority = firstMove && !firstIsSwitch ? reference.movePriority(firstMove) : 0;
+    const secondPriority = secondMove && !secondIsSwitch ? reference.movePriority(secondMove) : 0;
     if (firstMove && firstPriority === undefined) return `No move data for ${JSON.stringify(firstMove)}.`;
     if (secondMove && secondPriority === undefined) return `No move data for ${JSON.stringify(secondMove)}.`;
 
     const trickRoom = this.fields.has('trickroom');
     let order: 'first' | 'second' | 'tie' | 'uncertain';
     let reason: string;
-    if (firstPriority !== secondPriority) {
+    if (firstIsSwitch !== secondIsSwitch) {
+      order = firstIsSwitch ? 'first' : 'second';
+      reason = 'switches resolve before moves';
+    } else if (firstIsSwitch && secondIsSwitch) {
+      order = this.speedOrder(firstProfile, secondProfile, trickRoom);
+      reason = trickRoom ? 'both switching; switch order follows Speed under Trick Room' : 'both switching; switch order follows Speed';
+    } else if (firstPriority !== secondPriority) {
       order = firstPriority! > secondPriority! ? 'first' : 'second';
       reason = `base move priority ${firstPriority! >= 0 ? '+' : ''}${firstPriority!} vs ${secondPriority! >= 0 ? '+' : ''}${secondPriority!}`;
     } else {
@@ -523,11 +532,22 @@ export class BattleState {
       const mon = this.activeEntry(pid, Number(slot[2]));
       return mon ? { pid, slot: Number(slot[2]), mon } : undefined;
     }
-    return this.activeEntries().find(
+    const prefixed = /^(ally|foe)(.+)$/.exec(normalized);
+    const candidates = prefixed
+      ? this.activeEntries().filter((entry) => (entry.pid === this.pid) === (prefixed[1] === 'ally'))
+      : this.activeEntries();
+    const wanted = prefixed ? prefixed[2]! : normalized;
+    const exact = candidates.find(
       (entry) =>
-        this.speciesKey(entry.mon.species) === normalized ||
-        this.speciesKey(afterColon(entry.mon.ident)) === normalized,
+        this.speciesKey(entry.mon.species) === wanted || this.speciesKey(afterColon(entry.mon.ident)) === wanted,
     );
+    if (exact) return exact;
+    const demega = (key: string) => key.replace(/mega[xy]?$/, '').replace(/^mega/, '');
+    const wantedBase = demega(wanted);
+    return candidates.find((entry) => {
+      const entryKey = this.speciesKey(entry.mon.species);
+      return demega(entryKey) === wanted || entryKey === wantedBase || demega(entryKey) === wantedBase;
+    });
   }
 
   private speedProfile(pid: Pid, mon: MonState, reference: ShowdownReference): SpeedProfile | undefined {
@@ -753,12 +773,14 @@ export class BattleState {
         attrs.push(`last move ${mon.lastMove.name}${target} (turn ${mon.lastMove.turn})`);
       }
       if (mon.choiceLock) attrs.push(`Choice-locked into ${mon.choiceLock}`);
-      if (own && Object.keys(mon.stats).length)
+      if (own && Object.keys(mon.stats).length) {
+        const maxHp = /\/(\d+)/.exec(mon.hp ?? '')?.[1];
         attrs.push(
-          `stats ${Object.entries(mon.stats)
+          `stats ${maxHp ? `Max HP ${maxHp}, ` : ''}${Object.entries(mon.stats)
             .map(([stat, value]) => `${STAT_LABELS[stat] ?? stat} ${value}`)
             .join(', ')}`,
         );
+      }
       else if (reference?.speed) attrs.push(`raw Speed range ${reference.speed}`);
       if (mon.item) attrs.push(`item ${mon.item}${mon.itemConsumed ? ' (consumed)' : ''}`);
       if (mon.ability) attrs.push(`ability ${mon.ability}`);

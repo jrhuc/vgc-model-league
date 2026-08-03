@@ -137,14 +137,20 @@ const TRANSCRIPT_CHARACTER_LIMIT = 2400;
 const ACTION_ORDER_TOOL: ToolDefinition = {
   name: 'compare_action_order',
   description:
-    'Compare two active Pokémon using live Speed state without revealing hidden EVs. Applies visible items, boosts, status, Tailwind, weather abilities, move priority, and Trick Room; also explains Encore timing and redundant locks.',
+    'Compare two active Pokémon using live Speed state without revealing hidden EVs. Applies visible items, boosts, status, Tailwind, weather abilities, move priority, and Trick Room; also explains Encore timing and redundant locks. Pass "switch" as a move to time a switch-out, which resolves before moves.',
   parameters: {
     type: 'object',
     properties: {
       first: { type: 'string', description: 'Active species name or ally/foe slot, such as ally 1.' },
       second: { type: 'string', description: 'Active species name or ally/foe slot, such as foe 2.' },
-      first_move: { type: 'string', description: 'Optional move being considered for the first Pokémon.' },
-      second_move: { type: 'string', description: 'Optional move being considered for the second Pokémon.' },
+      first_move: {
+        type: 'string',
+        description: 'Optional move being considered for the first Pokémon, or "switch" for switching out.',
+      },
+      second_move: {
+        type: 'string',
+        description: 'Optional move being considered for the second Pokémon, or "switch" for switching out.',
+      },
     },
     required: ['first', 'second'],
     additionalProperties: false,
@@ -552,6 +558,7 @@ export class LLMEngine extends BaseEngine {
     let toolRounds = 0;
     this.callRetries = 0;
     const toolCalls: ToolTrace[] = [];
+    const seenToolResults = new Map<string, string>();
     const failedAttempts: { response: string; error: string }[] = [];
     const reasoningParts: string[] = [];
     const upstreamProviders = new Set<string>();
@@ -717,10 +724,15 @@ export class LLMEngine extends BaseEngine {
             ),
           );
           for (const call of calls) {
+            const seenKey = `${call.name} ${JSON.stringify(call.arguments)}`;
+            const cached = seenToolResults.get(seenKey);
             const result =
-              call.name === ACTION_ORDER_TOOL.name
-                ? this.state.compareActionOrder(call.arguments, this.reference)
-                : this.reference.lookup(call.name, call.arguments);
+              cached !== undefined
+                ? `[identical to an earlier call this decision] ${cached}`
+                : call.name === ACTION_ORDER_TOOL.name
+                  ? this.state.compareActionOrder(call.arguments, this.reference)
+                  : this.reference.lookup(call.name, call.arguments);
+            if (cached === undefined) seenToolResults.set(seenKey, result);
             toolCalls.push({ name: call.name, arguments: call.arguments, result });
             messages.push(toolResultMessage(call.id, result));
           }
