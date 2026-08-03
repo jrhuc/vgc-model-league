@@ -67,6 +67,9 @@ const DRAFT_PROMPT_POLICY = {
   notebookHeading: 'YOUR PRIVATE DRAFT NOTE FROM YOUR PREVIOUS PICK:',
   emptyRoster: '- (empty)',
   rejectionTemplate: 'That pick was rejected: {{error}}. Reply again with only the JSON object.',
+  fallbackNote:
+    'Harness note: every reply for pick {{pick}} was rejected (last reason: {{error}}), so a random legal pick was ' +
+    'made for you — {{mon}} is now on your roster. Your note above predates that pick.',
   truncatedTemplate:
     'Your previous reply used the whole {{budget}}-token budget before naming a pick. Reply now with only the JSON object, keeping your reasoning short enough to finish inside the budget.',
   notebookLimit: 4_000,
@@ -687,6 +690,12 @@ export async function runDraft(models: string[], board: DraftBoard, options: Run
         chosen = legal[Math.floor(options.rng() * legal.length)]!;
         reasoning = `random legal pick after ${DRAFT_PROMPT_POLICY.attempts} rejected replies (${lastError})`;
         fallback = true;
+        const note = DRAFT_PROMPT_POLICY.fallbackNote
+          .replace('{{pick}}', String(pickNumber + 1))
+          .replace('{{error}}', lastError || 'no usable reply')
+          .replace('{{mon}}', `${chosen.name} (${chosen.cost})`);
+        const room = DRAFT_PROMPT_POLICY.notebookLimit - note.length - 1;
+        notebooks[drafter] = `${clip(notebooks[drafter]!, Math.max(0, room))}\n${note}`.trim();
       }
     } else {
       chosen = legal[Math.floor(options.rng() * legal.length)]!;

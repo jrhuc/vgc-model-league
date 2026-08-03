@@ -676,6 +676,18 @@ test('a drafter that never answers falls back to a random legal pick', async (t)
   );
   assert.equal(outcome.picks[0]!.fallback, true);
   assert.match(outcome.picks[0]!.rationale, /random legal pick after 3 rejected replies/);
+  assert.match(outcome.notebooks[0]!, /Harness note: every reply for pick 1 was rejected/);
+  const seatLog = fs
+    .readFileSync(path.join(logDir, 'drafter-0-fake-model.jsonl'), 'utf8')
+    .split('\n')
+    .filter((line) => line.trim())
+    .map((line) => JSON.parse(line) as { pick: number; attempt: number; user: string });
+  const laterFirstAttempt = seatLog.find((row) => row.pick > 1 && row.attempt === 1);
+  assert.match(
+    laterFirstAttempt!.user,
+    /Harness note: every reply for pick 1 was rejected/,
+    'the fallback note reaches the next pick through the notebook',
+  );
 });
 
 test('a credential failure stops the draft instead of making random picks', async (t) => {
