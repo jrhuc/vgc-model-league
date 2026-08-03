@@ -53,6 +53,7 @@ const PHASE_LABELS = {
   drafting: 'Drafting',
   building: 'Teambuilding',
   roundrobin: 'Round robin',
+  window: 'Free agency',
   playoffs: 'Playoffs',
   complete: 'Complete',
 } as const;
@@ -64,6 +65,7 @@ function phaseLabel(card: Pick<LeagueCardView, 'phase' | 'week' | 'weeks'> & { p
   if (card.phase === 'roundrobin' && card.week > 0) {
     return `Round robin · week ${card.week}${card.weeks ? ` of ${card.weeks}` : ''}`;
   }
+  if (card.phase === 'window') return `Free agency · after week ${card.week}`;
   return PHASE_LABELS[card.phase];
 }
 
@@ -80,7 +82,7 @@ function LeagueCard({ card, onOpen }: { card: LeagueCardView; onOpen: () => void
           {card.board ? ` · ${card.board}` : ''}
         </span>
         <span class={`phase-pill ${card.phase}`}>
-          {card.live ? <span class="live-dot" aria-label="live" /> : null}
+          {card.live ? <span class="live-dot" role="img" aria-label="live" /> : null}
           {phaseLabel(card)}
         </span>
       </div>
@@ -107,7 +109,8 @@ function LeagueCard({ card, onOpen }: { card: LeagueCardView; onOpen: () => void
         ))}
       </ul>
       <span class="league-card-meta">
-        {card.entrants.length} coaches · {card.seriesCount} series recorded
+        {card.entrants.length} coaches · {card.seriesCount} series recorded ·{' '}
+        {card.tradeWindowAfterWeek === null ? 'locked rosters' : `free agency after week ${card.tradeWindowAfterWeek}`}
       </span>
     </button>
   );
@@ -379,7 +382,7 @@ function GamePage({
         </div>
         <div class="lede team-lede">
           <span>
-            {view.live ? <span class="live-dot" aria-label="live" /> : null} Game {view.game} of {view.games.length}
+            {view.live ? <span class="live-dot" aria-hidden="true" /> : null} Game {view.game} of {view.games.length}
             {view.winner !== null
               ? ` · ${league.franchises[view.winner]?.teamName ?? `Coach ${view.winner + 1}`} won`
               : view.live
@@ -413,9 +416,7 @@ function GamePage({
             receivedAt={view.receivedAt}
             players={{ p1: view.teamNames[0], p2: view.teamNames[1] }}
             warnings={{ p1: sideWarning(0), p2: sideWarning(1) }}
-            meta={
-              <span class="turn-badge">{view.snapshot.turn ? `Turn ${view.snapshot.turn}` : 'Team preview'}</span>
-            }
+            meta={<span class="turn-badge">{view.snapshot.turn ? `Turn ${view.snapshot.turn}` : 'Team preview'}</span>}
           />
         </section>
       ) : view.live ? (
@@ -669,9 +670,15 @@ function TeamPage({
     .filter((build) => build.entrant === franchise.entrant)
     .sort((a, b) => a.seriesIndex - b.seriesIndex);
   const bySeries = new Map(league.series.map((series) => [series.seriesIndex, series] as const));
-  const picks = [...franchise.roster].sort((a, b) => (a.pick ?? 99) - (b.pick ?? 99));
+  const picks = [...franchise.draftRoster].sort((a, b) => (a.pick ?? 99) - (b.pick ?? 99));
   const name = (entrant: number) => league.franchises[entrant]?.teamName ?? `Coach ${entrant + 1}`;
   const liveSeries = league.liveSeries.filter((entry) => entry.sides?.includes(franchise.entrant));
+  const windowDecision = league.tradeWindow?.decisions.find((entry) => entry.entrant === franchise.entrant);
+  const rosterNames = new Map(
+    league.franchises.flatMap((entry) =>
+      [...entry.draftRoster, ...entry.roster].map((mon) => [mon.id, mon.name] as const),
+    ),
+  );
   return (
     <div class="league-view">
       <header class="page-heading league-heading">
@@ -708,12 +715,7 @@ function TeamPage({
               <p>Watch this franchise's current battle.</p>
             </div>
           </div>
-          <LiveSeriesFeed
-            league={league}
-            entries={liveSeries}
-            onOpenTeam={onOpenTeam}
-            onOpenGame={onOpenGame}
-          />
+          <LiveSeriesFeed league={league} entries={liveSeries} onOpenTeam={onOpenTeam} onOpenGame={onOpenGame} />
         </section>
       ) : null}
       <TeamStats franchise={franchise} seriesPlayed={franchise.overallRecord.w + franchise.overallRecord.l} />
@@ -743,6 +745,52 @@ function TeamPage({
           {picks.length === 0 ? <p class="muted">No stored draft for this roster.</p> : null}
         </div>
       </section>
+      {league.tradeWindow ? (
+        <section class="panel">
+          <div class="section-head">
+            <div>
+              <h2>Mid-season free agency</h2>
+              <p>
+                After week {league.tradeWindow.afterWeek}, the lowest seed chose first with up to six swaps from the
+                undrafted pool.
+              </p>
+            </div>
+          </div>
+          <div class="draft-feed">
+            {windowDecision ? (
+              <>
+                <div class="draft-feed-item">
+                  <span class="draft-feed-head">
+                    {windowDecision.swaps.length
+                      ? `${windowDecision.swaps.length} roster swap${windowDecision.swaps.length === 1 ? '' : 's'}`
+                      : 'Roster kept'}
+                    {windowDecision.fallback ? ' · fallback' : ''}
+                  </span>
+                  <p>{windowDecision.reasoning || 'No stored rationale.'}</p>
+                  {windowDecision.swaps.length ? (
+                    <ul class="build-changes">
+                      {windowDecision.swaps.map((swap) => (
+                        <li key={`${swap.drop}:${swap.add}`}>
+                          Dropped {rosterNames.get(swap.drop) ?? swap.drop} · added{' '}
+                          {rosterNames.get(swap.add) ?? swap.add}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
+                </div>
+                <div class="draft-feed-item">
+                  <span class="draft-feed-head">Post-window roster · {franchise.spent} pts</span>
+                  <p>{franchise.roster.map((mon) => mon.name).join(', ')}</p>
+                </div>
+              </>
+            ) : (
+              <p class="muted">
+                {league.tradeWindow.complete ? 'No stored free-agency decision.' : 'This coach has not chosen yet.'}
+              </p>
+            )}
+          </div>
+        </section>
+      ) : null}
 
       <section class="panel">
         <div class="section-head">
@@ -864,7 +912,13 @@ function LiveNow({
     for (const franchise of league.franchises) {
       for (const slot of franchise.roster) {
         if (slot.pick !== null)
-          picks.push({ pick: slot.pick, team: franchise.teamName, entrant: franchise.entrant, name: slot.name, cost: slot.cost });
+          picks.push({
+            pick: slot.pick,
+            team: franchise.teamName,
+            entrant: franchise.entrant,
+            name: slot.name,
+            cost: slot.cost,
+          });
       }
     }
     return picks.sort((a, b) => b.pick - a.pick).slice(0, 6);
@@ -897,12 +951,7 @@ function LiveNow({
         </p>
       ) : null}
       {league.liveSeries.length > 0 ? (
-        <LiveSeriesFeed
-          league={league}
-          entries={league.liveSeries}
-          onOpenTeam={onOpenTeam}
-          onOpenGame={onOpenGame}
-        />
+        <LiveSeriesFeed league={league} entries={league.liveSeries} onOpenTeam={onOpenTeam} onOpenGame={onOpenGame} />
       ) : league.phase === 'roundrobin' || league.phase === 'playoffs' ? (
         <p class="live-note">Between series · waiting for the next matchup to begin.</p>
       ) : null}
@@ -997,7 +1046,10 @@ function LeaguePage({
         </div>
         <p class="lede">
           {league.franchises.length} coaches, {league.picksPerEntrant ?? '–'} picks from a {league.budget ?? '–'}-point
-          budget{league.format ? `, ${league.format}` : ''}.
+          budget{league.format ? `, ${league.format}` : ''}.{' '}
+          {league.tradeWindow
+            ? `Free agency opened after week ${league.tradeWindow.afterWeek}.`
+            : 'Rosters stayed locked after the draft.'}
         </p>
       </header>
 

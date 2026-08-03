@@ -355,6 +355,7 @@ export function FixturesView({ app, run, onStarted, onPools }: FixturesProps) {
   const [concurrency, setConcurrency] = useState('2');
   const [closedSheets, setClosedSheets] = useState(false);
   const [sequentialWeeks, setSequentialWeeks] = useState(false);
+  const [tradeWindow, setTradeWindow] = useState('default');
   const [nitro, setNitro] = useState(false);
   const [reasoning, setReasoning] = useState('');
   const [sharedReasoning, setSharedReasoning] = useState(true);
@@ -366,6 +367,26 @@ export function FixturesView({ app, run, onStarted, onPools }: FixturesProps) {
   const provider = providers.find((item) => item.id === providerId) ?? null;
   const curated = Boolean(provider && provider.models.length > 0);
   const maxModels = mode === 'match' ? 2 : mode === 'draft' ? Math.min(8, board?.maxEntrants ?? 8) : 8;
+  const draftWeeks = models.length < 2 ? 7 : models.length % 2 === 0 ? models.length - 1 : models.length;
+  const tradeWindowOptions = [
+    {
+      value: 'default',
+      label: 'Mid-season free agency (default)',
+      description: 'Opens after week 3, or the final round-robin week in a shorter league.',
+    },
+    {
+      value: 'off',
+      label: 'Locked rosters',
+      description: 'Keep draft-night rosters for the whole season.',
+    },
+    ...Array.from({ length: draftWeeks }, (_, index) => index + 1)
+      .filter((week) => week !== 3)
+      .map((week) => ({
+        value: String(week),
+        label: `Free agency after week ${week}`,
+        description: 'Lowest seed chooses first; each coach may make up to six free-agent swaps.',
+      })),
+  ];
   const teamsMode = mode === 'match' || (mode === 'tournament' && teamSource === 'custom');
   const lineupRef = useRef({ models, maxModels, mode });
   lineupRef.current = { models, maxModels, mode };
@@ -625,6 +646,9 @@ export function FixturesView({ app, run, onStarted, onPools }: FixturesProps) {
                 concurrency: Number(concurrency),
                 ...(closedSheets ? { closedSheets: true } : {}),
                 ...(sequentialWeeks ? { sequentialWeeks: true } : {}),
+                ...(tradeWindow === 'default'
+                  ? {}
+                  : { tradeWindow: tradeWindow === 'off' ? null : { afterWeek: Number(tradeWindow) } }),
               }
             : { pool, seriesPerPair: Number(series), concurrency: Number(concurrency) }),
     };
@@ -1157,6 +1181,13 @@ export function FixturesView({ app, run, onStarted, onPools }: FixturesProps) {
                   options={DRAFT_SCHEDULE_OPTIONS}
                   value={sequentialWeeks ? 'sequential' : 'parallel'}
                   onChange={(value) => setSequentialWeeks(value === 'sequential')}
+                />
+                <Dropdown
+                  id="tradeWindow"
+                  label="Roster changes"
+                  options={tradeWindowOptions}
+                  value={tradeWindow}
+                  onChange={setTradeWindow}
                 />
               </div>
             )}

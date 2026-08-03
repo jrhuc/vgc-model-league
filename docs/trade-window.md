@@ -1,8 +1,7 @@
 # Trade window (mid-season free agency)
 
-Status: specified, not implemented. Locked-roster runs remain the baseline
-format. A window run is a labeled variant; the delta between the two is the
-measurement. Do not make the window the default.
+Status: implemented and enabled by default. Locked-roster runs remain available
+as a labeled control variant; the delta between the two is the measurement.
 
 ## What this measures
 
@@ -33,6 +32,9 @@ mid-season change week. We adopt the S2 shape (single window) with the S1 cap
 (6 moves). Coach-to-coach trades do not exist here — series run in parallel
 and seats have no channel to negotiate — so the window is free agency only; a
 named deviation from the real leagues.
+A single coach-to-coach offer is also excluded: acceptance adds a second model
+decision, asymmetric failure paths, and ordering effects without enabling real
+negotiation. Free agency keeps one bounded, atomic decision per seat.
 
 ## Rules
 
@@ -121,9 +123,9 @@ K+1. `throughWeek` runs that stop at or before K never open the window.
   mid-window, completed seats' transactions are replayed from a
   `window.jsonl` decision log (same pattern as series decision replay) and
   the remaining seats run live.
-- Run config gains `trade_window: { after_week: number } | null`. Null (the
-  default) is the locked-roster baseline. The GUI run setup exposes it as an
-  opt-in labeled variant, mirroring the battle-timer treatment.
+- Run config records `trade_window: { after_week: number } | null`. New runs
+  default to week 3, clamped to the final round-robin week in shorter leagues.
+  Null selects the labeled locked-roster control. The GUI exposes both.
 - Results published from a window run carry the variant label so baseline
   and window standings are never pooled silently.
 

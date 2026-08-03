@@ -60,6 +60,9 @@ async function execute(message: RunWorkerStart): Promise<void> {
       await runDraftLeague(message.models, message.runDir, {
         ...commonOptions,
         ...(message.board === undefined ? {} : { board: message.board }),
+        ...(message.closedSheets === true ? { closedSheets: true } : {}),
+        ...(message.sequentialWeeks === true ? { sequentialWeeks: true } : {}),
+        ...(message.tradeWindow === undefined ? {} : { tradeWindow: message.tradeWindow }),
       });
     } else if (message.mode === 'tournament') {
       await runTournament(message.models, message.runDir, {

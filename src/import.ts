@@ -91,6 +91,7 @@ const LEAGUE_FILES: Array<{ key: keyof LeagueAssets; file: string }> = [
   { key: 'rosters', file: 'rosters.json' },
   { key: 'draft', file: 'draft/draft.jsonl' },
   { key: 'teambuild', file: 'teambuild/teambuild.jsonl' },
+  { key: 'window', file: 'window.json' },
 ];
 
 function writeLeagueAssets(league: ImportRequest['league'], runDir: string): string[] {
@@ -105,6 +106,10 @@ function writeLeagueAssets(league: ImportRequest['league'], runDir: string): str
       if (!Array.isArray(value)) throw new ImportError('league.rosters must be an array');
       text = `${JSON.stringify(value, null, 2)}\n`;
       if (Buffer.byteLength(text) > MAX_LOG_BYTES) throw new ImportError('league.rosters is larger than 1 MB');
+    } else if (key === 'window') {
+      if (!isRecord(value)) throw new ImportError('league.window must be an object');
+      text = `${JSON.stringify(value, null, 2)}\n`;
+      if (Buffer.byteLength(text) > MAX_LOG_BYTES) throw new ImportError('league.window is larger than 1 MB');
     } else {
       text = validateJsonl(value, `league.${key}`);
     }

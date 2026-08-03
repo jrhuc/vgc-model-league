@@ -6,7 +6,13 @@ import { completeWithDexTools } from './dex-lookups.js';
 import type { BoardInfo, DraftBoardMonView, DraftPickView } from './gui/api.js';
 import { BOARDS_DIR, defaultPsDir } from './paths.js';
 import type { ModelReasoningConfig, ReasoningLevel } from './providers.js';
-import { classifyProviderFailure, makeProvider, parseSpec, reasoningForModel, resolveSpecOverride } from './providers.js';
+import {
+  classifyProviderFailure,
+  makeProvider,
+  parseSpec,
+  reasoningForModel,
+  resolveSpecOverride,
+} from './providers.js';
 import type { Rng } from './random.js';
 import type { RecoveryGate } from './recovery.js';
 import { ShowdownReference } from './reference.js';
@@ -330,9 +336,7 @@ function replayTranscript(
     const drafter = context.order[index];
     if (drafter === undefined) throw new Error(`${file} holds more picks than the draft has slots`);
     if (row.model !== context.models[drafter]) {
-      throw new Error(
-        `${file} pick ${index + 1} belongs to ${String(row.model)}, expected ${context.models[drafter]}`,
-      );
+      throw new Error(`${file} pick ${index + 1} belongs to ${String(row.model)}, expected ${context.models[drafter]}`);
     }
     const mon = context.board.mons.find((entry) => entry.id === row.mon);
     if (!mon) {
@@ -385,11 +389,16 @@ function slug(value: string): string {
   );
 }
 
-function boardTable(board: DraftBoard, psDir: string): string {
+export function draftBoardTable(
+  board: DraftBoard,
+  psDir: string,
+  mons: readonly DraftBoardMon[] = board.mons,
+  heading: string = DRAFT_PROMPT_POLICY.boardHeading,
+): string {
   const { Dex } = loadShowdown(psDir);
   const dex = Dex.mod(Dex.formats.get(board.format).mod || 'base');
-  const lines: string[] = [DRAFT_PROMPT_POLICY.boardHeading];
-  for (const mon of [...board.mons].sort((a, b) => b.cost - a.cost || a.name.localeCompare(b.name))) {
+  const lines: string[] = [heading];
+  for (const mon of [...mons].sort((a, b) => b.cost - a.cost || a.name.localeCompare(b.name))) {
     const species = dex.species.get(mon.forme ?? mon.species);
     const stats = species.baseStats;
     const abilities = Object.values(species.abilities ?? {})
@@ -411,7 +420,7 @@ function draftSystemPrompt(board: DraftBoard, models: string[], drafter: number,
     coaches: String(models.length),
     picks: String(board.picks),
     budget: String(board.budget),
-    board: boardTable(board, psDir),
+    board: draftBoardTable(board, psDir),
   };
   return DRAFT_PROMPT_POLICY.systemTemplate
     .map((line) =>
@@ -519,7 +528,8 @@ export function parsePick(
     .trim()
     .slice(0, 60);
   if (!state.rosters[drafter]!.length && !teamName) return '"team_name" is required with your first pick';
-  const notebook = typeof record.notebook === 'string' ? clip(record.notebook.trim(), DRAFT_PROMPT_POLICY.notebookLimit) : '';
+  const notebook =
+    typeof record.notebook === 'string' ? clip(record.notebook.trim(), DRAFT_PROMPT_POLICY.notebookLimit) : '';
   if (!notebook) return '"notebook" must be a concise full roster plan to carry to your next pick';
   return {
     mon,

@@ -8,6 +8,7 @@ import { Sprite } from '../components/sprite';
 const PHASE_LABELS: Record<DraftView['phase'], string> = {
   draft: 'Drafting',
   roundrobin: 'Round robin',
+  window: 'Free agency',
   playoffs: 'Playoffs',
   done: 'Complete',
 };
@@ -68,7 +69,10 @@ export function DraftRoomView({ run }: { run: RunSnapshot }) {
   const draft = run.draft!;
   const { board: fullBoard, error: boardError } = useBoard(draft.boardId);
   const byId = useMemo(() => new Map((fullBoard?.mons ?? []).map((mon) => [mon.id, mon] as const)), [fullBoard]);
-  const owners = useMemo(() => new Map(draft.picks.map((pick) => [pick.mon, pick.entrant] as const)), [draft.picks]);
+  const owners = useMemo(
+    () => new Map(draft.rosters.flatMap((roster, entrant) => roster.map((id) => [id, entrant] as const))),
+    [draft.rosters],
+  );
   const pickNumbers = useMemo(() => new Map(draft.picks.map((pick) => [pick.mon, pick.pick] as const)), [draft.picks]);
 
   const recent = [...draft.picks].reverse();
@@ -81,7 +85,11 @@ export function DraftRoomView({ run }: { run: RunSnapshot }) {
             <h2>Franchises</h2>
             <p>
               Board {draft.boardId} · {draft.budget} points · {draft.picksPerEntrant} picks each
-              {draft.phase === 'roundrobin' ? ` · week ${draft.week} of ${draft.weeks}` : ''}
+              {draft.phase === 'roundrobin'
+                ? ` · week ${draft.week} of ${draft.weeks}`
+                : draft.phase === 'window'
+                  ? ` · after week ${draft.week}`
+                  : ''}
             </p>
           </div>
           <span class="phase-pill">{PHASE_LABELS[draft.phase]}</span>

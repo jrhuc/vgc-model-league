@@ -9,10 +9,12 @@ export interface SeriesRecord extends JsonObject {
   scaffold?: string;
   draft_scaffold?: string;
   teambuild_scaffold?: string;
+  window_scaffold?: string;
   run_id?: string;
   series_index?: number;
   pool?: string;
   timer_scale?: TimerScale;
+  trade_window?: { after_week: number } | null;
   contributor?: { provider: 'github'; subject: string; login: string };
   players: Record<Pid, string>;
   winner?: string | null;

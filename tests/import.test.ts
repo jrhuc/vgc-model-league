@@ -149,15 +149,22 @@ test('importSeries stores league assets, even for rows it already holds', () => 
       rosters: [{ model: 'random', team_name: 'Testers', roster: [{ id: 'pikachu', cost: 1 }] }],
       draft: '{"pick":1,"mon":"pikachu","rationale":"volt tackle"}',
       teambuild: '{"seriesIndex":1,"brought":["pikachu"]}',
+      window: { after_week: 1, decisions: [], rosters: [] },
     };
     const backfill = importSeries({ row: bundleRow({ mode: 'draft', pool: undefined }), league }, store.paths);
     assert.equal(backfill.duplicate, true);
-    assert.deepEqual(backfill.league, ['rosters.json', 'draft/draft.jsonl', 'teambuild/teambuild.jsonl']);
+    assert.deepEqual(backfill.league, [
+      'rosters.json',
+      'draft/draft.jsonl',
+      'teambuild/teambuild.jsonl',
+      'window.json',
+    ]);
 
     const runDir = path.join(store.paths.runsDir, '20260725T000000.000000Z-abcd1234');
     const rosters = JSON.parse(fs.readFileSync(path.join(runDir, 'rosters.json'), 'utf8')) as unknown[];
     assert.equal((rosters[0] as { team_name: string }).team_name, 'Testers');
     assert.match(fs.readFileSync(path.join(runDir, 'draft', 'draft.jsonl'), 'utf8'), /volt tackle/);
+    assert.equal(JSON.parse(fs.readFileSync(path.join(runDir, 'window.json'), 'utf8')).after_week, 1);
 
     const repeat = importSeries({ row: bundleRow({ mode: 'draft', pool: undefined }), league }, store.paths);
     assert.deepEqual(repeat.league, [], 'assets already on disk are left untouched');
@@ -173,6 +180,17 @@ test('importSeries stores league assets, even for rows it already holds', () => 
           store.paths,
         ),
       /must be an array/,
+    );
+    assert.throws(
+      () =>
+        importSeries(
+          {
+            row: bundleRow({ series_id: 'ddddeeeeffff' }),
+            league: { window: [] as unknown as Record<string, unknown> },
+          },
+          store.paths,
+        ),
+      /must be an object/,
     );
   } finally {
     store.dispose();

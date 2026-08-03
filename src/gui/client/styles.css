@@ -630,6 +630,7 @@ textarea { min-height: 170px; resize: vertical; font: 12px/1.5 var(--mono); }
 .league-card-meta { color: var(--ink-soft); font: 700 10px/1 var(--mono); letter-spacing: .04em; text-transform: uppercase; }
 .phase-pill.complete { color: var(--green); border-color: var(--green); }
 .phase-pill.playoffs { color: var(--blue); border-color: var(--blue); }
+.phase-pill.window { color: #9a6500; border-color: var(--yellow); background: #fff8d9; }
 
 .franchise-card-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; margin-bottom: 26px; }
 .franchise-card { display: flex; flex-direction: column; gap: 10px; padding: 16px 18px; }

@@ -63,8 +63,16 @@ every matchup built blind to the other round-robin results. `--sequential-weeks`
 serializes the schedule without adding cross-match coaching context;
 `--through-week <n>` stops a sequential league after that round-robin week. Use
 `draft --resume <run-dir>` to continue the stored league. Resume uses the
-stored models, board, seed, rosters, schedule mode, completed results, and
-private playoff coaching context.
+stored models, board, seed, rosters, schedule mode, trade-window state,
+completed results, and private playoff coaching context.
+
+Draft leagues open a free-agent window after week 3 by default, or after the
+final round-robin week when a shorter league has fewer than three weeks.
+Lowest seed chooses first; each coach atomically submits zero to six
+drop-and-add swaps from the undrafted board while keeping the original roster
+size and budget. Earlier drops become available to later coaches. Use
+`--trade-window <week>` to move the barrier or `--trade-window off` for the
+locked-roster control. Coach-to-coach offers are not part of this mode.
 
 The Champions Bo3 formats publish open team sheets at team preview: both
 models read the opposing moves, items, abilities, and stat alignments, but

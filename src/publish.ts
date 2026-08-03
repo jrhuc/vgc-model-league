@@ -96,6 +96,13 @@ function readLeagueAssets(runsDir: string, runId: string): ImportRequest['league
   if (draft !== undefined) league.draft = draft;
   const teambuild = read(path.join('teambuild', 'teambuild.jsonl'));
   if (teambuild !== undefined) league.teambuild = teambuild;
+  const window = read('window.json');
+  if (window !== undefined) {
+    const parsed: unknown = JSON.parse(window);
+    if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
+      league.window = parsed as Record<string, unknown>;
+    }
+  }
   return Object.keys(league).length > 0 ? league : undefined;
 }
 

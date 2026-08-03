@@ -20,6 +20,7 @@ import type {
   LeagueSeriesView,
   LeaguesResponse,
   LeagueTeambuildView,
+  LeagueTradeWindowView,
   LeagueUsageView,
   ModelProfileResponse,
   ModeRecordView,
@@ -31,6 +32,7 @@ import { BattleLog } from './gui/battlelog.js';
 import { modelKey, type SeriesRecord, TEST_POOL } from './records.js';
 import { loadShowdown } from './showdown.js';
 import { BattleState, type MonState } from './state.js';
+import { readCurrentRosterArtifact, readTradeWindow } from './trade-window.js';
 import type { Pid } from './types.js';
 import { afterColon } from './value.js';
 
@@ -114,7 +116,7 @@ export function snapshotBattle(
 
 export function isRunLive(runsDir: string, runId: string): boolean {
   const status = readRunJson(runsDir, runId, 'status.json') as Record<string, unknown> | null;
-  if (!status || status.state !== 'running' || typeof status.pid !== 'number') return false;
+  if (status?.state !== 'running' || typeof status.pid !== 'number') return false;
   try {
     process.kill(status.pid, 0);
     return true;
@@ -388,6 +390,54 @@ function preSeasonPhase(runsDir: string, runId: string): 'drafting' | 'building'
   const builds = readRunLines(runsDir, runId, 'teambuild', 'teambuild.jsonl');
   return builds.length > 0 ? 'building' : 'drafting';
 }
+function leaguePhase(
+  runsDir: string,
+  runId: string,
+  rows: SeriesRecord[],
+  progress: LeagueProgress,
+): 'drafting' | 'building' | 'roundrobin' | 'window' | 'playoffs' | 'complete' {
+  if (
+    fs.existsSync(path.join(runsDir, runId, 'window.jsonl')) &&
+    !fs.existsSync(path.join(runsDir, runId, 'window.json'))
+  ) {
+    return 'window';
+  }
+  return rows.length === 0 ? preSeasonPhase(runsDir, runId) : progress.phase;
+}
+function tradeWindowAfterWeek(runsDir: string, runId: string): number | null {
+  const config = readRunJson(runsDir, runId, 'config.json') as Record<string, unknown> | null;
+  const window = config?.trade_window;
+  if (typeof window !== 'object' || window === null || Array.isArray(window)) return null;
+  const afterWeek = Number((window as Record<string, unknown>).after_week);
+  return Number.isSafeInteger(afterWeek) && afterWeek > 0 ? afterWeek : null;
+}
+
+function tradeWindowView(runsDir: string, runId: string): LeagueTradeWindowView | null {
+  const afterWeek = tradeWindowAfterWeek(runsDir, runId);
+  if (afterWeek === null) return null;
+  const runDir = path.join(runsDir, runId);
+  const artifact = readTradeWindow(runDir);
+  const decisions = artifact?.decisions ?? readRunLines(runsDir, runId, 'window.jsonl');
+  return {
+    afterWeek,
+    complete: Boolean(artifact),
+    decisions: decisions.map((value) => {
+      const row = value as Record<string, unknown>;
+      return {
+        entrant: count(row.entrant),
+        swaps: Array.isArray(row.swaps)
+          ? row.swaps.flatMap((swap) => {
+              if (typeof swap !== 'object' || swap === null || Array.isArray(swap)) return [];
+              const pair = swap as Record<string, unknown>;
+              return [{ drop: String(pair.drop ?? ''), add: String(pair.add ?? '') }];
+            })
+          : [],
+        reasoning: typeof row.reasoning === 'string' ? row.reasoning : '',
+        fallback: row.fallback === true,
+      };
+    }),
+  };
+}
 
 export function buildLeagues(allRows: SeriesRecord[], runsDir: string): LeaguesResponse {
   const leagues: LeagueCardView[] = [];
@@ -406,7 +456,7 @@ export function buildLeagues(allRows: SeriesRecord[], runsDir: string): LeaguesR
       .sort();
     const status = readRunJson(runsDir, runId, 'status.json') as Record<string, unknown> | null;
     const started = typeof status?.start_time === 'string' ? status.start_time : '';
-    const phase = rows.length === 0 ? preSeasonPhase(runsDir, runId) : progress.phase;
+    const phase = leaguePhase(runsDir, runId, rows, progress);
     leagues.push({
       runId,
       when: timestamps[0] ?? started,
@@ -419,6 +469,7 @@ export function buildLeagues(allRows: SeriesRecord[], runsDir: string): LeaguesR
       phase,
       week: progress.week,
       champion: progress.champion,
+      tradeWindowAfterWeek: tradeWindowAfterWeek(runsDir, runId),
       live,
       picks: phase === 'drafting' ? readRunLines(runsDir, runId, 'draft', 'draft.jsonl').length : null,
     });
@@ -435,8 +486,10 @@ interface RosterEntry {
   roster: LeagueRosterSlotView[];
 }
 
-function readRosters(runsDir: string, runId: string, identity: LeagueIdentity): RosterEntry[] {
-  const stored = readRunJson(runsDir, runId, 'rosters.json');
+function readRosters(runsDir: string, runId: string, identity: LeagueIdentity, current = true): RosterEntry[] {
+  const stored = current
+    ? readCurrentRosterArtifact(path.join(runsDir, runId))
+    : readRunJson(runsDir, runId, 'rosters.json');
   const picks = readRunLines(runsDir, runId, 'draft', 'draft.jsonl');
   const pickByMon = new Map<string, Record<string, unknown>>();
   for (const pick of picks) pickByMon.set(`${modelKey(String(pick.model ?? ''))}:${pick.mon}`, pick);
@@ -539,6 +592,7 @@ export function buildLeague(allRows: SeriesRecord[], runsDir: string, runId: str
   if (identity.models.length < 2) return null;
   const progress = leagueProgress(rows, identity);
   const rosters = readRosters(runsDir, runId, identity);
+  const draftRosters = readRosters(runsDir, runId, identity, false);
 
   const roundRobinRecords: LeagueRecordView[] = identity.models.map(() => ({ w: 0, l: 0, gw: 0, gl: 0 }));
   const overallRecords: LeagueRecordView[] = identity.models.map(() => ({ w: 0, l: 0, gw: 0, gl: 0 }));
@@ -672,6 +726,7 @@ export function buildLeague(allRows: SeriesRecord[], runsDir: string, runId: str
     roundRobinRecord: roundRobinRecords[entrant]!,
     finish: finishLabel(entrant, progress, rankOf.get(entrant) ?? entrant + 1, playoffsSeen),
     roster: entry.roster,
+    draftRoster: draftRosters[entrant]?.roster ?? entry.roster,
     stats: statsAgg[entrant]!,
   }));
 
@@ -682,7 +737,9 @@ export function buildLeague(allRows: SeriesRecord[], runsDir: string, runId: str
     const key = `${entrant}:${id}`;
     let usage = usageMap.get(key);
     if (!usage) {
-      const slot = rosters[entrant]?.roster.find((mon) => mon.id === id);
+      const slot =
+        rosters[entrant]?.roster.find((mon) => mon.id === id) ??
+        draftRosters[entrant]?.roster.find((mon) => mon.id === id);
       usage = {
         entrant,
         id,
@@ -799,11 +856,12 @@ export function buildLeague(allRows: SeriesRecord[], runsDir: string, runId: str
     budget: sample ? sample.spent + sample.budgetLeft : null,
     picksPerEntrant: rosters.find((entry) => entry.roster.length > 0)?.roster.length ?? null,
     weeks: identity.weeks,
-    phase: rows.length === 0 ? preSeasonPhase(runsDir, runId) : progress.phase,
+    phase: leaguePhase(runsDir, runId, rows, progress),
     week: progress.week,
     champion: progress.champion,
     live,
     liveSeries: live ? liveSeriesViews(runsDir, runId, rows, identity) : [],
+    tradeWindow: tradeWindowView(runsDir, runId),
     franchises,
     series,
     teambuilds,
