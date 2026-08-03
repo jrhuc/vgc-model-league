@@ -380,7 +380,7 @@ function GamePage({
             </button>{' '}
             / {series ? seriesLabel(series, maxPlayoffRound) : `Series ${seriesIndex + 1}`}
           </p>
-          <h1>
+          <h1 class="matchup-heading">
             {view.teamNames[0]} vs {view.teamNames[1]}.
           </h1>
         </div>
