@@ -119,6 +119,20 @@ test('active matchups exclude same-side targets and handle primal weather', () =
   );
 });
 
+test('learnset lookup lists format-legal moves and excludes folklore', () => {
+  const reference = new ShowdownReference('gen9championsvgc2026regmb');
+  const pikachu = reference.lookup('lookup_learnset', { name: 'pikachu' });
+  assert.match(pikachu, /^- Learnset Pikachu \(\d+ legal moves\): /);
+  assert.match(pikachu, /Fake Out/);
+  assert.doesNotMatch(pikachu, /Follow Me/);
+  const gholdengo = reference.lookup('lookup_learnset', { name: 'gholdengo' });
+  assert.match(gholdengo, /Make It Rain/);
+  assert.doesNotMatch(gholdengo, /Thunder Wave/);
+  assert.match(reference.lookup('lookup_learnset', { name: 'garchomp-mega' }), /Earthquake/);
+  assert.equal(reference.lookup('lookup_learnset', { name: '' }), 'Species name is required.');
+  assert.match(reference.lookup('lookup_learnset', { name: 'notreal' }), /No species data/);
+});
+
 test('lookup tools return one entry and reject missing data', () => {
   const reference = new ShowdownReference('gen9championsvgc2026regmb');
   assert.match(reference.lookup('lookup_move', { name: 'Earthquake' }), /Earthquake/);
@@ -268,6 +282,43 @@ test('damage estimates accept percentages only, reject zero exact stats, and lab
   assert.equal('attacker_max_hp' in damageProperties, false);
   assert.equal('defender_hp' in damageProperties, false);
   assert.equal('defender_max_hp' in damageProperties, false);
+});
+
+test('species lookups resolve board display names the dex does not alias', () => {
+  const reference = new ShowdownReference('gen9championsvgc2026regmb');
+  assert.match(reference.lookup('lookup_species', { name: 'Basculegion-Male' }), /Species Basculegion:/);
+  assert.match(reference.lookup('lookup_species', { name: 'Basculegion-Female' }), /Species Basculegion-F:/);
+  assert.match(reference.lookup('lookup_species', { name: 'Meowstic-Male' }), /Species Meowstic:/);
+  assert.match(reference.lookup('lookup_species', { name: 'Mega Raichu Y' }), /Species Raichu-Mega-Y:/);
+  assert.match(reference.lookup('lookup_species', { name: 'Mega Meowstic' }), /Species Meowstic-M-Mega:/);
+  assert.match(reference.lookup('lookup_species', { name: 'Paldean Tauros' }), /Species Tauros-Paldea-Combat:/);
+  assert.match(reference.lookup('lookup_species', { name: 'Paldean Tauros Aqua' }), /Species Tauros-Paldea-Aqua:/);
+  assert.match(reference.lookup('lookup_learnset', { name: 'Basculegion-Male' }), /Learnset Basculegion \(/);
+  assert.match(
+    reference.lookup('calculate_stats', { species: 'Basculegion-Male', nature: 'Jolly', evs: { atk: 32, spe: 32 } }),
+    /^Basculegion \(Jolly/,
+  );
+});
+
+test('damage estimates reject implausible supplied stats but allow stage-boosted values', () => {
+  const reference = new ShowdownReference('gen9championsvgc2026regmb');
+  const args = { attacker: 'Basculegion', defender: 'Gengar-Mega', move: 'Last Respects' };
+  assert.match(
+    reference.lookup('estimate_damage', { ...args, defender_stats: { hp: 1, def: 1 } }),
+    /defender_stats\.def 1 is implausible for Gengar-Mega: legal raw def spans \d+-\d+/,
+  );
+  assert.match(
+    reference.lookup('estimate_damage', { ...args, defender_stats: { hp: 1, def: 110 } }),
+    /defender_stats\.hp 1 is outside Gengar-Mega's legal HP range \d+-\d+/,
+  );
+  assert.match(
+    reference.lookup('estimate_damage', { ...args, attacker_stats: { atk: 9999 } }),
+    /attacker_stats\.atk 9999 is implausible for Basculegion/,
+  );
+  assert.match(
+    reference.lookup('estimate_damage', { ...args, attacker_stats: { atk: 328 } }),
+    /Last Respects \(Ghost Physical BP 50\) into Gengar-Mega: \d+/,
+  );
 });
 
 test('compact reference omits ability essays and full move text', () => {

@@ -39,13 +39,8 @@ function request(activeCount = 1): BattleRequest {
   };
 }
 
-const decision = (
-  choices: number[],
-  rationale = 'test choice',
-  notebook = '',
-  threats: string[] = ['threat'],
-  candidates: string[] = ['candidate'],
-) => JSON.stringify({ choices, rationale, notebook, threats, candidates });
+const decision = (choices: number[], rationale = 'test choice', notebook = '') =>
+  JSON.stringify({ choices, rationale, notebook });
 
 const emptyStats = {
   decisions: 0,
@@ -68,8 +63,6 @@ const emptyStats = {
   abandoned_decisions: 0,
   parse_failures: 0,
   provider_retries: 0,
-  threat_turns: 0,
-  threat_hits: 0,
 };
 const oneMoveStats = { ...emptyStats, decisions: 1, move_selections: 1 };
 
@@ -105,6 +98,27 @@ test('a decision written only in the reasoning channel is salvaged without a ret
   assert.equal(provider.calls.length, 1, 'the answer already paid for is used instead of a retry');
   assert.equal(decisions[0]!.fallback, false);
   assert.equal(decisions[0]!.rationale, 'salvaged from reasoning');
+});
+
+test('primed replay rows answer requests without the provider until the recording diverges', async () => {
+  const provider = new ScriptedProvider([decision([1], 'live again')]);
+  const decisions: Record<string, unknown>[] = [];
+  const engine = new LLMEngine('p1', 'scripted', { provider, decisionLog: decisions });
+  engine.primeReplay([
+    { kind: 'decision', game_number: 1, turn: 1, phase: 'turn', action: 'move 1', notebook: 'carried plan' },
+    { kind: 'decision', game_number: 1, turn: 99, phase: 'turn', action: 'move 1' },
+  ]);
+  assert.equal(await engine.act(request(), { povLines: ['|turn|1'] }), 'move 1');
+  assert.equal(provider.calls.length, 0, 'a replayed decision costs no provider call');
+  assert.equal(decisions.length, 0, 'a replayed decision is not logged again');
+  assert.equal(engine.coachingNote(), 'carried plan');
+  assert.equal(await engine.act(request(), { povLines: ['|turn|2'] }), 'move 2');
+  assert.equal(provider.calls.length, 1, 'a divergent row abandons the queue and decides live');
+  assert.match(
+    provider.calls[0]!.messages[0]!.content as string,
+    /Decision: move 1/,
+    'the live prompt transcript includes the replayed decision',
+  );
 });
 
 test('reasoning with no parseable decision still follows the empty-response retry path', async () => {
@@ -176,22 +190,6 @@ test('Gemini-like nested candidate objects preserve the complete top-level decis
   assert.equal(decisions[0]!.parse_failures, 0);
   assert.equal(decisions[0]!.rationale, 'use the top-level choice');
   assert.equal(String(decisions[0]!.notebook).length, 1600);
-  assert.deepEqual(decisions[0]!.threats, ['direct threat', 'second threat', 'third threat']);
-  assert.deepEqual(decisions[0]!.candidates, [longCandidate.slice(0, 240), 'second nested line', 'third nested line']);
-});
-
-test('missing or malformed optional decision lists default to empty', async () => {
-  const provider = new ScriptedProvider([
-    JSON.stringify({ choices: [1], rationale: 'complete core decision', notebook: '', threats: { unexpected: true } }),
-  ]);
-  const decisions: Record<string, unknown>[] = [];
-  const engine = new LLMEngine('p1', 'scripted', { provider, decisionLog: decisions });
-
-  assert.equal(await engine.act(request(), { povLines: [] }), 'move 2');
-  assert.equal(provider.calls.length, 1);
-  assert.equal(decisions[0]!.fallback, false);
-  assert.deepEqual(decisions[0]!.threats, []);
-  assert.deepEqual(decisions[0]!.candidates, []);
 });
 
 test('timer context bounds the provider request', async () => {
@@ -846,6 +844,28 @@ test('readable decisions, technical traces, and post-game reflections stay separ
   });
 });
 
+test('the deciding game reflects on the finished series instead of a next game', async () => {
+  const provider = new ScriptedProvider([
+    JSON.stringify({
+      summary: 'Lost the series to superior speed control.',
+      adjustment: 'Bring the Tailwind setter in a rematch.',
+      notebook: 'Opponent leans on Tailwind turns 1-2.',
+    }),
+  ]);
+  const decisions: Record<string, unknown>[] = [];
+  const engine = new LLMEngine('p2', 'scripted', { provider, decisionLog: decisions });
+  await engine.endGame({
+    gameNumber: 2,
+    outcome: { winner: 'opponent', won: false, turns: 9 },
+    seriesScore: { p1: 2, p2: 0 },
+  });
+  assert.equal(decisions[0]!.kind, 'game_reflection');
+  assert.equal(decisions[0]!.series_over, true);
+  assert.match(provider.calls[0]!.system, /series that is now over/);
+  assert.match(provider.calls[0]!.system, /future series/);
+  assert.match(String(provider.calls[0]!.messages[0]!.content), /The series is over: you lost it 0-2 \(you are p2\)\./);
+});
+
 test('hard quota failures during reflection stop the series', async () => {
   const decisions: Record<string, unknown>[] = [];
   const engine = new LLMEngine('p1', 'google:gemini-test', {
@@ -1048,22 +1068,6 @@ test('engines that commit conflicting choices record the substitution', async ()
   assert.deepEqual(engine.committed?.choices, [0, 0]);
   assert.deepEqual(engine.committed?.substitution?.requested, [1, 1]);
   assert.match(String(engine.committed?.substitution?.reason), /only one Pokémon can Mega Evolve/);
-});
-
-test('threat predictions are scored against the next revealed foe action', async () => {
-  const provider = new ScriptedProvider([
-    decision([0], 'x', 'n', ['Garchomp will click Rock Slide into our left slot']),
-    decision([0], 'x', 'n', ['expecting a Tailwind turn']),
-    decision([0], 'x', 'n'),
-  ]);
-  const engine = new LLMEngine('p1', 'scripted', { provider, decisionLog: [] });
-  engine.beginGame({ gameId: 'game-1', gameNumber: 1, seriesId: 'series-1' });
-  await engine.act(request(), { povLines: ['|turn|1'] });
-  await engine.act(request(), { povLines: ['|move|p2a: Garchomp|Rock Slide|p1a: Mon1', '|turn|2'] });
-  await engine.act(request(), { povLines: ['|move|p2a: Garchomp|Earthquake|p1a: Mon1', '|turn|3'] });
-  const stats = engine.decisionStats();
-  assert.equal(stats.threat_turns, 2);
-  assert.equal(stats.threat_hits, 1);
 });
 
 test('abandoned decisions cannot mutate memory or statistics', async () => {

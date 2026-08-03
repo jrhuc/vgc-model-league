@@ -312,6 +312,14 @@ export function classifyProviderFailure(error: unknown, spec = 'provider'): Prov
       pausable: true,
     };
   }
+  if (status === 402) {
+    return {
+      kind: 'quota',
+      summary: `${label} API credits are exhausted (402).`,
+      terminal: true,
+      pausable: true,
+    };
+  }
   if (error instanceof TypeError) {
     return { kind: 'network', summary: `${label} API could not be reached.`, terminal: false, pausable: true };
   }
@@ -504,10 +512,31 @@ function markCacheBreakpoints(body: JsonObject): void {
 
 const ANTHROPIC_CACHE_OPTIONS = { anthropic: { cacheControl: { type: 'ephemeral' } } };
 
+/** Anthropic drops replayed thinking blocks from requests that do not enable thinking, which desyncs
+ * prompt-cache prefix hashing and silently disables cache reads and writes for the whole conversation. */
+function withoutReasoningParts(messages: ModelMessage[]): ModelMessage[] {
+  return messages.flatMap((message) => {
+    if (message.role !== 'assistant' || !Array.isArray(message.content)) return [message];
+    const content = message.content.filter((part) => part.type !== 'reasoning');
+    return content.length ? [{ ...message, content }] : [];
+  });
+}
+
+/** The ai package merges consecutive tool messages into one, keeping only the first message's
+ * providerOptions, so a message-level breakpoint on the last tool result silently vanishes whenever
+ * a round made more than one tool call; content parts survive the merge, so mark the last part. */
 function withCacheBreakpoint(messages: ModelMessage[]): ModelMessage[] {
   const marked = [...messages];
   const last = marked[marked.length - 1];
-  if (last) marked[marked.length - 1] = { ...last, providerOptions: ANTHROPIC_CACHE_OPTIONS } as ModelMessage;
+  if (!last) return marked;
+  if (Array.isArray(last.content) && last.content.length) {
+    const parts = [...last.content];
+    const tail = parts[parts.length - 1]!;
+    parts[parts.length - 1] = { ...tail, providerOptions: ANTHROPIC_CACHE_OPTIONS } as typeof tail;
+    marked[marked.length - 1] = { ...last, content: parts } as ModelMessage;
+  } else {
+    marked[marked.length - 1] = { ...last, providerOptions: ANTHROPIC_CACHE_OPTIONS } as ModelMessage;
+  }
   return marked;
 }
 
@@ -705,7 +734,11 @@ export class SdkProvider implements Provider {
               : system,
           messages:
             this.spec.provider === 'anthropic'
-              ? withCacheBreakpoint(convertMessages(messages))
+              ? withCacheBreakpoint(
+                  this.reasoning === undefined || this.reasoning === 'off'
+                    ? withoutReasoningParts(convertMessages(messages))
+                    : convertMessages(messages),
+                )
               : convertMessages(messages),
           ...(tools && !suppressTools ? { tools } : {}),
           ...(tools && !suppressTools && sendToolChoice ? { toolChoice: options.toolChoice } : {}),

@@ -10,10 +10,12 @@ export interface RecoveryPause {
 
 type RecoveryListener = (pause: RecoveryPause | undefined) => void;
 
-/** Quota and rate-limit failures drain a budget every seat on that provider shares, so they pause the
- * whole provider; any other failure is one seat's trouble and pauses only that model. */
+/** Quota failures drain a credit balance every seat on that provider shares, so they pause the whole
+ * provider. Rate limits are per-model in practice (one gateway upstream saturates while sibling seats
+ * stay clean), and a model-scoped pause still self-corrects when a limit is key-wide — every model
+ * that trips it pauses itself — so they pause only the model that failed. */
 export function pauseScope(model: string, kind: ProviderFailureKind): string {
-  return kind === 'quota' || kind === 'rate_limit' ? (model.split(':', 1)[0] ?? model) : model;
+  return kind === 'quota' ? (model.split(':', 1)[0] ?? model) : model;
 }
 
 export class RecoveryGate {

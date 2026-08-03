@@ -695,6 +695,20 @@ button.game-chip:hover { outline: 2px solid var(--blue); outline-offset: 1px; }
 .game-decision > p { margin: 0; padding: 2px 12px 10px; color: var(--ink-soft); }
 .game-decision-notebook { border-top: 1px dashed var(--line); font-style: italic; }
 
+.reflection-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 14px; }
+.reflection-card { border: 1px solid var(--line-strong); border-top-width: 4px; background: var(--panel, white); padding: 12px 14px; font: 500 12px/1.55 var(--mono); }
+.reflection-card.side-0 { border-top-color: var(--navy); }
+.reflection-card.side-1 { border-top-color: var(--blue); }
+.reflection-card header { display: flex; align-items: baseline; gap: 10px; margin-bottom: 8px; }
+.reflection-card header b { font-size: 12px; }
+.reflection-card p { margin: 0 0 8px; color: var(--ink-soft); }
+.reflection-result { font: 800 10px/1 var(--mono); letter-spacing: .05em; text-transform: uppercase; color: var(--ink-soft); }
+.reflection-result.won { color: var(--green); }
+.reflection-result.lost { color: var(--red); }
+.reflection-adjustment { border-left: 3px solid var(--line-strong); padding-left: 10px; }
+.reflection-card details summary { cursor: pointer; color: var(--blue); font: 800 10px/1.6 var(--mono); letter-spacing: .05em; text-transform: uppercase; }
+.reflection-card details p { margin-top: 6px; font-style: italic; }
+
 .usage-strip { display: flex; flex-wrap: wrap; gap: 8px 22px; padding: 0 24px 12px; font: 500 11px/1.4 var(--mono); color: var(--ink-soft); }
 .usage-strip b { color: var(--ink); }
 .usage-scroll { max-height: 430px; overflow-y: auto; }

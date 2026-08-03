@@ -137,7 +137,11 @@ test('gui serves the built app shell and setup state', async () => {
     assert.ok(pools.some((pool) => pool.name === 'test' && pool.teamCount >= 2));
     assert.equal((data.reasoningLevels as string[]).length, 7);
     const providers = data.providers as Array<Record<string, unknown>>;
-    assert.ok(providers.some((provider) => provider.id === 'anthropic'));
+    assert.ok(providers.some((provider) => provider.id === 'openrouter'));
+    assert.ok(
+      providers.every((provider) => provider.id !== 'anthropic'),
+      'direct Anthropic seats must never be offered by the GUI',
+    );
     assert.ok(providers.every((provider) => !('envKey' in provider) && !('keyPresent' in provider)));
     const meta = providers.find((provider) => provider.id === 'meta');
     assert.deepEqual(meta?.models, [
@@ -156,10 +160,13 @@ test('gui serves the built app shell and setup state', async () => {
     assert.equal((await fetch(`${base}readyz`)).status, 200);
     const missing = await fetch(`${base}api/nothing`);
     assert.equal(missing.status, 404);
-    const serverKeyCatalog = await fetch(`${base}api/models?provider=anthropic`);
+    const serverKeyCatalog = await fetch(`${base}api/models?provider=openai`);
     assert.equal(serverKeyCatalog.status, 404);
-    const browserKeyRequired = await apiJson(`${base}api/models`, { provider: 'anthropic', apiKey: '' });
+    const browserKeyRequired = await apiJson(`${base}api/models`, { provider: 'openai', apiKey: '' });
     assert.equal(browserKeyRequired.status, 400);
+    const disabledProvider = await apiJson(`${base}api/models`, { provider: 'anthropic', apiKey: 'browser-key' });
+    assert.equal(disabledProvider.status, 400);
+    assert.match(String(disabledProvider.data.error), /openrouter:anthropic/);
   } finally {
     gui.close();
   }
@@ -339,8 +346,8 @@ test('gui validates teambuilder pastes and creates immutable pools', async () =>
 });
 
 test('gui requires browser credentials and never exposes server keys', async () => {
-  const previous = process.env.ANTHROPIC_API_KEY;
-  process.env.ANTHROPIC_API_KEY = 'server-secret-must-not-be-used';
+  const previous = process.env.OPENAI_API_KEY;
+  process.env.OPENAI_API_KEY = 'server-secret-must-not-be-used';
   let receivedKeys: Record<string, string> | undefined;
   const gui = new GuiServer({
     runsDir: RUNS_SCRATCH,
@@ -351,8 +358,16 @@ test('gui requires browser credentials and never exposes server keys', async () 
   });
   const base = await gui.listen(0);
   try {
-    const missing = await apiJson(`${base}api/run`, {
+    const disabled = await apiJson(`${base}api/run`, {
       models: ['anthropic:test-model', 'random'],
+      pool: 'test',
+      apiKeys: { 'anthropic:test-model': 'browser-run-secret' },
+    });
+    assert.equal(disabled.status, 400);
+    assert.match(String(disabled.data.error), /openrouter:anthropic/);
+
+    const missing = await apiJson(`${base}api/run`, {
+      models: ['openai:test-model', 'random'],
       pool: 'test',
     });
     assert.equal(missing.status, 400);
@@ -360,12 +375,12 @@ test('gui requires browser credentials and never exposes server keys', async () 
     assert.doesNotMatch(JSON.stringify(missing.data), /server-secret/);
 
     const started = await apiJson(`${base}api/run`, {
-      models: ['anthropic:test-model', 'random'],
+      models: ['openai:test-model', 'random'],
       pool: 'test',
-      apiKeys: { 'anthropic:test-model': 'browser-run-secret' },
+      apiKeys: { 'openai:test-model': 'browser-run-secret' },
     });
     assert.equal(started.status, 200, JSON.stringify(started.data));
-    assert.deepEqual(receivedKeys, { 'anthropic:test-model': 'browser-run-secret' });
+    assert.deepEqual(receivedKeys, { 'openai:test-model': 'browser-run-secret' });
     const state = await apiJson(`${base}api/state`);
     assert.doesNotMatch(JSON.stringify(state.data), /browser-run-secret|server-secret/);
   } finally {
@@ -385,7 +400,7 @@ test('gui validates shared and per-model reasoning before launching', async () =
     },
   });
   const base = await gui.listen(0);
-  const models = ['anthropic:claude-opus-4-10', 'meta:muse-spark-1.1'];
+  const models = ['deepseek:deepseek-chat', 'meta:muse-spark-1.1'];
   const apiKeys = Object.fromEntries(models.map((model) => [model, 'browser-key']));
   try {
     const capabilities = await apiJson(`${base}api/reasoning?spec=${encodeURIComponent('anthropic:claude-opus-4-10')}`);
@@ -424,13 +439,13 @@ test('gui validates shared and per-model reasoning before launching', async () =
       apiKeys,
       pool: 'test',
       reasoningByModel: {
-        'anthropic:claude-opus-4-10': 'max',
+        'deepseek:deepseek-chat': 'max',
         'meta:muse-spark-1.1': 'minimal',
       },
     });
     assert.equal(started.status, 200, JSON.stringify(started.data));
     assert.deepEqual(received, {
-      'anthropic:claude-opus-4-10': 'max',
+      'deepseek:deepseek-chat': 'max',
       'meta:muse-spark-1.1': 'minimal',
     });
   } finally {

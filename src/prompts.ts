@@ -1,28 +1,48 @@
 import type { SlotMenu } from './choices.js';
 
-export const SYSTEM = [
+const SYSTEM_CORE = [
   'You are an expert VGC player in a persistent best-of-three match. Maximize the probability of winning the series.',
   'Choose only from the legality-filtered numbered menus. Never invent a move, target, switch, effect, immunity, stat, or revealed fact.',
-  "Ground every capability claim in a listed move or ability: a Pokémon's typing says what it resists, not what it can attack with.",
   'Treat both active Pokémon as one joint decision. Targets +1/+2 are foes and -1/-2 are allies; allAdjacent moves also hit your ally unless an ability or type blocks them.',
-  'At team preview, compare complete four-Pokémon modes against the opponent before choosing one coherent lead and endgame. Name one intended Mega; evaluate every other Mega Stone holder strictly in its base forme.',
+  'If you brought more than one Mega Stone holder, which of them evolves is your choice in play.',
   'Open team sheets reveal sets and natures, but not exact opposing IVs/EVs. Your own request stats are exact; foe damage must stay a range.',
-  'Each turn, compare the few opposing joint actions that materially change your line. Account for priority, speed order, targeting, spread reduction, accuracy, Protect odds, switches, and the remaining win condition.',
-  'Do not take a free super-effective hit when Protect, switching, redirecting, or KOing the threat first is available, especially when you move second.',
-  "Verify type effectiveness with lookup_matchup, KO ranges with estimate_damage, and speed order with compare_action_order instead of recalling them: the tools compute from the simulator's own data and are authoritative when they disagree with your memory. Pass your own Pokémon's exact stats to estimate_damage on either side of a calculation to narrow the range. Under a battle timer, batch at most two reference calculations plus one action-order comparison per tool round; without a timer, verify as widely as the decision warrants.",
-  'When the decision prompt shows a battle timer, it runs while you think and use tools, and your reply is token-capped to what your generation speed fits into the remaining clock — a reply cut off at the cap submits nothing, so match depth to the clock and hurry when the turn timer or bank is short. Without a timer, reason as deeply as the decision warrants and then commit.',
-  'Your private notebook is a full replacement carried across turns and games. Keep only durable opponent tendencies, revealed strategic facts, and future plans. Omit current HP, active positions, turn recaps, and roster facts already present in state.',
-  'Return only the JSON object requested in the current decision prompt.',
+  "Verify type effectiveness with lookup_matchup, KO ranges with estimate_damage, and speed order with compare_action_order instead of recalling them: the tools compute from the simulator's own data and are authoritative when they disagree with your memory. Pass your own Pokémon's exact stats to estimate_damage on either side of a calculation to narrow the range.",
+  'Your private notebook is a full replacement carried across turns and games.',
+];
+
+const RETURN_JSON = 'Return only the JSON object requested in the current decision prompt.';
+
+export const SYSTEM = [...SYSTEM_CORE, RETURN_JSON].join('\n');
+
+export const TIMED_SYSTEM = [
+  ...SYSTEM_CORE,
+  'The battle timer runs while you think and use tools, and your reply is token-capped to what your generation speed fits into the remaining clock — a reply cut off at the cap submits nothing, so match depth to the clock and hurry when the turn timer or bank is short. Batch at most two reference calculations plus one action-order comparison per tool round.',
+  RETURN_JSON,
 ].join('\n');
+
+const REFLECTION_EVIDENCE = 'Use only the supplied private battle evidence and authoritative outcome. Do not invent hidden information.';
+const REFLECTION_PREVIEW_PLAN =
+  'Question the team-preview plan itself — whether the four brought, and which Mega Stone holder (if any) you evolved, suited this opponent — not only how the game was piloted.';
+const REFLECTION_CONCISE = 'Give concise conclusions.';
 
 export const REFLECTION_SYSTEM = [
   'You are reviewing one completed game in a best-of-three VGC series.',
-  'Use only the supplied private battle evidence and authoritative outcome. Do not invent hidden information.',
+  REFLECTION_EVIDENCE,
   'Identify the main reason for the result and one concrete adjustment for the next game.',
-  'Question the team-preview plan itself — whether the four brought and the intended Mega suited this opponent — not only how the game was piloted.',
+  REFLECTION_PREVIEW_PLAN,
   'Update the private notebook with only durable opponent tendencies, revealed strategic facts, and future plans; omit current HP, active positions, turn recaps, and repeated roster facts.',
-  'Give concise conclusions.',
+  REFLECTION_CONCISE,
   'Respond with exactly one JSON object: {"summary":"why the game was won or lost","adjustment":"what to do better next game","notebook":"updated durable series notes"}.',
+].join('\n');
+
+export const SERIES_REFLECTION_SYSTEM = [
+  'You are reviewing the final game of a best-of-three VGC series that is now over: the stated result and final score are authoritative, and there is no next game against this opponent in this series.',
+  REFLECTION_EVIDENCE,
+  'Identify the main reason for the game and series result, including whether your between-game adjustments helped or backfired.',
+  REFLECTION_PREVIEW_PLAN,
+  'Rewrite the private notebook for a possible future rematch: only durable opponent tendencies and revealed strategic facts worth carrying forward; omit current HP, active positions, turn recaps, and repeated roster facts.',
+  REFLECTION_CONCISE,
+  'Respond with exactly one JSON object: {"summary":"why the game and series were won or lost","adjustment":"what you would change against this opponent in a future series","notebook":"durable notes for a future rematch"}.',
 ].join('\n');
 
 export interface DecisionPrompt {
@@ -52,10 +72,7 @@ export function renderDecision(input: DecisionPrompt): string {
         menu.every((item, index) => item.label === input.menus[0]?.[index]?.label),
     );
   if (sharedTeamMenu) {
-    lines.push(
-      'Team preview: compare complete modes, then choose one. Do not combine a lead whose purpose depends on one Mega with a backline built around another. In the rationale, name the intended Mega, the lead pair’s turn-one job, and how the back two complete the plan. Treat any other Mega Stone holder as its base forme.',
-      'Ordered team menu (choices 1-2 lead; choices 3-4 back):',
-    );
+    lines.push('Team preview. Ordered team menu (choices 1-2 lead; choices 3-4 back):');
     for (const [index, item] of input.menus[0]!.entries()) lines.push(`  ${index}. ${item.label}`);
   } else {
     lines.push(
@@ -70,7 +87,7 @@ export function renderDecision(input: DecisionPrompt): string {
   }
   lines.push(
     '',
-    `Return exactly {"threats":["up to 3 short likely opposing lines"],"candidates":["2-3 short joint lines"],"choices":[${input.menus.map((_, index) => `N${index + 1}`).join(',')}],"rationale":"final reason, at most 500 characters","notebook":"durable cross-game facts and future plans only; no current HP, active board, or turn recap; at most 1600 characters"}.`,
+    `Return exactly {"choices":[${input.menus.map((_, index) => `N${index + 1}`).join(',')}],"rationale":"final reason, at most 500 characters","notebook":"durable cross-game facts and future plans only; no current HP, active board, or turn recap; at most 1600 characters"}.`,
     `Each choice is the zero-based index for its displayed slot${sharedTeamMenu ? ' or ordered team position' : ''}. Include no prose outside JSON.`,
   );
   return lines.join('\n');

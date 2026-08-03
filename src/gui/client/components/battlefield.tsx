@@ -1,0 +1,143 @@
+import type { MonView, SideTimerView, SideView, SpendView } from '../../api';
+import { Mark } from './mark';
+import { Sprite } from './sprite';
+
+function hpPercent(value: string): number {
+  const match = /(\d+)\s*\/\s*(\d+)/.exec(value);
+  if (!match || !Number(match[2])) return value === 'fainted' ? 0 : 100;
+  return Math.max(0, Math.min(100, Math.round((Number(match[1]) * 100) / Number(match[2]))));
+}
+
+function Mon({ mon }: { mon: MonView }) {
+  const percent = hpPercent(mon.hp);
+  const tone = percent <= 25 ? 'danger' : percent <= 50 ? 'warn' : '';
+  const details: string[] = [];
+  if (mon.fainted) details.push('Fainted');
+  else if (mon.hp) details.push(`HP ${mon.hp}`);
+  if (mon.boosts) details.push(mon.boosts);
+  if (mon.volatiles && !mon.fainted) details.push(mon.volatiles);
+  if (mon.lastMove) details.push(mon.lastMove);
+  return (
+    <div class={`mon ${mon.slot ? 'active ' : ''}${mon.fainted ? 'fainted' : ''}`}>
+      <div class="mon-top">
+        <Sprite id={mon.spriteId} size={32} />
+        <span class="mon-name">
+          {mon.species}
+          {mon.status && !mon.fainted && <span class={`status-chip ${mon.status}`}>{mon.status.toUpperCase()}</span>}
+        </span>
+        <span class="slot">{mon.slot ? `${mon.slot} ACTIVE` : ''}</span>
+      </div>
+      <div class="hp-track">
+        <i class={tone} style={`width:${percent}%`} />
+      </div>
+      <div class="mon-data">{details.join(' · ') || 'Not revealed'}</div>
+    </div>
+  );
+}
+
+function clockText(total: number): string {
+  const clamped = Math.max(0, Math.floor(total));
+  if (clamped >= 3600) {
+    const minutes = Math.floor((clamped % 3600) / 60);
+    return `${Math.floor(clamped / 3600)}:${String(minutes).padStart(2, '0')}:${String(clamped % 60).padStart(2, '0')}`;
+  }
+  return `${Math.floor(clamped / 60)}:${String(clamped % 60).padStart(2, '0')}`;
+}
+
+function tokenText(count: number): string {
+  if (count < 1000) return String(count);
+  if (count < 1_000_000) return `${(count / 1000).toFixed(count < 10_000 ? 1 : 0)}k`;
+  return `${(count / 1_000_000).toFixed(2)}M`;
+}
+
+function timerInfo(
+  timer: SideTimerView | null | undefined,
+  spend: SpendView | undefined,
+  receivedAt: number,
+): { text: string; urgent: boolean; running: boolean } | null {
+  const drained = timer?.running ? Math.max(0, (Date.now() - receivedAt) / 1000) : 0;
+  if (!timer || timer.seconds === null) {
+    const thinking = timer?.running && typeof timer.elapsedSeconds === 'number' ? timer.elapsedSeconds + drained : null;
+    const total = (spend?.seconds ?? 0) + (thinking ?? 0);
+    if (thinking === null && !total && !spend?.tokens) return null;
+    const parts = [
+      ...(thinking === null ? [] : [`Thinking ${clockText(thinking)}`]),
+      `Total ${clockText(total)}`,
+      ...(spend?.tokens ? [`${tokenText(spend.tokens)} tokens`] : []),
+    ];
+    return { text: parts.join(' · '), urgent: false, running: timer?.running ?? false };
+  }
+  const seconds = Math.max(0, timer.seconds - drained);
+  const turnSeconds = timer.turnSeconds === null ? null : Math.max(0, timer.turnSeconds - drained);
+  const move = turnSeconds === null ? '' : `Move ${clockText(turnSeconds)} · `;
+  return {
+    text: `${move}Bank ${clockText(seconds)}`,
+    urgent: timer.running && ((turnSeconds !== null && turnSeconds <= 20) || seconds <= 60),
+    running: timer.running,
+  };
+}
+
+function monRank(mon: MonView): number {
+  if (mon.slot) return mon.slot.charCodeAt(0) - 65;
+  return mon.fainted ? 9 : 5;
+}
+
+export function Side({
+  pid,
+  side,
+  right,
+  timer,
+  spend,
+  receivedAt,
+  warning,
+}: {
+  pid: string;
+  side: SideView;
+  right: boolean;
+  timer: SideTimerView | null | undefined;
+  spend: SpendView | undefined;
+  receivedAt: number;
+  warning: string;
+}) {
+  const clock = timerInfo(timer, spend, receivedAt);
+  const mons = [...side.mons].sort((a, b) => monRank(a) - monRank(b));
+  return (
+    <div class={`side ${right ? 'right' : ''}`}>
+      <div class="side-name">
+        <div class="side-model">
+          {warning && (
+            <span
+              class="side-fallback-warning"
+              role="img"
+              aria-label={`Latest model decision used a fallback. ${warning}`}
+              title={warning}
+            />
+          )}
+          <Mark spec={side.player} size={16} />
+          <b>{side.player}</b>
+        </div>
+        <span>
+          {pid.toUpperCase()} · {side.conditions.length ? side.conditions.join(' · ') : 'No side conditions'}
+        </span>
+        {clock && (
+          <span class={`side-timer ${clock.urgent ? 'urgent' : ''}`} aria-live="off">
+            {clock.running && (
+              <>
+                <span class="thinking-dot" aria-hidden="true" />
+                <span class="visually-hidden">Thinking. </span>
+              </>
+            )}
+            {clock.text}
+          </span>
+        )}
+      </div>
+      {mons.length ? (
+        mons.map((mon, index) => <Mon key={`${mon.slot || 'x'}-${mon.species}-${index}`} mon={mon} />)
+      ) : (
+        <div class="mon">
+          <span class="mon-data">Roster not revealed</span>
+        </div>
+      )}
+    </div>
+  );
+}

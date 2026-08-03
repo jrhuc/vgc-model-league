@@ -6,7 +6,14 @@ import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { buildLeague, buildLeagueGame, buildLeagues, buildModelProfile, findLiveDraftRun } from '../archive.js';
+import {
+  buildLeague,
+  buildLeagueGame,
+  buildLeagues,
+  buildModelProfile,
+  findLiveDraftRun,
+  snapshotBattle,
+} from '../archive.js';
 import type { AuthService, AuthSession, AuthUser } from '../auth.js';
 import { AuthError } from '../auth.js';
 import { describeBoardMon, listBoards, loadBoard } from '../draft.js';
@@ -33,18 +40,16 @@ import { ROTATION_PROTOCOL_VERSION, runRotation } from '../rotation.js';
 import { writeRunStatus } from '../run-status.js';
 import { redactSecrets } from '../sanitize.js';
 import { loadShowdown } from '../showdown.js';
-import type { MonState } from '../state.js';
 import { BattleState } from '../state.js';
 import type { Team, TeamDraft } from '../teams.js';
 import { createPool, inspectTeam, listPools, loadPool, packTeam, validateTeam } from '../teams.js';
 import { parseTimerScale } from '../timer.js';
 import { runTournament, TOURNAMENT_PROTOCOL_VERSION } from '../tournament.js';
 import type { ExperimentMode, JsonObject, Pid, TimerScale } from '../types.js';
-import { afterColon, isRecord } from '../value.js';
+import { isRecord } from '../value.js';
 import type {
   AppState,
   BattleMessage,
-  BattleSnapshot,
   BoardResponse,
   BracketView,
   DecisionView,
@@ -54,7 +59,6 @@ import type {
   ImportRequest,
   ModelInfo,
   ModelsResponse,
-  MonView,
   PoolTeamsResponse,
   RecordsResponse,
   RunPauseView,
@@ -94,6 +98,13 @@ const MAX_RATE_BUCKETS = 4096;
 const DEFAULT_MAX_RUN_MS = 4 * 60 * 60 * 1000;
 const SHUTDOWN_ERROR = 'run interrupted by server shutdown';
 const TIMEOUT_ERROR = 'run exceeded its maximum duration';
+
+/** Sustained league traffic on a personal Anthropic API key can trip Anthropic's account-level
+ * abuse safeguards (it has suspended an org over it), so the GUI never offers direct Anthropic
+ * seats — Claude models route through OpenRouter instead. CLI runs are unaffected. */
+const GUI_DISABLED_PROVIDERS = new Set(['anthropic']);
+const GUI_DISABLED_PROVIDER_ERROR =
+  'Direct Anthropic seats are disabled here to protect your account — use openrouter:anthropic/<model> instead';
 
 interface GuiServerOptions {
   teamsDir?: string;
@@ -254,82 +265,6 @@ class HttpError extends Error {
   ) {
     super(message);
   }
-}
-
-const spriteIds = new Map<string, string>();
-
-function spriteIdFor(species: string): string {
-  const cached = spriteIds.get(species);
-  if (cached !== undefined) return cached;
-  const { Dex } = loadShowdown();
-  const resolved = Dex.mod('champions').species.get(species);
-  const id = resolved.exists ? resolved.spriteid : '';
-  spriteIds.set(species, id);
-  return id;
-}
-
-function snapshotMon(battle: BattleState, pid: Pid, mon: MonState): MonView {
-  const boosts = Object.entries(mon.boosts)
-    .filter(([, value]) => value)
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([stat, value]) => `${stat} ${value > 0 ? '+' : ''}${value}`)
-    .join(', ');
-  const target = mon.lastMove?.target ? ` → ${afterColon(mon.lastMove.target)}` : '';
-  const volatiles = [...mon.volatiles]
-    .map((volatile) => (/^perish(\d)$/i.test(volatile) ? `Perish ${volatile.slice(-1)}` : volatile))
-    .sort()
-    .join(', ');
-  return {
-    species: mon.species,
-    spriteId: spriteIdFor(mon.species),
-    slot: battle.activeSlot(pid, mon)?.toUpperCase() ?? '',
-    hp: mon.fainted ? 'fainted' : (mon.hp ?? ''),
-    status: mon.fainted ? '' : (mon.status ?? ''),
-    fainted: mon.fainted,
-    boosts,
-    volatiles,
-    lastMove: mon.lastMove ? `${mon.lastMove.name}${target} · T${mon.lastMove.turn}` : '',
-  };
-}
-
-function snapshotBattle(
-  battle: BattleState,
-  players: Record<Pid, string> | undefined,
-  log: BattleLog,
-  decisions: DecisionView[] = [],
-  spend?: Record<Pid, { ms: number; tokens: number }>,
-): BattleSnapshot {
-  const side = (pid: Pid) => ({
-    player: players?.[pid] ?? pid,
-    conditions: battle.conditionLabels(pid),
-    mons: battle.visibleMons(pid).map((mon) => snapshotMon(battle, pid, mon)),
-  });
-  const timerView = (pid: Pid) => {
-    const timer = battle.timers[pid];
-    if (!timer) return null;
-    const drained = timer.running ? (Date.now() - timer.at) / 1000 : 0;
-    const remaining = (value: number | null) => (value === null ? null : Math.max(0, Math.round(value - drained)));
-    return {
-      seconds: remaining(timer.seconds),
-      turnSeconds: remaining(timer.turnSeconds),
-      elapsedSeconds: timer.running ? Math.max(0, Math.floor(drained)) : null,
-      running: timer.running,
-    };
-  };
-  const spendView = (pid: Pid) => ({
-    seconds: Math.round((spend?.[pid]?.ms ?? 0) / 1000),
-    tokens: spend?.[pid]?.tokens ?? 0,
-  });
-  return {
-    turn: battle.turn,
-    weather: battle.weatherLabel(),
-    fields: battle.fieldLabels(),
-    sides: { p1: side('p1'), p2: side('p2') },
-    timers: { p1: timerView('p1'), p2: timerView('p2') },
-    spend: { p1: spendView('p1'), p2: spendView('p2') },
-    log: log.entries,
-    decisions,
-  };
 }
 
 function championsFormats(): FormatInfo[] {
@@ -853,7 +788,9 @@ export class GuiServer {
       formats: championsFormats(),
       sampleTeams: this.sampleTeamsBody(pools),
       boards: listBoards(),
-      providers: PROVIDER_OPTIONS.filter((option) => !this.publicOrigin || option.id !== 'compat').map((option) => ({
+      providers: PROVIDER_OPTIONS.filter(
+        (option) => !GUI_DISABLED_PROVIDERS.has(option.id) && (!this.publicOrigin || option.id !== 'compat'),
+      ).map((option) => ({
         id: option.id,
         label: option.label,
         description: option.description,
@@ -1069,7 +1006,7 @@ export class GuiServer {
       snapshot: snapshotBattle(
         entry.state,
         this.run?.rows[index]?.players,
-        entry.log,
+        entry.log.entries,
         decisions,
         this.run?.spend.get(index),
       ),
@@ -1081,6 +1018,7 @@ export class GuiServer {
     if (!option || (this.publicOrigin && option.id === 'compat')) {
       throw new HttpError(400, `unknown provider ${JSON.stringify(providerId)}`);
     }
+    if (GUI_DISABLED_PROVIDERS.has(option.id)) throw new HttpError(400, GUI_DISABLED_PROVIDER_ERROR);
     try {
       const models = await discoverModels(option, apiKey.trim() || undefined, {
         signal: AbortSignal.timeout(20_000),
@@ -1138,6 +1076,7 @@ export class GuiServer {
         if (this.publicOrigin && spec.provider === 'compat') {
           throw new Error('OpenAI-compatible custom endpoints are disabled in hosted mode');
         }
+        if (GUI_DISABLED_PROVIDERS.has(spec.provider)) throw new Error(GUI_DISABLED_PROVIDER_ERROR);
         validateReasoning(spec, reasoningByModel[model] ?? reasoning);
         const apiKey = typeof suppliedKeys[model] === 'string' ? suppliedKeys[model].trim() : '';
         const option = providerOption(spec.provider);

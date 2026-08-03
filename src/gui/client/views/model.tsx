@@ -137,11 +137,6 @@ export function ModelProfileView({
       title: 'Changed the two leads between games of a series',
       value: pct(profile.rates.leadChanges),
     },
-    {
-      label: 'Threat conversion',
-      title: 'Threatened KOs converted',
-      value: pct(profile.rates.threatConversion),
-    },
   ];
   const reliabilityRows: RateRow[] = [
     { label: 'Fallbacks', title: 'Decisions replaced by the first legal option', value: pct(profile.rates.fallback) },

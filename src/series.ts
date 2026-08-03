@@ -192,7 +192,15 @@ export async function playBo3(context: Bo3Context): Promise<Bo3Result> {
       p1: { name: names.p1, team: context.teams.p1.packed },
       p2: { name: names.p2, team: context.teams.p2.packed },
     };
-    const onUpdate = (lines: string[], publicLines: string[]) => context.onGameUpdate?.(gameNumber, lines, publicLines);
+    /** The log streams to disk during play so a live game is watchable from another process; the
+     * canonical rewrite at game end makes the file authoritative, and resume already trusts only
+     * logs that carry a win or tie line. */
+    const logPath = path.join(context.seriesDir, `game-${gameNumber}.log`);
+    fs.writeFileSync(logPath, '', 'utf8');
+    const onUpdate = (lines: string[], publicLines: string[]) => {
+      if (lines.length) fs.appendFileSync(logPath, `${lines.join('\n')}\n`, 'utf8');
+      context.onGameUpdate?.(gameNumber, lines, publicLines);
+    };
     const outcome = context.runBattle
       ? await context.runBattle(gameSeed, onUpdate)
       : await new SimBattle(
@@ -231,7 +239,6 @@ export async function playBo3(context: Bo3Context): Promise<Bo3Result> {
         await engines[pid].endGame(end);
       }),
     );
-    const logPath = path.join(context.seriesDir, `game-${gameNumber}.log`);
     fs.writeFileSync(logPath, `${outcome.log.join('\n')}\n`, 'utf8');
     games.push({
       number: gameNumber,
@@ -316,6 +323,7 @@ interface AdoptedSeries {
   games: JsonObject[];
   decisions: Record<Pid, JsonObject[]>;
   notebooks: Partial<Record<Pid, string>>;
+  replay: Record<Pid, JsonObject[]>;
 }
 
 function adoptSeriesDir(context: RecordedSeriesContext): AdoptedSeries | undefined {
@@ -348,8 +356,9 @@ function adoptSeriesDir(context: RecordedSeriesContext): AdoptedSeries | undefin
   return best;
 }
 
-/** A game log is trusted as finished only when it carries a win or tie line; everything after the last
- * finished game (a mid-game log, decision rows from the abandoned attempt) is replayed fresh. */
+/** A game log is trusted as finished only when it carries a win or tie line. The interrupted game's
+ * own decision rows become a replay queue — the deterministic seed re-simulates the battle and each
+ * side re-answers from its recording — while anything beyond them is replayed fresh. */
 function reconstructAdoptedSeries(
   context: RecordedSeriesContext,
   seriesId: string,
@@ -397,6 +406,7 @@ function reconstructAdoptedSeries(
     });
   }
   const decisions: Record<Pid, JsonObject[]> = { p1: [], p2: [] };
+  const replay: Record<Pid, JsonObject[]> = { p1: [], p2: [] };
   const notebooks: Partial<Record<Pid, string>> = {};
   for (const pid of ['p1', 'p2'] as const) {
     let raw: string;
@@ -413,14 +423,28 @@ function reconstructAdoptedSeries(
       } catch {
         continue;
       }
-      if (Number(row.game_number) > games.length) continue;
+      if (Number(row.game_number) > games.length) {
+        if (Number(row.game_number) === games.length + 1 && row.kind === 'decision') replay[pid].push(row);
+        continue;
+      }
       decisions[pid].push(row);
       if (row.kind === 'decision' && typeof row.notebook === 'string' && row.notebook.trim()) {
         notebooks[pid] = row.notebook;
       }
     }
   }
-  return { seriesId, seriesDir, started, games, decisions, notebooks };
+  /** The interrupted game replays from its recording only when the recording is complete: a
+   * random seat's RNG cursor is not restored across attempts, and timer autodefaults answer
+   * requests without logging a decision row, so those games start fresh instead. */
+  const replayable =
+    context.players.p1 !== 'random' &&
+    context.players.p2 !== 'random' &&
+    (['p1', 'p2'] as const).every((pid) => replay[pid].every((row) => !row.timer));
+  for (const pid of ['p1', 'p2'] as const) {
+    if (replayable) decisions[pid].push(...replay[pid]);
+    else replay[pid] = [];
+  }
+  return { seriesId, seriesDir, started, games, decisions, notebooks, replay };
 }
 
 function pruneDecisionFiles(adopted: AdoptedSeries): void {
@@ -491,6 +515,10 @@ export async function playRecordedSeries(context: RecordedSeriesContext): Promis
       ),
     ]),
   ) as Record<Pid, RandomEngine | LLMEngine>;
+  for (const pid of ['p1', 'p2'] as const) {
+    const engine = engines[pid];
+    if (adopted?.replay[pid].length && engine instanceof LLMEngine) engine.primeReplay(adopted.replay[pid]);
+  }
   const battleFormat = context.closedSheets ? closedSheetsFormat(context.format, context.psDir) : context.format;
   const { score, games, winnerSide } = await playBo3({
     engines,

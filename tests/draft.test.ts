@@ -632,6 +632,98 @@ test('a quota failure pauses for recovery and resumes where it left off', async 
   removeListener();
 });
 
+test('a resumed draft replays its transcript and continues from the next pick', async (t) => {
+  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-draft-replay-'));
+  t.after(() => fs.rmSync(logDir, { recursive: true, force: true }));
+  const garchomp = mon('garchomp');
+  const incineroar = mon('incineroar');
+  const whimsicott = mon('whimsicott');
+  const stored = [
+    {
+      pick: 1,
+      model: 'fake:model',
+      team_name: 'Replayed Rotoms',
+      mon: garchomp.id,
+      name: garchomp.name,
+      cost: garchomp.cost,
+      budget_left: BOARD.budget - garchomp.cost,
+      rationale: 'Original pick before the crash.',
+      notebook: 'Carry this plan across the resume.',
+      fallback: false,
+    },
+    {
+      pick: 2,
+      model: 'random',
+      team_name: 'Random Coach 2',
+      mon: incineroar.id,
+      name: incineroar.name,
+      cost: incineroar.cost,
+      budget_left: BOARD.budget - incineroar.cost,
+      rationale: 'random baseline pick',
+      fallback: false,
+    },
+    {
+      pick: 3,
+      model: 'random',
+      team_name: 'Random Coach 2',
+      mon: whimsicott.id,
+      name: whimsicott.name,
+      cost: whimsicott.cost,
+      budget_left: BOARD.budget - incineroar.cost - whimsicott.cost,
+      rationale: 'random baseline pick',
+      fallback: false,
+    },
+  ];
+  fs.writeFileSync(
+    path.join(logDir, 'draft.jsonl'),
+    `${stored.map((row) => JSON.stringify(row)).join('\n')}\n`,
+    'utf8',
+  );
+  let calls = 0;
+  const prompts: string[] = [];
+  const outcome = await runDraft(
+    ['fake:model', 'random'],
+    { ...BOARD, picks: 3 },
+    {
+      logDir,
+      rng: seededRng(9),
+      makeDraftProvider: () => ({
+        complete(_system, messages): Promise<Completion> {
+          calls += 1;
+          prompts.push(String(messages.at(-1)?.content ?? ''));
+          const text =
+            calls === 1
+              ? '{"pick": "sinistcha", "reasoning": "Resume pick.", "notebook": "Updated plan."}'
+              : '{"pick": "farigiraf", "reasoning": "Final pick.", "notebook": "Done."}';
+          return Promise.resolve({ text, usage: { total_tokens: 10 }, toolCalls: [] });
+        },
+      }),
+    },
+  );
+
+  assert.equal(calls, 2, 'replayed picks consume no provider calls');
+  assert.equal(outcome.teamNames[0], 'Replayed Rotoms');
+  assert.deepEqual(
+    outcome.rosters[0]!.map((entry) => entry.id),
+    [garchomp.id, 'sinistcha', 'farigiraf'],
+  );
+  assert.deepEqual(
+    outcome.rosters[1]!.map((entry) => entry.id),
+    [incineroar.id, whimsicott.id, outcome.rosters[1]![2]!.id],
+  );
+  assert.equal(outcome.picks[0]!.rationale, 'Original pick before the crash.');
+  assert.equal(outcome.picks.length, 6);
+  assert.ok(
+    prompts[0]!.includes('Carry this plan across the resume.'),
+    'the replayed notebook reaches the first live pick',
+  );
+  const transcript = fs
+    .readFileSync(path.join(logDir, 'draft.jsonl'), 'utf8')
+    .split('\n')
+    .filter((line) => line.trim());
+  assert.equal(transcript.length, 6, 'replayed picks are not rewritten to the transcript');
+});
+
 const TEAMBUILD_ROSTER = [
   'garchomp',
   'incineroar',

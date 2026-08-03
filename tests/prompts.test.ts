@@ -1,17 +1,15 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { renderDecision, SYSTEM } from '../src/prompts.js';
+import { renderDecision, SYSTEM, TIMED_SYSTEM } from '../src/prompts.js';
 
-test('system prompt concentrates strategic and tool policy', () => {
-  assert.match(SYSTEM, /complete four-Pokémon modes/);
-  assert.match(SYSTEM, /one intended Mega/);
+test('system prompt names the tools and reserves timer policy for timed play', () => {
   assert.match(SYSTEM, /lookup_matchup/);
   assert.match(SYSTEM, /estimate_damage/);
-  assert.match(SYSTEM, /two reference calculations plus one action-order comparison/);
-  assert.match(SYSTEM, /shows a battle timer/);
-  assert.match(SYSTEM, /Without a timer, reason as deeply/);
-  assert.match(SYSTEM, /free super-effective hit/);
-  assert.match(SYSTEM, /Omit current HP, active positions, turn recaps/);
+  assert.match(SYSTEM, /compare_action_order/);
+  assert.doesNotMatch(SYSTEM, /battle timer/);
+  assert.match(TIMED_SYSTEM, /battle timer/);
+  assert.match(TIMED_SYSTEM, /two reference calculations plus one action-order comparison/);
+  assert.ok(TIMED_SYSTEM.startsWith(SYSTEM.split('\n').slice(0, -1).join('\n')));
 });
 
 test('decision prompt leads with merged state and keeps mechanics compact', () => {
@@ -28,7 +26,6 @@ test('decision prompt leads with merged state and keeps mechanics compact', () =
     prompt.indexOf('Authoritative battle state and roster reference:') < prompt.indexOf('Active type matchups'),
   );
   assert.ok(prompt.indexOf('Active type matchups') < prompt.indexOf('Choose for Swampert'));
-  assert.match(prompt, /"threats"/);
   assert.match(
     prompt,
     /notebook":"durable cross-game facts and future plans only; no current HP, active board, or turn recap/,
@@ -50,6 +47,5 @@ test('team preview renders one shared ordered menu', () => {
 
   assert.equal(prompt.match(/Pick Gengar/g)?.length, 1);
   assert.match(prompt, /choices 1-2 lead; choices 3-4 back/);
-  assert.match(prompt, /Do not combine a lead whose purpose depends on one Mega/);
   assert.match(prompt, /"choices":\[N1,N2,N3,N4\]/);
 });

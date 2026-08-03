@@ -376,12 +376,6 @@ const PROFILE_COLUMNS: RateColumn[] = [
     value: (model) => model.rates.toolLookups,
     format: perDecision,
   },
-  {
-    label: 'Threat conv.',
-    title: 'Threatened KOs converted',
-    value: (model) => model.rates.threatConversion,
-    format: pct,
-  },
 ];
 
 const RELIABILITY_COLUMNS: RateColumn[] = [

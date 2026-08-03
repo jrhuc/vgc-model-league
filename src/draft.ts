@@ -24,11 +24,9 @@ const DRAFT_PROMPT_POLICY = {
     '- {{coaches}} coaches snake-draft {{picks}} Pokémon each from the shared board below.',
     '- Every coach has {{budget}} points. A Pokémon drafted by one coach is gone for everyone else.',
     '- You may not draft two entries that share a base species, so Charizard and Mega Charizard Y are alternatives, not a pair.',
-    '- Mega entries are drafted separately from their base forme. Drafting a Mega locks that Pokémon to its Mega Stone;',
-    '  drafting the base forme means it can never hold a Mega Stone. The board lists both, priced differently.',
-    '- Mega Evolving is a choice made in battle, and only one of your Pokémon may Mega Evolve per game. A brought Mega',
-    '  that does not Mega Evolve fights as its base forme holding its Stone.',
-    '- Rosters may include several Mega entries; each match you choose which of them to bring for that matchup, if any, like any other pick.',
+    '- A Mega entry plays as its base forme holding its Mega Stone, with the option to Mega Evolve during a game;',
+    '  drafting the base forme instead means it can hold any item but never a Mega Stone. The board lists both, priced differently.',
+    '- If you bring more than one Mega entry to a match, which of them evolves is a choice you make in play, game by game.',
     '- After the draft you keep this roster for the whole season: a round robin of best-of-three matches, then playoffs.',
     '- Before each match you choose 6 of your {{picks}} and build every set yourself: item, ability, nature, moves, and EVs.',
     '  Nothing about a set is fixed by the draft, so draft for options and roles rather than for one preset build.',
@@ -38,8 +36,8 @@ const DRAFT_PROMPT_POLICY = {
     'becomes, how a type matchup reads, what a spread outruns, or roughly how hard an attack hits. They compute',
     'from the simulator this league runs on, so trust them over recollection.',
     '',
-    'Draft a coherent, deep roster: speed control, offensive modes, defensive backbone, and answers to what your',
-    'opponents have already taken. Cheap Pokémon exist to round out a roster once you have spent on your core.',
+    'Your roster is judged matchup by matchup: over the season it needs a winning 6 against each of the other',
+    'rosters taking shape around you.',
     '',
     '{{board}}',
   ],
@@ -304,6 +302,67 @@ export interface RunDraftOptions extends ModelReasoningConfig {
   makeDraftProvider?: (spec: string, apiKey: string | undefined, reasoning: ReasoningLevel | undefined) => Provider;
 }
 
+function replayTranscript(
+  file: string,
+  state: DraftState,
+  context: {
+    models: string[];
+    board: DraftBoard;
+    order: number[];
+    picks: DraftPickView[];
+    notebooks: string[];
+    onPick?: (view: DraftPickView, state: DraftState) => void;
+  },
+): number {
+  let raw: string;
+  try {
+    raw = fs.readFileSync(file, 'utf8');
+  } catch {
+    return 0;
+  }
+  const rows = raw
+    .split('\n')
+    .filter((line) => line.trim())
+    .map((line) => JSON.parse(line) as Record<string, unknown>);
+  for (const [index, row] of rows.entries()) {
+    const drafter = context.order[index];
+    if (drafter === undefined) throw new Error(`${file} holds more picks than the draft has slots`);
+    if (row.model !== context.models[drafter]) {
+      throw new Error(
+        `${file} pick ${index + 1} belongs to ${String(row.model)}, expected ${context.models[drafter]}`,
+      );
+    }
+    const mon = context.board.mons.find((entry) => entry.id === row.mon);
+    if (!mon) {
+      throw new Error(
+        `${file} pick ${index + 1} drafted ${String(row.mon)}, which board ${context.board.id} does not hold`,
+      );
+    }
+    if (state.taken.has(mon.id)) throw new Error(`${file} pick ${index + 1} drafted ${mon.id} twice`);
+    state.taken.set(mon.id, drafter);
+    state.rosters[drafter]!.push(mon);
+    state.budgets[drafter]! -= mon.cost;
+    if (typeof row.budget_left === 'number' && row.budget_left !== state.budgets[drafter]) {
+      throw new Error(
+        `${file} pick ${index + 1} leaves ${state.budgets[drafter]} points, but the transcript recorded ${row.budget_left}`,
+      );
+    }
+    if (typeof row.team_name === 'string' && row.team_name && !state.teamNames[drafter])
+      state.teamNames[drafter] = row.team_name;
+    if (typeof row.notebook === 'string') context.notebooks[drafter] = row.notebook;
+    const view: DraftPickView = {
+      pick: index + 1,
+      entrant: drafter,
+      mon: mon.id,
+      rationale: typeof row.rationale === 'string' ? row.rationale.slice(0, 600) : '',
+      fallback: row.fallback === true,
+    };
+    context.picks.push(view);
+    context.onPick?.(view, state);
+  }
+  return rows.length;
+}
+
 export function snakeOrder(entrants: number, rounds: number): number[] {
   const order: number[] = [];
   for (let round = 0; round < rounds; round += 1) {
@@ -507,7 +566,16 @@ export async function runDraft(models: string[], board: DraftBoard, options: Run
   const notebooks = models.map(() => '');
 
   const order = snakeOrder(models.length, board.picks);
+  const replayed = replayTranscript(transcript, state, {
+    models,
+    board,
+    order,
+    picks,
+    notebooks,
+    ...(options.onPick ? { onPick: options.onPick } : {}),
+  });
   for (const [pickNumber, drafter] of order.entries()) {
+    if (pickNumber < replayed) continue;
     options.signal?.throwIfAborted();
     const legal = legalPicks(state, drafter);
     if (legal.length === 0) {

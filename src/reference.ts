@@ -39,6 +39,12 @@ export const DEX_TOOLS: ToolDefinition[] = [
   tool('lookup_item', "Look up an item's effect text and mega-stone behaviour.", { name: { type: 'string' } }, [
     'name',
   ]),
+  tool(
+    'lookup_learnset',
+    "List every move a species can legally learn in this format's ruleset.",
+    { name: { type: 'string' } },
+    ['name'],
+  ),
   tool('lookup_ability', "Look up an ability's effect text.", { name: { type: 'string' } }, ['name']),
   tool('lookup_nature', 'Look up a Showdown nature/stat alignment (+stat / -stat).', { name: { type: 'string' } }, [
     'name',
@@ -438,6 +444,7 @@ export class ShowdownReference {
       ShowdownReference.prototype.render,
       ShowdownReference.prototype.lookup,
       prototype.lookupSpecies,
+      prototype.lookupLearnset,
       prototype.lookupOne,
       prototype.formatLegalityError,
       prototype.lookupMatchup,
@@ -631,7 +638,7 @@ export class ShowdownReference {
 
     const speciesGroups = new Map<string, { species: Dex.Species; sets: SpeciesSet[] }>();
     for (const set of speciesSets) {
-      const species = this.dex.species.get(set[0]);
+      const species = this.getSpecies(set[0]);
       if (!species.exists) continue;
       const group = speciesGroups.get(species.id) ?? { species, sets: [] };
       if (!group.sets.some((current) => JSON.stringify(current.slice(1)) === JSON.stringify(set.slice(1))))
@@ -735,6 +742,7 @@ export class ShowdownReference {
     if (name === 'lookup_item') {
       return this.formatLegalityError('item', value) ?? this.lookupOne('Item', value, { items: [value] });
     }
+    if (name === 'lookup_learnset') return this.lookupLearnset(value);
     if (name === 'lookup_ability') return this.lookupOne('Ability', value, { abilities: [value] });
     if (name === 'lookup_nature') return this.lookupOne('Nature', value, { natures: [value] }, '- Stat alignment ');
     if (name === 'calculate_stats') return this.calculateStats(args);
@@ -749,6 +757,25 @@ export class ShowdownReference {
     if (!data.exists) return null;
     const banned = this.battle.ruleTable.has(`-${kind}:${data.id}`);
     return data.isNonstandard || banned ? `${data.name} is not legal in ${this.format}.` : null;
+  }
+
+  private getSpecies(name: string): Dex.Species {
+    const direct = this.dex.species.get(name);
+    if (direct.exists || !name.trim()) return direct;
+    const candidates = [
+      name.replace(/-Male$/i, ''),
+      name.replace(/-Female$/i, '-F'),
+      name.replace(/^Mega (.+?)(?: ([XY]))?$/i, (_, base, xy) => (xy ? `${base}-Mega-${xy}` : `${base}-Mega`)),
+      name.replace(/^Paldean (.+?)(?: (Aqua|Blaze|Combat))?$/i, (_, base, breed) =>
+        breed ? `${base}-Paldea-${breed}` : `${base}-Paldea`,
+      ),
+    ];
+    for (const candidate of candidates) {
+      if (candidate === name) continue;
+      const species = this.dex.species.get(candidate);
+      if (species.exists) return species;
+    }
+    return direct;
   }
 
   private lookupSpecies(name: string, item?: unknown, nature?: unknown): string {
@@ -772,13 +799,26 @@ export class ShowdownReference {
     );
   }
 
+  private lookupLearnset(name: string): string {
+    if (!name.trim()) return 'Species name is required.';
+    const species = this.getSpecies(name);
+    if (!species.exists) return `No species data for ${JSON.stringify(name)} in ${this.format}.`;
+    const moves: string[] = [];
+    for (const moveId of this.dex.species.getMovePool(species.id)) {
+      const move = this.dex.moves.get(moveId);
+      if (move.exists && !move.isNonstandard) moves.push(move.name);
+    }
+    moves.sort();
+    return `- Learnset ${species.name} (${moves.length} legal moves): ${moves.join(', ')}`;
+  }
+
   private lookupMatchup(args: Record<string, unknown>): string {
     const defenderName = typeof args.defender === 'string' ? args.defender : '';
     if (!defenderName.trim()) return 'defender is required.';
-    const defender = this.dex.species.get(defenderName);
+    const defender = this.getSpecies(defenderName);
     if (!defender.exists) return `No species data for ${JSON.stringify(defenderName)} in ${this.format}.`;
     const attackerName = typeof args.attacker === 'string' ? args.attacker : '';
-    const attacker = attackerName ? this.dex.species.get(attackerName) : undefined;
+    const attacker = attackerName ? this.getSpecies(attackerName) : undefined;
     let attackType = typeof args.attacker_type === 'string' ? args.attacker_type : '';
     let moveName = typeof args.move === 'string' ? args.move : '';
     if (moveName.trim()) {
@@ -803,7 +843,7 @@ export class ShowdownReference {
     if (!speciesName.trim() || !natureName.trim() || !args.evs || typeof args.evs !== 'object') {
       return 'species, nature, and evs are required.';
     }
-    const species = this.dex.species.get(speciesName);
+    const species = this.getSpecies(speciesName);
     if (!species.exists) return `No species data for ${JSON.stringify(speciesName)} in ${this.format}.`;
     const nature = this.dex.natures.get(natureName);
     if (!nature.exists) return `No nature data for ${JSON.stringify(natureName)} in ${this.format}.`;
@@ -827,14 +867,26 @@ export class ShowdownReference {
     return `${species.name} (${nature.name}; ${label} ${total}${limits.total === null ? '' : `/${limits.total}`}): HP ${stats.hp}, Attack ${stats.atk}, Defense ${stats.def}, Special Attack ${stats.spa}, Special Defense ${stats.spd}, Speed ${stats.spe}.`;
   }
 
+  private implausibleStat(
+    species: Dex.Species,
+    stat: Exclude<StatId, 'hp'>,
+    value: number,
+    label: string,
+  ): string | null {
+    const [low, high] = statRange(this.battle, species.baseStats, undefined, stat);
+    return value < Math.floor(low / 4) || value > high * 4
+      ? `${label} ${value} is implausible for ${species.name}: legal raw ${stat} spans ${low}-${high}, and stat stages reach x0.25-x4.`
+      : null;
+  }
+
   private estimateDamage(args: Record<string, unknown>): string {
     const attackerName = typeof args.attacker === 'string' ? args.attacker : '';
     const defenderName = typeof args.defender === 'string' ? args.defender : '';
     const moveName = typeof args.move === 'string' ? args.move : '';
     if (!attackerName.trim() || !defenderName.trim() || !moveName.trim())
       return 'attacker, defender, and move are required.';
-    const attacker = this.dex.species.get(attackerName);
-    const defender = this.dex.species.get(defenderName);
+    const attacker = this.getSpecies(attackerName);
+    const defender = this.getSpecies(defenderName);
     const move = this.dex.moves.get(moveName);
     if (!attacker.exists) return `No species data for ${JSON.stringify(attackerName)}.`;
     if (!defender.exists) return `No species data for ${JSON.stringify(defenderName)}.`;
@@ -858,6 +910,10 @@ export class ShowdownReference {
     const exact = args.attacker_stats && typeof args.attacker_stats === 'object' ? args.attacker_stats : undefined;
     const suppliedAttack = exact && asFinite((exact as Record<string, unknown>)[attackStat]);
     const exactAttack = suppliedAttack !== undefined && suppliedAttack > 0 ? suppliedAttack : undefined;
+    if (exactAttack !== undefined) {
+      const error = this.implausibleStat(attacker, attackStat, exactAttack, `attacker_stats.${attackStat}`);
+      if (error) return error;
+    }
     const [atkLow, atkHigh] =
       exactAttack !== undefined
         ? [exactAttack, exactAttack]
@@ -875,6 +931,15 @@ export class ShowdownReference {
     const exactDefense = suppliedDefense !== undefined && suppliedDefense > 0 ? suppliedDefense : undefined;
     const suppliedHp = exactDefender && asFinite((exactDefender as Record<string, unknown>).hp);
     const exactHp = suppliedHp !== undefined && suppliedHp > 0 ? suppliedHp : undefined;
+    if (exactDefense !== undefined) {
+      const error = this.implausibleStat(defender, defenseStat, exactDefense, `defender_stats.${defenseStat}`);
+      if (error) return error;
+    }
+    if (exactHp !== undefined) {
+      const [legalLow, legalHigh] = hpRange(this.battle, defender.baseStats);
+      if (exactHp < legalLow || exactHp > legalHigh)
+        return `defender_stats.hp ${exactHp} is outside ${defender.name}'s legal HP range ${legalLow}-${legalHigh}; HP has no stat stages.`;
+    }
     let [defLow, defHigh] =
       exactDefense !== undefined
         ? [exactDefense, exactDefense]

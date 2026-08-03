@@ -2,12 +2,16 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { count, decisionLogPath, quantile, readDecisionLog, SAFE_SEGMENT } from './evidence.js';
 import type {
+  BattleLogEntryView,
+  BattleSnapshot,
+  DecisionView,
   LeagueCardView,
   LeagueChampionView,
   LeagueDistributionView,
   LeagueFranchiseStatsView,
   LeagueFranchiseView,
   LeagueGameDecisionView,
+  LeagueGameReflectionView,
   LeagueGameResponse,
   LeagueLiveSeriesView,
   LeagueRecordView,
@@ -19,14 +23,94 @@ import type {
   LeagueUsageView,
   ModelProfileResponse,
   ModeRecordView,
+  MonView,
   QuartileView,
   TeambuildSetView,
 } from './gui/api.js';
 import { BattleLog } from './gui/battlelog.js';
 import { modelKey, type SeriesRecord, TEST_POOL } from './records.js';
+import { loadShowdown } from './showdown.js';
+import { BattleState, type MonState } from './state.js';
 import type { Pid } from './types.js';
+import { afterColon } from './value.js';
 
 const PIDS: Pid[] = ['p1', 'p2'];
+
+const spriteIds = new Map<string, string>();
+
+function spriteIdFor(species: string): string {
+  const cached = spriteIds.get(species);
+  if (cached !== undefined) return cached;
+  const { Dex } = loadShowdown();
+  const resolved = Dex.mod('champions').species.get(species);
+  const id = resolved.exists ? resolved.spriteid : '';
+  spriteIds.set(species, id);
+  return id;
+}
+
+function snapshotMon(battle: BattleState, pid: Pid, mon: MonState): MonView {
+  const boosts = Object.entries(mon.boosts)
+    .filter(([, value]) => value)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([stat, value]) => `${stat} ${value > 0 ? '+' : ''}${value}`)
+    .join(', ');
+  const target = mon.lastMove?.target ? ` → ${afterColon(mon.lastMove.target)}` : '';
+  const volatiles = [...mon.volatiles]
+    .map((volatile) => (/^perish(\d)$/i.test(volatile) ? `Perish ${volatile.slice(-1)}` : volatile))
+    .sort()
+    .join(', ');
+  return {
+    species: mon.species,
+    spriteId: spriteIdFor(mon.species),
+    slot: battle.activeSlot(pid, mon)?.toUpperCase() ?? '',
+    hp: mon.fainted ? 'fainted' : (mon.hp ?? ''),
+    status: mon.fainted ? '' : (mon.status ?? ''),
+    fainted: mon.fainted,
+    boosts,
+    volatiles,
+    lastMove: mon.lastMove ? `${mon.lastMove.name}${target} · T${mon.lastMove.turn}` : '',
+  };
+}
+
+export function snapshotBattle(
+  battle: BattleState,
+  players: Record<Pid, string> | undefined,
+  log: BattleLogEntryView[],
+  decisions: DecisionView[] = [],
+  spend?: Record<Pid, { ms: number; tokens: number }>,
+): BattleSnapshot {
+  const side = (pid: Pid) => ({
+    player: players?.[pid] ?? pid,
+    conditions: battle.conditionLabels(pid),
+    mons: battle.visibleMons(pid).map((mon) => snapshotMon(battle, pid, mon)),
+  });
+  const timerView = (pid: Pid) => {
+    const timer = battle.timers[pid];
+    if (!timer) return null;
+    const drained = timer.running ? (Date.now() - timer.at) / 1000 : 0;
+    const remaining = (value: number | null) => (value === null ? null : Math.max(0, Math.round(value - drained)));
+    return {
+      seconds: remaining(timer.seconds),
+      turnSeconds: remaining(timer.turnSeconds),
+      elapsedSeconds: timer.running ? Math.max(0, Math.floor(drained)) : null,
+      running: timer.running,
+    };
+  };
+  const spendView = (pid: Pid) => ({
+    seconds: Math.round((spend?.[pid]?.ms ?? 0) / 1000),
+    tokens: spend?.[pid]?.tokens ?? 0,
+  });
+  return {
+    turn: battle.turn,
+    weather: battle.weatherLabel(),
+    fields: battle.fieldLabels(),
+    sides: { p1: side('p1'), p2: side('p2') },
+    timers: { p1: timerView('p1'), p2: timerView('p2') },
+    spend: { p1: spendView('p1'), p2: spendView('p2') },
+    log,
+    decisions,
+  };
+}
 
 export function isRunLive(runsDir: string, runId: string): boolean {
   const status = readRunJson(runsDir, runId, 'status.json') as Record<string, unknown> | null;
@@ -183,12 +267,13 @@ function liveSeriesViews(
     const players = (meta?.players ?? null) as Record<string, unknown> | null;
     let sides: [number, number] | null = null;
     if (players && typeof players.p1 === 'string' && typeof players.p2 === 'string') {
-      const a = identity.models.indexOf(players.p1);
-      const b = identity.models.indexOf(players.p2);
+      const a = entrantForSpec(identity, players.p1);
+      const b = entrantForSpec(identity, players.p2);
       if (a >= 0 && b >= 0) sides = [a, b];
     }
     if (decisions === 0 && !sides) continue;
-    views.push({ seriesId, game: Math.max(1, game), turn, decisions, sides });
+    const seriesIndex = typeof meta?.series_index === 'number' ? meta.series_index : null;
+    views.push({ seriesId, seriesIndex, game: Math.max(1, game), turn, decisions, sides });
   }
   return views.sort((a, b) => a.seriesId.localeCompare(b.seriesId));
 }
@@ -234,11 +319,22 @@ function leagueIdentity(runsDir: string, runId: string, rows: SeriesRecord[]): L
   };
 }
 
+/** A seat rewired to another provider mid-run keeps its entrant: match the exact spec first,
+ * then fall back to the bare model name when it identifies a single entrant. */
+function entrantForSpec(identity: LeagueIdentity, spec: string): number {
+  const exact = identity.models.indexOf(spec);
+  if (exact >= 0) return exact;
+  const matches = identity.models
+    .map((model, entrant) => (modelKey(model) === modelKey(spec) ? entrant : -1))
+    .filter((entrant) => entrant >= 0);
+  return matches.length === 1 ? matches[0]! : -1;
+}
+
 function sideEntrant(row: SeriesRecord, pid: Pid, identity: LeagueIdentity): number {
   const label = String((row.teams as Record<Pid, unknown> | undefined)?.[pid] ?? '');
   const byTeam = identity.teamNames.findIndex((name) => label === name || label.startsWith(`${name} `));
   if (byTeam >= 0) return byTeam;
-  return identity.models.indexOf(row.players[pid]);
+  return entrantForSpec(identity, row.players[pid]);
 }
 
 interface LeagueProgress {
@@ -460,8 +556,6 @@ export function buildLeague(allRows: SeriesRecord[], runsDir: string, runId: str
     consecutiveProtects: 0,
     spreadSelections: 0,
     megaSelections: 0,
-    threatTurns: 0,
-    threatHits: 0,
     buildAttempts: 0,
     leadChanges: 0,
     bringChanges: 0,
@@ -494,8 +588,6 @@ export function buildLeague(allRows: SeriesRecord[], runsDir: string, runId: str
         agg.consecutiveProtects += count(d.consecutive_protect_selections);
         agg.spreadSelections += count(d.spread_move_selections);
         agg.megaSelections += count(d.mega_selections);
-        agg.threatTurns += count(d.threat_turns);
-        agg.threatHits += count(d.threat_hits);
         agg.leadChanges += count(d.lead_changes);
         agg.bringChanges += count(d.bring_changes);
         if (typeof d.cost === 'number') {
@@ -835,7 +927,6 @@ export function buildModelProfile(allRows: SeriesRecord[], runsDir: string, id: 
       repeatedActions: per(stats.repeated_joint_actions ?? 0, decisions),
       bringChanges: repeatChances > 0 ? (stats.bring_changes ?? 0) / repeatChances : null,
       leadChanges: repeatChances > 0 ? (stats.lead_changes ?? 0) / repeatChances : null,
-      threatConversion: (stats.threat_turns ?? 0) > 0 ? (stats.threat_hits ?? 0) / stats.threat_turns! : null,
       reflectionFallback: (stats.reflections ?? 0) > 0 ? (stats.reflection_fallbacks ?? 0) / stats.reflections! : null,
     },
     modes: [...modes.entries()]
@@ -854,6 +945,31 @@ export function buildModelProfile(allRows: SeriesRecord[], runsDir: string, id: 
   };
 }
 
+function liveSeriesByIndex(
+  runsDir: string,
+  runId: string,
+  seriesIndex: number,
+  identity: LeagueIdentity,
+): { seriesId: string; sides: [number, number] } | null {
+  let entries: string[];
+  try {
+    entries = fs.readdirSync(path.join(runsDir, runId, 'series'));
+  } catch {
+    return null;
+  }
+  for (const seriesId of entries) {
+    if (!SAFE_SEGMENT.test(seriesId)) continue;
+    const meta = readRunJson(runsDir, runId, 'series', seriesId, 'series.json') as Record<string, unknown> | null;
+    if (meta?.series_index !== seriesIndex) continue;
+    const players = (meta.players ?? null) as Record<string, unknown> | null;
+    if (typeof players?.p1 !== 'string' || typeof players.p2 !== 'string') continue;
+    const a = entrantForSpec(identity, players.p1);
+    const b = entrantForSpec(identity, players.p2);
+    if (a >= 0 && b >= 0) return { seriesId, sides: [a, b] };
+  }
+  return null;
+}
+
 export function buildLeagueGame(
   allRows: SeriesRecord[],
   runsDir: string,
@@ -862,41 +978,58 @@ export function buildLeagueGame(
   game: number,
 ): LeagueGameResponse | null {
   if (!SAFE_SEGMENT.test(runId)) return null;
-  const rows = draftRuns(allRows).get(runId);
-  if (!rows) return null;
-  const row = rows.find((entry) => count(entry.series_index) === seriesIndex);
-  if (!row) return null;
-  const seriesId = String(row.series_id ?? '');
-  if (!SAFE_SEGMENT.test(seriesId)) return null;
+  const rows = draftRuns(allRows).get(runId) ?? [];
   const identity = leagueIdentity(runsDir, runId, rows);
-  const a = sideEntrant(row, 'p1', identity);
-  const b = sideEntrant(row, 'p2', identity);
-  if (a < 0 || b < 0) return null;
-
-  const gameRows = Array.isArray(row.games) ? (row.games as Record<string, unknown>[]) : [];
-  const games: number[] = [];
-  for (let n = 1; n <= Math.max(gameRows.length, 1); n += 1) {
-    if (fs.existsSync(path.join(runsDir, runId, 'series', seriesId, `game-${n}.log`))) games.push(n);
+  const row = rows.find((entry) => count(entry.series_index) === seriesIndex);
+  let seriesId: string;
+  let sides: [number, number];
+  if (row) {
+    seriesId = String(row.series_id ?? '');
+    const a = sideEntrant(row, 'p1', identity);
+    const b = sideEntrant(row, 'p2', identity);
+    if (a < 0 || b < 0) return null;
+    sides = [a, b];
+  } else {
+    const found = liveSeriesByIndex(runsDir, runId, seriesIndex, identity);
+    if (!found) return null;
+    ({ seriesId, sides } = found);
   }
-  if (!games.includes(game)) return null;
-  let raw: string;
+  if (!SAFE_SEGMENT.test(seriesId)) return null;
+
+  let seriesFiles: string[];
   try {
-    raw = fs.readFileSync(path.join(runsDir, runId, 'series', seriesId, `game-${game}.log`), 'utf8');
+    seriesFiles = fs.readdirSync(path.join(runsDir, runId, 'series', seriesId));
   } catch {
     return null;
   }
-  const battleLog = new BattleLog(10_000);
-  battleLog.feed(raw.split('\n'));
+  const gameNumbers = new Set<number>();
+  for (const name of seriesFiles) {
+    const match = /^game-(\d+)\.log$/.exec(name);
+    if (match) gameNumbers.add(Number(match[1]));
+  }
 
   const decisions: LeagueGameDecisionView[] = [];
+  const reflections: LeagueGameReflectionView[] = [];
   for (const [side, pid] of [
     [0, 'p1'],
     [1, 'p2'],
   ] as const) {
-    const file = decisionLogPath(runsDir, runId, seriesId, pid);
-    if (!file) continue;
     for (const entry of readRunLines(runsDir, runId, 'series', seriesId, `${pid}-decisions.jsonl`)) {
-      if (entry.kind !== 'decision' || count(entry.game_number) !== game) continue;
+      const entryGame = count(entry.game_number);
+      if (entryGame > 0) gameNumbers.add(entryGame);
+      if (entryGame !== game) continue;
+      if (entry.kind === 'game_reflection') {
+        reflections.push({
+          side,
+          result: entry.result === 'won' ? 'won' : 'lost',
+          summary: typeof entry.summary === 'string' ? entry.summary : '',
+          adjustment: typeof entry.adjustment === 'string' ? entry.adjustment : '',
+          notebook: typeof entry.notebook === 'string' ? entry.notebook : '',
+          fallback: entry.fallback === true,
+        });
+        continue;
+      }
+      if (entry.kind !== 'decision') continue;
       const numeric = (value: unknown) => (typeof value === 'number' && Number.isFinite(value) ? value : null);
       decisions.push({
         side,
@@ -914,22 +1047,60 @@ export function buildLeagueGame(
       });
     }
   }
+  if (!gameNumbers.has(game)) return null;
   decisions.sort((first, second) => first.turn - second.turn || first.side - second.side);
 
+  /** An unfinished game has no log yet unless the run streamed one; an empty timeline still renders decisions. */
+  let raw = '';
+  try {
+    raw = fs.readFileSync(path.join(runsDir, runId, 'series', seriesId, `game-${game}.log`), 'utf8');
+  } catch {
+    if (row) return null;
+  }
+  const battleLog = new BattleLog(10_000);
+  battleLog.feed(raw.split('\n'));
+  /** A run predating log streaming writes the log only at game end, so an empty log means the
+   * battlefield state is unknown rather than at team preview. */
+  const live = !row && isRunLive(runsDir, runId);
+  let snapshot: BattleSnapshot | null = null;
+  if (live && raw !== '' && !/^\|(?:win\||tie\b)/m.test(raw)) {
+    const state = new BattleState('p1');
+    state.feed(raw.split('\n'));
+    snapshot = snapshotBattle(state, { p1: identity.models[sides[0]]!, p2: identity.models[sides[1]]! }, []);
+  }
+
+  const gameRows = row && Array.isArray(row.games) ? (row.games as Record<string, unknown>[]) : [];
   const gameRow = gameRows[game - 1];
-  const winner = gameRow?.winner_side === 'p1' ? a : gameRow?.winner_side === 'p2' ? b : null;
+  let winner = gameRow?.winner_side === 'p1' ? sides[0] : gameRow?.winner_side === 'p2' ? sides[1] : null;
+  if (!row && winner === null && raw) {
+    const lines = raw.split('\n');
+    const players = new Map<string, Pid>();
+    for (const line of lines) {
+      const match = /^\|player\|(p[12])\|([^|]+)\|/.exec(line);
+      if (match) players.set(match[2]!, match[1] as Pid);
+    }
+    const winLine = lines.find((line) => line.startsWith('|win|'));
+    const pid = winLine === undefined ? undefined : players.get(winLine.slice(5).trim());
+    if (pid) winner = pid === 'p1' ? sides[0] : sides[1];
+  }
   return {
     runId,
     seriesIndex,
     seriesId,
-    stage: row.stage === 'playoff' ? 'playoff' : 'roundrobin',
-    round: count(row.round),
+    stage: row?.stage === 'playoff' ? 'playoff' : 'roundrobin',
+    round: count(row?.round),
     game,
-    games,
-    sides: [a, b],
-    teamNames: [identity.teamNames[a] ?? `Coach ${a + 1}`, identity.teamNames[b] ?? `Coach ${b + 1}`],
+    games: [...gameNumbers].sort((first, second) => first - second),
+    sides,
+    teamNames: [
+      identity.teamNames[sides[0]] ?? `Coach ${sides[0] + 1}`,
+      identity.teamNames[sides[1]] ?? `Coach ${sides[1] + 1}`,
+    ],
     winner,
+    live,
+    snapshot,
     log: battleLog.entries,
     decisions,
+    reflections,
   };
 }

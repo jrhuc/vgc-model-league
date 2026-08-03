@@ -3,6 +3,26 @@ import type { RecoveryGate } from './recovery.js';
 import type { ShowdownReference } from './reference.js';
 import { DEX_TOOLS } from './reference.js';
 import type { Completion, JsonObject, Provider, ProviderMessage } from './types.js';
+import { isRecord } from './value.js';
+
+export const TOOL_BUDGET_NOTICE =
+  'Tool budget for this reply is exhausted; further tool calls will not be executed. Reply now with only the final JSON object.';
+
+function textToolCall(text: string): { name: string; arguments: JsonObject } | undefined {
+  const trimmed = text.trim();
+  if (!trimmed.startsWith('{') || !trimmed.endsWith('}')) return undefined;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(trimmed);
+  } catch {
+    return undefined;
+  }
+  if (!isRecord(parsed) || typeof parsed.name !== 'string') return undefined;
+  const name = parsed.name;
+  if (!DEX_TOOLS.some((tool) => tool.name === name)) return undefined;
+  const args = parsed.args ?? parsed.arguments ?? parsed.parameters;
+  return isRecord(args) ? { name, arguments: args } : undefined;
+}
 
 export interface DexToolPolicy {
   maxTokens: number;
@@ -62,11 +82,25 @@ export async function completeWithDexTools(request: DexToolRequest): Promise<Com
   for (let round = 0; ; round += 1) {
     request.signal?.throwIfAborted();
     const final = round >= request.policy.toolRounds;
+    if (final && round === request.policy.toolRounds) {
+      request.messages.push({ role: 'user', content: TOOL_BUDGET_NOTICE });
+    }
     const completion = await completeOnce(request, { tools: true, final });
     for (const [key, value] of Object.entries(completion.usage)) {
       usage[key] = (usage[key] ?? 0) + Math.trunc(value);
     }
     if (!completion.toolCalls.length || final) {
+      const salvaged = final ? undefined : textToolCall(completion.text);
+      if (salvaged) {
+        request.messages.push({ role: 'assistant', content: completion.text });
+        const result = request.reference.lookup(salvaged.name, salvaged.arguments);
+        request.onLookup?.({ name: salvaged.name, arguments: salvaged.arguments, result });
+        request.messages.push({
+          role: 'user',
+          content: `Tool result for ${salvaged.name}: ${result}\nWhen your analysis is done, reply with only the final JSON object.`,
+        });
+        continue;
+      }
       /** Some providers omit finishReason, so an exhausted output budget also means truncation. */
       const spent = (completion.usage.output_tokens ?? 0) >= request.policy.maxTokens;
       return {

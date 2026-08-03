@@ -73,7 +73,6 @@ test('buildEvidence aggregates decision logs, rates, and luck', () => {
   assert.equal(model.rates.fallback, 1 / 3);
   assert.equal(model.rates.switch, 2 / 6);
   assert.equal(model.rates.toolLookups, 2);
-  assert.equal(model.rates.threatConversion, 3 / 4);
   const series = evidence.series[0]!;
   assert.equal(series.winner, 'example-model');
   assert.deepEqual(series.luck, { p1: 1, p2: 3 });

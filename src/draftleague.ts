@@ -196,6 +196,40 @@ export async function runDraftLeague(
   });
   options.onEvent?.({ type: 'draft', draft: draftView(false) });
 
+  /** In-progress writes leave out rosters and draft notes: loadStoredLeague reads their
+   * presence as a completed draft, and resume must not mistake a half-drafted league for one. */
+  const writeConfig = (outcome?: Record<string, unknown>): void => {
+    fs.writeFileSync(
+      path.join(runDir, 'config.json'),
+      `${JSON.stringify(
+        {
+          mode: 'draft',
+          protocol_version: DRAFT_PROTOCOL_VERSION,
+          scaffold,
+          draft_scaffold: draftScaffold,
+          teambuild_scaffold: teambuildScaffold,
+          models,
+          seed,
+          concurrency: options.concurrency ?? 2,
+          reasoning: options.reasoning ?? null,
+          reasoning_by_model: options.reasoningByModel ?? null,
+          timer_scale: timerScale,
+          board: board.id,
+          format: board.format,
+          sequential_weeks: options.sequentialWeeks === true || options.throughWeek !== undefined,
+          closed_sheets: options.closedSheets === true,
+          entrants,
+          team_names: teamNames,
+          weeks: weeks.length,
+          ...(outcome ?? {}),
+        },
+        null,
+        2,
+      )}\n`,
+      'utf8',
+    );
+  };
+
   if (stored) {
     const monById = new Map(board.mons.map((mon) => [mon.id, mon] as const));
     rosters = stored.rosterIds.map((ids) =>
@@ -209,6 +243,7 @@ export async function runDraftLeague(
     teamNames = stored.teamNames;
     draftNotes = stored.draftNotes;
   } else {
+    writeConfig();
     const outcome = await runDraft(entrants, board, {
       psDir,
       logDir: path.join(runDir, 'draft'),
@@ -223,6 +258,7 @@ export async function runDraftLeague(
         rosters = state.rosters;
         budgets = state.budgets;
         teamNames = state.teamNames;
+        writeConfig();
         options.onEvent?.({ type: 'draft', draft: draftView(false) });
       },
     });
@@ -248,37 +284,11 @@ export async function runDraftLeague(
       )}\n`,
       'utf8',
     );
-    fs.writeFileSync(
-      path.join(runDir, 'config.json'),
-      `${JSON.stringify(
-        {
-          mode: 'draft',
-          protocol_version: DRAFT_PROTOCOL_VERSION,
-          scaffold,
-          draft_scaffold: draftScaffold,
-          teambuild_scaffold: teambuildScaffold,
-          models,
-          seed,
-          concurrency: options.concurrency ?? 2,
-          reasoning: options.reasoning ?? null,
-          reasoning_by_model: options.reasoningByModel ?? null,
-          timer_scale: timerScale,
-          board: board.id,
-          format: board.format,
-          sequential_weeks: options.sequentialWeeks === true || options.throughWeek !== undefined,
-          closed_sheets: options.closedSheets === true,
-          entrants,
-          team_names: teamNames,
-          weeks: weeks.length,
-          rosters: rosters.map((roster) => roster.map((mon) => mon.id)),
-          draft_notes: draftNotes,
-          contributor: options.contributor ?? null,
-        },
-        null,
-        2,
-      )}\n`,
-      'utf8',
-    );
+    writeConfig({
+      rosters: rosters.map((roster) => roster.map((mon) => mon.id)),
+      draft_notes: draftNotes,
+      contributor: options.contributor ?? null,
+    });
   }
 
   phase = 'roundrobin';
@@ -583,7 +593,8 @@ function loadStoredTeambuilds(
   return reusable;
 }
 
-function loadStoredLeague(runDir: string): StoredLeague {
+/** Undefined means the draft is still in progress: re-enter the draft path and replay its transcript. */
+function loadStoredLeague(runDir: string): StoredLeague | undefined {
   const configPath = path.join(runDir, 'config.json');
   if (!fs.existsSync(configPath)) throw new Error(`${runDir} holds no draft league config to resume`);
   const config = JSON.parse(fs.readFileSync(configPath, 'utf8')) as {
@@ -593,7 +604,9 @@ function loadStoredLeague(runDir: string): StoredLeague {
     rosters?: string[][];
     draft_notes?: string[];
   };
-  if (config.mode !== 'draft' || !config.entrants || !config.team_names || !config.rosters) {
+  if (config.mode !== 'draft') throw new Error(`${runDir} is not a draft league run`);
+  if (!config.rosters) return undefined;
+  if (!config.entrants || !config.team_names) {
     throw new Error(`${runDir} is not a completed-draft league run`);
   }
   const draftNotes =

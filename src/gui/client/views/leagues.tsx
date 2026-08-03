@@ -10,6 +10,7 @@ import type {
   LeaguesResponse,
   LeagueTeambuildView,
 } from '../../api';
+import { Side } from '../components/battlefield';
 import { BoardBrowser, STAT_ORDER, useBoard } from '../components/boardbrowser';
 import { StatTile } from '../components/chartkit';
 import { Mark } from '../components/mark';
@@ -274,7 +275,7 @@ function GamePage({
   onOpenTeam: (entrant: number) => void;
   onBack: () => void;
 }) {
-  const [view, setView] = useState<LeagueGameResponse | null>(null);
+  const [view, setView] = useState<(LeagueGameResponse & { receivedAt: number }) | null>(null);
   const [error, setError] = useState('');
   useEffect(() => {
     setView(null);
@@ -282,11 +283,23 @@ function GamePage({
       `/api/league/game?run=${encodeURIComponent(league.runId)}&series=${seriesIndex}&game=${game}`,
     )
       .then((response) => {
-        setView(response);
+        setView({ ...response, receivedAt: Date.now() });
         setError('');
       })
       .catch((failure: Error) => setError(failure.message));
   }, [league.runId, seriesIndex, game]);
+
+  useEffect(() => {
+    if (!view?.live) return;
+    const timer = setInterval(() => {
+      apiFresh<LeagueGameResponse>(
+        `/api/league/game?run=${encodeURIComponent(league.runId)}&series=${seriesIndex}&game=${game}`,
+      )
+        .then((response) => setView({ ...response, receivedAt: Date.now() }))
+        .catch(() => {});
+    }, 10_000);
+    return () => clearInterval(timer);
+  }, [view?.live, league.runId, seriesIndex, game]);
 
   const maxPlayoffRound = Math.max(
     1,
@@ -299,6 +312,14 @@ function GamePage({
   const turns = [
     ...new Set([...view.log.map((entry) => entry.turn), ...view.decisions.map((entry) => entry.turn)]),
   ].sort((a, b) => a - b);
+  const sideWarning = (side: 0 | 1): string => {
+    for (let index = view.decisions.length - 1; index >= 0; index -= 1) {
+      const decision = view.decisions[index]!;
+      if (decision.side !== side || decision.automatic) continue;
+      return decision.fallback ? 'The latest model decision used a fallback.' : '';
+    }
+    return '';
+  };
   return (
     <div class="league-view">
       <header class="page-heading league-heading">
@@ -315,10 +336,12 @@ function GamePage({
         </div>
         <div class="lede team-lede">
           <span>
-            Game {view.game} of {view.games.length}
+            {view.live ? <span class="live-dot" aria-label="live" /> : null} Game {view.game} of {view.games.length}
             {view.winner !== null
               ? ` · ${league.franchises[view.winner]?.teamName ?? `Coach ${view.winner + 1}`} won`
-              : ' · no winner recorded'}
+              : view.live
+                ? ' · in progress'
+                : ' · no winner recorded'}
           </span>
           <span class="game-switcher">
             {view.games.map((number) => (
@@ -339,6 +362,41 @@ function GamePage({
           </span>
         </div>
       </header>
+
+      {view.snapshot ? (
+        <section class="panel battlefield">
+          <div class="field-meta">
+            <span class="turn-badge">{view.snapshot.turn ? `Turn ${view.snapshot.turn}` : 'Team preview'}</span>
+            <span class={view.snapshot.weather === 'none' ? '' : 'condition-active'}>
+              {view.snapshot.weather === 'none' ? 'Clear skies' : view.snapshot.weather}
+            </span>
+            <span class={view.snapshot.fields.length ? 'condition-active' : ''}>
+              {view.snapshot.fields.join(' · ') || 'Open field'}
+            </span>
+          </div>
+          <div class="field-surface">
+            <Side
+              pid="p1"
+              side={view.snapshot.sides.p1}
+              right={false}
+              timer={view.snapshot.timers?.p1}
+              spend={view.snapshot.spend?.p1}
+              receivedAt={view.receivedAt}
+              warning={sideWarning(0)}
+            />
+            <div class="center-mark">VS</div>
+            <Side
+              pid="p2"
+              side={view.snapshot.sides.p2}
+              right={true}
+              timer={view.snapshot.timers?.p2}
+              spend={view.snapshot.spend?.p2}
+              receivedAt={view.receivedAt}
+              warning={sideWarning(1)}
+            />
+          </div>
+        </section>
+      ) : null}
 
       <section class="panel">
         <div class="section-head">
@@ -383,6 +441,36 @@ function GamePage({
           ))}
         </div>
       </section>
+
+      {view.reflections.length > 0 ? (
+        <section class="panel">
+          <div class="section-head">
+            <div>
+              <h2>Post-game reflections</h2>
+              <p>What each coach took from this game, and how they plan to adapt.</p>
+            </div>
+          </div>
+          <div class="reflection-grid">
+            {view.reflections.map((reflection) => (
+              <article class={`reflection-card side-${reflection.side}`} key={reflection.side}>
+                <header>
+                  <b>{view.teamNames[reflection.side]}</b>
+                  <span class={`reflection-result ${reflection.result}`}>{reflection.result}</span>
+                  {reflection.fallback ? <span class="game-decision-flag">fallback</span> : null}
+                </header>
+                <p>{reflection.summary || 'No stored reflection.'}</p>
+                {reflection.adjustment ? <p class="reflection-adjustment">{reflection.adjustment}</p> : null}
+                {reflection.notebook ? (
+                  <details>
+                    <summary>Notebook carried forward</summary>
+                    <p class="game-decision-notebook">{reflection.notebook}</p>
+                  </details>
+                ) : null}
+              </article>
+            ))}
+          </div>
+        </section>
+      ) : null}
     </div>
   );
 }
@@ -427,7 +515,6 @@ function TeamStats({ franchise, seriesPlayed }: { franchise: LeagueFranchiseView
   const stats = franchise.stats;
   const selections = stats.moveSelections + stats.switchSelections;
   const rows: Array<[string, string]> = [
-    ['Threat reads converted', rate(stats.threatHits, stats.threatTurns)],
     ['Switch rate', rate(stats.switchSelections, selections)],
     ['Protect rate', rate(stats.protectSelections, selections)],
     ['Consecutive Protects', String(stats.consecutiveProtects)],
@@ -644,7 +731,15 @@ function TeamPage({
   );
 }
 
-function LiveNow({ league, onOpenTeam }: { league: LeagueResponse; onOpenTeam: (entrant: number) => void }) {
+function LiveNow({
+  league,
+  onOpenTeam,
+  onOpenGame,
+}: {
+  league: LeagueResponse;
+  onOpenTeam: (entrant: number) => void;
+  onOpenGame: (seriesIndex: number, game: number) => void;
+}) {
   const recentPicks = useMemo(() => {
     const picks: Array<{ pick: number; team: string; entrant: number; name: string; cost: number }> = [];
     for (const franchise of league.franchises) {
@@ -699,7 +794,14 @@ function LiveNow({ league, onOpenTeam }: { league: LeagueResponse; onOpenTeam: (
               ) : (
                 <b>Series {entry.seriesId.slice(0, 6)}…</b>
               )}{' '}
-              · game {entry.game}
+              ·{' '}
+              {entry.seriesIndex !== null ? (
+                <button type="button" class="text-link" onClick={() => onOpenGame(entry.seriesIndex!, entry.game)}>
+                  watch game {entry.game}
+                </button>
+              ) : (
+                `game ${entry.game}`
+              )}
               {entry.turn > 0 ? ` · turn ${entry.turn}` : ''} · {entry.decisions} decisions
             </li>
           ))}
@@ -799,7 +901,7 @@ function LeaguePage({
         </p>
       </header>
 
-      {league.live ? <LiveNow league={league} onOpenTeam={openEntrant} /> : null}
+      {league.live ? <LiveNow league={league} onOpenTeam={openEntrant} onOpenGame={openGame} /> : null}
 
       <div class="stat-row">
         <StatTile

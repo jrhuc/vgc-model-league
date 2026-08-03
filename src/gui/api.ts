@@ -335,7 +335,6 @@ export interface ModelEvidence {
     switch: number;
     protect: number;
     toolLookups: number;
-    threatConversion: number | null;
     reflectionFallback: number | null;
   };
 }
@@ -461,8 +460,6 @@ export interface LeagueFranchiseStatsView {
   consecutiveProtects: number;
   spreadSelections: number;
   megaSelections: number;
-  threatTurns: number;
-  threatHits: number;
   buildAttempts: number;
   leadChanges: number;
   bringChanges: number;
@@ -540,12 +537,6 @@ export interface LeagueDistributionView {
   topItems: Array<{ item: string; count: number }>;
 }
 
-export interface LeagueGameLogEntryView {
-  turn: number;
-  kind: string;
-  text: string;
-}
-
 export interface LeagueGameDecisionView {
   side: 0 | 1;
   turn: number;
@@ -561,6 +552,15 @@ export interface LeagueGameDecisionView {
   reasoningTokens: number | null;
 }
 
+export interface LeagueGameReflectionView {
+  side: 0 | 1;
+  result: 'won' | 'lost';
+  summary: string;
+  adjustment: string;
+  notebook: string;
+  fallback: boolean;
+}
+
 export interface LeagueGameResponse {
   runId: string;
   seriesIndex: number;
@@ -568,17 +568,22 @@ export interface LeagueGameResponse {
   stage: 'roundrobin' | 'playoff';
   round: number;
   game: number;
-  /** Game numbers with a stored log for this series, ascending. */
+  /** Game numbers with a stored log or logged decisions for this series, ascending. */
   games: number[];
   sides: [number, number];
   teamNames: [string, string];
   winner: number | null;
-  log: LeagueGameLogEntryView[];
+  live: boolean;
+  /** Battlefield state for a game still in progress; null once the game has a result. */
+  snapshot: BattleSnapshot | null;
+  log: BattleLogEntryView[];
   decisions: LeagueGameDecisionView[];
+  reflections: LeagueGameReflectionView[];
 }
 
 export interface LeagueLiveSeriesView {
   seriesId: string;
+  seriesIndex: number | null;
   game: number;
   turn: number;
   decisions: number;
@@ -650,7 +655,6 @@ export interface ModelProfileResponse {
     repeatedActions: number;
     bringChanges: number | null;
     leadChanges: number | null;
-    threatConversion: number | null;
     reflectionFallback: number | null;
   };
   modes: ModeRecordView[];

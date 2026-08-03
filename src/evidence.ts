@@ -34,8 +34,6 @@ interface StatBucket {
   switchSelections: number;
   protectSelections: number;
   toolLookups: number;
-  threatTurns: number;
-  threatHits: number;
   points: LatencyPoint[];
 }
 
@@ -53,8 +51,6 @@ function bucket(): StatBucket {
     switchSelections: 0,
     protectSelections: 0,
     toolLookups: 0,
-    threatTurns: 0,
-    threatHits: 0,
     points: [],
   };
 }
@@ -283,8 +279,6 @@ export function buildEvidence(allRows: SeriesRecord[], runsDir: string, pool: st
       entry.switchSelections += count(sideStats.switch_selections);
       entry.protectSelections += count(sideStats.protect_selections);
       entry.toolLookups += count(sideStats.tool_lookups);
-      entry.threatTurns += count(sideStats.threat_turns);
-      entry.threatHits += count(sideStats.threat_hits);
       const file = decisionLogPath(runsDir, String(row.run_id ?? ''), String(row.series_id ?? ''), pid);
       if (file) entry.points.push(...readLatencyPoints(file, String(row.series_id ?? '')));
     }
@@ -322,7 +316,6 @@ export function buildEvidence(allRows: SeriesRecord[], runsDir: string, pool: st
           switch: selections ? entry.switchSelections / selections : 0,
           protect: selections ? entry.protectSelections / selections : 0,
           toolLookups: entry.decisions ? entry.toolLookups / entry.decisions : 0,
-          threatConversion: entry.threatTurns ? entry.threatHits / entry.threatTurns : null,
           reflectionFallback: entry.reflections ? entry.reflectionFallbacks / entry.reflections : null,
         },
       };

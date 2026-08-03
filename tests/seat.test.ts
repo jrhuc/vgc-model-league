@@ -132,8 +132,6 @@ test('an exhibition series against random plays to completion through the bridge
         data.exchange.phase === 'reflection'
           ? '{"summary":"s","adjustment":"a","notebook":"n"}'
           : JSON.stringify({
-              threats: [],
-              candidates: [],
               choices: decide(data.exchange.prompt),
               rationale: 'r',
               notebook: 'n',
