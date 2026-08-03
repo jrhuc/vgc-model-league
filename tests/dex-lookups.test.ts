@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { TOOL_BUDGET_NOTICE, completeWithDexTools } from '../src/dex-lookups.js';
+import { completeWithDexTools, TOOL_BUDGET_NOTICE } from '../src/dex-lookups.js';
 import { ShowdownReference } from '../src/reference.js';
-import type { Completion, CompleteOptions, Provider, ProviderMessage } from '../src/types.js';
+import type { CompleteOptions, Completion, Provider, ProviderMessage } from '../src/types.js';
 
 const POLICY = {
   maxTokens: 4096,
@@ -18,7 +18,10 @@ function reply(partial: Partial<Completion>): Completion {
   return { text: '', usage: {}, toolCalls: [], ...partial };
 }
 
-function scriptedProvider(replies: Completion[], calls: { messages: ProviderMessage[]; options?: CompleteOptions }[]): Provider {
+function scriptedProvider(
+  replies: Completion[],
+  calls: { messages: ProviderMessage[]; options?: CompleteOptions }[],
+): Provider {
   return {
     complete: (_system, messages, options) => {
       calls.push({ messages: messages.map((m) => ({ ...m })), ...(options === undefined ? {} : { options }) });

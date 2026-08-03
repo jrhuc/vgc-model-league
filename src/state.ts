@@ -446,7 +446,9 @@ export class BattleState {
       reason = 'switches resolve before moves';
     } else if (firstIsSwitch && secondIsSwitch) {
       order = this.speedOrder(firstProfile, secondProfile, trickRoom);
-      reason = trickRoom ? 'both switching; switch order follows Speed under Trick Room' : 'both switching; switch order follows Speed';
+      reason = trickRoom
+        ? 'both switching; switch order follows Speed under Trick Room'
+        : 'both switching; switch order follows Speed';
     } else if (firstPriority !== secondPriority) {
       order = firstPriority! > secondPriority! ? 'first' : 'second';
       reason = `base move priority ${firstPriority! >= 0 ? '+' : ''}${firstPriority!} vs ${secondPriority! >= 0 ? '+' : ''}${secondPriority!}`;
@@ -780,8 +782,7 @@ export class BattleState {
             .map(([stat, value]) => `${STAT_LABELS[stat] ?? stat} ${value}`)
             .join(', ')}`,
         );
-      }
-      else if (reference?.speed) attrs.push(`raw Speed range ${reference.speed}`);
+      } else if (reference?.speed) attrs.push(`raw Speed range ${reference.speed}`);
       if (mon.item) attrs.push(`item ${mon.item}${mon.itemConsumed ? ' (consumed)' : ''}`);
       if (mon.ability) attrs.push(`ability ${mon.ability}`);
       if (mon.nature) attrs.push(`stat alignment ${mon.nature}`);

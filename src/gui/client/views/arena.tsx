@@ -362,7 +362,7 @@ export function ArenaView({
         <div class="panel no-run">
           <div class="no-run-inner">
             <div class="no-run-mark">
-              <span class="live-dot" aria-label="live" />
+              <span class="live-dot" aria-hidden="true" />
             </div>
             <p class="eyebrow">League in progress</p>
             <h2>A draft league is running from the CLI</h2>

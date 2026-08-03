@@ -721,7 +721,8 @@ export class LLMEngine extends BaseEngine {
         if (completion.reasoning) reasoningParts.push(completion.reasoning);
         if (completion.toolCalls.length && !finalRound) {
           toolRounds += 1;
-          const standardMax = deadline === undefined ? UNTIMED_MAX_STANDARD_TOOL_CALLS : DECISION_MAX_STANDARD_TOOL_CALLS;
+          const standardMax =
+            deadline === undefined ? UNTIMED_MAX_STANDARD_TOOL_CALLS : DECISION_MAX_STANDARD_TOOL_CALLS;
           const orderMax = deadline === undefined ? UNTIMED_MAX_ORDER_TOOL_CALLS : DECISION_MAX_ORDER_TOOL_CALLS;
           const { kept: calls, dropped } = boundedToolCalls(completion.toolCalls, standardMax, orderMax);
           messages.push(assistantToolMessage(completion));

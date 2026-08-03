@@ -6,15 +6,21 @@ import type { DraftBoardMon } from './draft.js';
 import type { TeambuildSetView, TeambuildView } from './gui/api.js';
 import { defaultPsDir } from './paths.js';
 import type { ModelReasoningConfig, ReasoningLevel } from './providers.js';
-import { classifyProviderFailure, makeProvider, parseSpec, reasoningForModel, resolveSpecOverride } from './providers.js';
+import {
+  classifyProviderFailure,
+  makeProvider,
+  parseSpec,
+  reasoningForModel,
+  resolveSpecOverride,
+} from './providers.js';
 import { type Rng, shuffle } from './random.js';
-import { clip } from './value.js';
 import type { RecoveryGate } from './recovery.js';
 import { ShowdownReference } from './reference.js';
 import type { ShowdownApi } from './showdown.js';
 import { loadShowdown } from './showdown.js';
 import { normalizePackedTeam, validateTeam } from './teams.js';
 import type { JsonObject, Provider, ProviderFailure, ProviderMessage } from './types.js';
+import { clip } from './value.js';
 
 const TEAMBUILD_PROMPT_POLICY = {
   systemTemplate: [

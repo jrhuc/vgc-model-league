@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { Battle, Dex } from 'pokemon-showdown';
 import { defaultPsDir } from './paths.js';
-import { loadShowdown, showdownCommit, type ShowdownApi } from './showdown.js';
+import { loadShowdown, type ShowdownApi, showdownCommit } from './showdown.js';
 import type { ToolDefinition } from './types.js';
 
 type FormatDataKind = 'move' | 'item';
@@ -101,7 +101,7 @@ export const DEX_TOOLS: ToolDefinition[] = [
       attacker_stats: {
         type: 'object',
         description:
-          "Optional exact raw stats from your own build. Only the stat this move attacks with is read; other keys are ignored, so never pad unknown stats with placeholder values.",
+          'Optional exact raw stats from your own build. Only the stat this move attacks with is read; other keys are ignored, so never pad unknown stats with placeholder values.',
         properties: {
           atk: { type: 'number', exclusiveMinimum: 0 },
           def: { type: 'number', exclusiveMinimum: 0 },
@@ -969,9 +969,7 @@ export class ShowdownReference {
     }
     if (!attackType.trim()) {
       if (attacker?.exists) {
-        const perType = attacker.types.map(
-          (type) => `${type}: ${effectivenessDetail(this.dex, type, defender.types)}`,
-        );
+        const perType = attacker.types.map((type) => `${type}: ${effectivenessDetail(this.dex, type, defender.types)}`);
         return `${attacker.name} types into ${defender.name} (${defender.types.join('/')}): ${perType.join(' | ')}.`;
       }
       return 'Provide move or attacker_type.';
@@ -1072,7 +1070,8 @@ export class ShowdownReference {
       const statusRaw = args[`${side}_status`];
       if (typeof statusRaw === 'string' && statusRaw.trim()) {
         const status = STATUS_IDS[id(statusRaw)];
-        if (!status) return `Unknown ${side}_status ${JSON.stringify(statusRaw)}; accepted: brn, par, psn, tox, slp, frz.`;
+        if (!status)
+          return `Unknown ${side}_status ${JSON.stringify(statusRaw)}; accepted: brn, par, psn, tox, slp, frz.`;
         statuses[side] = status;
       }
       const natureRaw = args[`${side}_nature`];
@@ -1144,7 +1143,9 @@ export class ShowdownReference {
         return value;
       }
       if (this.implausibleStat(species, stat, value, `${side}_stats.${stat}`)) {
-        notes.push(`${side}_stats.${stat} ${value} is implausible for ${species.name}, so the legal range was used instead`);
+        notes.push(
+          `${side}_stats.${stat} ${value} is implausible for ${species.name}, so the legal range was used instead`,
+        );
         return undefined;
       }
       return value;
@@ -1153,9 +1154,13 @@ export class ShowdownReference {
     const exactDef = exactStat('defender', defStat, defender);
     const exactHp = exactStat('defender', 'hp', defender);
     const [offLow, offHigh] =
-      exactOff !== undefined ? [exactOff, exactOff] : statRange(this.battle, offSpecies.baseStats, natures[offSide], offStat);
+      exactOff !== undefined
+        ? [exactOff, exactOff]
+        : statRange(this.battle, offSpecies.baseStats, natures[offSide], offStat);
     const [defLow, defHigh] =
-      exactDef !== undefined ? [exactDef, exactDef] : statRange(this.battle, defender.baseStats, natures.defender, defStat);
+      exactDef !== undefined
+        ? [exactDef, exactDef]
+        : statRange(this.battle, defender.baseStats, natures.defender, defStat);
     const [hpLow, hpHigh] = exactHp !== undefined ? [exactHp, exactHp] : hpRange(this.battle, defender.baseStats);
 
     const suppliedAttackerHp = asFinite(args.attacker_hp_percent);
@@ -1329,11 +1334,17 @@ export class ShowdownReference {
       format: this.resolvedFormat,
       p1: {
         name: 'Attacker',
-        team: [scratchSet(cfg.attacker.name, cfg.attackerAbility ?? 'Honey Gather', cfg.attackerItem ?? '', [cfg.moveId]), filler()],
+        team: [
+          scratchSet(cfg.attacker.name, cfg.attackerAbility ?? 'Honey Gather', cfg.attackerItem ?? '', [cfg.moveId]),
+          filler(),
+        ],
       },
       p2: {
         name: 'Defender',
-        team: [scratchSet(cfg.defender.name, cfg.defenderAbility ?? 'Honey Gather', cfg.defenderItem ?? '', ['Splash']), filler()],
+        team: [
+          scratchSet(cfg.defender.name, cfg.defenderAbility ?? 'Honey Gather', cfg.defenderItem ?? '', ['Splash']),
+          filler(),
+        ],
       },
     });
     try {

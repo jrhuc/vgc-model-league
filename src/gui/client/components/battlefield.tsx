@@ -112,14 +112,7 @@ export function Side({
     <div class={`side ${right ? 'right' : ''}`}>
       <div class="side-name">
         <div class="side-model">
-          {warningLabel && (
-            <span
-              class="side-fallback-warning"
-              role="img"
-              aria-label={warningLabel}
-              title={warning}
-            />
-          )}
+          {warningLabel && <span class="side-fallback-warning" role="img" aria-label={warningLabel} title={warning} />}
           <Mark spec={side.player} size={16} />
           <b>{player ?? side.player}</b>
         </div>

@@ -166,10 +166,7 @@ export function Dropdown({
 
   const onBlur = (event: TargetedFocusEvent<HTMLElement>) => {
     const target = event.relatedTarget;
-    if (
-      !(target instanceof Node) ||
-      (!rootRef.current?.contains(target) && !popRef.current?.contains(target))
-    ) {
+    if (!(target instanceof Node) || (!rootRef.current?.contains(target) && !popRef.current?.contains(target))) {
       setOpen(false);
     }
   };

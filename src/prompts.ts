@@ -20,7 +20,8 @@ export const TIMED_SYSTEM = [
   RETURN_JSON,
 ].join('\n');
 
-const REFLECTION_EVIDENCE = 'Use only the supplied private battle evidence and authoritative outcome. Do not invent hidden information.';
+const REFLECTION_EVIDENCE =
+  'Use only the supplied private battle evidence and authoritative outcome. Do not invent hidden information.';
 const REFLECTION_PREVIEW_PLAN =
   'Question the team-preview plan itself — whether the four brought, and which Mega Stone holder (if any) you evolved, suited this opponent — not only how the game was piloted.';
 const REFLECTION_CONCISE = 'Give concise conclusions.';
