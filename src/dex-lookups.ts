@@ -120,13 +120,13 @@ export async function completeWithDexTools(request: DexToolRequest): Promise<Com
     }
 
     const calls = completion.toolCalls.slice(0, request.policy.maxCallsPerRound);
-    request.messages.push(
-      assistantToolMessage(
-        calls.length === completion.toolCalls.length
-          ? completion
-          : { ...completion, toolCalls: calls, responseMessages: [] },
-      ),
-    );
+    const dropped = completion.toolCalls.slice(request.policy.maxCallsPerRound);
+    request.messages.push(assistantToolMessage(completion));
+    for (const call of dropped) {
+      const result = `Not executed: this round exceeded its budget of ${request.policy.maxCallsPerRound} calls. Re-issue the call next round if you still need it.`;
+      request.onLookup?.({ name: call.name, arguments: call.arguments, result });
+      request.messages.push(toolResultMessage(call.id, result));
+    }
     for (const call of calls) {
       const result = lookup(call.name, call.arguments);
       request.onLookup?.({ name: call.name, arguments: call.arguments, result });

@@ -8,6 +8,7 @@ import { defaultPsDir } from './paths.js';
 import type { ModelReasoningConfig, ReasoningLevel } from './providers.js';
 import { classifyProviderFailure, makeProvider, parseSpec, reasoningForModel, resolveSpecOverride } from './providers.js';
 import { type Rng, shuffle } from './random.js';
+import { clip } from './value.js';
 import type { RecoveryGate } from './recovery.js';
 import { ShowdownReference } from './reference.js';
 import type { ShowdownApi } from './showdown.js';
@@ -568,7 +569,7 @@ export async function runTeambuild(request: TeambuildRequest, options: Teambuild
     opponent: request.opponent,
     brought: repaired.map((entry) => entry.mon.id),
     sets: views,
-    rationale: chosen.plan.slice(0, 900),
+    rationale: clip(chosen.plan, 2_000),
     attempts: attemptsUsed,
   };
   fs.appendFileSync(

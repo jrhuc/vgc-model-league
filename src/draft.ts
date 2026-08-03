@@ -12,7 +12,7 @@ import type { RecoveryGate } from './recovery.js';
 import { ShowdownReference } from './reference.js';
 import { loadShowdown } from './showdown.js';
 import type { JsonObject, Provider, ProviderFailure, ProviderMessage } from './types.js';
-import { text } from './value.js';
+import { clip, text } from './value.js';
 
 const BOARD_SLUG = /^[a-z0-9][a-z0-9-]{0,63}$/;
 
@@ -63,6 +63,8 @@ const DRAFT_PROMPT_POLICY = {
   rejectionTemplate: 'That pick was rejected: {{error}}. Reply again with only the JSON object.',
   truncatedTemplate:
     'Your previous reply used the whole {{budget}}-token budget before naming a pick. Reply now with only the JSON object, keeping your reasoning short enough to finish inside the budget.',
+  notebookLimit: 4_000,
+  rationaleLimit: 2_000,
   maxTokens: 32_768,
   timeoutSeconds: 600,
   attempts: 3,
@@ -354,7 +356,7 @@ function replayTranscript(
       pick: index + 1,
       entrant: drafter,
       mon: mon.id,
-      rationale: typeof row.rationale === 'string' ? row.rationale.slice(0, 600) : '',
+      rationale: typeof row.rationale === 'string' ? clip(row.rationale, DRAFT_PROMPT_POLICY.rationaleLimit) : '',
       fallback: row.fallback === true,
     };
     context.picks.push(view);
@@ -517,7 +519,7 @@ export function parsePick(
     .trim()
     .slice(0, 60);
   if (!state.rosters[drafter]!.length && !teamName) return '"team_name" is required with your first pick';
-  const notebook = typeof record.notebook === 'string' ? record.notebook.trim().slice(0, 1_200) : '';
+  const notebook = typeof record.notebook === 'string' ? clip(record.notebook.trim(), DRAFT_PROMPT_POLICY.notebookLimit) : '';
   if (!notebook) return '"notebook" must be a concise full roster plan to carry to your next pick';
   return {
     mon,
@@ -690,7 +692,7 @@ export async function runDraft(models: string[], board: DraftBoard, options: Run
       pick: pickNumber + 1,
       entrant: drafter,
       mon: chosen.id,
-      rationale: reasoning.slice(0, 600),
+      rationale: clip(reasoning, DRAFT_PROMPT_POLICY.rationaleLimit),
       fallback,
     };
     picks.push(view);

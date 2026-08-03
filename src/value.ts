@@ -24,3 +24,9 @@ export function afterColon(value: string): string {
   const separator = value.indexOf(': ');
   return separator < 0 ? value : value.slice(separator + 2);
 }
+
+/** Doom-loop backstop, not a content budget: limits should be set far above real traffic, and any
+ * clipping must stay visible to the model and in traces rather than silently amputating content. */
+export function clip(value: string, limit: number): string {
+  return value.length <= limit ? value : `${value.slice(0, limit)} [clipped]`;
+}

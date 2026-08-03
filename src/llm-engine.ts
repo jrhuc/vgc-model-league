@@ -34,7 +34,7 @@ import type {
   ToolCall,
   ToolDefinition,
 } from './types.js';
-import { isRecord, text } from './value.js';
+import { clip, isRecord, text } from './value.js';
 
 interface ParsedDecision {
   choices: number[];
@@ -119,16 +119,19 @@ const PACE_SAMPLE_MIN_MS = 2000;
 const DECISION_MAX_TOOL_ROUNDS = 2;
 const DECISION_MAX_STANDARD_TOOL_CALLS = 2;
 const DECISION_MAX_ORDER_TOOL_CALLS = 1;
-/** Generous enough that reaching it signals a looping model, not an interrupted analysis: at the old cap
- * of 4 every parse failure in the 2026-08-02 audit came from analyses forced to finish tool-less. */
-const UNTIMED_MAX_TOOL_ROUNDS = 12;
-const UNTIMED_MAX_STANDARD_TOOL_CALLS = 4;
-const UNTIMED_MAX_ORDER_TOOL_CALLS = 2;
+/** Doom-loop backstops only: run-3 traffic piled up at the old round cap of 12 (101 decisions stopped
+ * at exactly 12), so real analyses were being interrupted; identical repeat calls are now answered from
+ * cache, which is the loop catch these caps used to approximate. */
+const UNTIMED_MAX_TOOL_ROUNDS = 30;
+const UNTIMED_MAX_STANDARD_TOOL_CALLS = 12;
+const UNTIMED_MAX_ORDER_TOOL_CALLS = 4;
 const DECISION_PARSE_ATTEMPTS = 2;
 const UNTIMED_DECISION_PARSE_ATTEMPTS = 4;
 const UNTIMED_EMPTY_RESPONSE_RETRIES = 2;
-const DECISION_NOTE_LIMIT = 1600;
-const DECISION_RATIONALE_LIMIT = 500;
+/** Content backstops, not budgets: run-3 hit the old notebook cap of 1600 on 190 decisions, every one
+ * amputating the newest plans mid-sentence. Anything these do clip carries a visible marker. */
+const DECISION_NOTE_LIMIT = 8000;
+const DECISION_RATIONALE_LIMIT = 2000;
 const DECISION_TEMPERATURE = 0.2;
 const REFLECTION_MAX_TOKENS = 8192;
 const REFLECTION_TIMEOUT_S = 240;
@@ -182,11 +185,18 @@ export function updatedPace(previous: number | undefined, outputTokens: number, 
   return previous === undefined ? rate : (previous + rate) / 2;
 }
 
-function boundedToolCalls(calls: ToolCall[], standardMax: number, orderMax: number): ToolCall[] {
+function boundedToolCalls(
+  calls: ToolCall[],
+  standardMax: number,
+  orderMax: number,
+): { kept: ToolCall[]; dropped: ToolCall[] } {
   const order = calls.filter((call) => call.name === ACTION_ORDER_TOOL.name).slice(0, orderMax);
   const standard = calls.filter((call) => call.name !== ACTION_ORDER_TOOL.name).slice(0, standardMax);
   const selectedIds = new Set([...standard, ...order].map((call) => call.id));
-  return calls.filter((call) => selectedIds.has(call.id));
+  return {
+    kept: calls.filter((call) => selectedIds.has(call.id)),
+    dropped: calls.filter((call) => !selectedIds.has(call.id)),
+  };
 }
 
 const GOLDEN_LINES = [
@@ -380,7 +390,7 @@ export class LLMEngine extends BaseEngine {
     this.reference =
       options.reference ?? new ShowdownReference(options.format ?? 'gen9championsvgc2026regmbbo3', options.psDir);
     this.state = new BattleState(pid);
-    this.notebook = options.initialNotebook?.trim().slice(0, DECISION_NOTE_LIMIT) ?? '';
+    this.notebook = clip(options.initialNotebook?.trim() ?? '', DECISION_NOTE_LIMIT);
     this.gameId = spec;
   }
 
@@ -711,18 +721,15 @@ export class LLMEngine extends BaseEngine {
         if (completion.reasoning) reasoningParts.push(completion.reasoning);
         if (completion.toolCalls.length && !finalRound) {
           toolRounds += 1;
-          const calls = boundedToolCalls(
-            completion.toolCalls,
-            deadline === undefined ? UNTIMED_MAX_STANDARD_TOOL_CALLS : DECISION_MAX_STANDARD_TOOL_CALLS,
-            deadline === undefined ? UNTIMED_MAX_ORDER_TOOL_CALLS : DECISION_MAX_ORDER_TOOL_CALLS,
-          );
-          messages.push(
-            assistantToolMessage(
-              calls.length === completion.toolCalls.length
-                ? completion
-                : { ...completion, toolCalls: calls, responseMessages: [] },
-            ),
-          );
+          const standardMax = deadline === undefined ? UNTIMED_MAX_STANDARD_TOOL_CALLS : DECISION_MAX_STANDARD_TOOL_CALLS;
+          const orderMax = deadline === undefined ? UNTIMED_MAX_ORDER_TOOL_CALLS : DECISION_MAX_ORDER_TOOL_CALLS;
+          const { kept: calls, dropped } = boundedToolCalls(completion.toolCalls, standardMax, orderMax);
+          messages.push(assistantToolMessage(completion));
+          for (const call of dropped) {
+            const result = `Not executed: this round exceeded its budget of ${standardMax} standard and ${orderMax} order calls. Re-issue the call next round if you still need it.`;
+            toolCalls.push({ name: call.name, arguments: call.arguments, result });
+            messages.push(toolResultMessage(call.id, result));
+          }
           for (const call of calls) {
             const seenKey = `${call.name} ${JSON.stringify(call.arguments)}`;
             const cached = seenToolResults.get(seenKey);
@@ -1143,8 +1150,8 @@ export class LLMEngine extends BaseEngine {
       throw new Error('response must contain string rationale and notebook fields');
     return {
       choices,
-      rationale: rationale.slice(0, DECISION_RATIONALE_LIMIT),
-      notebook: notebook.slice(0, DECISION_NOTE_LIMIT),
+      rationale: clip(rationale, DECISION_RATIONALE_LIMIT),
+      notebook: clip(notebook, DECISION_NOTE_LIMIT),
     };
   }
 
@@ -1277,9 +1284,9 @@ export class LLMEngine extends BaseEngine {
     )
       throw new Error('review must contain string summary, adjustment, and notebook fields');
     return {
-      summary: object.summary.slice(0, DECISION_RATIONALE_LIMIT),
-      adjustment: object.adjustment.slice(0, DECISION_RATIONALE_LIMIT),
-      notebook: object.notebook.slice(0, DECISION_NOTE_LIMIT),
+      summary: clip(object.summary, DECISION_RATIONALE_LIMIT),
+      adjustment: clip(object.adjustment, DECISION_RATIONALE_LIMIT),
+      notebook: clip(object.notebook, DECISION_NOTE_LIMIT),
     };
   }
 

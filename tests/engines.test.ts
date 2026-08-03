@@ -189,7 +189,7 @@ test('Gemini-like nested candidate objects preserve the complete top-level decis
   assert.equal(decisions[0]!.fallback, false);
   assert.equal(decisions[0]!.parse_failures, 0);
   assert.equal(decisions[0]!.rationale, 'use the top-level choice');
-  assert.equal(String(decisions[0]!.notebook).length, 1600);
+  assert.equal(String(decisions[0]!.notebook).length, 1800, 'well under the notebook backstop, kept whole');
 });
 
 test('timer context bounds the provider request', async () => {
@@ -708,7 +708,7 @@ test('untimed tool batches allow wide verification across many rounds', async ()
     assert.equal(call.options.toolChoice, 'auto', 'four rounds sit well under the untimed cap');
   }
   const toolTrace = traces[0]!.tool_calls as Array<Record<string, unknown>>;
-  assert.equal(toolTrace.length, 9, 'the untimed cap keeps four standard calls of the five-call batch');
+  assert.equal(toolTrace.length, 10, 'the raised untimed cap executes the whole five-call batch');
   assert.equal(traces[0]!.tool_rounds, 4);
 });
 
@@ -732,7 +732,11 @@ test('timed tool batches stay capped at two rounds of two calls', async () => {
   assert.equal(provider.calls.length, 3);
   assert.equal(provider.calls[2]!.options.toolChoice, 'none');
   const toolTrace = traces[0]!.tool_calls as Array<Record<string, unknown>>;
-  assert.equal(toolTrace.length, 4, 'two rounds of two standard calls under the clock');
+  assert.equal(toolTrace.length, 6, 'two executed plus one explicitly-refused call per timed round');
+  assert.ok(
+    toolTrace.some((entry) => /Not executed/.test(String(entry.result))),
+    'dropped calls are answered, not silently discarded',
+  );
 });
 
 test('one action-order call may accompany two standard calls in the single tool round', async () => {
