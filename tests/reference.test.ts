@@ -86,7 +86,7 @@ test('active matchup chart resolves Weather Ball under the live weather', () => 
       move: 'Weather Ball',
       weather: 'RainDance (4 turns left)',
     }),
-    /weather 1\.5x/,
+    /Weather Ball \(Water Special BP 100\).*applied rain/,
   );
 });
 
@@ -232,7 +232,10 @@ test('exact defender stats collapse the open-sheet range', () => {
 test('damage tools reject items removed from the Champions format', () => {
   const reference = new ShowdownReference('gen9championsvgc2026regmb');
   const args = { attacker: 'Gengar', defender: 'Farigiraf', move: 'Sludge Bomb' };
-  assert.match(reference.lookup('estimate_damage', args), /defender item 1x/);
+  assert.match(
+    reference.lookup('estimate_damage', args),
+    /no abilities, items, status, or field effects applied/,
+  );
   assert.equal(
     reference.lookup('estimate_damage', { ...args, defender_item: 'Assault Vest' }),
     'Assault Vest is not legal in gen9championsvgc2026regmb.',
@@ -241,7 +244,7 @@ test('damage tools reject items removed from the Champions format', () => {
     reference.lookup('estimate_damage', { ...args, defender_item: 'Eviolite' }),
     'Eviolite is not legal in gen9championsvgc2026regmb.',
   );
-  assert.match(reference.lookup('estimate_damage', { ...args, defender_item: 'Leftovers' }), /defender item 1x/);
+  assert.match(reference.lookup('estimate_damage', { ...args, defender_item: 'Leftovers' }), /defender item Leftovers/);
 });
 
 test('damage estimates accept percentages only, reject zero exact stats, and label KO certainty', () => {
@@ -300,24 +303,63 @@ test('species lookups resolve board display names the dex does not alias', () =>
   );
 });
 
-test('damage estimates reject implausible supplied stats but allow stage-boosted values', () => {
+test('damage estimates fall back to legal ranges for implausible stats but keep stage-boosted values', () => {
   const reference = new ShowdownReference('gen9championsvgc2026regmb');
   const args = { attacker: 'Basculegion', defender: 'Gengar-Mega', move: 'Last Respects' };
-  assert.match(
-    reference.lookup('estimate_damage', { ...args, defender_stats: { hp: 1, def: 1 } }),
-    /defender_stats\.def 1 is implausible for Gengar-Mega: legal raw def spans \d+-\d+/,
-  );
+  const implausibleDef = reference.lookup('estimate_damage', { ...args, defender_stats: { hp: 1, def: 1 } });
+  assert.match(implausibleDef, /defender_stats\.def 1 is implausible for Gengar-Mega, so the legal range was used/);
+  assert.match(implausibleDef, /% of maximum HP/, 'the estimate must still be produced');
   assert.match(
     reference.lookup('estimate_damage', { ...args, defender_stats: { hp: 1, def: 110 } }),
-    /defender_stats\.hp 1 is outside Gengar-Mega's legal HP range \d+-\d+/,
+    /defender_stats\.hp 1 is outside Gengar-Mega's legal HP range \d+-\d+, so the legal range was used/,
   );
   assert.match(
     reference.lookup('estimate_damage', { ...args, attacker_stats: { atk: 9999 } }),
-    /attacker_stats\.atk 9999 is implausible for Basculegion/,
+    /attacker_stats\.atk 9999 is implausible for Basculegion, so the legal range was used/,
   );
   assert.match(
     reference.lookup('estimate_damage', { ...args, attacker_stats: { atk: 328 } }),
     /Last Respects \(Ghost Physical BP 50\) into Gengar-Mega: \d+/,
+  );
+});
+
+test('damage estimates apply abilities, stages, burn, screens, and terrain through the engine', () => {
+  const reference = new ShowdownReference('gen9championsvgc2026regmb');
+  const args = { attacker: 'Garchomp', defender: 'Incineroar', move: 'Earthquake', is_spread_hit: false };
+  const maxPercent = (result: string) => {
+    const match = result.match(/-([\d.]+)% of maximum HP/);
+    assert.ok(match, `expected a damage range in: ${result}`);
+    return Number(match![1]);
+  };
+  const near = (ratio: number, expected: number) => Math.abs(ratio - expected) < 0.02;
+  const base = maxPercent(reference.lookup('estimate_damage', args));
+  const burned = maxPercent(reference.lookup('estimate_damage', { ...args, attacker_status: 'brn' }));
+  assert.ok(near(burned / base, 0.5), `burn must halve physical damage (${base} -> ${burned})`);
+  const boosted = maxPercent(reference.lookup('estimate_damage', { ...args, attacker_boosts: { atk: 2 } }));
+  assert.ok(near(boosted / base, 2), `+2 atk must double damage (${base} -> ${boosted})`);
+  const screened = maxPercent(
+    reference.lookup('estimate_damage', { ...args, defender_screens: ['reflect'] }),
+  );
+  assert.ok(near(screened / base, 2732 / 4096), `Reflect in doubles is a 1/3 cut (${base} -> ${screened})`);
+  const intimidated = maxPercent(reference.lookup('estimate_damage', { ...args, attacker_boosts: { atk: -1 } }));
+  assert.ok(intimidated < base, 'negative stages must reduce damage');
+  assert.match(
+    reference.lookup('estimate_damage', { ...args, defender_ability: 'Levitate' }),
+    /immune or absorbed by Levitate/,
+  );
+  const grounded = maxPercent(
+    reference.lookup('estimate_damage', {
+      attacker: 'Iron Treads',
+      defender: 'Incineroar',
+      move: 'Steel Roller',
+      terrain: 'grassy',
+      is_spread_hit: false,
+    }),
+  );
+  assert.ok(grounded > 0, 'terrain-dependent moves must compute under the supplied terrain');
+  assert.match(
+    reference.lookup('estimate_damage', { attacker: 'Azumarill', defender: 'Dragonite', move: 'Play Rough', attacker_ability: 'Huge Power' }),
+    /applied attacker ability Huge Power/,
   );
 });
 
