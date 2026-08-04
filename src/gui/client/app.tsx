@@ -32,14 +32,22 @@ interface Route {
   section: DataRoomSection;
   run?: string;
   team?: string;
+  series?: number;
   model?: string;
 }
 
 function routeFromHash(): Route {
   const hash = decodeURIComponent(window.location.hash.slice(1));
-  const [head = '', second = '', third = ''] = hash.split('/');
+  const [head = '', second = '', third = '', fourth = ''] = hash.split('/');
   if (head === 'leagues') {
-    return { view: 'leagues', section: 'play', ...(second ? { run: second } : {}), ...(third ? { team: third } : {}) };
+    const series = /^\d+$/.test(fourth) ? Number(fourth) : undefined;
+    return {
+      view: 'leagues',
+      section: 'play',
+      ...(second ? { run: second } : {}),
+      ...(third ? { team: third } : {}),
+      ...(series === undefined ? {} : { series }),
+    };
   }
   if (head === 'tournaments') return { view: 'tournaments', section: 'play', ...(second ? { run: second } : {}) };
   if (head === 'data') {
@@ -195,7 +203,8 @@ export function App() {
     window.scrollTo(0, 0);
   };
   const openLeague = (runId: string) => drill(runId ? `leagues/${runId}` : 'leagues');
-  const openTeam = (runId: string, slug: string) => drill(`leagues/${runId}/${slug}`);
+  const openTeam = (runId: string, slug: string, series?: number) =>
+    drill(series === undefined ? `leagues/${runId}/${slug}` : `leagues/${runId}/${slug}/${series}`);
   const openTournament = (runId: string) => drill(runId ? `tournaments/${runId}` : 'tournaments');
   const openModel = (id: string) => drill(`data/${id}`);
 
@@ -372,6 +381,7 @@ export function App() {
               boards={app.boards}
               run={route.run}
               team={route.team}
+              series={route.series}
               onOpenLeague={openLeague}
               onOpenTeam={openTeam}
               onOpenModel={openModel}

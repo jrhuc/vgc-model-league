@@ -21,6 +21,22 @@ const COST_BANDS = [
   { min: 1, max: 5, cls: 'c1' },
 ] as const;
 
+export interface DraftRecord {
+  pick: number;
+  entrant: number;
+}
+
+interface BoardGroup {
+  key: string;
+  title: string;
+  cls: string;
+  mons: DraftBoardMonView[];
+}
+
+function bandFor(cost: number): string {
+  return COST_BANDS.find((band) => cost >= band.min && cost <= band.max)?.cls ?? 'c1';
+}
+
 export function useBoard(boardId: string) {
   const [result, setResult] = useState<{ id: string; board: BoardResponse | null; error: string }>({
     id: '',
@@ -59,15 +75,17 @@ export function BoardBrowser({
 }: {
   board: DraftBoardMonView[];
   owners: Map<string, number>;
-  picks?: Map<string, number>;
+  picks?: Map<string, DraftRecord>;
   coach: (entrant: number) => string;
 }) {
   const [query, setQuery] = useState('');
   const [hideTaken, setHideTaken] = useState(false);
+  const [order, setOrder] = useState<'cost' | 'pick'>('cost');
+  const drafted = picks !== undefined && picks.size > 0;
+  const byPick = drafted && order === 'pick';
   const { count, groups } = useMemo(() => {
     const needle = query.trim().toLowerCase();
-    const next = COST_BANDS.map((band) => ({ band, mons: [] as DraftBoardMonView[] }));
-    let count = 0;
+    const matched: DraftBoardMonView[] = [];
     for (const mon of board) {
       if (hideTaken && owners.has(mon.id)) continue;
       if (
@@ -78,12 +96,51 @@ export function BoardBrowser({
       ) {
         continue;
       }
-      const group = next.find(({ band }) => mon.cost >= band.min && mon.cost <= band.max);
-      if (group) group.mons.push(mon);
-      count += 1;
+      matched.push(mon);
     }
-    return { count, groups: next.filter((group) => group.mons.length > 0) };
-  }, [board, owners, query, hideTaken]);
+    if (!byPick) {
+      const bands = COST_BANDS.map((band) => ({
+        key: String(band.min),
+        title: `${band.min}–${band.max} points`,
+        cls: band.cls,
+        mons: [] as DraftBoardMonView[],
+      }));
+      for (const mon of matched) {
+        bands.find((group) => group.cls === bandFor(mon.cost))?.mons.push(mon);
+      }
+      return { count: matched.length, groups: bands.filter((group) => group.mons.length > 0) };
+    }
+    /** Snake rounds are the shape a draft is read in, so pick order groups by round rather than
+     * running one 60-long list; seats come from the owner map because the board itself has none. */
+    const seats = Math.max(
+      0,
+      ...[...owners.values()].map((entrant) => entrant + 1),
+      ...[...(picks?.values() ?? [])].map((record) => record.entrant + 1),
+    );
+    const rounds = new Map<number, BoardGroup>();
+    const undrafted: DraftBoardMonView[] = [];
+    for (const mon of [...matched].sort((a, b) => (picks?.get(a.id)?.pick ?? 0) - (picks?.get(b.id)?.pick ?? 0))) {
+      const record = picks?.get(mon.id);
+      if (record === undefined) {
+        undrafted.push(mon);
+        continue;
+      }
+      const round = seats > 0 ? Math.ceil(record.pick / seats) : 1;
+      const group = rounds.get(round) ?? {
+        key: `round-${round}`,
+        title: seats > 0 ? `Round ${round}` : 'Picks',
+        cls: 'picked',
+        mons: [],
+      };
+      group.mons.push(mon);
+      rounds.set(round, group);
+    }
+    const ordered = [...rounds.entries()].sort(([a], [b]) => a - b).map(([, group]) => group);
+    if (undrafted.length > 0) {
+      ordered.push({ key: 'undrafted', title: 'Never drafted', cls: 'undrafted', mons: undrafted });
+    }
+    return { count: matched.length, groups: ordered };
+  }, [board, owners, picks, query, hideTaken, byPick]);
 
   return (
     <div class="board-browser">
@@ -106,20 +163,28 @@ export function BoardBrowser({
         <span class="board-count">
           <b>{count}</b> / {board.length}
         </span>
+        {drafted ? (
+          <div class="board-order" role="group" aria-label="Board order">
+            <button type="button" class={order === 'cost' ? 'on' : ''} onClick={() => setOrder('cost')}>
+              Cost
+            </button>
+            <button type="button" class={order === 'pick' ? 'on' : ''} onClick={() => setOrder('pick')}>
+              Pick order
+            </button>
+          </div>
+        ) : null}
       </div>
       <div class="board-catalog">
-        {groups.map(({ band, mons }) => (
-          <section class="board-tier" key={band.min}>
-            <header class={`board-tier-head ${band.cls}`}>
-              <h3>
-                {band.min}–{band.max} points
-              </h3>
-              <b>{mons.length}</b>
+        {groups.map((group) => (
+          <section class="board-tier" key={group.key}>
+            <header class={`board-tier-head ${group.cls}`}>
+              <h3>{group.title}</h3>
+              <b>{group.mons.length}</b>
             </header>
             <div class="board-grid">
-              {mons.map((mon) => {
+              {group.mons.map((mon) => {
                 const owner = owners.get(mon.id);
-                const pick = picks?.get(mon.id);
+                const record = picks?.get(mon.id);
                 return (
                   <article class={`board-card ${owner !== undefined ? 'taken' : ''}`} key={mon.id}>
                     <div class="board-card-head">
@@ -134,7 +199,7 @@ export function BoardBrowser({
                           ))}
                         </div>
                       </div>
-                      <span class={`board-cost ${band.cls}`}>
+                      <span class={`board-cost ${bandFor(mon.cost)}`}>
                         {mon.cost}
                         <small>pts</small>
                       </span>
@@ -151,8 +216,12 @@ export function BoardBrowser({
                     {mon.item ? <small class="board-locked">Mega Stone · {mon.item}</small> : null}
                     {owner !== undefined ? (
                       <small class="board-owner">
-                        {pick !== undefined ? `Pick ${pick} · ` : ''}
+                        {record !== undefined ? `Pick ${record.pick} · ` : ''}
                         Drafted by {coach(owner)}
+                      </small>
+                    ) : record !== undefined ? (
+                      <small class="board-owner released">
+                        Pick {record.pick} · {coach(record.entrant)} released it at free agency
                       </small>
                     ) : null}
                   </article>

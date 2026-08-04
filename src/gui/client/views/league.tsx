@@ -73,7 +73,10 @@ export function DraftRoomView({ run }: { run: RunSnapshot }) {
     () => new Map(draft.rosters.flatMap((roster, entrant) => roster.map((id) => [id, entrant] as const))),
     [draft.rosters],
   );
-  const pickNumbers = useMemo(() => new Map(draft.picks.map((pick) => [pick.mon, pick.pick] as const)), [draft.picks]);
+  const pickNumbers = useMemo(
+    () => new Map(draft.picks.map((pick) => [pick.mon, { pick: pick.pick, entrant: pick.entrant }] as const)),
+    [draft.picks],
+  );
 
   const recent = [...draft.picks].reverse();
   const spent = (entrant: number) => draft.budget - (draft.budgets[entrant] ?? 0);
