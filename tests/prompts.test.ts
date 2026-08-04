@@ -14,7 +14,7 @@ test('system prompt names the tools and reserves timer policy for timed play', (
 
 test('decision prompt leads with merged state and keeps mechanics compact', () => {
   const prompt = renderDecision({
-    seriesContext: 'Series abc; game 1; score p1 0, p2 0',
+    seriesContext: 'Series abc; game 1; score you 0, opponent 0',
     state: 'Turn: 1\n- Swampert; types Water/Ground; moves Earthquake [Ground/Physical/100/spread]',
     matchups: ['- Swampert Earthquake: Farigiraf neutral (1x)'],
     transcript: ['Turn 1 begins.'],

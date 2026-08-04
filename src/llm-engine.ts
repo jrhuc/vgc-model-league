@@ -290,7 +290,7 @@ function goldenDecisionRender(): string {
     menus,
     transcript: ['Turn 1 begins.'],
     notebook: 'golden',
-    seriesContext: 'Series golden; game 1; score p1 0, p2 0',
+    seriesContext: 'Series golden; game 1; score you 0, opponent 0',
     matchups: ['- golden matchup line'],
   });
 }
@@ -1347,7 +1347,8 @@ export class LLMEngine extends BaseEngine {
   }
 
   private scoreText(): string {
-    return `p1 ${this.seriesScore.p1}, p2 ${this.seriesScore.p2}`;
+    const foe: Pid = this.pid === 'p1' ? 'p2' : 'p1';
+    return `you ${this.seriesScore[this.pid]}, opponent ${this.seriesScore[foe]}`;
   }
 
   private writeLog(output: DecisionLog | undefined, row: JsonObject): void {
