@@ -1150,9 +1150,11 @@ function LeaguePage({
         <p class="lede">
           {league.franchises.length} coaches, {league.picksPerEntrant ?? '–'} picks from a {league.budget ?? '–'}-point
           budget{league.format ? `, ${league.format}` : ''}.{' '}
-          {league.tradeWindow
-            ? `Free agency opened after week ${league.tradeWindow.afterWeek}.`
-            : 'Rosters stayed locked after the draft.'}
+          {league.draftOnly
+            ? 'The draft is the whole run: no games were played.'
+            : league.tradeWindow
+              ? `Free agency opened after week ${league.tradeWindow.afterWeek}.`
+              : 'Rosters stayed locked after the draft.'}
         </p>
       </header>
 

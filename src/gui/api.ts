@@ -632,6 +632,7 @@ export interface LeagueResponse {
   phase: LeaguePhase;
   week: number;
   champion: LeagueChampionView | null;
+  draftOnly: boolean;
   live: boolean;
   liveSeries: LeagueLiveSeriesView[];
   tradeWindow: LeagueTradeWindowView | null;

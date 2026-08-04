@@ -884,6 +884,7 @@ export function buildLeague(allRows: SeriesRecord[], runsDir: string, runId: str
     phase: leaguePhase(runsDir, runId, rows, progress),
     week: progress.week,
     champion: progress.champion,
+    draftOnly: isDraftOnly(runsDir, runId) && rows.length === 0,
     live,
     liveSeries: live ? liveSeriesViews(runsDir, runId, rows, identity) : [],
     tradeWindow: tradeWindowView(runsDir, runId),
