@@ -943,9 +943,9 @@ test('game transcripts reset while notebook and score persist, with a 2400-chara
   await engine.act(request(), { povLines: [] });
   const nextGamePrompt = String(provider.calls[1]!.messages[0]!.content);
   assert.doesNotMatch(nextGamePrompt, /Ancient Memory|\[Game 1 begins/);
-  assert.match(nextGamePrompt, /\[Game 2 begins; series score p1 1, p2 0\]/);
+  assert.match(nextGamePrompt, /\[Game 2 begins; series score you 1, opponent 0\]/);
   assert.match(nextGamePrompt, /Private notebook: durable series note/);
-  assert.match(nextGamePrompt, /Series series-1; game 2; score p1 1, p2 0/);
+  assert.match(nextGamePrompt, /Series series-1; game 2; score you 1, opponent 0/);
 
   engine.observe([`|move|p2a: NewMon|${'x'.repeat(2600)}LATEST|p1a: Mon1`]);
   await engine.act(request(), { povLines: [] });
