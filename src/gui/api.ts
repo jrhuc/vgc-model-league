@@ -438,6 +438,7 @@ export interface LeagueRosterSlotView {
   pick: number | null;
   rationale: string;
   fallback: boolean;
+  acquired: 'draft' | 'window';
 }
 
 export interface LeagueRecordView {
