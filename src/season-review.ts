@@ -15,6 +15,7 @@ import {
 } from './providers.js';
 import type { RecoveryGate } from './recovery.js';
 import { ShowdownReference } from './reference.js';
+import { mapLimit } from './series.js';
 import type { TradeWindowArtifact } from './trade-window.js';
 import type { JsonObject, Provider, ProviderFailure, ProviderMessage } from './types.js';
 import { clip } from './value.js';
@@ -81,6 +82,7 @@ export interface SeasonReviewState {
 export interface RunSeasonReviewOptions extends ModelReasoningConfig {
   runDir: string;
   psDir: string;
+  concurrency?: number;
   recovery?: RecoveryGate;
   signal?: AbortSignal;
   apiKeys?: Readonly<Record<string, string>>;
@@ -268,107 +270,114 @@ export async function runSeasonReview(
   fs.mkdirSync(logDir, { recursive: true });
   const reference = new ShowdownReference(state.board.format, options.psDir);
 
-  for (const { entrant, outcome } of pending) {
-    options.signal?.throwIfAborted();
-    const model = state.models[entrant]!;
-    const make =
-      options.makeReviewProvider ??
-      ((spec: string, apiKey: string | undefined, reasoning: ReasoningLevel | undefined) => {
-        const resolved = resolveSpecOverride(spec);
-        return makeProvider(parseSpec(resolved), {
-          ...(reasoning === undefined ? {} : { reasoning }),
-          ...(resolved === spec && apiKey !== undefined ? { apiKey } : {}),
-        });
-      });
-    const provider =
-      model === 'random' ? undefined : make(model, options.apiKeys?.[model], reasoningForModel(model, options));
-    let parsed: ParsedSeasonReview | undefined;
-    let fallback = false;
-    let lastError = '';
-    const system = systemPrompt(state, entrant);
-    if (provider) {
-      const messages: ProviderMessage[] = [{ role: 'user', content: userPrompt(state, entrant, outcome) }];
-      const seatLog = path.join(logDir, `seat-${entrant}-${slug(model)}.jsonl`);
-      for (let attempt = 1; attempt <= SEASON_REVIEW_PROMPT_POLICY.attempts && !parsed; attempt += 1) {
-        const promptForAttempt = messages[messages.length - 1]!.content ?? '';
-        let response = '';
-        let usage: Record<string, number> | undefined;
-        let error: string | undefined;
-        let terminalError: Error | undefined;
-        let pauseFailure: ProviderFailure | undefined;
-        const lookups: { name: string; arguments: JsonObject; result: string }[] = [];
-        try {
-          const completion = await completeWithDexTools({
-            provider,
-            system,
-            messages,
-            spec: model,
-            reference,
-            policy: SEASON_REVIEW_PROMPT_POLICY,
-            ...(options.recovery === undefined ? {} : { recovery: options.recovery }),
-            ...(options.signal === undefined ? {} : { signal: options.signal }),
-            onLookup: (call) => lookups.push(call),
+  const fresh = await mapLimit(
+    pending,
+    options.concurrency ?? pending.length,
+    options.signal,
+    async (entry, signal) => {
+      const { entrant, outcome } = entry;
+      signal.throwIfAborted();
+      const model = state.models[entrant]!;
+      const make =
+        options.makeReviewProvider ??
+        ((spec: string, apiKey: string | undefined, reasoning: ReasoningLevel | undefined) => {
+          const resolved = resolveSpecOverride(spec);
+          return makeProvider(parseSpec(resolved), {
+            ...(reasoning === undefined ? {} : { reasoning }),
+            ...(resolved === spec && apiKey !== undefined ? { apiKey } : {}),
           });
-          response = completion.text;
-          usage = completion.usage;
-          const candidate = parseSeasonReview(response || completion.reasoning || '');
-          if (typeof candidate === 'string') {
-            error =
-              completion.finishReason === 'length' ? 'the reply was cut off before completing the review' : candidate;
-            lastError = error;
-            messages.push({ role: 'assistant', content: response || '[the reply contained no visible text]' });
-            messages.push({
-              role: 'user',
-              content:
-                completion.finishReason === 'length'
-                  ? SEASON_REVIEW_PROMPT_POLICY.truncatedTemplate.replace(
-                      '{{budget}}',
-                      String(SEASON_REVIEW_PROMPT_POLICY.maxTokens),
-                    )
-                  : SEASON_REVIEW_PROMPT_POLICY.rejectionTemplate.replace('{{error}}', candidate),
+        });
+      const provider =
+        model === 'random' ? undefined : make(model, options.apiKeys?.[model], reasoningForModel(model, options));
+      let parsed: ParsedSeasonReview | undefined;
+      let fallback = false;
+      let lastError = '';
+      const system = systemPrompt(state, entrant);
+      if (provider) {
+        const messages: ProviderMessage[] = [{ role: 'user', content: userPrompt(state, entrant, outcome) }];
+        const seatLog = path.join(logDir, `seat-${entrant}-${slug(model)}.jsonl`);
+        for (let attempt = 1; attempt <= SEASON_REVIEW_PROMPT_POLICY.attempts && !parsed; attempt += 1) {
+          const promptForAttempt = messages[messages.length - 1]!.content ?? '';
+          let response = '';
+          let usage: Record<string, number> | undefined;
+          let error: string | undefined;
+          let terminalError: Error | undefined;
+          let pauseFailure: ProviderFailure | undefined;
+          const lookups: { name: string; arguments: JsonObject; result: string }[] = [];
+          try {
+            const completion = await completeWithDexTools({
+              provider,
+              system,
+              messages,
+              spec: model,
+              reference,
+              policy: SEASON_REVIEW_PROMPT_POLICY,
+              ...(options.recovery === undefined ? {} : { recovery: options.recovery }),
+              signal,
+              onLookup: (call) => lookups.push(call),
             });
-          } else {
-            parsed = candidate;
+            response = completion.text;
+            usage = completion.usage;
+            const candidate = parseSeasonReview(response || completion.reasoning || '');
+            if (typeof candidate === 'string') {
+              error =
+                completion.finishReason === 'length' ? 'the reply was cut off before completing the review' : candidate;
+              lastError = error;
+              messages.push({ role: 'assistant', content: response || '[the reply contained no visible text]' });
+              messages.push({
+                role: 'user',
+                content:
+                  completion.finishReason === 'length'
+                    ? SEASON_REVIEW_PROMPT_POLICY.truncatedTemplate.replace(
+                        '{{budget}}',
+                        String(SEASON_REVIEW_PROMPT_POLICY.maxTokens),
+                      )
+                    : SEASON_REVIEW_PROMPT_POLICY.rejectionTemplate.replace('{{error}}', candidate),
+              });
+            } else {
+              parsed = candidate;
+            }
+          } catch (cause) {
+            const failure = classifyProviderFailure(cause, model);
+            error = failure.summary;
+            lastError = error;
+            if (failure.pausable && options.recovery) pauseFailure = failure;
+            else terminalError = new Error(`${failure.summary} The season review cannot continue.`, { cause });
           }
-        } catch (cause) {
-          const failure = classifyProviderFailure(cause, model);
-          error = failure.summary;
-          lastError = error;
-          if (failure.pausable && options.recovery) pauseFailure = failure;
-          else terminalError = new Error(`${failure.summary} The season review cannot continue.`, { cause });
-        }
-        fs.appendFileSync(
-          seatLog,
-          `${JSON.stringify({
-            attempt,
-            ...(attempt === 1 ? { system } : {}),
-            user: promptForAttempt,
-            response,
-            ...(usage ? { usage } : {}),
-            ...(lookups.length ? { tool_lookups: lookups } : {}),
-            ...(error ? { error } : {}),
-          } satisfies SeasonSeatLog)}\n`,
-          'utf8',
-        );
-        if (terminalError) throw terminalError;
-        if (pauseFailure) {
-          await options.recovery?.pause(model, pauseFailure.kind, pauseFailure.summary, options.signal);
-          attempt -= 1;
+          fs.appendFileSync(
+            seatLog,
+            `${JSON.stringify({
+              attempt,
+              ...(attempt === 1 ? { system } : {}),
+              user: promptForAttempt,
+              response,
+              ...(usage ? { usage } : {}),
+              ...(lookups.length ? { tool_lookups: lookups } : {}),
+              ...(error ? { error } : {}),
+            } satisfies SeasonSeatLog)}\n`,
+            'utf8',
+          );
+          if (terminalError) throw terminalError;
+          if (pauseFailure) {
+            await options.recovery?.pause(model, pauseFailure.kind, pauseFailure.summary, signal);
+            attempt -= 1;
+          }
         }
       }
-    }
-    if (!parsed) {
-      const reason = provider
-        ? `no review was recorded after ${SEASON_REVIEW_PROMPT_POLICY.attempts} rejected replies (${lastError})`
-        : 'the random baseline files no review';
-      parsed = { summary: reason, did_well: reason, did_poorly: reason, would_change: reason };
-      fallback = Boolean(provider);
-    }
-    const review: SeasonReview = { entrant, model, outcome, ...parsed, fallback };
-    reviews.push(review);
-    fs.appendFileSync(transcript, `${JSON.stringify({ ...review, timestamp: new Date().toISOString() })}\n`, 'utf8');
-    options.onReview?.(review);
-  }
+      if (!parsed) {
+        const reason = provider
+          ? `no review was recorded after ${SEASON_REVIEW_PROMPT_POLICY.attempts} rejected replies (${lastError})`
+          : 'the random baseline files no review';
+        parsed = { summary: reason, did_well: reason, did_poorly: reason, would_change: reason };
+        fallback = Boolean(provider);
+      }
+      const review: SeasonReview = { entrant, model, outcome, ...parsed, fallback };
+      fs.appendFileSync(transcript, `${JSON.stringify({ ...review, timestamp: new Date().toISOString() })}\n`, 'utf8');
+      options.onReview?.(review);
+      return review;
+    },
+  );
+  reviews.push(...fresh);
   return reviews;
 }
 
