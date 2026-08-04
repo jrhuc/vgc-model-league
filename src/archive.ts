@@ -1133,10 +1133,8 @@ export function buildLeagueGame(
   }
 
   const gameRows = row && Array.isArray(row.games) ? (row.games as Record<string, unknown>[]) : [];
-  const gameRow = gameRows[game - 1];
-  let winner = gameRow?.winner_side === 'p1' ? sides[0] : gameRow?.winner_side === 'p2' ? sides[1] : null;
-  if (!row && winner === null && raw) {
-    const lines = raw.split('\n');
+  const logWinner = (text: string): number | null => {
+    const lines = text.split('\n');
     const players = new Map<string, Pid>();
     for (const line of lines) {
       const match = /^\|player\|(p[12])\|([^|]+)\|/.exec(line);
@@ -1144,8 +1142,21 @@ export function buildLeagueGame(
     }
     const winLine = lines.find((line) => line.startsWith('|win|'));
     const pid = winLine === undefined ? undefined : players.get(winLine.slice(5).trim());
-    if (pid) winner = pid === 'p1' ? sides[0] : sides[1];
-  }
+    return pid === undefined ? null : pid === 'p1' ? sides[0] : sides[1];
+  };
+  const winnerOf = (number: number): number | null => {
+    const gameRow = gameRows[number - 1];
+    if (gameRow?.winner_side === 'p1') return sides[0];
+    if (gameRow?.winner_side === 'p2') return sides[1];
+    if (row) return null;
+    if (number === game) return raw ? logWinner(raw) : null;
+    try {
+      return logWinner(fs.readFileSync(path.join(runsDir, runId, 'series', seriesId, `game-${number}.log`), 'utf8'));
+    } catch {
+      return null;
+    }
+  };
+  const games = [...gameNumbers].sort((first, second) => first - second);
   return {
     runId,
     seriesIndex,
@@ -1153,13 +1164,14 @@ export function buildLeagueGame(
     stage: row?.stage === 'playoff' ? 'playoff' : 'roundrobin',
     round: count(row?.round),
     game,
-    games: [...gameNumbers].sort((first, second) => first - second),
+    games,
+    gameWinners: games.map(winnerOf),
     sides,
     teamNames: [
       identity.teamNames[sides[0]] ?? `Coach ${sides[0] + 1}`,
       identity.teamNames[sides[1]] ?? `Coach ${sides[1] + 1}`,
     ],
-    winner,
+    winner: winnerOf(game),
     live,
     snapshot,
     log: battleLog.entries,

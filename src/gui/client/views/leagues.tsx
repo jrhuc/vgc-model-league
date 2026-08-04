@@ -14,6 +14,7 @@ import { Battlefield } from '../components/battlefield';
 import { BoardBrowser, STAT_ORDER, useBoard } from '../components/boardbrowser';
 import { StatTile } from '../components/chartkit';
 import { Mark } from '../components/mark';
+import { SetCard } from '../components/setcard';
 import { Sprite } from '../components/sprite';
 import { api, apiFresh } from '../http';
 
@@ -370,6 +371,14 @@ function GamePage({
     const model = league.franchises[view.sides[side] ?? -1]?.model;
     return model ? displaySpec(model) : (view.teamNames[side] ?? '');
   };
+  const buildFor = (side: 0 | 1) =>
+    league.teambuilds.find((build) => build.seriesIndex === seriesIndex && build.entrant === view.sides[side]);
+  const seriesScore: [number, number] = [
+    view.gameWinners.filter((winner) => winner === view.sides[0]).length,
+    view.gameWinners.filter((winner) => winner === view.sides[1]).length,
+  ];
+  const chipSide = (winner: number | null): string =>
+    winner === view.sides[0] ? 'left' : winner === view.sides[1] ? 'right' : '';
   return (
     <div class="league-view">
       <header class="page-heading league-heading">
@@ -392,13 +401,14 @@ function GamePage({
               : view.live
                 ? ' · in progress'
                 : ' · no winner recorded'}
+            {seriesScore[0] + seriesScore[1] > 0 ? ` · series ${seriesScore[0]}–${seriesScore[1]}` : ''}
           </span>
           <span class="game-switcher">
-            {view.games.map((number) => (
+            {view.games.map((number, index) => (
               <button
                 key={number}
                 type="button"
-                class={`game-chip ${number === view.game ? 'on' : ''}`}
+                class={`game-chip ${chipSide(view.gameWinners[index] ?? null)} ${number === view.game ? 'on' : ''}`}
                 onClick={() => onOpenGame(seriesIndex, number)}
               >
                 {number}
@@ -420,16 +430,48 @@ function GamePage({
             receivedAt={view.receivedAt}
             players={{ p1: modelLabel(0), p2: modelLabel(1) }}
             warnings={{ p1: sideWarning(0), p2: sideWarning(1) }}
+            teams={{ p1: buildFor(0)?.sets, p2: buildFor(1)?.sets }}
             meta={<span class="turn-badge">{view.snapshot.turn ? `Turn ${view.snapshot.turn}` : 'Team preview'}</span>}
           />
         </section>
-      ) : view.live ? (
+      ) : view.live && view.winner === null ? (
         <section class="panel battlefield">
           <div class="field-surface">
             <div class="field-empty" aria-live="polite">
               <h2>Battle starting</h2>
               <p>Waiting for the first team-preview event.</p>
             </div>
+          </div>
+        </section>
+      ) : buildFor(0) || buildFor(1) ? (
+        <section class="panel">
+          <div class="section-head">
+            <div>
+              <h2>The teams they brought</h2>
+              <p>The six each coach built for this series, with the sets from the open team sheet.</p>
+            </div>
+          </div>
+          <div class="lineup-grid">
+            {([0, 1] as const).map((side) => {
+              const build = buildFor(side);
+              return (
+                <div class="lineup-side" key={side}>
+                  <h3>
+                    <Mark spec={league.franchises[view.sides[side] ?? -1]?.model ?? ''} size={16} />
+                    {view.teamNames[side]}
+                  </h3>
+                  {build ? (
+                    <div class="teambuild-sets">
+                      {build.sets.map((set) => (
+                        <SetCard set={set} key={set.species} />
+                      ))}
+                    </div>
+                  ) : (
+                    <p class="muted">No stored teambuild.</p>
+                  )}
+                </div>
+              );
+            })}
           </div>
         </section>
       ) : null}
@@ -870,26 +912,7 @@ function TeamPage({
                 <p class="teambuild-plan">{build.rationale}</p>
                 <div class="teambuild-sets">
                   {build.sets.map((set) => (
-                    <div class={`teambuild-set ${set.repaired ? 'repaired' : ''}`} key={set.species}>
-                      <div class="teambuild-set-head">
-                        <Sprite id={set.spriteId} size={26} />
-                        <b>{set.species}</b>
-                        {set.item ? <span>@ {set.item}</span> : null}
-                      </div>
-                      <small>
-                        {set.ability} · {set.nature}
-                      </small>
-                      <ul>
-                        {set.moves.map((move) => (
-                          <li key={move}>{move}</li>
-                        ))}
-                      </ul>
-                      <small class="teambuild-evs">
-                        {STAT_ORDER.filter((stat) => set.evs[stat])
-                          .map((stat) => `${set.evs[stat]} ${stat}`)
-                          .join(' / ') || 'no EVs'}
-                      </small>
-                    </div>
+                    <SetCard set={set} key={set.species} />
                   ))}
                 </div>
               </details>

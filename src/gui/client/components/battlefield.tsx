@@ -1,8 +1,56 @@
 import type { ComponentChildren } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
-import type { BattleSnapshot, MonView, SideTimerView, SideView, SpendView } from '../../api';
+import type { BattleSnapshot, MonView, SideTimerView, SideView, SpendView, TeambuildSetView } from '../../api';
 import { Mark } from './mark';
-import { Sprite } from './sprite';
+import { SetCard } from './setcard';
+import { ItemIcon, Sprite } from './sprite';
+
+function speciesSlug(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '');
+}
+
+/** A drafted mega enters play under its base species until it evolves, so match by slug prefix. */
+function setMatchesMon(set: TeambuildSetView, mon: MonView): boolean {
+  const setId = speciesSlug(set.species);
+  const monId = speciesSlug(mon.species);
+  return setId === monId || setId.startsWith(`${monId}-`) || monId.startsWith(`${setId}-`);
+}
+
+function TeamStrip({
+  team,
+  mons,
+  open,
+  onToggle,
+}: {
+  team: TeambuildSetView[];
+  mons: MonView[];
+  open: number | null;
+  onToggle: (index: number) => void;
+}) {
+  return (
+    <div class="team-strip">
+      {team.map((set, index) => {
+        const mon = mons.find((candidate) => setMatchesMon(set, candidate));
+        const state = mon?.fainted ? 'fainted' : mon?.slot ? 'active' : '';
+        return (
+          <button
+            key={set.species}
+            type="button"
+            class={`team-strip-mon ${state} ${open === index ? 'on' : ''}`}
+            title={`${set.species}${set.item ? ` @ ${set.item}` : ''}`}
+            onClick={() => onToggle(index)}
+          >
+            <Sprite id={set.spriteId} size={36} />
+            {set.item ? <ItemIcon item={set.item} size={16} /> : null}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
 
 function hpPercent(value: string): number {
   const match = /(\d+)\s*\/\s*(\d+)/.exec(value);
@@ -93,6 +141,7 @@ export function Side({
   receivedAt,
   warning,
   player,
+  team,
 }: {
   pid: string;
   side: SideView;
@@ -102,7 +151,9 @@ export function Side({
   receivedAt: number;
   warning: string;
   player?: string | undefined;
+  team?: TeambuildSetView[] | undefined;
 }) {
+  const [openSet, setOpenSet] = useState<number | null>(null);
   const [, setTick] = useState(0);
   useEffect(() => {
     if (!timer?.running) return;
@@ -138,13 +189,26 @@ export function Side({
           </span>
         )}
       </div>
-      {mons.length ? (
-        mons.map((mon, index) => <Mon key={`${mon.slot || 'x'}-${mon.species}-${index}`} mon={mon} />)
-      ) : (
-        <div class="mon">
-          <span class="mon-data">Roster not revealed</span>
+      <div class="side-body">
+        {team && team.length > 0 ? (
+          <TeamStrip
+            team={team}
+            mons={side.mons}
+            open={openSet}
+            onToggle={(index) => setOpenSet(openSet === index ? null : index)}
+          />
+        ) : null}
+        <div class="side-mons">
+          {mons.length ? (
+            mons.map((mon, index) => <Mon key={`${mon.slot || 'x'}-${mon.species}-${index}`} mon={mon} />)
+          ) : (
+            <div class="mon">
+              <span class="mon-data">Roster not revealed</span>
+            </div>
+          )}
         </div>
-      )}
+      </div>
+      {openSet !== null && team?.[openSet] ? <SetCard set={team[openSet]!} /> : null}
     </div>
   );
 }
@@ -154,12 +218,14 @@ export function Battlefield({
   receivedAt,
   players,
   warnings,
+  teams,
   meta,
 }: {
   snapshot: BattleSnapshot;
   receivedAt: number;
   players?: Partial<Record<'p1' | 'p2', string>>;
   warnings?: Partial<Record<'p1' | 'p2', string>>;
+  teams?: Partial<Record<'p1' | 'p2', TeambuildSetView[] | undefined>>;
   meta?: ComponentChildren;
 }) {
   return (
@@ -183,6 +249,7 @@ export function Battlefield({
           receivedAt={receivedAt}
           warning={warnings?.p1 ?? ''}
           player={players?.p1}
+          team={teams?.p1}
         />
         <div class="center-mark">VS</div>
         <Side
@@ -194,6 +261,7 @@ export function Battlefield({
           receivedAt={receivedAt}
           warning={warnings?.p2 ?? ''}
           player={players?.p2}
+          team={teams?.p2}
         />
       </div>
     </>
