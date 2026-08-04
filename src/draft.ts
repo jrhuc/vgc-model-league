@@ -682,7 +682,7 @@ export async function runDraft(models: string[], board: DraftBoard, options: Run
         );
         if (terminalError) throw terminalError;
         if (pauseFailure) {
-          await options.recovery?.pause(models[drafter]!, pauseFailure.kind, pauseFailure.summary, options.signal);
+          await options.recovery?.pause(models[drafter]!, pauseFailure, options.signal);
           attempt -= 1;
         }
       }

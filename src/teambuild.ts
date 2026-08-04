@@ -505,7 +505,7 @@ export async function runTeambuild(request: TeambuildRequest, options: Teambuild
     );
     if (terminalError) throw terminalError;
     if (pauseFailure) {
-      await options.recovery?.pause(request.model, pauseFailure.kind, pauseFailure.summary, options.signal);
+      await options.recovery?.pause(request.model, pauseFailure, options.signal);
       attempt -= 1;
     }
   }

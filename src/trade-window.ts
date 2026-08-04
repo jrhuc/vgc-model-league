@@ -447,12 +447,7 @@ export async function runTradeWindow(
         );
         if (terminalError) throw terminalError;
         if (pauseFailure) {
-          await options.recovery?.pause(
-            state.models[entrant]!,
-            pauseFailure.kind,
-            pauseFailure.summary,
-            options.signal,
-          );
+          await options.recovery?.pause(state.models[entrant]!, pauseFailure, options.signal);
           attempt -= 1;
         }
       }

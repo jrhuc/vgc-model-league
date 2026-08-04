@@ -22,7 +22,7 @@ test('pause scopes widen to the provider only for shared-credit failures', () =>
 
 test('a model pause blocks only that seat while others keep playing', async () => {
   const gate = new RecoveryGate();
-  const paused = gate.pause('openrouter:google/gemini-3.6-flash', 'upstream', 'hollow response');
+  const paused = gate.pause('openrouter:google/gemini-3.6-flash', { kind: 'upstream', summary: 'hollow response' });
   assert.equal(await settled(gate.wait('openrouter:x-ai/grok-4.5')), true);
   assert.equal(await settled(gate.wait('openrouter:google/gemini-3.6-flash')), false);
   assert.equal(gate.resume('openrouter:google/gemini-3.6-flash'), true);
@@ -31,7 +31,7 @@ test('a model pause blocks only that seat while others keep playing', async () =
 
 test('a rate-limit pause holds only the limited model while siblings keep playing', async () => {
   const gate = new RecoveryGate();
-  void gate.pause('opencode-go:glm-5.2', 'rate_limit', '429');
+  void gate.pause('opencode-go:glm-5.2', { kind: 'rate_limit', summary: '429' });
   assert.equal(await settled(gate.wait('opencode-go:glm-5.2')), false);
   assert.equal(await settled(gate.wait('opencode-go:kimi-k3')), true);
   gate.resume('opencode-go:glm-5.2');
@@ -40,7 +40,7 @@ test('a rate-limit pause holds only the limited model while siblings keep playin
 
 test('a quota pause holds every seat on the same provider', async () => {
   const gate = new RecoveryGate();
-  void gate.pause('opencode-go:glm-5.2', 'quota', 'credits exhausted');
+  void gate.pause('opencode-go:glm-5.2', { kind: 'quota', summary: 'credits exhausted' });
   assert.equal(await settled(gate.wait('opencode-go:kimi-k3')), false);
   assert.equal(await settled(gate.wait('openrouter:x-ai/grok-4.5')), true);
   gate.resume('opencode-go');
@@ -51,8 +51,8 @@ test('concurrent pauses resume independently and listeners see the remainder', a
   const gate = new RecoveryGate();
   const events: Array<string | undefined> = [];
   gate.onChange((pause) => events.push(pause?.scope));
-  void gate.pause('openrouter:minimax/minimax-m3', 'upstream', 'flake');
-  void gate.pause('opencode-go:glm-5.2', 'rate_limit', '429');
+  void gate.pause('openrouter:minimax/minimax-m3', { kind: 'upstream', summary: 'flake' });
+  void gate.pause('opencode-go:glm-5.2', { kind: 'rate_limit', summary: '429' });
   assert.deepEqual(events, ['openrouter:minimax/minimax-m3', 'opencode-go:glm-5.2']);
   gate.resume('openrouter:minimax/minimax-m3');
   assert.equal(events.at(-1), 'opencode-go:glm-5.2');

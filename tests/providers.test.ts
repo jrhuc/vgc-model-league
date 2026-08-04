@@ -86,6 +86,39 @@ test('provider failures distinguish terminal capacity from recoverable upstream 
   });
   assert.deepEqual(
     classifyProviderFailure(
+      new ApiError(
+        429,
+        'google:gemini-3.6-flash 429: {"error":{"details":[{"@type":"type.googleapis.com/google.rpc.QuotaFailure",' +
+          '"violations":[{"quotaMetric":"generativelanguage.googleapis.com/generate_content_paid_tier_input_token_count",' +
+          '"quotaId":"GenerateContentInputTokensPerModelPerMinute-PaidTier"}]},' +
+          '{"@type":"type.googleapis.com/google.rpc.RetryInfo","retryDelay":"27.5s"}]}}',
+      ),
+      'google:gemini-3.6-flash',
+    ),
+    {
+      kind: 'rate_limit',
+      summary: 'Google API rate limit was reached (429; GenerateContentInputTokensPerModelPerMinute-PaidTier).',
+      terminal: false,
+      pausable: true,
+      retryAfterMs: 27_500,
+    },
+    'the violated quota and the wait the provider asked for both survive classification',
+  );
+  assert.deepEqual(
+    classifyProviderFailure(
+      new ApiError(429, 'openai:gpt-5.6-terra 429: Rate limit reached. Please try again in 1.2s.'),
+      'openai:gpt-5.6-terra',
+    ),
+    {
+      kind: 'rate_limit',
+      summary: 'OpenAI API rate limit was reached (429).',
+      terminal: false,
+      pausable: true,
+      retryAfterMs: 1_200,
+    },
+  );
+  assert.deepEqual(
+    classifyProviderFailure(
       new ApiError(402, 'This request requires more credits, or fewer max_tokens. You requested up to 32768 tokens'),
       'openrouter:moonshotai/kimi-k3:nitro',
     ),

@@ -574,8 +574,7 @@ test('recoverable provider failures pause and resume the same run', async () => 
       });
       const waiting = options.recovery!.pause(
         'google:gemini-test',
-        'quota',
-        'Google API quota is exhausted.',
+        { kind: 'quota', summary: 'Google API quota is exhausted.' },
         options.signal,
       );
       paused.resolve();

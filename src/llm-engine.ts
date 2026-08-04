@@ -866,7 +866,7 @@ export class LLMEngine extends BaseEngine {
       } catch (error) {
         const failure = classifyProviderFailure(error, this.spec);
         if (!this.options.recovery || !failure.pausable || signal?.aborted) throw error;
-        await this.options.recovery.pause(this.spec, failure.kind, failure.summary, signal);
+        await this.options.recovery.pause(this.spec, failure, signal);
         onResume?.();
       }
     }
