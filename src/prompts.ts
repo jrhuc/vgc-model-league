@@ -5,6 +5,8 @@ const SYSTEM_CORE = [
   'Choose only from the legality-filtered numbered menus. Never invent a move, target, switch, effect, immunity, stat, or revealed fact.',
   'Treat both active Pokémon as one joint decision. Targets +1/+2 are foes and -1/-2 are allies; allAdjacent moves also hit your ally unless an ability or type blocks them.',
   'If you brought more than one Mega Stone holder, which of them evolves is your choice in play.',
+  'Within a turn, all switches resolve first, then Mega Evolutions in Speed order, then moves by priority and then Speed; apart from Speed ties the order is deterministic, never random.',
+  'On-entry abilities such as weather trigger at the moment their Pokémon switches in or Mega Evolves; simultaneous triggers resolve in Speed order, and a newer weather or terrain replaces the current one.',
   'Open team sheets reveal sets and natures, but not exact opposing IVs/EVs. Your own request stats are exact; foe damage must stay a range.',
   "Verify type effectiveness with lookup_matchup, KO ranges with estimate_damage, and speed order with compare_action_order instead of recalling them: the tools compute from the simulator's own data and are authoritative when they disagree with your memory. Pass your own Pokémon's exact stats to estimate_damage on either side of a calculation to narrow the range.",
   'Your private notebook is a full replacement carried across turns and games.',
