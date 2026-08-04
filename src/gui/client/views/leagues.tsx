@@ -166,7 +166,11 @@ function FranchiseCard({
       {slot ? (
         <div class="franchise-pick">
           <span class="draft-feed-head">
-            {slot.acquired === 'window' ? 'Mid-season trade · ' : slot.pick !== null ? `${pickLabel(slot.pick)} · ` : ''}
+            {slot.acquired === 'window'
+              ? 'Mid-season trade · '
+              : slot.pick !== null
+                ? `${pickLabel(slot.pick)} · `
+                : ''}
             {slot.name} · {slot.cost} pts{slot.fallback ? ' · fallback' : ''}
           </span>
           {slot.acquired === 'window' ? (

@@ -462,3 +462,44 @@ test('loadRows caches by mtime and size but sees appended rows', () => {
   assert.equal(loadRows(file).length, 2);
   fs.rmSync(dir, { recursive: true, force: true });
 });
+
+test('a finished semifinal is not mistaken for the final while the bracket is unresolved', () => {
+  const runsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-archive-semis-'));
+  const runId = '20260804T100000.000000Z-semi0001';
+  const runDir = path.join(runsDir, runId);
+  fs.mkdirSync(runDir, { recursive: true });
+  const teamNames = ['Aces', 'Bandits', 'Comets', 'Dodgers', 'Embers', 'Foxes'];
+  fs.writeFileSync(
+    path.join(runDir, 'config.json'),
+    JSON.stringify({
+      mode: 'draft',
+      entrants: teamNames.map((_, index) => `openai:model${index}`),
+      team_names: teamNames,
+      weeks: 5,
+      board: 'test-board',
+      format: 'gen9testformat',
+    }),
+  );
+  const semi = leagueRow({
+    run_id: runId,
+    series_index: 15,
+    series_id: 'semi01',
+    stage: 'playoff',
+    round: 1,
+    timestamp: '2026-08-04T10:00:00.000Z',
+    players: { p1: 'openai:model3', p2: 'openai:model2' },
+    teams: { p1: 'Dodgers', p2: 'Comets' },
+    winner: 'openai:model3',
+    winner_side: 'p1',
+    score: { p1: 2, p2: 0 },
+    turns: 12,
+    games: [{ number: 1, winner_side: 'p1', turns: 6 }],
+  });
+  const league = buildLeague([semi], runsDir, runId)!;
+  assert.ok(league);
+  assert.equal(league.champion, null, 'no champion until the final is played');
+  assert.equal(league.phase, 'playoffs');
+  assert.equal(league.franchises[3]!.finish, '', 'a semifinal winner has no placing yet');
+  assert.equal(league.franchises[2]!.finish, 'Eliminated in the semifinals');
+  fs.rmSync(runsDir, { recursive: true, force: true });
+});
