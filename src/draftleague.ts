@@ -640,6 +640,22 @@ export async function runDraftLeague(
       },
     );
   };
+  /** A retrospective buys nothing later games depend on, so an eliminated coach writes its review while the
+   * bracket plays on; the run joins the outstanding reviews, and surfaces their failures, before it returns. */
+  const seasonJobs: Promise<void>[] = [];
+  let seasonFailure: unknown;
+  const startSeasonClose = (finished: Array<{ entrant: number; outcome: string }>): void => {
+    seasonJobs.push(
+      closeSeason(finished).catch((error: unknown) => {
+        seasonFailure ??= error;
+      }),
+    );
+  };
+  const finish = async (): Promise<SeriesRecord[]> => {
+    await Promise.all(seasonJobs);
+    if (seasonFailure !== undefined && !options.signal?.aborted) throw seasonFailure;
+    return sorted(results);
+  };
   const scheduleRoundRobin = async (scheduled: SeriesPlanned[]): Promise<void> => {
     results.push(
       ...(await mapLimit(scheduled, options.concurrency ?? 2, options.signal, (plan, signal) =>
@@ -691,13 +707,13 @@ export async function runDraftLeague(
   week = 0;
   options.onEvent?.({ type: 'draft', draft: draftView(true) });
 
-  await closeSeason(
+  startSeasonClose(
     seeding.slice(playoffRounds === 2 ? 4 : 2).map((entrant, index) => ({
       entrant,
       outcome: `You finished ${ordinal((playoffRounds === 2 ? 4 : 2) + index + 1)} of ${entrants.length} in the round robin and missed the playoffs. Your season is over.`,
     })),
   );
-  if (options.signal?.aborted) return sorted(results);
+  if (options.signal?.aborted) return finish();
 
   const playoffs = plans.filter((plan) => plan.stage === 'playoff');
   const bracket: BracketView = {
@@ -750,8 +766,8 @@ export async function runDraftLeague(
       },
     );
     results.push(...semis);
-    if (options.signal?.aborted) return sorted(results);
-    await closeSeason(
+    if (options.signal?.aborted) return finish();
+    startSeasonClose(
       bracket.rounds[0]!.flatMap((match) => {
         const loser = match.slots.find((slot) => slot !== null && slot !== match.winner);
         return loser === null || loser === undefined
@@ -764,12 +780,12 @@ export async function runDraftLeague(
             ];
       }),
     );
-    if (options.signal?.aborted) return sorted(results);
+    if (options.signal?.aborted) return finish();
   }
   const finalPlan = playoffs[playoffs.length - 1]!;
   const finalRound = playoffRounds - 1;
   finalPlan.entrants = bracket.rounds[finalRound]![0]!.slots as [number, number];
-  if (finalPlan.entrants[0] === null || finalPlan.entrants[1] === null) return sorted(results);
+  if (finalPlan.entrants[0] === null || finalPlan.entrants[1] === null) return finish();
   const storedFinal = completed.get(finalPlan.index);
   const finalRow = storedFinal
     ? [storedFinal]
@@ -793,7 +809,7 @@ export async function runDraftLeague(
     phase = 'done';
     options.onEvent?.({ type: 'draft', draft: draftView(true) });
   }
-  return sorted(results);
+  return finish();
 }
 
 function sorted(rows: SeriesRecord[]): SeriesRecord[] {

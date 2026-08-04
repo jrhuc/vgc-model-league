@@ -1420,8 +1420,48 @@ test('season reviews are written once per coach and replayed on resume', async (
       },
     }),
   });
-  assert.deepEqual(replayed, reviews);
+  const byEntrant = (rows: typeof reviews) => [...rows].sort((a, b) => a.entrant - b.entrant);
+  assert.deepEqual(byEntrant(replayed), byEntrant(reviews));
   assert.equal(readSeasonReviews(directory).length, 2);
+
+  const started: number[] = [];
+  let releaseFirst: (() => void) | undefined;
+  const bothStarted = new Promise<void>((resolve, reject) => {
+    releaseFirst = resolve;
+    setTimeout(
+      () => reject(new Error('the second seat never started: season reviews ran one at a time')),
+      5_000,
+    ).unref();
+  });
+  const concurrent = await runSeasonReview(
+    [
+      { entrant: 0, outcome: 'You won the final.' },
+      { entrant: 1, outcome: 'You missed the playoffs.' },
+    ],
+    state,
+    {
+      runDir: fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-season-review-parallel-')),
+      psDir: defaultPsDir(),
+      makeReviewProvider: (spec) => ({
+        async complete(): Promise<Completion> {
+          const entrant = models.indexOf(spec);
+          started.push(entrant);
+          if (started.length === 1) await bothStarted;
+          else releaseFirst?.();
+          return { text: reply, usage: {}, toolCalls: [] };
+        },
+      }),
+    },
+  );
+  assert.deepEqual(
+    concurrent.map((review) => review.entrant),
+    [0, 1],
+    'reviews return in the order the seats finished their seasons, whatever order they answer in',
+  );
+  assert.ok(
+    concurrent.every((review) => !review.fallback),
+    'both seats were in flight at once',
+  );
 });
 
 test('a season review must fill every field', () => {

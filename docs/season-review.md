@@ -31,6 +31,12 @@ it was never part of.
 - Semifinal losers, once their semifinal resolves.
 - The runner-up and the champion, once the final resolves.
 
+The bracket does not wait for any of them. A review is bought alongside the
+games still being played — the seats knocked out of the round robin write theirs
+while the semifinals run, the semifinal losers while the final runs — and the
+seats within one batch answer concurrently. The run joins any outstanding
+reviews before it returns, so a failed review still fails the run, just later.
+
 ## Prompt
 
 Same voice and dex-tool access as the draft and window prompts, with its own
