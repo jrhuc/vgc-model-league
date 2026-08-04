@@ -147,11 +147,13 @@ export async function runDraftLeague(
 
   const stored = options.resume ? loadStoredLeague(runDir) : undefined;
   const draftOnly = options.draftOnly === true;
+  /** A draft-only run never held a window, so its resume chooses one like a fresh league. */
+  const storedWindow = stored ? stored.tradeWindow : undefined;
   /** A window is chosen on standings, so a league that plays no games cannot hold one. */
   let tradeWindow = draftOnly
     ? null
-    : stored
-      ? stored.tradeWindow
+    : storedWindow !== undefined
+      ? storedWindow
       : options.tradeWindow === undefined
         ? { ...DEFAULT_TRADE_WINDOW }
         : options.tradeWindow;
@@ -161,7 +163,7 @@ export async function runDraftLeague(
   const entrants = stored ? stored.entrants : shuffle(models, random);
   const weeks = roundRobinWeeks(entrants.length);
   if (tradeWindow && tradeWindow.afterWeek > weeks.length) {
-    if (!stored && options.tradeWindow === undefined) tradeWindow = { afterWeek: weeks.length };
+    if (storedWindow === undefined && options.tradeWindow === undefined) tradeWindow = { afterWeek: weeks.length };
     else throw new Error(`trade window week must be between 1 and ${weeks.length}`);
   }
   const sequentialWeeks = stored
@@ -311,6 +313,18 @@ export async function runDraftLeague(
     budgets = rosters.map((roster) => board.budget - roster.reduce((sum, mon) => sum + mon.cost, 0));
     teamNames = stored.teamNames;
     draftNotes = stored.draftNotes;
+    if (storedWindow === undefined) {
+      /** Resuming a draft-only run turns it into a season with a window, but the recorded scaffold
+       * hashes are the draft's provenance: rewrite the two fields the resume changes, nothing else. */
+      const configPath = path.join(runDir, 'config.json');
+      const priorConfig = JSON.parse(fs.readFileSync(configPath, 'utf8')) as Record<string, unknown>;
+      const nextConfig = {
+        ...priorConfig,
+        draft_only: false,
+        trade_window: tradeWindow ? { after_week: tradeWindow.afterWeek } : null,
+      };
+      fs.writeFileSync(configPath, `${JSON.stringify(nextConfig, null, 2)}\n`, 'utf8');
+    }
   } else {
     writeConfig();
     const outcome = await runDraft(entrants, board, {
@@ -833,7 +847,7 @@ interface StoredLeague {
   rosterIds: string[][];
   draftNotes: string[];
   sequentialWeeks: boolean;
-  tradeWindow: TradeWindowConfig | null;
+  tradeWindow: TradeWindowConfig | null | undefined;
 }
 
 /** A resume re-buys nothing a prior attempt already built: completed teambuilds are replayed from the
@@ -867,6 +881,7 @@ function loadStoredLeague(runDir: string): StoredLeague | undefined {
     rosters?: string[][];
     draft_notes?: string[];
     sequential_weeks?: boolean;
+    draft_only?: boolean;
     trade_window?: { after_week?: number } | null;
   };
   if (config.mode !== 'draft') throw new Error(`${runDir} is not a draft league run`);
@@ -880,7 +895,11 @@ function loadStoredLeague(runDir: string): StoredLeague | undefined {
       : config.entrants.map(() => '');
   const afterWeek = config.trade_window?.after_week;
   const tradeWindow =
-    Number.isSafeInteger(afterWeek) && Number(afterWeek) > 0 ? { afterWeek: Number(afterWeek) } : null;
+    config.draft_only === true
+      ? undefined
+      : Number.isSafeInteger(afterWeek) && Number(afterWeek) > 0
+        ? { afterWeek: Number(afterWeek) }
+        : null;
   return {
     entrants: config.entrants,
     teamNames: config.team_names,
