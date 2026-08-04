@@ -609,7 +609,8 @@ export function buildLeague(allRows: SeriesRecord[], runsDir: string, runId: str
   if (!SAFE_SEGMENT.test(runId)) return null;
   const live = isRunLive(runsDir, runId);
   const rows = draftRuns(allRows).get(runId) ?? [];
-  if (rows.length === 0 && !live) return null;
+  /** A finished draft-only run has no series and is not live, and its draft is the whole point of it. */
+  if (rows.length === 0 && !live && !isDraftOnly(runsDir, runId)) return null;
   const identity = leagueIdentity(runsDir, runId, rows);
   if (identity.models.length < 2) return null;
   const progress = leagueProgress(rows, identity);
@@ -869,9 +870,11 @@ export function buildLeague(allRows: SeriesRecord[], runsDir: string, runId: str
     .filter(Boolean)
     .sort();
   const sample = rosters.find((entry) => entry.spent + entry.budgetLeft > 0);
+  const status = readRunJson(runsDir, runId, 'status.json') as Record<string, unknown> | null;
+  const started = typeof status?.start_time === 'string' ? status.start_time : '';
   return {
     runId,
-    when: timestamps[0] ?? '',
+    when: timestamps[0] ?? started,
     lastPlayed: timestamps[timestamps.length - 1] ?? null,
     board: identity.board,
     format: identity.format,

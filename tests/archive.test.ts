@@ -178,6 +178,16 @@ test('a finished draft-only run stays listed and stops being draft-only once it 
     assert.equal(leagues[0]!.live, false);
     assert.equal(leagues[0]!.phase, 'complete');
 
+    const league = buildLeague([], runsDir, runId);
+    assert.ok(league, 'a listed draft-only run opens');
+    assert.equal(league.phase, 'complete');
+    assert.equal(league.series.length, 0);
+    assert.equal(league.when, '2026-08-04T21:00:00.000Z', 'a run with no series dates from its start time');
+    assert.deepEqual(
+      league.franchises.map((franchise) => franchise.teamName),
+      ['Alpha Aces', 'Beta Bandits'],
+    );
+
     const played = LEAGUE_ROWS.map((row) => ({ ...row, run_id: runId }));
     const promoted = buildLeagues(played, runsDir).leagues;
     assert.equal(promoted[0]!.draftOnly, false, 'a promoted run is a season, not a draft-only run');

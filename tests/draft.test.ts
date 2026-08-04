@@ -1382,6 +1382,10 @@ test('a draft-only league stops at the rosters and resumes into a full season', 
   assert.equal(played.length, 2, 'resuming a draft-only run plays the season it skipped');
   const promoted = JSON.parse(fs.readFileSync(path.join(directory, 'config.json'), 'utf8')) as Record<string, unknown>;
   assert.deepEqual(promoted.rosters, config.rosters, 'the drafted rosters carry into the season');
+  assert.equal(promoted.draft_only, false, 'a resumed draft-only run is a season');
+  assert.deepEqual(promoted.trade_window, { after_week: 1 }, 'the resumed season chooses a window like a fresh one');
+  assert.equal(promoted.draft_scaffold, config.draft_scaffold, 'a resume keeps the draft it already ran on record');
+  assert.ok(fs.existsSync(path.join(directory, 'window.json')), 'the chosen window opens');
   assert.equal(played[0]!.stage, 'roundrobin');
   assert.equal(played[1]!.stage, 'playoff');
 });
