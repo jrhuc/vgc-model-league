@@ -1,9 +1,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-import type { DraftBoardMon } from './draft.js';
-import { draftScaffoldRevision, loadBoard, runDraft } from './draft.js';
-import type { BracketView, DraftTableRow, DraftView, TeambuildView } from './gui/api.js';
+import type { DraftBoard, DraftBoardMon } from './draft.js';
+import { draftScaffoldRevision, loadBoard, runDraft, snakeOrder } from './draft.js';
+import type { BracketView, DraftPickView, DraftTableRow, DraftView, TeambuildView } from './gui/api.js';
 import { scaffoldRevision } from './llm-engine.js';
 import { BOARDS_DIR, defaultPsDir, RESULTS_PATH } from './paths.js';
 import { validateModelExecution } from './providers.js';
@@ -73,6 +73,27 @@ function draftRosterSummary(roster: readonly DraftBoardMon[], build: TeambuildVi
     `registered for this series: ${names(roster.filter((mon) => registered.has(mon.id)))}; ` +
     `left behind: ${names(roster.filter((mon) => !registered.has(mon.id)))}.`
   );
+}
+
+/** A resumed league skips the draft entirely, so the picks a season review is judged against are rebuilt
+ * from the transcript; seats are recovered from the snake order rather than the logged model name, which
+ * repeats when the same model holds two seats. */
+function loadStoredPicks(runDir: string, entrants: number, board: DraftBoard): DraftPickView[] {
+  const rows = loadRows(path.join(runDir, 'draft', 'draft.jsonl')).sort((a, b) => Number(a.pick) - Number(b.pick));
+  const order = snakeOrder(entrants, board.picks);
+  return rows.flatMap((row, index) => {
+    const entrant = order[index];
+    if (entrant === undefined || typeof row.mon !== 'string') return [];
+    return [
+      {
+        pick: Number(row.pick),
+        entrant,
+        mon: row.mon,
+        rationale: typeof row.rationale === 'string' ? row.rationale : '',
+        fallback: row.fallback === true,
+      },
+    ];
+  });
 }
 
 function playoffReview(summary: string, build: TeambuildView, notebook: string): string {
@@ -203,7 +224,7 @@ export async function runDraftLeague(
   let rosters: DraftBoardMon[][] = entrants.map(() => []);
   let budgets: number[] = entrants.map(() => board.budget);
   let teamNames: string[] = entrants.map(() => '');
-  let picks: DraftView['picks'] = [];
+  let picks: DraftView['picks'] = stored ? loadStoredPicks(runDir, entrants.length, board) : [];
   const draftView = (withTable: boolean): DraftView => ({
     boardId: board.id,
     budget: board.budget,
