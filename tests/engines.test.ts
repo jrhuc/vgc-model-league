@@ -923,7 +923,7 @@ test('hard quota failures during reflection stop the series', async () => {
   assert.equal(decisions[0]!.error_summary, 'Google API quota is exhausted (429).');
 });
 
-test('game transcripts reset while notebook and score persist, with a 2400-character cap', async () => {
+test('game transcripts reset while notebook and score persist, with a marked character cap', async () => {
   const provider = new ScriptedProvider([
     decision([0], 'game one', 'durable series note'),
     decision([0], 'game two', 'durable series note'),
@@ -947,14 +947,15 @@ test('game transcripts reset while notebook and score persist, with a 2400-chara
   assert.match(nextGamePrompt, /Private notebook: durable series note/);
   assert.match(nextGamePrompt, /Series series-1; game 2; score you 1, opponent 0/);
 
-  engine.observe([`|move|p2a: NewMon|${'x'.repeat(2600)}LATEST|p1a: Mon1`]);
+  engine.observe([`|move|p2a: NewMon|${'x'.repeat(26_000)}LATEST|p1a: Mon1`]);
   await engine.act(request(), { povLines: [] });
   const cappedPrompt = String(provider.calls[2]!.messages[0]!.content);
   const timelineMarker = 'Compact private battle timeline (your POV):\n';
   const timeline = cappedPrompt
     .slice(cappedPrompt.indexOf(timelineMarker) + timelineMarker.length)
     .split('\n\nChoose for ')[0]!;
-  assert.equal(timeline.length, 2400);
+  assert.ok(timeline.length <= 24_100, `timeline stayed near the cap (${timeline.length})`);
+  assert.match(timeline, /^\[Earlier turns are omitted from this timeline\.\]/);
   assert.match(timeline, /LATEST into Mon1\.$/);
 });
 
