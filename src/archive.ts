@@ -506,20 +506,29 @@ function readRosters(runsDir: string, runId: string, identity: LeagueIdentity, c
   const picks = readRunLines(runsDir, runId, 'draft', 'draft.jsonl');
   const pickByMon = new Map<string, Record<string, unknown>>();
   for (const pick of picks) pickByMon.set(`${modelKey(String(pick.model ?? ''))}:${pick.mon}`, pick);
+  const windowAdds = new Map<number, Set<string>>();
+  if (current) {
+    for (const decision of readTradeWindow(path.join(runsDir, runId))?.decisions ?? []) {
+      windowAdds.set(decision.entrant, new Set(decision.swaps.map((swap) => swap.add)));
+    }
+  }
   const entries: RosterEntry[] = [];
   const source = Array.isArray(stored) ? (stored as Record<string, unknown>[]) : [];
   for (const [entrant, model] of identity.models.entries()) {
     const record = source.find((candidate) => modelKey(String(candidate.model ?? '')) === modelKey(model)) ?? {};
     const mons = Array.isArray(record.roster) ? (record.roster as Record<string, unknown>[]) : [];
     let roster = mons.map((mon): LeagueRosterSlotView => {
-      const pick = pickByMon.get(`${modelKey(model)}:${String(mon.id ?? '')}`);
+      const id = String(mon.id ?? '');
+      const viaWindow = windowAdds.get(entrant)?.has(id) === true;
+      const pick = viaWindow ? undefined : pickByMon.get(`${modelKey(model)}:${id}`);
       return {
-        id: String(mon.id ?? ''),
+        id,
         name: String(mon.name ?? mon.id ?? ''),
         cost: count(mon.cost),
         pick: pick ? count(pick.pick) : null,
         rationale: typeof pick?.rationale === 'string' ? pick.rationale : '',
         fallback: pick?.fallback === true,
+        acquired: viaWindow ? 'window' : 'draft',
       };
     });
     let spent = count(record.spent);
@@ -536,6 +545,7 @@ function readRosters(runsDir: string, runId: string, identity: LeagueIdentity, c
           pick: count(pick.pick),
           rationale: typeof pick.rationale === 'string' ? pick.rationale : '',
           fallback: pick.fallback === true,
+          acquired: 'draft',
         }),
       );
       spent = own.reduce((total, pick) => total + count(pick.cost), 0);

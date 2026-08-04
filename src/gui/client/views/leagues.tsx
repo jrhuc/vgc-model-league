@@ -156,7 +156,7 @@ function FranchiseCard({
             key={entry.id}
             type="button"
             class={`franchise-sprite ${openSlot === entry.id ? 'on' : ''}`}
-            title={`${entry.name} · ${entry.cost} pts${entry.pick !== null ? ` · pick ${entry.pick}` : ''}`}
+            title={`${entry.name} · ${entry.cost} pts${entry.acquired === 'window' ? ' · mid-season trade' : entry.pick !== null ? ` · pick ${entry.pick}` : ''}`}
             onClick={() => setOpenSlot(openSlot === entry.id ? null : entry.id)}
           >
             <Sprite id={spriteFor(entry.id)} size={40} />
@@ -166,10 +166,19 @@ function FranchiseCard({
       {slot ? (
         <div class="franchise-pick">
           <span class="draft-feed-head">
-            {slot.pick !== null ? `${pickLabel(slot.pick)} · ` : ''}
+            {slot.acquired === 'window' ? 'Mid-season trade · ' : slot.pick !== null ? `${pickLabel(slot.pick)} · ` : ''}
             {slot.name} · {slot.cost} pts{slot.fallback ? ' · fallback' : ''}
           </span>
-          <p>{slot.rationale || 'No stored rationale.'}</p>
+          {slot.acquired === 'window' ? (
+            <p>
+              Signed in free agency. One rationale covers every swap this coach made —{' '}
+              <button type="button" class="text-link" onClick={onOpenTeam}>
+                read it on the team page →
+              </button>
+            </p>
+          ) : (
+            <p>{slot.rationale || 'No stored rationale.'}</p>
+          )}
         </div>
       ) : null}
       <footer class="franchise-card-foot">
@@ -720,7 +729,7 @@ function TeamPage({
   const name = (entrant: number) => league.franchises[entrant]?.teamName ?? `Coach ${entrant + 1}`;
   const liveSeries = league.liveSeries.filter((entry) => entry.sides?.includes(franchise.entrant));
   const windowDecision = league.tradeWindow?.decisions.find((entry) => entry.entrant === franchise.entrant);
-  const seasonReview = league.seasonReviews.find((entry) => entry.entrant === franchise.entrant);
+  const seasonReview = league.seasonReviews?.find((entry) => entry.entrant === franchise.entrant);
   const rosterNames = new Map(
     league.franchises.flatMap((entry) =>
       [...entry.draftRoster, ...entry.roster].map((mon) => [mon.id, mon.name] as const),
