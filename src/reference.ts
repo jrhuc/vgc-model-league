@@ -252,6 +252,7 @@ export interface MatchupMon {
   species: string;
   moves: string[];
   ally?: boolean;
+  ability?: string;
 }
 
 function id(value: string): string {
@@ -412,8 +413,26 @@ const RAGING_BULL_TYPE: Record<string, string> = {
   taurospaldeaaqua: 'Water',
 };
 
-function speciesMoveType(moveId: string, defaultType: string, speciesName: string): string {
-  return moveId === 'ragingbull' ? (RAGING_BULL_TYPE[id(speciesName)] ?? defaultType) : defaultType;
+const ATE_ABILITY_TYPE: Record<string, string> = {
+  pixilate: 'Fairy',
+  aerilate: 'Flying',
+  refrigerate: 'Ice',
+  galvanize: 'Electric',
+};
+
+function speciesMoveType(
+  moveId: string,
+  defaultType: string,
+  speciesName: string,
+  ability = '',
+  soundMove = false,
+): string {
+  if (moveId === 'ragingbull') return RAGING_BULL_TYPE[id(speciesName)] ?? defaultType;
+  const abilityId = id(ability);
+  if (abilityId === 'normalize') return 'Normal';
+  if (defaultType === 'Normal' && ATE_ABILITY_TYPE[abilityId]) return ATE_ABILITY_TYPE[abilityId]!;
+  if (abilityId === 'liquidvoice' && soundMove) return 'Water';
+  return defaultType;
 }
 
 const SPEED_HALVING_ITEMS = new Set([
@@ -781,12 +800,15 @@ export class ShowdownReference {
         const move = this.dex.moves.get(moveName);
         if (!move.exists || move.category === 'Status' || !move.type || move.type === '???') continue;
         const override = weatherBallOverride(move.id, weatherId);
-        const moveType = override?.type ?? speciesMoveType(move.id, move.type, species.name);
-        const contextualType = moveType !== move.type;
+        const speciesType = speciesMoveType(move.id, move.type, species.name);
+        const moveType =
+          override?.type ??
+          speciesMoveType(move.id, move.type, species.name, attacker.ability ?? '', !!move.flags.sound);
+        const abilityConverted = !override && moveType !== speciesType && attacker.ability;
         const typeLabel = override
           ? `currently ${override.type} in ${weather}`
-          : contextualType
-            ? `currently ${moveType} for ${species.name}`
+          : moveType !== move.type
+            ? `currently ${moveType} for ${species.name}${abilityConverted ? ` (${attacker.ability})` : ''}`
             : moveType;
         const bits: string[] = [];
         for (const defender of defenders) {
@@ -996,6 +1018,7 @@ export class ShowdownReference {
     const attacker = attackerName ? this.getSpecies(attackerName) : undefined;
     let attackType = typeof args.attacker_type === 'string' ? args.attacker_type : '';
     let moveName = typeof args.move === 'string' ? args.move : '';
+    let typeNote = '';
     if (moveName.trim()) {
       const move = this.dex.moves.get(moveName);
       if (!move.exists) return `No move data for ${JSON.stringify(moveName)} in ${this.format}.`;
@@ -1003,6 +1026,21 @@ export class ShowdownReference {
       if (error) return error;
       if (move.id === 'ragingbull' && !attacker?.exists) return 'attacker is required to resolve Raging Bull typing.';
       attackType = speciesMoveType(move.id, move.type, attacker?.name ?? '');
+      if (attacker?.exists) {
+        const abilities = [...new Set(Object.values(attacker.abilities).filter((entry) => typeof entry === 'string'))];
+        const conversions = abilities.flatMap((abilityName) => {
+          const converted = speciesMoveType(move.id, move.type, attacker.name, abilityName, !!move.flags.sound);
+          return converted === attackType ? [] : [{ abilityName, converted }];
+        });
+        if (conversions.length && abilities.length === 1) {
+          attackType = conversions[0]!.converted;
+          typeNote = ` via ${conversions[0]!.abilityName}`;
+        } else if (conversions.length) {
+          typeNote = ` (${conversions
+            .map((entry) => `${entry.abilityName} would make it ${entry.converted}`)
+            .join('; ')})`;
+        }
+      }
       moveName = move.name;
     }
     if (!attackType.trim()) {
@@ -1014,7 +1052,7 @@ export class ShowdownReference {
     }
     const type = this.dex.types.get(attackType);
     if (!type.exists) return `No type data for ${JSON.stringify(attackType)}.`;
-    const source = moveName ? `${moveName} (${type.name})` : type.name;
+    const source = moveName ? `${moveName} (${type.name}${typeNote})` : type.name;
     return `${source} into ${defender.name} (${defender.types.join('/')}): ${effectivenessDetail(this.dex, type.name, defender.types)}.`;
   }
 
@@ -1414,6 +1452,12 @@ export class ShowdownReference {
 
       let active = battle.dex.getActiveMove(cfg.moveId);
       active.willCrit = cfg.crit;
+      /** Handlers like Unaware's onAnyModifyBoost read battle.activePokemon/activeTarget,
+       * which only real move execution sets; without them the scratch call silently no-ops. */
+      const context = battle as unknown as { activePokemon: unknown; activeTarget: unknown; activeMove: unknown };
+      context.activePokemon = att;
+      context.activeTarget = def;
+      context.activeMove = active;
       battle.singleEvent('ModifyType', active, null, att, def, active, active);
       battle.singleEvent('ModifyMove', active, null, att, def, active, active);
       active = battle.runEvent('ModifyType', att, def, active, active);

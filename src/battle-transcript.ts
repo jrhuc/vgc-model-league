@@ -23,9 +23,14 @@ const PROTECTION_EFFECTS = new Set([
   'Max Guard',
 ]);
 
-export function summarizeBattleEvents(lines: string[]): string[] {
+export function summarizeBattleEvents(lines: string[], pov?: 'p1' | 'p2'): string[] {
   const summary: string[] = [];
   const ident = (value = '') => value.replace(/^p[12][a-z]?:\s*/, '');
+  const sideLabel = (value = '') => {
+    const side = /^(p[12])[ab]?:?/.exec(value)?.[1];
+    if (!pov || !side) return value;
+    return side === pov ? 'Your side' : "The opponent's side";
+  };
   for (const line of lines) {
     if (!line.startsWith('|')) continue;
     const [, kind = '', ...args] = line.split('|');
@@ -39,8 +44,13 @@ export function summarizeBattleEvents(lines: string[]): string[] {
         `${ident(args[0])} HP became ${battleHpPercent(args[1])}${kind === '-heal' ? ' after healing' : ''}.`,
       );
     else if (kind === 'faint' && args[0]) summary.push(`${ident(args[0])} fainted.`);
-    else if (kind === 'cant' && args.length >= 2) summary.push(`${ident(args[0])} could not act (${args[1]}).`);
-    else if (kind === '-status' && args.length >= 2) summary.push(`${ident(args[0])} became ${args[1]}.`);
+    else if (kind === 'cant' && args.length >= 2) {
+      const blocked = args.find((arg) => arg.startsWith('[of] '));
+      const ability = /^ability: (.+)$/.exec(args[1] ?? '');
+      if (ability && args[2] && blocked)
+        summary.push(`${ident(blocked.slice(5))}'s ${args[2]} was blocked by ${ident(args[0])}'s ${ability[1]}.`);
+      else summary.push(`${ident(args[0])} could not act (${args[1]}).`);
+    } else if (kind === '-status' && args.length >= 2) summary.push(`${ident(args[0])} became ${args[1]}.`);
     else if (kind === '-curestatus' && args.length >= 2) summary.push(`${ident(args[0])} was cured of ${args[1]}.`);
     else if (kind === '-ability' && args.length >= 2) summary.push(`${ident(args[0])} revealed ${args[1]}.`);
     else if (kind === '-mega' && args[0]) summary.push(`${ident(args[0])} Mega Evolved.`);
@@ -67,9 +77,13 @@ export function summarizeBattleEvents(lines: string[]): string[] {
     else if (kind === '-fieldstart' && args[0]) summary.push(`Field started: ${args[0]}.`);
     else if (kind === '-fieldend' && args[0]) summary.push(`Field ended: ${args[0]}.`);
     else if ((kind === '-sidestart' || kind === '-sideend') && args.length >= 2)
-      summary.push(`${args[0]} ${kind === '-sidestart' ? 'gained' : 'lost'} ${args[1]}.`);
-    else if (kind === 'win' && args[0]) summary.push(`${args[0]} won the game.`);
-    else if (kind === 'tie') summary.push('The game tied.');
+      summary.push(
+        `${sideLabel(args[0])} ${kind === '-sidestart' ? 'gained' : 'lost'} ${args[1]!.replace(/^move: /, '')}.`,
+      );
+    else if (kind === 'win' && args[0]) {
+      const side = /^(p[12])-/.exec(args[0])?.[1];
+      summary.push(pov && side ? `${side === pov ? 'You' : 'The opponent'} won the game.` : `${args[0]} won the game.`);
+    } else if (kind === 'tie') summary.push('The game tied.');
     else if (kind === 'timer' && args[0])
       summary.push(
         args[0] === 'autodefault'
@@ -79,5 +93,5 @@ export function summarizeBattleEvents(lines: string[]): string[] {
             : 'The game was declared a tie on time.',
       );
   }
-  return summary.slice(-60);
+  return summary.slice(-200);
 }

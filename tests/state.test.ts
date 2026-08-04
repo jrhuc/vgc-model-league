@@ -448,3 +448,20 @@ test('charge turns render as charging, not as a completed move', () => {
   ]).join('\n');
   assert.match(summary, /Charizard is charging Solar Beam; it releases next turn unless disrupted\./);
 });
+
+test('blocked moves, side labels, and win lines render from the player point of view', () => {
+  const events = summarizeBattleEvents(
+    [
+      '|cant|p1a: Tsareena|ability: Queenly Majesty|Brave Bird|[of] p2b: Talonflame',
+      '|-sidestart|p2: p2-openrouter:qwen/qwen3.8-max|move: Tailwind',
+      '|-sideend|p1: p1-openai:gpt-5.6-terra|move: Tailwind',
+      '|win|p1-openai:gpt-5.6-terra',
+    ],
+    'p2',
+  ).join('\n');
+  assert.match(events, /Talonflame's Brave Bird was blocked by Tsareena's Queenly Majesty\./);
+  assert.match(events, /Your side gained Tailwind\./);
+  assert.match(events, /The opponent's side lost Tailwind\./);
+  assert.match(events, /The opponent won the game\./);
+  assert.doesNotMatch(events, /openrouter|openai/);
+});

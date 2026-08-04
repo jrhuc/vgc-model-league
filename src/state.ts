@@ -394,6 +394,7 @@ export class BattleState {
             species: mon.species,
             moves: [...mon.moves.values()].map((move) => move.name),
             ally,
+            ...(mon.ability === undefined ? {} : { ability: mon.ability }),
           },
         ];
       });

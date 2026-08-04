@@ -530,3 +530,39 @@ test('speed profiles apply visible battle modifiers without collapsing hidden ra
   assert.equal(reference.movePriority('Quick Attack'), 1);
   assert.equal(reference.movePriority('Encore'), 0);
 });
+
+test('type-changing abilities convert Normal moves in the chart and matchup tool', () => {
+  const reference = new ShowdownReference('gen9championsvgc2026regmb');
+  const chart = reference
+    .renderActiveMatchups(
+      [{ species: 'Gardevoir-Mega', moves: ['Hyper Voice'], ally: true, ability: 'Pixilate' }],
+      [{ species: 'Gengar-Mega', moves: [], ally: false }],
+    )
+    .join('\n');
+  assert.match(
+    chart,
+    /Hyper Voice \(currently Fairy for Gardevoir-Mega \(Pixilate\)\): Gengar-Mega not very effective \(0\.5x\)/,
+  );
+  assert.doesNotMatch(chart, /immune/);
+  assert.match(
+    reference.lookup('lookup_matchup', { attacker: 'Gardevoir-Mega', move: 'Hyper Voice', defender: 'Gengar-Mega' }),
+    /Hyper Voice \(Fairy via Pixilate\) into Gengar-Mega[\s\S]*not very effective/,
+  );
+});
+
+test('Unaware ignores attacker boosts in the damage estimate', () => {
+  const reference = new ShowdownReference('gen9championsvgc2026regmb');
+  const range = (result: string) => /(\d+(?:\.\d+)?-\d+(?:\.\d+)?)% of maximum HP/.exec(result)?.[1];
+  const base = { attacker: 'Gengar-Mega', defender: 'Milotic', move: 'Shadow Ball', defender_ability: 'Unaware' };
+  const unboosted = reference.lookup('estimate_damage', base);
+  const boosted = reference.lookup('estimate_damage', { ...base, attacker_boosts: { spa: 2 } });
+  assert.ok(range(unboosted), unboosted);
+  assert.equal(range(boosted), range(unboosted));
+  const noAbility = reference.lookup('estimate_damage', {
+    attacker: 'Gengar-Mega',
+    defender: 'Milotic',
+    move: 'Shadow Ball',
+    attacker_boosts: { spa: 2 },
+  });
+  assert.notEqual(range(noAbility), range(unboosted));
+});

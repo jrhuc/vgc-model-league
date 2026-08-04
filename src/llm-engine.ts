@@ -145,7 +145,8 @@ const DECISION_RATIONALE_LIMIT = 2000;
 const DECISION_TEMPERATURE = 0.2;
 const REFLECTION_MAX_TOKENS = 8192;
 const REFLECTION_TIMEOUT_S = 240;
-const TRANSCRIPT_CHARACTER_LIMIT = 2400;
+const TRANSCRIPT_CHARACTER_LIMIT = 24000;
+const TRANSCRIPT_CLIP_MARKER = '[Earlier turns are omitted from this timeline.]';
 
 const ACTION_ORDER_TOOL: ToolDefinition = {
   name: 'compare_action_order',
@@ -444,7 +445,7 @@ export class LLMEngine extends BaseEngine {
     const winner = text(context.outcome.winner, 'tie') || 'tie';
     const won = context.outcome.won === true;
     const result = winner === 'tie' ? 'tied' : won ? 'won' : 'lost';
-    this.remember(`[Game ${context.gameNumber} ended; ${result}; winner ${winner}; series score ${this.scoreText()}]`);
+    this.remember(`[Game ${context.gameNumber} ended; you ${result}; series score ${this.scoreText()}]`);
     await this.reflect(context, result);
   }
 
@@ -1328,18 +1329,23 @@ export class LLMEngine extends BaseEngine {
 
   private trimTranscript(): void {
     let length = this.transcript.reduce((total, line) => total + line.length, this.transcript.length - 1);
+    let dropped = false;
     while (length > TRANSCRIPT_CHARACTER_LIMIT && this.transcript.length > 1) {
       length -= this.transcript.shift()!.length + 1;
+      dropped = true;
     }
-    if (length <= TRANSCRIPT_CHARACTER_LIMIT) return;
-    const line = this.transcript[0]!;
-    const prefix = /^(?:Turn \d+|Setup):/.exec(line)?.[0] ?? '';
-    const retained = Math.max(0, TRANSCRIPT_CHARACTER_LIMIT - prefix.length - 2);
-    this.transcript[0] = `${prefix} …${line.slice(-retained)}`;
+    if (length > TRANSCRIPT_CHARACTER_LIMIT) {
+      const line = this.transcript[0]!;
+      const prefix = /^(?:Turn \d+|Setup):/.exec(line)?.[0] ?? '';
+      const retained = Math.max(0, TRANSCRIPT_CHARACTER_LIMIT - prefix.length - 2);
+      this.transcript[0] = `${prefix} …${line.slice(-retained)}`;
+      dropped = true;
+    }
+    if (dropped && this.transcript[0] !== TRANSCRIPT_CLIP_MARKER) this.transcript.unshift(TRANSCRIPT_CLIP_MARKER);
   }
 
   private rememberEvents(lines: string[]): void {
-    for (const event of summarizeBattleEvents(lines)) {
+    for (const event of summarizeBattleEvents(lines, this.pid)) {
       const turn = /^Turn (\d+) begins\.$/.exec(event);
       if (turn) this.remember(`Turn ${turn[1]}:`);
       else this.rememberTurnDetail(event);
