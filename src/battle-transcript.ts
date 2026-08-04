@@ -45,6 +45,8 @@ export function summarizeBattleEvents(lines: string[]): string[] {
     else if (kind === '-ability' && args.length >= 2) summary.push(`${ident(args[0])} revealed ${args[1]}.`);
     else if (kind === '-mega' && args[0]) summary.push(`${ident(args[0])} Mega Evolved.`);
     else if (kind === '-miss' && args.length >= 2) summary.push(`${ident(args[0])} missed ${ident(args[1])}.`);
+    else if (kind === '-prepare' && args.length >= 2)
+      summary.push(`${ident(args[0])} is charging ${args[1]}; it releases next turn unless disrupted.`);
     else if (kind === '-immune' && args[0]) summary.push(`${ident(args[0])} was immune.`);
     else if (kind === '-fail' && args[0]) summary.push(`${ident(args[0])}'s action failed.`);
     else if (kind === '-crit' && args[0]) summary.push(`A critical hit landed on ${ident(args[0])}.`);

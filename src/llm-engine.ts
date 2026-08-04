@@ -150,12 +150,12 @@ const TRANSCRIPT_CHARACTER_LIMIT = 2400;
 const ACTION_ORDER_TOOL: ToolDefinition = {
   name: 'compare_action_order',
   description:
-    'Compare two active Pokémon using live Speed state without revealing hidden EVs. Applies visible items, boosts, status, Tailwind, weather abilities, move priority, and Trick Room; also explains Encore timing and redundant locks. Pass "switch" as a move to time a switch-out, which resolves before moves.',
+    'Compare two Pokémon (active or benched) using live Speed state without revealing hidden EVs. Applies visible items, boosts, status, Tailwind, weather abilities, Trick Room, and move priority including ability modifiers (Prankster, Gale Wings, Triage, Grassy Glide, Stall, Mycelium Might) and priority items (Quick Claw, Lagging Tail); also explains Encore timing and redundant locks. Pass "switch" as a move to time a switch-out, which resolves before moves.',
   parameters: {
     type: 'object',
     properties: {
-      first: { type: 'string', description: 'Active species name or ally/foe slot, such as ally 1.' },
-      second: { type: 'string', description: 'Active species name or ally/foe slot, such as foe 2.' },
+      first: { type: 'string', description: 'Species name (active or benched) or ally/foe slot, such as ally 1.' },
+      second: { type: 'string', description: 'Species name (active or benched) or ally/foe slot, such as foe 2.' },
       first_move: {
         type: 'string',
         description: 'Optional move being considered for the first Pokémon, or "switch" for switching out.',
