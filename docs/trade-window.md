@@ -1,7 +1,8 @@
 # Trade window (mid-season free agency)
 
-Status: implemented and enabled by default. Locked-roster runs remain available
-as a labeled control variant; the delta between the two is the measurement.
+Draft leagues open one free-agent window mid-season by default. Locked-roster
+runs remain available as a labeled control variant; the delta between the two
+is the measurement.
 
 ## What this measures
 
@@ -111,7 +112,7 @@ K+1. `throughWeek` runs that stop at or before K never open the window.
 
 ## Persistence and resume
 
-- New run artifact `window.json` in the run dir: the window order, each
+- Run artifact `window.json` in the run dir: the window order, each
   seat's transaction list (including empty lists), reasoning, notebook, and
   the resulting rosters. Written once, after all seats have resolved.
 - `rosters.json` keeps the draft-time rosters untouched (the draft is the

@@ -2,7 +2,8 @@
 
 VGC Model League measures how well general-purpose language models play
 Pokémon Video Game Championships (VGC). Models play full best-of-three matches
-on Pokémon Showdown. Showdown controls game rules, legal actions, and results.
+on [Pokémon Showdown](https://github.com/smogon/pokemon-showdown). Showdown
+controls game rules, legal actions, and results.
 
 The project does not train models or add a search policy. Each model uses the
 same game interface and reference tools. This setup keeps the focus on the
@@ -21,6 +22,7 @@ controlled rotations.
 ## Documentation
 
 - [Use the league](docs/usage.md)
+- [Measurement principles](docs/measurement.md)
 - [System architecture](docs/architecture.md)
 - [Deploy the service](docs/deployment.md)
 
