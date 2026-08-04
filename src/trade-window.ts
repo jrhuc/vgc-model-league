@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
+import { createBoardSearch } from './board-search.js';
 import { completeWithDexTools } from './dex-lookups.js';
 import type { DraftBoard, DraftBoardMon } from './draft.js';
 import { draftBoardTable } from './draft.js';
@@ -370,6 +371,7 @@ export async function runTradeWindow(
     return make(model, options.apiKeys?.[model], reasoningForModel(model, options));
   });
   const reference = new ShowdownReference(state.board.format, options.psDir);
+  const boardSearch = createBoardSearch(state.board, options.psDir);
 
   for (const [position, entrant] of order.entries()) {
     if (position < decisions.length) continue;
@@ -397,6 +399,7 @@ export async function runTradeWindow(
             messages,
             spec: state.models[entrant]!,
             reference,
+            boardSearch,
             policy: TRADE_WINDOW_PROMPT_POLICY,
             ...(options.recovery === undefined ? {} : { recovery: options.recovery }),
             ...(options.signal === undefined ? {} : { signal: options.signal }),

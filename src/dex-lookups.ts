@@ -1,3 +1,4 @@
+import type { BoardSearch } from './board-search.js';
 import { assistantToolMessage, classifyProviderFailure, toolResultMessage } from './providers.js';
 import type { RecoveryGate } from './recovery.js';
 import type { ShowdownReference } from './reference.js';
@@ -40,6 +41,7 @@ export interface DexToolRequest {
   spec: string;
   reference: ShowdownReference;
   policy: DexToolPolicy;
+  boardSearch?: BoardSearch;
   recovery?: RecoveryGate;
   signal?: AbortSignal;
   onLookup?: (call: { name: string; arguments: JsonObject; result: string }) => void;
@@ -65,7 +67,12 @@ async function completeOnce(request: DexToolRequest, options: { tools: boolean; 
       return await request.provider.complete(request.system, request.messages, {
         maxTokens: request.policy.maxTokens,
         timeout: request.policy.timeoutSeconds,
-        ...(options.tools ? { tools: DEX_TOOLS, toolChoice: options.final ? 'none' : 'auto' } : {}),
+        ...(options.tools
+          ? {
+              tools: request.boardSearch ? [...DEX_TOOLS, request.boardSearch.definition] : DEX_TOOLS,
+              toolChoice: options.final ? 'none' : 'auto',
+            }
+          : {}),
         ...(request.signal === undefined ? {} : { signal: request.signal }),
       });
     } catch (error) {
@@ -84,7 +91,10 @@ export async function completeWithDexTools(request: DexToolRequest): Promise<Com
     const seenKey = `${name} ${JSON.stringify(args)}`;
     const cached = seenToolResults.get(seenKey);
     if (cached !== undefined) return `[identical to an earlier call this reply] ${cached}`;
-    const result = request.reference.lookup(name, args);
+    const result =
+      request.boardSearch && name === request.boardSearch.definition.name
+        ? request.boardSearch.run(args)
+        : request.reference.lookup(name, args);
     seenToolResults.set(seenKey, result);
     return result;
   };

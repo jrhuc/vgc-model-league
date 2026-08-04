@@ -94,6 +94,11 @@ models read the opposing moves, items, abilities, and stat alignments, but
 never the hidden stat points. `draft --closed-sheets` strips that rule so
 models must deduce sets through play.
 
+The draft board is published price-descending, as real draft leagues publish
+one. Coaches also get `search_board` during the draft and the free-agent
+window, which filters and re-sorts it by type, price range, ability, base stat
+total, or which entries legally learn a given move.
+
 Draft coaches carry a private roster note across their picks. Each matchup's
 teambuild plan carries into its own best-of-three. Round-robin matchups do not
 share notes or results; playoff coaches receive their own earlier builds,

@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
+import { createBoardSearch } from '../src/board-search.js';
 import type { DraftBoardMon, DraftState } from '../src/draft.js';
 import {
   boardInfo,
@@ -1385,18 +1386,20 @@ test('a draft-only league stops at the rosters and resumes into a full season', 
   assert.equal(played[1]!.stage, 'playoff');
 });
 
-test('the draft prompt states budget rules without pricing the board for the coach', () => {
-  const state = freshState();
-  const board = draftBoardTable(BOARD, defaultPsDir());
-  const costs = board
+test('the board is published price-descending the way a draft league publishes one', () => {
+  const costs = draftBoardTable(BOARD, defaultPsDir())
     .split('\n')
     .slice(1)
     .map((line) => Number(line.split(' | ')[1]));
+  assert.ok(costs.length > 1, 'the board renders rows');
   assert.ok(
-    costs.some((cost, index) => index > 0 && cost > costs[index - 1]!),
-    'the board is not ordered by price',
+    costs.every((cost, index) => index === 0 || cost <= costs[index - 1]!),
+    'contested premium entries are listed first',
   );
+});
 
+test('the draft prompt states budget rules without computing a ceiling for the coach', () => {
+  const state = freshState();
   const prompt = draftUserPrompt(state, 0, ['fake:model', 'random'], 0, '');
   assert.ok(!/most you can spend/.test(prompt), 'the harness does not compute an affordable ceiling');
   assert.match(prompt, /every remaining slot has to be filled/, 'the budget rule is still stated');
@@ -1545,4 +1548,59 @@ test('a season review must fill every field', () => {
     JSON.stringify({ summary: 'a', did_well: 'b', did_poorly: 'c', would_change: 'd', extra: 1 }),
   );
   assert.notEqual(typeof parsed, 'string');
+});
+
+test('search_board filters the board by price, type, ability, and legal movepool', () => {
+  const search = createBoardSearch(BOARD, defaultPsDir());
+  const ids = (result: string): string[] =>
+    result
+      .split('\n')
+      .slice(1)
+      .map((line) => line.slice(2).split(' | ')[0]!);
+
+  const cheapFire = search.run({ types: ['fire'], max_cost: 10, limit: 100 });
+  const cheapFireIds = ids(cheapFire);
+  assert.ok(cheapFireIds.length > 0, 'the board has cheap Fire types');
+  for (const id of cheapFireIds) {
+    const entry = mon(id);
+    assert.ok(entry.cost <= 10, `${id} respects max_cost`);
+    assert.ok(entry.types.some((type) => type.toLowerCase() === 'fire'), `${id} is Fire`);
+  }
+
+  const fakeOut = ids(search.run({ learns: 'Fake Out', limit: 100 }));
+  assert.ok(fakeOut.includes('incineroar'), 'Incineroar learns Fake Out');
+  assert.ok(!fakeOut.includes('archaludon'), 'Archaludon does not learn Fake Out');
+
+  const intimidate = ids(search.run({ ability: 'Intimidate', limit: 100 }));
+  assert.ok(intimidate.includes('incineroar'), 'Incineroar has Intimidate');
+
+  const dual = ids(search.run({ types: ['Fire', 'Flying'], limit: 100 }));
+  assert.ok(dual.includes('charizard-mega-y'), 'both listed types must match');
+  assert.ok(!dual.includes('incineroar'), 'a Fire/Dark entry does not match Fire/Flying');
+
+  assert.match(search.run({ learns: 'Nonexistent Move' }), /No move data/);
+  assert.match(search.run({ max_cost: 0 }), /No board entries match/);
+});
+
+test('search_board sorts by price by default and reaches entries the board buries', () => {
+  const search = createBoardSearch(BOARD, defaultPsDir());
+  const rows = search.run({ limit: 100 }).split('\n').slice(1);
+  const costs = rows.map((line) => Number(line.split(' | ')[1]));
+  assert.ok(
+    costs.every((cost, index) => index === 0 || cost <= costs[index - 1]!),
+    'default sort is price-descending',
+  );
+
+  const byName = search.run({ sort: 'name', limit: 100 }).split('\n').slice(1);
+  const names = byName.map((line) => line.split(' | ')[2]!);
+  assert.deepEqual(names, [...names].sort((a, b) => a.localeCompare(b)), 'name sort is alphabetical');
+
+  const bst = search.run({ min_bst: 600, limit: 100 });
+  assert.ok(ids(bst).length > 0, 'the base stat filter returns entries');
+  function ids(result: string): string[] {
+    return result
+      .split('\n')
+      .slice(1)
+      .map((line) => line.slice(2).split(' | ')[0]!);
+  }
 });

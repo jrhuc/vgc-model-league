@@ -30,6 +30,17 @@ The harness must provide:
 - Neutral process instructions applied identically to every seat, such as a
   reflection step that asks the model to question its own team choice. Process
   prompts say *when* to think, never *what* to conclude.
+- The real artifact's own presentation, plus tools to re-cut it. No ordering of
+  a long list is neutral, so match how the format publishes it and let the
+  model re-sort: draft boards go out price-descending the way real draft
+  leagues publish them, and `search_board` filters by type, price, ability,
+  base stat total, or which entries learn a given move. Re-sorting the board
+  alphabetically to avoid making cost "the axis" instead made recall the axis —
+  the joint-most-expensive entry fell from row 2 to row 164 of 308 and went
+  undrafted for the first time in nine leagues, while an equally buried but
+  famous entry at the same price was still taken third. Substituting an
+  ordering models cannot exploit for one a human would use is a parity break,
+  not a neutrality gain.
 
 The harness must never provide:
 
@@ -38,11 +49,8 @@ The harness must never provide:
   coaching, even though one follows from the other.
 - Corrections for known model biases. When many models share a wrong prior,
   measuring which ones overcome it is the point.
-- Steering through data. Never adjust board prices, menu ordering, or example
-  choices to nudge models toward play you consider correct. Ordering is part
-  of this: a list sorted by one attribute makes that attribute the axis the
-  option space is read along, so the draft board sorts by name and leaves cost
-  as a column.
+- Steering through data. Never adjust board prices or example choices to nudge
+  models toward play you consider correct.
 - Derived quantities the model can compute itself. Stating the budget and the
   rule that every slot must be filled is parity; computing the resulting
   ceiling and leading with it hands over an accounting frame.

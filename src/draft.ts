@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
+import { boardRow, createBoardSearch } from './board-search.js';
 import { completeWithDexTools } from './dex-lookups.js';
 import type { BoardInfo, DraftBoardMonView, DraftPickView } from './gui/api.js';
 import { BOARDS_DIR, defaultPsDir } from './paths.js';
@@ -40,7 +41,8 @@ const DRAFT_PROMPT_POLICY = {
     '',
     'You have the Showdown dex tools. Use them to check anything the board summary does not answer: what a Mega',
     'becomes, how a type matchup reads, what a spread outruns, or roughly how hard an attack hits. They compute',
-    'from the simulator this league runs on, so trust them over recollection.',
+    'from the simulator this league runs on, so trust them over recollection. search_board filters and re-sorts the',
+    'board itself by type, price, ability, base stat total, or which entries legally learn a given move.',
     '',
     'Your roster is judged matchup by matchup: over the season it needs a winning 6 against each of the other',
     'rosters taking shape around you.',
@@ -61,6 +63,7 @@ const DRAFT_PROMPT_POLICY = {
     'Overall pick {{pick}} of {{total}}. You have {{budget}} points and {{remaining}} left, and every remaining ' +
     'slot has to be filled from what is still on the board.',
   boardHeading: 'DRAFT BOARD (id | cost | name | types | base stats | abilities):',
+  boardOrder: 'cost-descending' as 'cost-descending' | 'name',
   takenHeading: 'ALREADY DRAFTED:',
   nothingTaken: '- (nothing yet; you have the first pick)',
   rosterHeading: 'YOUR ROSTER:',
@@ -401,17 +404,12 @@ export function draftBoardTable(
   const { Dex } = loadShowdown(psDir);
   const dex = Dex.mod(Dex.formats.get(board.format).mod || 'base');
   const lines: string[] = [heading];
-  for (const mon of [...mons].sort((a, b) => a.name.localeCompare(b.name))) {
-    const species = dex.species.get(mon.forme ?? mon.species);
-    const stats = species.baseStats;
-    const abilities = Object.values(species.abilities ?? {})
-      .filter(Boolean)
-      .join('/');
-    lines.push(
-      `- ${mon.id} | ${mon.cost} | ${mon.name} | ${mon.types.join('/')} | ` +
-        `${stats.hp}/${stats.atk}/${stats.def}/${stats.spa}/${stats.spd}/${stats.spe} | ${abilities}` +
-        (mon.item ? ` | holds ${mon.item}` : ''),
-    );
+  const order =
+    DRAFT_PROMPT_POLICY.boardOrder === 'name'
+      ? (a: DraftBoardMon, b: DraftBoardMon) => a.name.localeCompare(b.name)
+      : (a: DraftBoardMon, b: DraftBoardMon) => b.cost - a.cost || a.name.localeCompare(b.name);
+  for (const mon of [...mons].sort(order)) {
+    lines.push(boardRow(mon, dex));
   }
   return lines.join('\n');
 }
@@ -573,6 +571,7 @@ export async function runDraft(models: string[], board: DraftBoard, options: Run
     return make(model, options.apiKeys?.[model], reasoningForModel(model, options));
   });
   const reference = new ShowdownReference(board.format, psDir);
+  const boardSearch = createBoardSearch(board, psDir);
   const systemPrompts = models.map((_, drafter) => draftSystemPrompt(board, models, drafter, psDir));
   const seatLogs = models.map((model, index) => path.join(options.logDir, `drafter-${index}-${slug(model)}.jsonl`));
   const transcript = path.join(options.logDir, 'draft.jsonl');
@@ -624,6 +623,7 @@ export async function runDraft(models: string[], board: DraftBoard, options: Run
             messages,
             spec: models[drafter]!,
             reference,
+            boardSearch,
             policy: DRAFT_PROMPT_POLICY,
             ...(options.recovery === undefined ? {} : { recovery: options.recovery }),
             ...(options.signal === undefined ? {} : { signal: options.signal }),
