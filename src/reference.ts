@@ -732,6 +732,44 @@ export class ShowdownReference {
     return move.exists ? move.priority : undefined;
   }
 
+  priorityProfile(
+    name: string,
+    context: { ability?: string; item?: string; itemConsumed?: boolean; fullHp?: boolean; grassyTerrain?: boolean },
+  ): { priority: number; notes: string[]; unresolved?: string } | undefined {
+    const move = this.dex.moves.get(name);
+    if (!move.exists) return undefined;
+    let priority = move.priority;
+    const notes: string[] = [];
+    let unresolved: string | undefined;
+    const ability = id(context.ability ?? '');
+    if (ability === 'prankster' && move.category === 'Status') {
+      priority += 1;
+      notes.push('Prankster +1 (fails against Dark-type targets)');
+    }
+    if (ability === 'galewings' && move.type === 'Flying') {
+      if (context.fullHp === true) {
+        priority += 1;
+        notes.push('Gale Wings +1 (full HP)');
+      } else if (context.fullHp === false) notes.push('Gale Wings inactive (not at full HP)');
+      else unresolved = 'Gale Wings adds +1 only at full HP; current HP unknown';
+    }
+    if (ability === 'triage' && move.flags.heal) {
+      priority += 3;
+      notes.push('Triage +3');
+    }
+    if (ability === 'myceliummight' && move.category === 'Status')
+      notes.push('Mycelium Might: acts last within its bracket');
+    if (ability === 'stall') notes.push('Stall: acts last within its bracket');
+    if (move.id === 'grassyglide' && context.grassyTerrain) {
+      priority += 1;
+      notes.push('Grassy Glide +1 (Grassy Terrain)');
+    }
+    const item = context.itemConsumed ? '' : id(context.item ?? '');
+    if (item === 'quickclaw') notes.push('Quick Claw: 20% chance to act first within its bracket');
+    if (item === 'laggingtail' || item === 'fullincense') notes.push(`${context.item}: acts last within its bracket`);
+    return { priority, notes, ...(unresolved === undefined ? {} : { unresolved }) };
+  }
+
   renderActiveMatchups(attackers: MatchupMon[], defenders: MatchupMon[], weather = ''): string[] {
     const lines: string[] = [];
     let examined = false;

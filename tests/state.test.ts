@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
+import { summarizeBattleEvents } from '../src/battle-transcript.js';
 import { REPO_ROOT } from '../src/paths.js';
 import { ShowdownReference } from '../src/reference.js';
 import { BattleState } from '../src/state.js';
@@ -141,13 +142,16 @@ test('unseen opponents read as not brought once the whole bring is revealed', ()
     },
     active: [null, null],
   };
-  assert.match(state.render(brought), /Annihilape; HP \?/, 'two reveals leave the bench uncertain');
+  const partial = state.render(brought);
+  assert.match(partial, /Annihilape; HP \?/, 'two reveals leave the bench uncertain');
+  assert.match(partial, /Opponent brought 4 this game; 2 revealed so far, so only 2 of the "HP \?" Pokémon below are/);
 
   state.feed(['|switch|p2a: Garchomp|Garchomp, L50|100/100', '|switch|p2b: Dragapult|Dragapult, L50|100/100']);
   const rendered = state.render(brought);
   assert.match(rendered, /Annihilape; not brought this game/);
   assert.match(rendered, /Floette-Eternal; not brought this game/);
   assert.doesNotMatch(rendered, /HP \?/, 'four reveals resolve the whole opposing bring');
+  assert.doesNotMatch(rendered, /Opponent brought 4 this game/, 'the interim count disappears once resolved');
 });
 
 test('post-preview own state omits Pokémon that were not brought', () => {
@@ -367,4 +371,80 @@ test('action order proves one-point and Tailwind speed guarantees', () => {
     ),
     /Venusaur-Mega is guaranteed to act first[\s\S]*attempts to lock the move used this turn, Giga Drain/,
   );
+});
+
+test('action order applies Gale Wings and Prankster priority modifiers', () => {
+  const reference = new ShowdownReference('gen9championsvgc2026regmb');
+  const state = new BattleState('p1');
+  state.feed([
+    '|showteam|p2|Mamoswine||FocusSash|ThickFat|IceShard,RockSlide|Adamant|||||50',
+    '|switch|p1a: Talonflame|Talonflame, L50|155/155',
+    '|switch|p2a: Mamoswine|Mamoswine, L50|100/100',
+  ]);
+  const talonflame = {
+    ident: 'p1: Talonflame',
+    details: 'Talonflame, L50',
+    condition: '155/155',
+    active: true,
+    ability: 'Gale Wings',
+    stats: { spe: 195 },
+  };
+  state.render({ active: [{ moves: [{ move: 'Brave Bird', target: 'normal' }] }], side: { pokemon: [talonflame] } });
+  const args = { first: 'Talonflame', first_move: 'Brave Bird', second: 'Mamoswine', second_move: 'Ice Shard' };
+  const fullHp = state.compareActionOrder(args, reference);
+  assert.match(fullHp, /Talonflame is guaranteed to act first \(equal priority\)/);
+  assert.match(fullHp, /Gale Wings \+1 \(full HP\)/);
+
+  state.feed(['|-damage|p1a: Talonflame|154/155']);
+  const chipped = state.compareActionOrder(args, reference);
+  assert.match(chipped, /Mamoswine is guaranteed to act first \(move priority \+0 vs \+1\)/);
+  assert.match(chipped, /Gale Wings inactive \(not at full HP\)/);
+
+  const prankster = new BattleState('p1');
+  prankster.feed([
+    '|showteam|p2|Whimsicott||FocusSash|Prankster|Tailwind,Moonblast|Timid|||||50',
+    '|switch|p1a: Dragapult|Dragapult, L50|163/163',
+    '|switch|p2a: Whimsicott|Whimsicott, L50|100/100',
+  ]);
+  prankster.render({
+    active: [{ moves: [{ move: 'Dragon Darts', target: 'normal' }] }],
+    side: {
+      pokemon: [
+        { ident: 'p1: Dragapult', details: 'Dragapult, L50', condition: '163/163', active: true, stats: { spe: 213 } },
+        { ident: 'p1: Tinkaton', details: 'Tinkaton, L50', condition: '171/171', active: false, stats: { spe: 155 } },
+      ],
+    },
+  });
+  const pranked = prankster.compareActionOrder(
+    { first: 'Dragapult', first_move: 'Dragon Darts', second: 'Whimsicott', second_move: 'Tailwind' },
+    reference,
+  );
+  assert.match(pranked, /Whimsicott is guaranteed to act first \(move priority \+0 vs \+1\)/);
+  assert.match(pranked, /Prankster \+1/);
+
+  const benched = prankster.compareActionOrder({ first: 'Tinkaton', second: 'Whimsicott' }, reference);
+  assert.match(benched, /Tinkaton \(benched\)/);
+  assert.match(benched, /Benched Pokémon are compared as if already on the field/);
+});
+
+test('weather from a replacement switch-in counts from its first full turn', () => {
+  const state = new BattleState('p1');
+  state.feed([
+    '|switch|p1a: Gengar|Gengar-Mega, L50|165/165',
+    '|switch|p2a: Milotic|Milotic, L50|100/100',
+    '|turn|3',
+    '|upkeep',
+    '|switch|p2a: Tyranitar|Tyranitar, L50|100/100',
+    '|-weather|Sandstorm|[from] ability: Sand Stream|[of] p2a: Tyranitar',
+    '|turn|4',
+  ]);
+  assert.match(state.render({}), /Sandstorm \(5 turns left\)/);
+});
+
+test('charge turns render as charging, not as a completed move', () => {
+  const summary = summarizeBattleEvents([
+    '|move|p2a: Charizard|Solar Beam|p1a: Spiritomb|[still]',
+    '|-prepare|p2a: Charizard|Solar Beam',
+  ]).join('\n');
+  assert.match(summary, /Charizard is charging Solar Beam; it releases next turn unless disrupted\./);
 });

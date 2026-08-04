@@ -117,6 +117,9 @@ export interface SideTimer {
 
 export class BattleState {
   turn = 0;
+  /** True between a turn's residual phase and the next |turn| line: effects that
+   * start there (faint-replacement switch-ins) tick their first upkeep a turn later. */
+  private upkeepDone = false;
   weather: TimedEffect | undefined;
   fields = new Map<string, TimedEffect>();
   sides: Record<Pid, SideState> = { p1: new SideState(), p2: new SideState() };
@@ -145,7 +148,10 @@ export class BattleState {
   private feedLine(line: string): void {
     if (!line.startsWith('|')) return;
     const [, kind = '', ...args] = line.split('|');
-    if (kind === 'turn' && args[0]) this.turn = Number(args[0]);
+    if (kind === 'turn' && args[0]) {
+      this.turn = Number(args[0]);
+      this.upkeepDone = false;
+    } else if (kind === 'upkeep') this.upkeepDone = true;
     else if ((kind === 'switch' || kind === 'drag' || kind === 'replace') && args.length >= 3) {
       const mon = this.mon(args[0]!);
       this.setDetails(mon, args[1]!);
@@ -243,11 +249,11 @@ export class BattleState {
         const rock = WEATHER_ROCKS[this.speciesKey(name)];
         const setter = this.effectSource(args) ?? this.lastMoveUserThisTurn(this.speciesKey(name));
         const extended = rock !== undefined && setter?.item !== undefined && this.speciesKey(setter.item) === rock;
-        this.weather = { name, startedTurn: Math.max(1, this.turn), duration: extended ? 8 : 5 };
+        this.weather = { name, startedTurn: this.effectStartTurn(), duration: extended ? 8 : 5 };
       }
     } else if (kind === '-fieldstart' && args[0]) {
       const name = this.effect(args[0]);
-      this.fields.set(this.speciesKey(name), { name, startedTurn: Math.max(1, this.turn), duration: 5 });
+      this.fields.set(this.speciesKey(name), { name, startedTurn: this.effectStartTurn(), duration: 5 });
     } else if (kind === '-fieldend' && args[0]) this.fields.delete(this.speciesKey(this.effect(args[0]!)));
     else if ((kind === '-sidestart' || kind === '-sideend') && args.length >= 2) {
       const side = args[0]!.split(':')[0]!;
@@ -425,14 +431,14 @@ export class BattleState {
     const firstName = typeof args.first === 'string' ? args.first.trim() : '';
     const secondName = typeof args.second === 'string' ? args.second.trim() : '';
     if (!firstName || !secondName) return 'first and second are required active Pokémon names or ally/foe slot labels.';
-    const first = this.findActive(firstName);
-    const second = this.findActive(secondName);
+    const first = this.findMon(firstName);
+    const second = this.findMon(secondName);
     const active = this.activeEntries().map(
       (entry) => `${entry.pid === this.pid ? 'ally' : 'foe'} ${entry.slot}: ${entry.mon.species}`,
     );
     if (!first || !second)
-      return `Could not resolve ${!first ? JSON.stringify(firstName) : JSON.stringify(secondName)}. Active Pokémon: ${active.join('; ') || 'none'}.`;
-    if (first.mon === second.mon) return 'first and second must identify different active Pokémon.';
+      return `Could not resolve ${!first ? JSON.stringify(firstName) : JSON.stringify(secondName)}. Active Pokémon: ${active.join('; ') || 'none'}; benched Pokémon may be named directly.`;
+    if (first.mon === second.mon) return 'first and second must identify different Pokémon.';
 
     const firstProfile = this.speedProfile(first.pid, first.mon, reference);
     const secondProfile = this.speedProfile(second.pid, second.mon, reference);
@@ -442,12 +448,28 @@ export class BattleState {
     const switchKeys = new Set(['switch', 'switchout', 'switching', 'swap']);
     const firstIsSwitch = switchKeys.has(this.speciesKey(firstMove));
     const secondIsSwitch = switchKeys.has(this.speciesKey(secondMove));
-    const firstPriority = firstMove && !firstIsSwitch ? reference.movePriority(firstMove) : 0;
-    const secondPriority = secondMove && !secondIsSwitch ? reference.movePriority(secondMove) : 0;
-    if (firstMove && firstPriority === undefined) return `No move data for ${JSON.stringify(firstMove)}.`;
-    if (secondMove && secondPriority === undefined) return `No move data for ${JSON.stringify(secondMove)}.`;
+    const grassyTerrain = [...this.fields.values()].some((effect) => /grassy/i.test(effect.name));
+    const contextFor = (mon: MonState) => ({
+      ...(mon.ability === undefined ? {} : { ability: mon.ability }),
+      ...(mon.item === undefined ? {} : { item: mon.item }),
+      itemConsumed: mon.itemConsumed,
+      ...(mon.hpPercent === undefined ? {} : { fullHp: mon.hpPercent >= 99.5 }),
+      grassyTerrain,
+    });
+    const emptyInfo: { priority: number; notes: string[]; unresolved?: string } = { priority: 0, notes: [] };
+    const firstInfo =
+      firstMove && !firstIsSwitch ? reference.priorityProfile(firstMove, contextFor(first.mon)) : emptyInfo;
+    const secondInfo =
+      secondMove && !secondIsSwitch ? reference.priorityProfile(secondMove, contextFor(second.mon)) : emptyInfo;
+    if (!firstInfo) return `No move data for ${JSON.stringify(firstMove)}.`;
+    if (!secondInfo) return `No move data for ${JSON.stringify(secondMove)}.`;
+    const firstPriority = firstInfo.priority;
+    const secondPriority = secondInfo.priority;
 
     const trickRoom = this.fields.has('trickroom');
+    const bracketLast = (info: { notes: string[] }) =>
+      info.notes.some((note) => note.includes('acts last within its bracket'));
+    const signed = (value: number) => `${value >= 0 ? '+' : ''}${value}`;
     let order: 'first' | 'second' | 'tie' | 'uncertain';
     let reason: string;
     if (firstIsSwitch !== secondIsSwitch) {
@@ -458,18 +480,30 @@ export class BattleState {
       reason = trickRoom
         ? 'both switching; switch order follows Speed under Trick Room'
         : 'both switching; switch order follows Speed';
+    } else if (firstInfo.unresolved || secondInfo.unresolved) {
+      order = 'uncertain';
+      reason = [firstInfo.unresolved, secondInfo.unresolved].filter(Boolean).join('; ');
     } else if (firstPriority !== secondPriority) {
-      order = firstPriority! > secondPriority! ? 'first' : 'second';
-      reason = `base move priority ${firstPriority! >= 0 ? '+' : ''}${firstPriority!} vs ${secondPriority! >= 0 ? '+' : ''}${secondPriority!}`;
+      order = firstPriority > secondPriority ? 'first' : 'second';
+      reason = `move priority ${signed(firstPriority)} vs ${signed(secondPriority)}`;
+    } else if (bracketLast(firstInfo) !== bracketLast(secondInfo)) {
+      order = bracketLast(firstInfo) ? 'second' : 'first';
+      reason = [...firstInfo.notes, ...secondInfo.notes].find((note) => note.includes('acts last within its bracket'))!;
     } else {
       order = this.speedOrder(firstProfile, secondProfile, trickRoom);
       reason = trickRoom ? 'equal priority under Trick Room' : 'equal priority';
     }
+    const quickClaw = (info: { notes: string[] }) => info.notes.some((note) => note.startsWith('Quick Claw'));
+    const sameBracket = !firstIsSwitch && !secondIsSwitch && firstPriority === secondPriority;
     const orderText =
       order === 'first'
-        ? `${first.mon.species} is guaranteed to act first`
+        ? sameBracket && quickClaw(secondInfo)
+          ? `${first.mon.species} acts first unless ${second.mon.species}'s Quick Claw triggers (20%)`
+          : `${first.mon.species} is guaranteed to act first`
         : order === 'second'
-          ? `${second.mon.species} is guaranteed to act first`
+          ? sameBracket && quickClaw(firstInfo)
+            ? `${second.mon.species} acts first unless ${first.mon.species}'s Quick Claw triggers (20%)`
+            : `${second.mon.species} is guaranteed to act first`
           : order === 'tie'
             ? 'The Pokémon speed-tie'
             : 'Their order is uncertain across the legal hidden Speed range';
@@ -481,10 +515,17 @@ export class BattleState {
       }`;
     };
     const lines = [
-      describe(first.mon.species, firstProfile),
-      describe(second.mon.species, secondProfile),
+      describe(`${first.mon.species}${first.benched ? ' (benched)' : ''}`, firstProfile),
+      describe(`${second.mon.species}${second.benched ? ' (benched)' : ''}`, secondProfile),
       `${orderText} (${reason}).`,
     ];
+    const notes = [
+      ...firstInfo.notes.map((note) => `${first.mon.species}: ${note}`),
+      ...secondInfo.notes.map((note) => `${second.mon.species}: ${note}`),
+    ];
+    if (notes.length) lines.push(`Priority modifiers applied: ${notes.join('; ')}.`);
+    if (first.benched || second.benched)
+      lines.push('Benched Pokémon are compared as if already on the field (entry boosts not included).');
     if (this.speciesKey(firstMove) === 'encore') {
       const alreadyEncored = [...second.mon.volatiles].some((volatile) => this.speciesKey(volatile) === 'encore');
       if (alreadyEncored) lines.push(`Encore fails: ${second.mon.species} is already Encored.`);
@@ -532,6 +573,27 @@ export class BattleState {
     const key = this.sides[pid].active[slot === 1 ? 'a' : slot === 2 ? 'b' : ''];
     const mon = key ? this.sides[pid].mons.get(key) : undefined;
     return mon && !mon.fainted ? mon : undefined;
+  }
+
+  private findMon(query: string): { pid: Pid; slot: number; mon: MonState; benched: boolean } | undefined {
+    const activeMatch = this.findActive(query);
+    if (activeMatch) return { ...activeMatch, benched: false };
+    const normalized = this.speciesKey(query);
+    const prefixed = /^(ally|foe)(.+)$/.exec(normalized);
+    const wanted = prefixed ? prefixed[2]! : normalized;
+    const demega = (key: string) => key.replace(/mega[xy]?$/, '').replace(/^mega/, '');
+    for (const pid of ['p1', 'p2'] as const) {
+      if (prefixed && (pid === this.pid) !== (prefixed[1] === 'ally')) continue;
+      const side = this.sides[pid];
+      const activeKeys = new Set(Object.values(side.active));
+      for (const [key, mon] of side.mons) {
+        if (activeKeys.has(key) || mon.fainted) continue;
+        const monKey = this.speciesKey(mon.species);
+        if (monKey === wanted || demega(monKey) === wanted || monKey === demega(wanted))
+          return { pid, slot: -1, mon, benched: true };
+      }
+    }
+    return undefined;
   }
 
   private findActive(query: string): { pid: Pid; slot: number; mon: MonState } | undefined {
@@ -654,6 +716,10 @@ export class BattleState {
     return mons.filter((mon) => !(mon.preview && mon.hp === undefined && rich.has(this.speciesKey(mon.species))));
   }
 
+  private effectStartTurn(): number {
+    return Math.max(1, this.turn + (this.upkeepDone ? 1 : 0));
+  }
+
   private formatTimed(effect: TimedEffect | undefined): string {
     if (!effect) return 'none';
     if (effect.duration === undefined) return effect.name;
@@ -696,8 +762,14 @@ export class BattleState {
       [...side.mons.values()].filter((mon) => !own || mon.brought !== false),
     );
     const broughtCount = [...this.sides[this.pid].mons.values()].filter((mon) => mon.brought === true).length;
-    const foesResolved =
-      !own && broughtCount > 0 && mons.filter((mon) => mon.hpPercent !== undefined).length >= broughtCount;
+    const revealedCount = mons.filter((mon) => mon.hpPercent !== undefined).length;
+    const foesResolved = !own && broughtCount > 0 && revealedCount >= broughtCount;
+    if (!own && broughtCount > 0 && !foesResolved)
+      lines.push(
+        `Opponent brought ${broughtCount} this game; ${revealedCount} revealed so far, so only ${
+          broughtCount - revealedCount
+        } of the "HP ?" Pokémon below ${broughtCount - revealedCount === 1 ? 'is' : 'are'} actually in this game.`,
+      );
     if (!own && side.showteam) {
       const knownSpecies = new Set(mons.flatMap((mon) => [this.speciesKey(mon.species), ...mon.formes]));
       const knownIdentities = new Set(mons.map((mon) => this.monKey(mon.ident)));
