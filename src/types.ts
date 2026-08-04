@@ -114,4 +114,6 @@ export interface ProviderFailure {
   terminal: boolean;
   retryable?: boolean;
   pausable?: boolean;
+  /** How long the provider itself asked us to wait, when it says so. */
+  retryAfterMs?: number;
 }

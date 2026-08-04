@@ -360,7 +360,7 @@ export async function runSeasonReview(
           );
           if (terminalError) throw terminalError;
           if (pauseFailure) {
-            await options.recovery?.pause(model, pauseFailure.kind, pauseFailure.summary, signal);
+            await options.recovery?.pause(model, pauseFailure, signal);
             attempt -= 1;
           }
         }

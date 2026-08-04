@@ -1,4 +1,4 @@
-import type { ProviderFailureKind } from './types.js';
+import type { ProviderFailure, ProviderFailureKind } from './types.js';
 
 export interface RecoveryPause {
   model: string;
@@ -6,6 +6,7 @@ export interface RecoveryPause {
   message: string;
   since: number;
   scope: string;
+  retryAfterMs?: number;
 }
 
 type RecoveryListener = (pause: RecoveryPause | undefined) => void;
@@ -37,10 +38,22 @@ export class RecoveryGate {
     return this.pauses.get(model) ?? this.pauses.get(model.split(':', 1)[0] ?? model);
   }
 
-  async pause(model: string, kind: ProviderFailureKind, message: string, signal?: AbortSignal): Promise<void> {
+  async pause(
+    model: string,
+    failure: Pick<ProviderFailure, 'kind' | 'summary' | 'retryAfterMs'>,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    const { kind, summary: message, retryAfterMs } = failure;
     const scope = pauseScope(model, kind);
     if (!this.pauses.has(scope)) {
-      const entry: RecoveryPause = { model, kind, message, since: Date.now(), scope };
+      const entry: RecoveryPause = {
+        model,
+        kind,
+        message,
+        since: Date.now(),
+        scope,
+        ...(retryAfterMs === undefined ? {} : { retryAfterMs }),
+      };
       this.pauses.set(scope, entry);
       this.emit(entry);
     }

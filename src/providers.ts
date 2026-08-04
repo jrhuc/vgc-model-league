@@ -208,6 +208,36 @@ export class ApiError extends Error {
 const HARD_QUOTA_ERROR =
   /(?:insufficient[_ -]?quota|exceeded your current quota|free[_ -]?tier[_ -]?requests|requests?[_ -]?per[_ -]?day|generateRequestsPerDay|credit balance|billing quota)/i;
 
+/** A 429 says nothing useful on its own. Providers name the limit they hit and often how long to wait,
+ * so both are pulled out of the error body: without them a pause loop polls a wall it cannot see. */
+function limitDetail(message: string): string {
+  const quota = /"quotaId"\s*:\s*"([^"]+)"/.exec(message)?.[1] ?? /"quotaMetric"\s*:\s*"([^"]+)"/.exec(message)?.[1];
+  if (quota) return quota.split('/').pop() ?? quota;
+  return /\b(requests?|tokens?|input tokens?|output tokens?)[ _-]per[ _-](minute|hour|day)\b/i.exec(message)?.[0] ?? '';
+}
+
+function retryAfterMs(message: string): number | undefined {
+  const seconds =
+    /"retryDelay"\s*:\s*"([\d.]+)s"/.exec(message)?.[1] ??
+    /\btry again in ([\d.]+)\s*s(?:econds?)?\b/i.exec(message)?.[1] ??
+    /\bretry[- ]after:?\s*([\d.]+)\b/i.exec(message)?.[1];
+  if (seconds === undefined) return undefined;
+  const parsed = Number(seconds);
+  return Number.isFinite(parsed) && parsed > 0 ? Math.round(parsed * 1000) : undefined;
+}
+
+function rateLimited(label: string, message: string): ProviderFailure {
+  const detail = limitDetail(message);
+  const wait = retryAfterMs(message);
+  return {
+    kind: 'rate_limit',
+    summary: `${label} API rate limit was reached (429${detail ? `; ${detail}` : ''}).`,
+    terminal: false,
+    pausable: true,
+    ...(wait === undefined ? {} : { retryAfterMs: wait }),
+  };
+}
+
 export function classifyProviderFailure(error: unknown, spec = 'provider'): ProviderFailure {
   const message = error instanceof Error ? error.message : String(error);
   const status = error instanceof ApiError ? error.status : Number(/\b([45]\d\d)\b/.exec(message)?.[1] ?? 0);
@@ -250,12 +280,7 @@ export function classifyProviderFailure(error: unknown, spec = 'provider'): Prov
     };
   }
   if (status === 429 && /per[_ -]?minute/i.test(message)) {
-    return {
-      kind: 'rate_limit',
-      summary: `${label} API rate limit was reached (429).`,
-      terminal: false,
-      pausable: true,
-    };
+    return rateLimited(label, message);
   }
   if (HARD_QUOTA_ERROR.test(message)) {
     const quotaId = /"quotaId"\s*:\s*"([^"]+)"/.exec(message)?.[1];
@@ -305,12 +330,7 @@ export function classifyProviderFailure(error: unknown, spec = 'provider'): Prov
     };
   }
   if (status === 429) {
-    return {
-      kind: 'rate_limit',
-      summary: `${label} API rate limit was reached (429).`,
-      terminal: false,
-      pausable: true,
-    };
+    return rateLimited(label, message);
   }
   if (status === 402) {
     return {

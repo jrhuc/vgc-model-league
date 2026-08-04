@@ -160,7 +160,9 @@ function autoResumeGate(): RecoveryGate {
     const count = streak && now - streak.lastPause <= 10 * 60_000 ? streak.count : 0;
     streaks.set(pause.scope, { count: count + 1, lastPause: now });
     const ceiling = pause.kind === 'rate_limit' ? 60_000 : 5 * 60_000;
-    const delay = Math.min(ceiling, 30_000 * 2 ** count);
+    /** Our own ladder is a guess; a provider that states how long to wait knows better, so the longer
+     * of the two wins rather than us polling a limit that has not lifted yet. */
+    const delay = Math.min(Math.max(Math.min(ceiling, 30_000 * 2 ** count), pause.retryAfterMs ?? 0), 15 * 60_000);
     console.error(
       `paused ${pause.scope} on ${pause.model} (${pause.kind}): ${pause.message} auto-resume in ${Math.round(delay / 1000)}s`,
     );
