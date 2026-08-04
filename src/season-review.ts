@@ -22,7 +22,7 @@ import { clip } from './value.js';
 
 const SEASON_REVIEW_PROMPT_POLICY = {
   systemTemplate: [
-    'You are {{model}}, a coach in a Pokémon VGC draft league played in the format {{format}}. Your season is over.',
+    'You are {{model}}, coaching {{team}} in a Pokémon VGC draft league played in the format {{format}}. Your season is over.',
     '',
     'This is a retrospective, not a decision. Nothing you write changes a result; it is published on your team page.',
     '- Judge the whole season: the roster you drafted, what you did with the free-agency window, the six you registered for each series, and how you piloted them.',
@@ -152,6 +152,7 @@ export function parseSeasonReview(response: string): ParsedSeasonReview | string
 function systemPrompt(state: SeasonReviewState, entrant: number): string {
   const values: Record<string, string> = {
     model: state.models[entrant]!,
+    team: state.teamNames[entrant] || state.models[entrant]!,
     format: state.board.format,
   };
   return SEASON_REVIEW_PROMPT_POLICY.systemTemplate

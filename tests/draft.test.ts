@@ -287,19 +287,26 @@ test('the trade window runs lowest seed first and replays completed seats', asyn
     reflections: [[], [], []],
   });
   const calls: string[] = [];
+  const systems = new Map<string, string>();
   const firstState = createState();
   const artifact = await runTradeWindow(firstState, {
     runDir: directory,
     psDir: defaultPsDir(),
     afterWeek: 2,
     makeTradeProvider: (spec) => ({
-      complete(): Promise<Completion> {
+      complete(system: string): Promise<Completion> {
         calls.push(spec);
+        systems.set(spec, system);
         return Promise.resolve({ text: JSON.stringify(responses.get(spec)), usage: {}, toolCalls: [] });
       },
     }),
   });
   assert.deepEqual(artifact.order, [2, 1, 0]);
+  assert.match(
+    systems.get(models[2]!) ?? '',
+    /coaching Worst /,
+    'a coach is named its own team, so it can find its row in the standings',
+  );
   assert.deepEqual(calls, [models[2], models[1], models[0]]);
   assert.equal(firstState.rosters[1]![9]?.id, initial[2]![0]!.id, 'an earlier drop becomes available immediately');
   assert.ok(fs.existsSync(path.join(directory, 'window.json')));
@@ -1394,8 +1401,8 @@ test('season reviews are written once per coach and replayed on resume', async (
       runDir: directory,
       psDir: defaultPsDir(),
       makeReviewProvider: (spec) => ({
-        complete(_system: string, messages: ProviderMessage[]): Promise<Completion> {
-          prompts.set(spec, messages[0]?.content ?? '');
+        complete(system: string, messages: ProviderMessage[]): Promise<Completion> {
+          prompts.set(spec, `${system}\n${messages[0]?.content ?? ''}`);
           return Promise.resolve({ text: reply, usage: {}, toolCalls: [] });
         },
       }),
@@ -1407,6 +1414,11 @@ test('season reviews are written once per coach and replayed on resume', async (
   );
   assert.ok(reviews.every((review) => !review.fallback));
   assert.match(prompts.get(models[0]!) ?? '', /Traded up\./);
+  assert.match(
+    prompts.get(models[1]!) ?? '',
+    /coaching Eliminated /,
+    'a coach is named its own team, so it can find its row in the standings',
+  );
   assert.match(prompts.get(models[1]!) ?? '', /You made no swaps/);
   assert.match(prompts.get(models[1]!) ?? '', /Sand anchor\./);
   assert.equal(loadRows(path.join(directory, 'season.jsonl')).length, 2);
