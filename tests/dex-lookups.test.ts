@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import { createBoardSearch } from '../src/board-search.js';
 import { completeWithDexTools, TOOL_BUDGET_NOTICE } from '../src/dex-lookups.js';
+import { loadBoard } from '../src/draft.js';
+import { defaultPsDir } from '../src/paths.js';
 import { ShowdownReference } from '../src/reference.js';
 import type { CompleteOptions, Completion, Provider, ProviderMessage } from '../src/types.js';
 
@@ -111,4 +114,46 @@ test('exhausting the tool budget is announced before the forced-text round', asy
   assert.equal(calls[2]!.options?.toolChoice, 'none');
   assert.equal(calls[2]!.messages.at(-1)!.content, TOOL_BUDGET_NOTICE);
   assert.ok(!calls[1]!.messages.some((m) => m.content === TOOL_BUDGET_NOTICE));
+});
+
+test('search_board is offered and dispatched only when a board search is supplied', async () => {
+  const reference = new ShowdownReference('gen9championsvgc2026regmb');
+  const boardSearch = createBoardSearch(loadBoard('regmb-202607'), defaultPsDir());
+  const toolCall = { id: 'call-1', name: 'search_board', arguments: { learns: 'Fake Out', max_cost: 20, limit: 5 } };
+
+  const withoutBoard: { messages: ProviderMessage[]; options?: CompleteOptions }[] = [];
+  await completeWithDexTools({
+    provider: scriptedProvider([reply({ text: '{"pick": "gengar-mega"}' })], withoutBoard),
+    system: 'sys',
+    messages: [{ role: 'user', content: 'pick' }],
+    spec: 'test:model',
+    reference,
+    policy: POLICY,
+  });
+  const plainTools = (withoutBoard[0]!.options?.tools ?? []).map((tool) => tool.name);
+  assert.ok(!plainTools.includes('search_board'), 'stages without a board never see the tool');
+
+  const calls: { messages: ProviderMessage[]; options?: CompleteOptions }[] = [];
+  const lookups: { name: string; result: string }[] = [];
+  const completion = await completeWithDexTools({
+    provider: scriptedProvider(
+      [reply({ toolCalls: [toolCall] }), reply({ text: '{"pick": "incineroar"}' })],
+      calls,
+    ),
+    system: 'sys',
+    messages: [{ role: 'user', content: 'pick' }],
+    spec: 'test:model',
+    reference,
+    boardSearch,
+    policy: POLICY,
+    onLookup: (call) => lookups.push({ name: call.name, result: call.result }),
+  });
+  const draftTools = (calls[0]!.options?.tools ?? []).map((tool) => tool.name);
+  assert.ok(draftTools.includes('search_board'), 'the draft offers the board tool alongside the dex tools');
+  assert.ok(draftTools.includes('lookup_species'), 'the dex tools are still offered');
+  assert.equal(completion.text, '{"pick": "incineroar"}');
+  assert.equal(lookups.length, 1);
+  assert.equal(lookups[0]!.name, 'search_board');
+  assert.match(lookups[0]!.result, /Board search: \d+ match/);
+  assert.match(lookups[0]!.result, /incineroar \| /);
 });
