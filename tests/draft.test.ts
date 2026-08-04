@@ -23,6 +23,7 @@ import { ApiError } from '../src/providers.js';
 import { seededRng } from '../src/random.js';
 import { loadRows } from '../src/records.js';
 import { RecoveryGate } from '../src/recovery.js';
+import { parseSeasonReview, readSeasonReviews, runSeasonReview, type SeasonReviewState } from '../src/season-review.js';
 import { loadShowdown } from '../src/showdown.js';
 import { runTeambuild, teambuildScaffoldRevision } from '../src/teambuild.js';
 import {
@@ -1338,4 +1339,99 @@ test('a two-coach league plays one week and a single final', async (t) => {
   for (const row of rows) assert.equal(row.closed_sheets, true, 'series records carry the sheet rule');
   const gameLog = fs.readFileSync(path.join(directory, 'series', String(rows[0]!.series_id), 'game-1.log'), 'utf8');
   assert.ok(!gameLog.includes('|showteam|'), 'closed-sheet games publish no team sheets');
+});
+
+test('season reviews are written once per coach and replayed on resume', async (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-season-review-'));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const models = ['test:champion', 'test:eliminated'];
+  const state: SeasonReviewState = {
+    board: BOARD,
+    models,
+    teamNames: ['Champion', 'Eliminated'],
+    picks: [
+      { pick: 0, entrant: 0, mon: mon('charizard-mega-y').id, rationale: 'Sun opener.', fallback: false },
+      { pick: 1, entrant: 1, mon: mon('tyranitar').id, rationale: 'Sand anchor.', fallback: false },
+    ],
+    rosters: [[mon('charizard-mega-y')], [mon('tyranitar')]],
+    window: {
+      after_week: 3,
+      order: [1, 0],
+      decisions: [
+        { entrant: 1, model: models[1]!, swaps: [], reasoning: 'Kept it.', notebook: '', fallback: false },
+        {
+          entrant: 0,
+          model: models[0]!,
+          swaps: [{ drop: mon('venusaur').id, add: mon('absol').id }],
+          reasoning: 'Traded up.',
+          notebook: '',
+          fallback: false,
+        },
+      ],
+      rosters: [],
+    },
+    standings: [
+      { entrant: 0, w: 1, l: 0, gw: 2, gl: 0 },
+      { entrant: 1, w: 0, l: 1, gw: 0, gl: 2 },
+    ],
+    series: [['Round-robin week 1: beat Eliminated 2-0'], ['Round-robin week 1: lost to Champion 0-2']],
+    notebooks: ['champion plan', 'eliminated plan'],
+  };
+  const prompts = new Map<string, string>();
+  const reply = JSON.stringify({
+    summary: 'It went as the record says.',
+    did_well: 'The draft covered rain.',
+    did_poorly: 'The mega slot was idle.',
+    would_change: 'Buy the backup mega.',
+  });
+  const reviews = await runSeasonReview(
+    [
+      { entrant: 1, outcome: 'You missed the playoffs.' },
+      { entrant: 0, outcome: 'You won the final.' },
+    ],
+    state,
+    {
+      runDir: directory,
+      psDir: defaultPsDir(),
+      makeReviewProvider: (spec) => ({
+        complete(_system: string, messages: ProviderMessage[]): Promise<Completion> {
+          prompts.set(spec, messages[0]?.content ?? '');
+          return Promise.resolve({ text: reply, usage: {}, toolCalls: [] });
+        },
+      }),
+    },
+  );
+  assert.deepEqual(
+    reviews.map((review) => review.entrant),
+    [1, 0],
+  );
+  assert.ok(reviews.every((review) => !review.fallback));
+  assert.match(prompts.get(models[0]!) ?? '', /Traded up\./);
+  assert.match(prompts.get(models[1]!) ?? '', /You made no swaps/);
+  assert.match(prompts.get(models[1]!) ?? '', /Sand anchor\./);
+  assert.equal(loadRows(path.join(directory, 'season.jsonl')).length, 2);
+
+  const replayed = await runSeasonReview([{ entrant: 0, outcome: 'You won the final.' }], state, {
+    runDir: directory,
+    psDir: defaultPsDir(),
+    makeReviewProvider: () => ({
+      complete(): Promise<Completion> {
+        throw new Error('a replayed season review must not call a provider');
+      },
+    }),
+  });
+  assert.deepEqual(replayed, reviews);
+  assert.equal(readSeasonReviews(directory).length, 2);
+});
+
+test('a season review must fill every field', () => {
+  assert.equal(typeof parseSeasonReview('no json here'), 'string');
+  assert.equal(
+    typeof parseSeasonReview(JSON.stringify({ summary: 'a', did_well: 'b', did_poorly: 'c', would_change: '  ' })),
+    'string',
+  );
+  const parsed = parseSeasonReview(
+    JSON.stringify({ summary: 'a', did_well: 'b', did_poorly: 'c', would_change: 'd', extra: 1 }),
+  );
+  assert.notEqual(typeof parsed, 'string');
 });
