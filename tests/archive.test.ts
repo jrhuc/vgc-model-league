@@ -149,6 +149,43 @@ const LEAGUE_ROWS: SeriesRecord[] = [
   }),
 ];
 
+test('a finished draft-only run stays listed and stops being draft-only once it plays', () => {
+  const runsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-archive-draft-only-'));
+  const runId = '20260804T210000.000000Z-feed0002';
+  const runDir = path.join(runsDir, runId);
+  fs.mkdirSync(path.join(runDir, 'draft'), { recursive: true });
+  fs.writeFileSync(
+    path.join(runDir, 'config.json'),
+    JSON.stringify({
+      mode: 'draft',
+      entrants: ['openai:alpha', 'openai:beta'],
+      team_names: ['Alpha Aces', 'Beta Bandits'],
+      weeks: 1,
+      board: 'test-board',
+      format: 'gen9testformat',
+      draft_only: true,
+      trade_window: null,
+    }),
+  );
+  fs.writeFileSync(
+    path.join(runDir, 'status.json'),
+    JSON.stringify({ state: 'done', error: null, notices: [], start_time: '2026-08-04T21:00:00.000Z' }),
+  );
+  try {
+    const { leagues } = buildLeagues([], runsDir);
+    assert.equal(leagues.length, 1, 'a finished draft-only run stays listed without any recorded series');
+    assert.equal(leagues[0]!.draftOnly, true);
+    assert.equal(leagues[0]!.live, false);
+    assert.equal(leagues[0]!.phase, 'complete');
+
+    const played = LEAGUE_ROWS.map((row) => ({ ...row, run_id: runId }));
+    const promoted = buildLeagues(played, runsDir).leagues;
+    assert.equal(promoted[0]!.draftOnly, false, 'a promoted run is a season, not a draft-only run');
+  } finally {
+    fs.rmSync(runsDir, { recursive: true, force: true });
+  }
+});
+
 test('a live run with no recorded series surfaces as a drafting league', () => {
   const runsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-archive-live-'));
   const liveId = '20260728T210000.000000Z-feed0001';

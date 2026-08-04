@@ -66,6 +66,14 @@ serializes the schedule without adding cross-match coaching context;
 stored models, board, seed, rosters, schedule mode, trade-window state,
 completed results, and private playoff coaching context.
 
+`draft --draft-only` stops the run once every roster is drafted and plays no
+games, for when the draft itself is what you are measuring. The run writes its
+rosters and finishes; the archive lists it as a draft-only league. Resume it
+later with `draft --resume <run-dir>` to play the season from those rosters,
+which picks its free-agency window from `--trade-window` like a fresh league
+because a draft-only run never held one. The GUI offers the same choice as the
+run scope on the draft form.
+
 Draft leagues open a free-agent window after week 3 by default, or after the
 final round-robin week when a shorter league has fewer than three weeks.
 Lowest seed chooses first; each coach atomically submits zero to six

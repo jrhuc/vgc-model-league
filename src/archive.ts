@@ -405,8 +405,16 @@ function leaguePhase(
   ) {
     return 'window';
   }
-  return rows.length === 0 ? preSeasonPhase(runsDir, runId) : progress.phase;
+  if (rows.length > 0) return progress.phase;
+  /** A draft-only run ends at a full board of picks, so it is complete rather than mid-draft. */
+  if (isDraftOnly(runsDir, runId) && !isRunLive(runsDir, runId)) return 'complete';
+  return preSeasonPhase(runsDir, runId);
 }
+function isDraftOnly(runsDir: string, runId: string): boolean {
+  const config = readRunJson(runsDir, runId, 'config.json') as Record<string, unknown> | null;
+  return config?.draft_only === true;
+}
+
 function tradeWindowAfterWeek(runsDir: string, runId: string): number | null {
   const config = readRunJson(runsDir, runId, 'config.json') as Record<string, unknown> | null;
   const window = config?.trade_window;
@@ -458,7 +466,7 @@ export function buildLeagues(allRows: SeriesRecord[], runsDir: string): LeaguesR
   const leagues: LeagueCardView[] = [];
   const byRun = draftRuns(allRows);
   for (const runId of draftRunDirs(runsDir)) {
-    if (!byRun.has(runId) && isRunLive(runsDir, runId)) byRun.set(runId, []);
+    if (!byRun.has(runId) && (isRunLive(runsDir, runId) || isDraftOnly(runsDir, runId))) byRun.set(runId, []);
   }
   for (const [runId, rows] of byRun) {
     const identity = leagueIdentity(runsDir, runId, rows);
@@ -485,6 +493,7 @@ export function buildLeagues(allRows: SeriesRecord[], runsDir: string): LeaguesR
       week: progress.week,
       champion: progress.champion,
       tradeWindowAfterWeek: tradeWindowAfterWeek(runsDir, runId),
+      draftOnly: isDraftOnly(runsDir, runId) && rows.length === 0,
       live,
       picks: phase === 'drafting' ? readRunLines(runsDir, runId, 'draft', 'draft.jsonl').length : null,
     });

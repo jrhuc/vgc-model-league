@@ -44,6 +44,19 @@ const TEAM_SHEET_OPTIONS = [
   },
 ];
 
+const DRAFT_SCOPE_OPTIONS = [
+  {
+    value: 'season',
+    label: 'Full season',
+    description: 'Draft, then play the round robin and playoffs.',
+  },
+  {
+    value: 'draft-only',
+    label: 'Draft only',
+    description: 'Stop once rosters are drafted; play the season later from the run.',
+  },
+];
+
 const DRAFT_SCHEDULE_OPTIONS = [
   {
     value: 'parallel',
@@ -355,6 +368,7 @@ export function FixturesView({ app, run, onStarted, onPools }: FixturesProps) {
   const [concurrency, setConcurrency] = useState('2');
   const [closedSheets, setClosedSheets] = useState(false);
   const [sequentialWeeks, setSequentialWeeks] = useState(false);
+  const [draftOnly, setDraftOnly] = useState(false);
   const [tradeWindow, setTradeWindow] = useState('default');
   const [nitro, setNitro] = useState(false);
   const [reasoning, setReasoning] = useState('');
@@ -646,6 +660,7 @@ export function FixturesView({ app, run, onStarted, onPools }: FixturesProps) {
                 concurrency: Number(concurrency),
                 ...(closedSheets ? { closedSheets: true } : {}),
                 ...(sequentialWeeks ? { sequentialWeeks: true } : {}),
+                ...(draftOnly ? { draftOnly: true } : {}),
                 ...(tradeWindow === 'default'
                   ? {}
                   : { tradeWindow: tradeWindow === 'off' ? null : { afterWeek: Number(tradeWindow) } }),
@@ -1169,26 +1184,37 @@ export function FixturesView({ app, run, onStarted, onPools }: FixturesProps) {
                   </div>
                 </div>
                 <Dropdown
+                  id="draftScope"
+                  label="Run scope"
+                  options={DRAFT_SCOPE_OPTIONS}
+                  value={draftOnly ? 'draft-only' : 'season'}
+                  onChange={(value) => setDraftOnly(value === 'draft-only')}
+                />
+                <Dropdown
                   id="teamSheets"
                   label="Team sheets"
                   options={TEAM_SHEET_OPTIONS}
                   value={closedSheets ? 'closed' : 'open'}
                   onChange={(value) => setClosedSheets(value === 'closed')}
                 />
-                <Dropdown
-                  id="schedule"
-                  label="Schedule"
-                  options={DRAFT_SCHEDULE_OPTIONS}
-                  value={sequentialWeeks ? 'sequential' : 'parallel'}
-                  onChange={(value) => setSequentialWeeks(value === 'sequential')}
-                />
-                <Dropdown
-                  id="tradeWindow"
-                  label="Roster changes"
-                  options={tradeWindowOptions}
-                  value={tradeWindow}
-                  onChange={setTradeWindow}
-                />
+                {!draftOnly && (
+                  <>
+                    <Dropdown
+                      id="schedule"
+                      label="Schedule"
+                      options={DRAFT_SCHEDULE_OPTIONS}
+                      value={sequentialWeeks ? 'sequential' : 'parallel'}
+                      onChange={(value) => setSequentialWeeks(value === 'sequential')}
+                    />
+                    <Dropdown
+                      id="tradeWindow"
+                      label="Roster changes"
+                      options={tradeWindowOptions}
+                      value={tradeWindow}
+                      onChange={setTradeWindow}
+                    />
+                  </>
+                )}
               </div>
             )}
             <div class="setting-grid">

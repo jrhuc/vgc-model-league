@@ -59,7 +59,10 @@ const PHASE_LABELS = {
   complete: 'Complete',
 } as const;
 
-function phaseLabel(card: Pick<LeagueCardView, 'phase' | 'week' | 'weeks'> & { picks?: number | null }): string {
+function phaseLabel(
+  card: Pick<LeagueCardView, 'phase' | 'week' | 'weeks'> & { picks?: number | null; draftOnly?: boolean },
+): string {
+  if (card.draftOnly && card.phase === 'complete') return 'Draft only';
   if (card.phase === 'drafting' && typeof card.picks === 'number' && card.picks > 0) {
     return `Drafting · pick ${card.picks}`;
   }
@@ -98,7 +101,7 @@ function LeagueCard({ card, onOpen }: { card: LeagueCardView; onOpen: () => void
         </div>
       ) : (
         <div class="league-card-champion open">
-          <b>Season in progress</b>
+          <b>{card.draftOnly ? 'Rosters drafted, no games played' : 'Season in progress'}</b>
         </div>
       )}
       <ul class="league-card-coaches">
@@ -110,8 +113,14 @@ function LeagueCard({ card, onOpen }: { card: LeagueCardView; onOpen: () => void
         ))}
       </ul>
       <span class="league-card-meta">
-        {card.entrants.length} coaches · {card.seriesCount} series recorded ·{' '}
-        {card.tradeWindowAfterWeek === null ? 'locked rosters' : `free agency after week ${card.tradeWindowAfterWeek}`}
+        {card.entrants.length} coaches ·{' '}
+        {card.draftOnly
+          ? 'draft only'
+          : `${card.seriesCount} series recorded · ${
+              card.tradeWindowAfterWeek === null
+                ? 'locked rosters'
+                : `free agency after week ${card.tradeWindowAfterWeek}`
+            }`}
       </span>
     </button>
   );

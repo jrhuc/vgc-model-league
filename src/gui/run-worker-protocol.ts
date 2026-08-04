@@ -23,6 +23,7 @@ export interface RunWorkerStart extends ModelReasoningConfig {
   closedSheets?: boolean;
   sequentialWeeks?: boolean;
   tradeWindow?: TradeWindowConfig | null;
+  draftOnly?: boolean;
   contributor?: ContributorAttribution;
 }
 

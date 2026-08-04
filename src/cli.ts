@@ -53,7 +53,8 @@ Commands:
       each coach drafts 10 within a 100-point budget, then picks 6 and builds every set before each match
       [--board <name>] [--seed <n>] [--concurrency <n>] [--reasoning <level>] [--timer-scale <n|off>]
       [--nitro] [--through-week <n>] [--resume <run-dir>] [--sequential-weeks] [--closed-sheets]
-      [--trade-window <week|off>]
+      [--trade-window <week|off>] [--draft-only]
+      --draft-only stops once rosters are drafted and plays no games; resume the run to play the season
       --through-week stops cleanly after that round-robin week; --resume continues a stored league
       round-robin series run concurrently with blind teambuilds; --sequential-weeks restores
       week-by-week play (implied by --through-week); --closed-sheets hides opposing team sheets
@@ -336,6 +337,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
         'sequential-weeks': { type: 'boolean', default: false },
         'closed-sheets': { type: 'boolean', default: false },
         'trade-window': { type: 'string' },
+        'draft-only': { type: 'boolean', default: false },
       },
     });
     const { runDraftLeague, roundRobinWeeks } = await import('./draftleague.js');
@@ -350,6 +352,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
           timer_scale?: number | 'off';
           sequential_weeks?: boolean;
           closed_sheets?: boolean;
+          draft_only?: boolean;
           trade_window?: { after_week?: number } | null;
         })
       : undefined;
@@ -371,15 +374,20 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
     }
     const throughWeek =
       values['through-week'] === undefined ? undefined : positiveInteger('through-week', values['through-week']);
-    const tradeWindowValue = storedConfig
-      ? storedConfig.trade_window === undefined || storedConfig.trade_window === null
-        ? null
-        : { afterWeek: positiveInteger('trade-window', String(storedConfig.trade_window.after_week)) }
-      : values['trade-window'] === undefined
-        ? undefined
-        : values['trade-window'] === 'off'
+    const storedWindow =
+      storedConfig && storedConfig.draft_only !== true
+        ? storedConfig.trade_window === undefined || storedConfig.trade_window === null
           ? null
-          : { afterWeek: positiveInteger('trade-window', values['trade-window']) };
+          : { afterWeek: positiveInteger('trade-window', String(storedConfig.trade_window.after_week)) }
+        : undefined;
+    const tradeWindowValue =
+      storedWindow !== undefined
+        ? storedWindow
+        : values['trade-window'] === undefined
+          ? undefined
+          : values['trade-window'] === 'off'
+            ? null
+            : { afterWeek: positiveInteger('trade-window', values['trade-window']) };
     const runDir = resumeDir ?? makeRunDirectory();
     armModelOverrides(runDir);
     let lastTeambuilds = 0;
@@ -396,6 +404,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
           ? { closedSheets: true }
           : {}),
         ...(tradeWindowValue === undefined ? {} : { tradeWindow: tradeWindowValue }),
+        ...(values['draft-only'] ? { draftOnly: true } : {}),
         ...execution,
         onEvent: (event) => {
           if (event.type !== 'draft') return;
@@ -419,7 +428,10 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
     );
     printResults(rows);
     const totalSeries = roundRobinWeeks(models.length).flat().length + (models.length >= 5 ? 3 : 1);
-    if (rows.length < totalSeries) {
+    if (values['draft-only']) {
+      console.log(`Draft complete; no games played. Rosters: ${path.join(runDir, 'rosters.json')}`);
+      console.log(`Play the season later with: vgcleague draft --resume ${runDir}`);
+    } else if (rows.length < totalSeries) {
       console.log(`League paused after ${rows.length} of ${totalSeries} series.`);
       console.log(`Resume with: vgcleague draft --resume ${runDir}`);
     } else {

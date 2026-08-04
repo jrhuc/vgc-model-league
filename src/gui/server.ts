@@ -190,6 +190,7 @@ interface RunConfig extends ModelReasoningConfig {
   closedSheets?: boolean;
   sequentialWeeks?: boolean;
   tradeWindow?: TradeWindowConfig | null;
+  draftOnly?: boolean;
 }
 
 function isActiveRunState(state: RunSnapshot['state']): state is 'running' | 'paused' {
@@ -1187,6 +1188,7 @@ export class GuiServer {
       ...(mode === 'draft' && body.closedSheets === true ? { closedSheets: true } : {}),
       ...(mode === 'draft' && body.sequentialWeeks === true ? { sequentialWeeks: true } : {}),
       ...(mode === 'draft' ? { tradeWindow: tradeWindow! } : {}),
+      ...(mode === 'draft' && body.draftOnly === true ? { draftOnly: true } : {}),
     };
     const run = new ActiveRun(config, apiKeys, owner, this.options.runsDir);
     if (owner && this.options.auth) {
@@ -1306,6 +1308,7 @@ export class GuiServer {
           ...(run.config.closedSheets === true ? { closedSheets: true } : {}),
           ...(run.config.sequentialWeeks === true ? { sequentialWeeks: true } : {}),
           ...(run.config.tradeWindow === undefined ? {} : { tradeWindow: run.config.tradeWindow }),
+          ...(run.config.draftOnly === true ? { draftOnly: true } : {}),
         });
       } else if (run.config.mode === 'tournament') {
         await (this.options.tournamentRunner ?? runTournament)(run.config.models, run.runDir, {
@@ -1528,6 +1531,7 @@ export class GuiServer {
       ...(run.config.closedSheets === true ? { closedSheets: true } : {}),
       ...(run.config.sequentialWeeks === true ? { sequentialWeeks: true } : {}),
       ...(run.config.tradeWindow === undefined ? {} : { tradeWindow: run.config.tradeWindow }),
+      ...(run.config.draftOnly === true ? { draftOnly: true } : {}),
       ...(run.owner
         ? {
             contributor: {
