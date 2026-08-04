@@ -538,6 +538,11 @@ textarea { min-height: 170px; resize: vertical; font: 12px/1.5 var(--mono); }
 .board-toggle { display: flex; align-items: center; gap: 7px; color: var(--ink-soft); font: 700 10px/1 var(--mono); letter-spacing: .06em; text-transform: uppercase; white-space: nowrap; }
 .board-toggle input { width: auto; accent-color: var(--blue); }
 .board-count { min-width: 64px; color: var(--ink-soft); font: 700 10px/1 var(--mono); text-align: right; }
+.board-order { display: flex; border: 1px solid var(--line-strong); background: white; }
+.board-order button { padding: 8px 12px; border: 0; background: none; color: var(--ink-soft); font: 700 10px/1 var(--mono); letter-spacing: .06em; text-transform: uppercase; white-space: nowrap; cursor: pointer; }
+.board-order button + button { border-left: 1px solid var(--line-strong); }
+.board-order button:hover { color: var(--ink); }
+.board-order button.on { background: var(--navy); color: white; }
 .board-count b { color: var(--ink); font-size: 13px; }
 .board-catalog { max-height: 680px; overflow-y: auto; overscroll-behavior: contain; border: 1px solid var(--line-strong); background: #eef3fa; }
 .board-tier + .board-tier { border-top: 1px solid var(--line-strong); }
@@ -548,6 +553,9 @@ textarea { min-height: 170px; resize: vertical; font: 12px/1.5 var(--mono); }
 .board-tier-head.c11, .board-cost.c11 { --cost-band: #ec8a2f; }
 .board-tier-head.c6, .board-cost.c6 { --cost-band: var(--yellow); }
 .board-tier-head.c1, .board-cost.c1 { --cost-band: #cdd9ea; }
+.board-tier-head.picked { --cost-band: var(--blue); }
+.board-owner.released { color: var(--ink-soft); }
+.board-tier-head.undrafted { --cost-band: #8397b4; }
 .board-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(235px, 1fr)); gap: 10px; padding: 12px; }
 .board-card { min-width: 0; display: flex; flex-direction: column; gap: 10px; padding: 12px; border: 1px solid var(--line); background: white; box-shadow: 0 4px 12px rgba(20, 45, 91, .05); content-visibility: auto; contain-intrinsic-size: auto 180px; }
 .board-card.taken { background: #e9eef5; box-shadow: none; }
@@ -572,6 +580,7 @@ textarea { min-height: 170px; resize: vertical; font: 12px/1.5 var(--mono); }
 
 .teambuild-list { display: flex; flex-direction: column; gap: 8px; padding: 18px 24px 24px; }
 .teambuild-card { border: 1px solid var(--line); background: white; }
+.teambuild-card.focused { border-color: var(--blue); box-shadow: inset 3px 0 0 var(--blue); }
 .teambuild-card > summary { cursor: pointer; padding: 10px 13px; font: 500 12px/1.3 var(--mono); }
 .teambuild-card[open] > summary { border-bottom: 1px solid var(--line); }
 .teambuild-plan { margin: 11px 13px; color: var(--ink-soft); font: 500 12px/1.5 var(--body); }

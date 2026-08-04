@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'preact/hooks';
+import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 
 import type {
   BoardInfo,
@@ -11,7 +11,7 @@ import type {
   LeagueTeambuildView,
 } from '../../api';
 import { Battlefield } from '../components/battlefield';
-import { BoardBrowser, STAT_ORDER, useBoard } from '../components/boardbrowser';
+import { BoardBrowser, type DraftRecord, STAT_ORDER, useBoard } from '../components/boardbrowser';
 import { StatTile } from '../components/chartkit';
 import { Mark } from '../components/mark';
 import { SetCard } from '../components/setcard';
@@ -212,7 +212,7 @@ function ScheduleTable({
   onOpenGame,
 }: {
   league: LeagueResponse;
-  onOpenTeam: (entrant: number) => void;
+  onOpenTeam: (entrant: number, seriesIndex?: number) => void;
   onOpenGame: (seriesIndex: number, game: number) => void;
 }) {
   const maxPlayoffRound = Math.max(
@@ -243,7 +243,8 @@ function ScheduleTable({
                     <button
                       type="button"
                       class={`text-link ${series.winner === entrant ? 'winner' : ''}`}
-                      onClick={() => onOpenTeam(entrant)}
+                      title={`Open ${name(entrant)} at this series`}
+                      onClick={() => onOpenTeam(entrant, series.seriesIndex)}
                     >
                       {name(entrant)}
                     </button>
@@ -712,6 +713,7 @@ function TeamPage({
   league,
   franchise,
   spriteFor,
+  focusSeries,
   onBack,
   onOpenGame,
   onOpenTeam,
@@ -720,11 +722,16 @@ function TeamPage({
   league: LeagueResponse;
   franchise: LeagueFranchiseView;
   spriteFor: (id: string) => string;
+  focusSeries: number | undefined;
   onBack: () => void;
   onOpenGame: (seriesIndex: number, game: number) => void;
   onOpenTeam: (entrant: number) => void;
   onOpenModel: () => void;
 }) {
+  const focused = useRef<HTMLDetailsElement | null>(null);
+  useEffect(() => {
+    focused.current?.scrollIntoView({ block: 'center' });
+  }, [focusSeries]);
   const builds = league.teambuilds
     .filter((build) => build.entrant === franchise.entrant)
     .sort((a, b) => a.seriesIndex - b.seriesIndex);
@@ -898,7 +905,14 @@ function TeamPage({
             const changes = setDiff(builds[index - 1], build);
             const won = series?.winner === franchise.entrant;
             return (
-              <details class="teambuild-card" key={build.seriesIndex} open={index === builds.length - 1}>
+              <details
+                class={`teambuild-card ${build.seriesIndex === focusSeries ? 'focused' : ''}`}
+                key={build.seriesIndex}
+                ref={(node: HTMLDetailsElement | null) => {
+                  if (build.seriesIndex === focusSeries) focused.current = node;
+                }}
+                open={focusSeries === undefined ? index === builds.length - 1 : build.seriesIndex === focusSeries}
+              >
                 <summary>
                   <b>vs {name(build.opponent)}</b>
                   {series ? (
@@ -1035,13 +1049,15 @@ function LiveNow({
 function LeaguePage({
   league,
   team,
+  series,
   onOpenTeam,
   onOpenModel,
   onBack,
 }: {
   league: LeagueResponse;
   team: string | undefined;
-  onOpenTeam: (slug: string) => void;
+  series: number | undefined;
+  onOpenTeam: (slug: string, series?: number) => void;
   onOpenModel: (id: string) => void;
   onBack: () => void;
 }) {
@@ -1055,18 +1071,22 @@ function LeaguePage({
     }
     return map;
   }, [league]);
+  /** Pick order is the draft's shape, not the post-window roster's, so the numbers come from the drafted
+   * ten — otherwise a Pokémon released at free agency reads as one that was never picked at all. */
   const pickNumbers = useMemo(() => {
-    const map = new Map<string, number>();
+    const map = new Map<string, DraftRecord>();
     for (const franchise of league.franchises) {
-      for (const entry of franchise.roster) if (entry.pick !== null) map.set(entry.id, entry.pick);
+      for (const entry of [...franchise.draftRoster, ...franchise.roster]) {
+        if (entry.pick !== null) map.set(entry.id, { pick: entry.pick, entrant: franchise.entrant });
+      }
     }
     return map;
   }, [league]);
 
   const openGame = (seriesIndex: number, game: number) => onOpenTeam(`game-${seriesIndex}-${game}`);
-  const openEntrant = (entrant: number) => {
+  const openEntrant = (entrant: number, seriesIndex?: number) => {
     const franchise = league.franchises[entrant];
-    if (franchise) onOpenTeam(teamSlug(franchise.teamName));
+    if (franchise) onOpenTeam(teamSlug(franchise.teamName), seriesIndex);
   };
   const gameRoute = team ? /^game-(\d+)-(\d+)$/.exec(team) : null;
   if (gameRoute) {
@@ -1089,6 +1109,7 @@ function LeaguePage({
         league={league}
         franchise={selected}
         spriteFor={spriteFor}
+        focusSeries={series}
         onBack={onBack}
         onOpenGame={openGame}
         onOpenTeam={openEntrant}
@@ -1285,6 +1306,7 @@ export function LeaguesView({
   boards,
   run,
   team,
+  series,
   onOpenLeague,
   onOpenTeam,
   onOpenModel,
@@ -1295,8 +1317,9 @@ export function LeaguesView({
   epoch: number;
   run: string | undefined;
   team: string | undefined;
+  series: number | undefined;
   onOpenLeague: (runId: string) => void;
-  onOpenTeam: (runId: string, slug: string) => void;
+  onOpenTeam: (runId: string, slug: string, series?: number) => void;
   onOpenModel: (id: string) => void;
   onBack: () => void;
 }) {
@@ -1356,7 +1379,8 @@ export function LeaguesView({
       <LeaguePage
         league={league}
         team={team}
-        onOpenTeam={(slug) => onOpenTeam(run, slug)}
+        series={series}
+        onOpenTeam={(slug, focus) => onOpenTeam(run, slug, focus)}
         onOpenModel={onOpenModel}
         onBack={() => (team ? onOpenLeague(run) : onBack())}
       />
