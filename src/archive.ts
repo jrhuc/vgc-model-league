@@ -354,21 +354,23 @@ function leagueProgress(rows: SeriesRecord[], identity: LeagueIdentity): LeagueP
   const eliminatedRound = new Map<number, number>();
   let champion: LeagueChampionView | null = null;
   let finalists: [number, number] | null = null;
-  const maxRound = Math.max(0, ...playoffRows.map((row) => count(row.round)));
+  /** Mirrors the bracket in draftleague.ts: the final is the last round, so a lone finished
+   * semifinal must not be mistaken for it while the other semifinal is still playing. */
+  const finalRound = identity.models.length >= 5 ? 2 : 1;
   for (const row of playoffRows) {
     const winnerPid = row.winner_side === 'p1' || row.winner_side === 'p2' ? (row.winner_side as Pid) : null;
     if (!winnerPid) continue;
     const loser = sideEntrant(row, winnerPid === 'p1' ? 'p2' : 'p1', identity);
     if (loser >= 0) eliminatedRound.set(loser, count(row.round));
   }
-  const finals = playoffRows.filter((row) => count(row.round) === maxRound);
-  if (maxRound > 0 && finals.length === 1) {
+  const finals = playoffRows.filter((row) => count(row.round) === finalRound);
+  if (finals.length === 1) {
     const final = finals[0]!;
     const a = sideEntrant(final, 'p1', identity);
     const b = sideEntrant(final, 'p2', identity);
     if (a >= 0 && b >= 0) finalists = [a, b];
     const winnerPid = final.winner_side === 'p1' || final.winner_side === 'p2' ? (final.winner_side as Pid) : null;
-    if (winnerPid && (maxRound >= 2 || playoffRows.length === 1)) {
+    if (winnerPid) {
       const entrant = sideEntrant(final, winnerPid, identity);
       if (entrant >= 0) {
         champion = { entrant, model: identity.models[entrant]!, team: identity.teamNames[entrant]! };
