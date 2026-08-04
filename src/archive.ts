@@ -17,6 +17,7 @@ import type {
   LeagueRecordView,
   LeagueResponse,
   LeagueRosterSlotView,
+  LeagueSeasonReviewView,
   LeagueSeriesView,
   LeaguesResponse,
   LeagueTeambuildView,
@@ -34,7 +35,7 @@ import { loadShowdown } from './showdown.js';
 import { BattleState, type MonState } from './state.js';
 import { readCurrentRosterArtifact, readTradeWindow } from './trade-window.js';
 import type { Pid } from './types.js';
-import { afterColon } from './value.js';
+import { afterColon, ordinal, text } from './value.js';
 
 const PIDS: Pid[] = ['p1', 'p2'];
 
@@ -412,6 +413,18 @@ function tradeWindowAfterWeek(runsDir: string, runId: string): number | null {
   return Number.isSafeInteger(afterWeek) && afterWeek > 0 ? afterWeek : null;
 }
 
+function seasonReviewViews(runsDir: string, runId: string): LeagueSeasonReviewView[] {
+  return readRunLines(runsDir, runId, 'season.jsonl').map((row) => ({
+    entrant: count(row.entrant),
+    outcome: text(row.outcome),
+    summary: text(row.summary),
+    didWell: text(row.did_well),
+    didPoorly: text(row.did_poorly),
+    wouldChange: text(row.would_change),
+    fallback: row.fallback === true,
+  }));
+}
+
 function tradeWindowView(runsDir: string, runId: string): LeagueTradeWindowView | null {
   const afterWeek = tradeWindowAfterWeek(runsDir, runId);
   if (afterWeek === null) return null;
@@ -549,18 +562,6 @@ function finishLabel(entrant: number, progress: LeagueProgress, rank: number, pl
   }
   if (progress.phase === 'complete' && playoffsSeen) return `${ordinal(rank)} in the round robin`;
   return '';
-}
-
-function ordinal(rank: number): string {
-  const suffix =
-    rank % 10 === 1 && rank !== 11
-      ? 'st'
-      : rank % 10 === 2 && rank !== 12
-        ? 'nd'
-        : rank % 10 === 3 && rank !== 13
-          ? 'rd'
-          : 'th';
-  return `${rank}${suffix}`;
 }
 
 function recordCompletedSeries(
@@ -862,6 +863,7 @@ export function buildLeague(allRows: SeriesRecord[], runsDir: string, runId: str
     live,
     liveSeries: live ? liveSeriesViews(runsDir, runId, rows, identity) : [],
     tradeWindow: tradeWindowView(runsDir, runId),
+    seasonReviews: seasonReviewViews(runsDir, runId),
     franchises,
     series,
     teambuilds,

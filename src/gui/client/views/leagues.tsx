@@ -720,6 +720,7 @@ function TeamPage({
   const name = (entrant: number) => league.franchises[entrant]?.teamName ?? `Coach ${entrant + 1}`;
   const liveSeries = league.liveSeries.filter((entry) => entry.sides?.includes(franchise.entrant));
   const windowDecision = league.tradeWindow?.decisions.find((entry) => entry.entrant === franchise.entrant);
+  const seasonReview = league.seasonReviews.find((entry) => entry.entrant === franchise.entrant);
   const rosterNames = new Map(
     league.franchises.flatMap((entry) =>
       [...entry.draftRoster, ...entry.roster].map((mon) => [mon.id, mon.name] as const),
@@ -834,6 +835,38 @@ function TeamPage({
                 {league.tradeWindow.complete ? 'No stored free-agency decision.' : 'This coach has not chosen yet.'}
               </p>
             )}
+          </div>
+        </section>
+      ) : null}
+
+      {seasonReview ? (
+        <section class="panel">
+          <div class="section-head">
+            <div>
+              <h2>Season review</h2>
+              <p>
+                Written by the coach once its own season was over, with its draft, its free-agency window, and every
+                series in front of it.{seasonReview.fallback ? ' No usable review was returned.' : ''}
+              </p>
+            </div>
+          </div>
+          <div class="draft-feed">
+            <div class="draft-feed-item">
+              <span class="draft-feed-head">{seasonReview.outcome}</span>
+              <p>{seasonReview.summary}</p>
+            </div>
+            <div class="draft-feed-item">
+              <span class="draft-feed-head">What went well</span>
+              <p>{seasonReview.didWell}</p>
+            </div>
+            <div class="draft-feed-item">
+              <span class="draft-feed-head">What went poorly</span>
+              <p>{seasonReview.didPoorly}</p>
+            </div>
+            <div class="draft-feed-item">
+              <span class="draft-feed-head">What it would change</span>
+              <p>{seasonReview.wouldChange}</p>
+            </div>
           </div>
         </section>
       ) : null}

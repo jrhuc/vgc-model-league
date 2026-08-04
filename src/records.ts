@@ -10,6 +10,7 @@ export interface SeriesRecord extends JsonObject {
   draft_scaffold?: string;
   teambuild_scaffold?: string;
   window_scaffold?: string;
+  season_scaffold?: string;
   run_id?: string;
   series_index?: number;
   pool?: string;

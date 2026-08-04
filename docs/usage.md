@@ -75,6 +75,12 @@ size and budget. Earlier drops become available to later coaches. Use
 locked-roster control. Coach-to-coach offers are not part of this mode. See
 [Trade window](trade-window.md) for the full rules and provenance.
 
+When a coach's season ends — missing the playoff cut, losing a semifinal or the
+final, or winning it — it writes one retrospective over its own draft, its
+free-agency decision, and every series it played. Reviews are stored in
+`season.jsonl` and shown on the team page. See
+[Season review](season-review.md).
+
 The Champions Bo3 formats publish open team sheets at team preview: both
 models read the opposing moves, items, abilities, and stat alignments, but
 never the hidden stat points. `draft --closed-sheets` strips that rule so

@@ -608,6 +608,16 @@ export interface LeagueTradeWindowView {
   decisions: LeagueTradeWindowDecisionView[];
 }
 
+export interface LeagueSeasonReviewView {
+  entrant: number;
+  outcome: string;
+  summary: string;
+  didWell: string;
+  didPoorly: string;
+  wouldChange: string;
+  fallback: boolean;
+}
+
 export interface LeagueResponse {
   runId: string;
   when: string;
@@ -623,6 +633,7 @@ export interface LeagueResponse {
   live: boolean;
   liveSeries: LeagueLiveSeriesView[];
   tradeWindow: LeagueTradeWindowView | null;
+  seasonReviews: LeagueSeasonReviewView[];
   franchises: LeagueFranchiseView[];
   series: LeagueSeriesView[];
   teambuilds: LeagueTeambuildView[];

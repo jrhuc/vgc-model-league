@@ -10,6 +10,7 @@ import { validateModelExecution } from './providers.js';
 import { resolveSeed, seededRng, seriesEntropy, shuffle } from './random.js';
 import type { SeriesRecord } from './records.js';
 import { appendRow, loadRows } from './records.js';
+import { runSeasonReview, seasonReviewScaffoldRevision } from './season-review.js';
 import type { ExperimentOptions } from './series.js';
 import { mapLimit, playRecordedSeries } from './series.js';
 import { showdownCommit } from './showdown.js';
@@ -26,6 +27,7 @@ import {
   tradeWindowScaffoldRevision,
 } from './trade-window.js';
 import type { Pid } from './types.js';
+import { ordinal } from './value.js';
 
 export const DRAFT_PROTOCOL_VERSION = 4;
 
@@ -119,6 +121,7 @@ export async function runDraftLeague(
   const draftScaffold = draftScaffoldRevision();
   const teambuildScaffold = teambuildScaffoldRevision();
   const windowScaffold = tradeWindowScaffoldRevision();
+  const seasonScaffold = seasonReviewScaffoldRevision();
 
   const stored = options.resume ? loadStoredLeague(runDir) : undefined;
   let tradeWindow = stored
@@ -245,6 +248,7 @@ export async function runDraftLeague(
           draft_scaffold: draftScaffold,
           teambuild_scaffold: teambuildScaffold,
           window_scaffold: windowScaffold,
+          season_scaffold: seasonScaffold,
           models,
           seed,
           concurrency: options.concurrency ?? 2,
@@ -452,6 +456,7 @@ export async function runDraftLeague(
       draft_scaffold: draftScaffold,
       teambuild_scaffold: teambuildScaffold,
       window_scaffold: windowScaffold,
+      season_scaffold: seasonScaffold,
       series_index: plan.index,
       stage: plan.stage,
       round: plan.round,
@@ -584,6 +589,36 @@ export async function runDraftLeague(
     phase = 'roundrobin';
     options.onEvent?.({ type: 'draft', draft: draftView(true) });
   };
+  /** A coach reviews its season at the moment that season ends, so a team knocked out in the round robin
+   * judges its draft without seeing playoff results it was never part of. */
+  const closeSeason = async (finished: Array<{ entrant: number; outcome: string }>): Promise<void> => {
+    if (!finished.length || options.signal?.aborted) return;
+    await runSeasonReview(
+      finished,
+      {
+        board,
+        models: entrants,
+        teamNames,
+        picks,
+        rosters,
+        window: windowArtifact,
+        standings: rankedTable(table),
+        series: playoffContext.map((context) =>
+          [...context.entries()].sort(([a], [b]) => a - b).map(([, entry]) => entry),
+        ),
+        notebooks: draftNotes,
+      },
+      {
+        runDir,
+        psDir,
+        ...(options.reasoning === undefined ? {} : { reasoning: options.reasoning }),
+        ...(options.reasoningByModel === undefined ? {} : { reasoningByModel: options.reasoningByModel }),
+        ...(options.apiKeys === undefined ? {} : { apiKeys: options.apiKeys }),
+        ...(options.recovery === undefined ? {} : { recovery: options.recovery }),
+        ...(options.signal === undefined ? {} : { signal: options.signal }),
+      },
+    );
+  };
   const scheduleRoundRobin = async (scheduled: SeriesPlanned[]): Promise<void> => {
     results.push(
       ...(await mapLimit(scheduled, options.concurrency ?? 2, options.signal, (plan, signal) =>
@@ -634,6 +669,14 @@ export async function runDraftLeague(
   phase = 'playoffs';
   week = 0;
   options.onEvent?.({ type: 'draft', draft: draftView(true) });
+
+  await closeSeason(
+    seeding.slice(playoffRounds === 2 ? 4 : 2).map((entrant, index) => ({
+      entrant,
+      outcome: `You finished ${ordinal((playoffRounds === 2 ? 4 : 2) + index + 1)} of ${entrants.length} in the round robin and missed the playoffs. Your season is over.`,
+    })),
+  );
+  if (options.signal?.aborted) return sorted(results);
 
   const playoffs = plans.filter((plan) => plan.stage === 'playoff');
   const bracket: BracketView = {
@@ -687,6 +730,20 @@ export async function runDraftLeague(
     );
     results.push(...semis);
     if (options.signal?.aborted) return sorted(results);
+    await closeSeason(
+      bracket.rounds[0]!.flatMap((match) => {
+        const loser = match.slots.find((slot) => slot !== null && slot !== match.winner);
+        return loser === null || loser === undefined
+          ? []
+          : [
+              {
+                entrant: loser,
+                outcome: `You reached the playoffs as the ${ordinal(seeding.indexOf(loser) + 1)} seed and were eliminated in the semifinals. Your season is over.`,
+              },
+            ];
+      }),
+    );
+    if (options.signal?.aborted) return sorted(results);
   }
   const finalPlan = playoffs[playoffs.length - 1]!;
   const finalRound = playoffRounds - 1;
@@ -698,8 +755,20 @@ export async function runDraftLeague(
     : await mapLimit([finalPlan], 1, options.signal, (plan, signal) => playSeries(plan, signal));
   if (finalRow[0]) {
     if (storedFinal) applyOutcome(finalPlan, storedFinal);
-    resolve(0, finalRound, finalRow[0].winner_side as Pid);
+    const champion = resolve(0, finalRound, finalRow[0].winner_side as Pid);
     results.push(finalRow[0]);
+    const runnerUp = finalPlan.entrants.find((entrant) => entrant !== champion);
+    await closeSeason([
+      ...(runnerUp === undefined || runnerUp === null
+        ? []
+        : [
+            {
+              entrant: runnerUp,
+              outcome: 'You reached the final and lost it. You are the league runner-up and your season is over.',
+            },
+          ]),
+      { entrant: champion, outcome: 'You won the final. You are the league champion and the season is over.' },
+    ]);
     phase = 'done';
     options.onEvent?.({ type: 'draft', draft: draftView(true) });
   }
