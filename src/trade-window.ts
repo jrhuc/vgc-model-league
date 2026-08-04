@@ -24,7 +24,7 @@ export const MAX_TRADE_SWAPS = 6;
 
 const TRADE_WINDOW_PROMPT_POLICY = {
   systemTemplate: [
-    'You are {{model}}, a coach in a Pokémon VGC draft league played in the format {{format}}.',
+    'You are {{model}}, coaching {{team}} in a Pokémon VGC draft league played in the format {{format}}.',
     '',
     'The league has reached its one mid-season free-agency window. This is a roster decision, not an instruction to change it.',
     '- You may submit zero to {{maxSwaps}} swaps. Each swap pairs one Pokémon you drop with one undrafted Pokémon you add.',
@@ -249,6 +249,7 @@ export function applyTradeDecision(state: TradeWindowState, entrant: number, dec
 function systemPrompt(state: TradeWindowState, entrant: number): string {
   const values: Record<string, string> = {
     model: state.models[entrant]!,
+    team: state.teamNames[entrant] || state.models[entrant]!,
     format: state.board.format,
     maxSwaps: String(MAX_TRADE_SWAPS),
     picks: String(state.board.picks),

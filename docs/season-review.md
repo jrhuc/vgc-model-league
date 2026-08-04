@@ -40,10 +40,12 @@ reviews before it returns, so a failed review still fails the run, just later.
 ## Prompt
 
 Same voice and dex-tool access as the draft and window prompts, with its own
-policy object and hash. The seat receives, in one prompt: how its season ended,
-the final standings, its own draft in pick order with the reasoning it gave at
-the time, its free-agency decision and every other seat's, its final roster,
-each of its series in order, and its final private notebook.
+policy object and hash. The seat is addressed by the franchise name it chose at
+its first pick, so the standings table names it too; the window prompt does the
+same. The seat receives, in one prompt: how its season ended, the final
+standings, its own draft in pick order with the reasoning it gave at the time,
+its free-agency decision and every other seat's, its final roster, each of its
+series in order, and its final private notebook.
 
 The instruction asks it to separate the three things that can lose a series —
 the roster it drafted, the six it registered, and how it piloted them — and to
