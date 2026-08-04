@@ -24,8 +24,13 @@ export const TIMED_SYSTEM = [
 
 const REFLECTION_EVIDENCE =
   'Use only the supplied private battle evidence and authoritative outcome. Do not invent hidden information.';
-const REFLECTION_PREVIEW_PLAN =
-  'Question the team-preview plan itself — whether the four brought, and which Mega Stone holder (if any) you evolved, suited this opponent — not only how the game was piloted.';
+const REFLECTION_PREVIEW_PLAN = [
+  'Two decisions produced this result and the evidence distinguishes them: the plan you brought — the four you selected and',
+  'the Mega Stone holder, if any, you evolved — and the turns you played it, meaning the targets you picked, the switches,',
+  'the protects, and the order you did them in. The timeline records both, including your own selections.',
+  'A game lost to a plan no line of play could rescue is not a piloting result; a game lost to a line the plan allowed is',
+  'not a selection result. Say which, and say it from the timeline rather than from the plan alone.',
+].join(' ');
 const REFLECTION_CONCISE = 'Give concise conclusions.';
 
 export const REFLECTION_SYSTEM = [
