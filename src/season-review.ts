@@ -183,7 +183,7 @@ function userPrompt(state: SeasonReviewState, entrant: number, outcome: string):
   for (const pick of own) {
     const mon = byId.get(pick.mon);
     lines.push(
-      `- Pick ${pick.pick + 1}: ${mon?.name ?? pick.mon} (${mon?.cost ?? '?'} pts)${pick.fallback ? ' [fallback pick]' : ''} — ${pick.rationale || '(no stored reasoning)'}`,
+      `- Pick ${pick.pick}: ${mon?.name ?? pick.mon} (${mon?.cost ?? '?'} pts)${pick.fallback ? ' [fallback pick]' : ''} — ${pick.rationale || '(no stored reasoning)'}`,
     );
   }
 
