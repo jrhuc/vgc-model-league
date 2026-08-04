@@ -72,7 +72,8 @@ Lowest seed chooses first; each coach atomically submits zero to six
 drop-and-add swaps from the undrafted board while keeping the original roster
 size and budget. Earlier drops become available to later coaches. Use
 `--trade-window <week>` to move the barrier or `--trade-window off` for the
-locked-roster control. Coach-to-coach offers are not part of this mode.
+locked-roster control. Coach-to-coach offers are not part of this mode. See
+[Trade window](trade-window.md) for the full rules and provenance.
 
 The Champions Bo3 formats publish open team sheets at team preview: both
 models read the opposing moves, items, abilities, and stat alignments, but
