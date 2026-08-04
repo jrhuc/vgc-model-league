@@ -573,6 +573,8 @@ export interface LeagueGameResponse {
   game: number;
   /** Game numbers with a stored log or logged decisions for this series, ascending. */
   games: number[];
+  /** Winning entrant per entry of `games`, null while that game is unresolved. */
+  gameWinners: Array<number | null>;
   sides: [number, number];
   teamNames: [string, string];
   winner: number | null;
