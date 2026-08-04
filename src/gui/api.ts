@@ -423,6 +423,7 @@ export interface LeagueCardView {
   week: number;
   champion: LeagueChampionView | null;
   tradeWindowAfterWeek: number | null;
+  draftOnly: boolean;
   live: boolean;
   picks: number | null;
 }

@@ -7,7 +7,9 @@ import test from 'node:test';
 import type { DraftBoardMon, DraftState } from '../src/draft.js';
 import {
   boardInfo,
+  draftBoardTable,
   draftScaffoldRevision,
+  draftUserPrompt,
   legalPicks,
   loadBoard,
   maxAffordable,
@@ -1346,6 +1348,63 @@ test('a two-coach league plays one week and a single final', async (t) => {
   for (const row of rows) assert.equal(row.closed_sheets, true, 'series records carry the sheet rule');
   const gameLog = fs.readFileSync(path.join(directory, 'series', String(rows[0]!.series_id), 'game-1.log'), 'utf8');
   assert.ok(!gameLog.includes('|showteam|'), 'closed-sheet games publish no team sheets');
+});
+
+test('a draft-only league stops at the rosters and resumes into a full season', async (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-draft-only-'));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const recordsPath = path.join(directory, 'results.jsonl');
+  const drafted = await runDraftLeague(['random', 'random'], directory, {
+    recordsPath,
+    seed: 5,
+    concurrency: 1,
+    draftOnly: true,
+  });
+  assert.deepEqual(drafted, [], 'a draft-only league plays no series');
+  assert.ok(!fs.existsSync(path.join(directory, 'series')), 'no series directory is created');
+  assert.ok(!fs.existsSync(recordsPath), 'no rows reach the records file');
+
+  const config = JSON.parse(fs.readFileSync(path.join(directory, 'config.json'), 'utf8')) as Record<string, unknown>;
+  assert.equal(config.draft_only, true);
+  assert.equal(config.trade_window, null, 'a league that plays no games holds no free-agency window');
+  const rosters = JSON.parse(fs.readFileSync(path.join(directory, 'rosters.json'), 'utf8')) as Array<
+    Record<string, unknown>
+  >;
+  assert.equal(rosters.length, 2);
+
+  const played = await runDraftLeague(['random', 'random'], directory, {
+    recordsPath,
+    seed: 5,
+    concurrency: 1,
+    resume: true,
+  });
+  assert.equal(played.length, 2, 'resuming a draft-only run plays the season it skipped');
+  const promoted = JSON.parse(fs.readFileSync(path.join(directory, 'config.json'), 'utf8')) as Record<string, unknown>;
+  assert.deepEqual(promoted.rosters, config.rosters, 'the drafted rosters carry into the season');
+  assert.equal(played[0]!.stage, 'roundrobin');
+  assert.equal(played[1]!.stage, 'playoff');
+});
+
+test('the draft prompt states budget rules without pricing the board for the coach', () => {
+  const state = freshState();
+  const board = draftBoardTable(BOARD, defaultPsDir());
+  const costs = board
+    .split('\n')
+    .slice(1)
+    .map((line) => Number(line.split(' | ')[1]));
+  assert.ok(
+    costs.some((cost, index) => index > 0 && cost > costs[index - 1]!),
+    'the board is not ordered by price',
+  );
+
+  const prompt = draftUserPrompt(state, 0, ['fake:model', 'random'], 0, '');
+  assert.ok(!/most you can spend/.test(prompt), 'the harness does not compute an affordable ceiling');
+  assert.match(prompt, /every remaining slot has to be filled/, 'the budget rule is still stated');
+  assert.ok(
+    prompt.indexOf('YOUR ROSTER') < prompt.lastIndexOf('You have'),
+    'roster context comes before the budget line',
+  );
+  assert.ok(!/roster plan and needs/.test(prompt), 'the notebook does not prescribe a needs list');
 });
 
 test('season reviews are written once per coach and replayed on resume', async (t) => {

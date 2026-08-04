@@ -164,14 +164,15 @@ export function BoardBrowser({
           <b>{count}</b> / {board.length}
         </span>
         {drafted ? (
-          <div class="board-order" role="group" aria-label="Board order">
+          <fieldset class="board-order">
+            <legend class="visually-hidden">Board order</legend>
             <button type="button" class={order === 'cost' ? 'on' : ''} onClick={() => setOrder('cost')}>
               Cost
             </button>
             <button type="button" class={order === 'pick' ? 'on' : ''} onClick={() => setOrder('pick')}>
               Pick order
             </button>
-          </div>
+          </fieldset>
         ) : null}
       </div>
       <div class="board-catalog">

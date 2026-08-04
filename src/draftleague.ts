@@ -41,6 +41,7 @@ export interface DraftLeagueOptions extends ExperimentOptions {
   resume?: boolean;
   sequentialWeeks?: boolean;
   tradeWindow?: TradeWindowConfig | null;
+  draftOnly?: boolean;
 }
 
 interface SeriesPlanned {
@@ -145,11 +146,15 @@ export async function runDraftLeague(
   const seasonScaffold = seasonReviewScaffoldRevision();
 
   const stored = options.resume ? loadStoredLeague(runDir) : undefined;
-  let tradeWindow = stored
-    ? stored.tradeWindow
-    : options.tradeWindow === undefined
-      ? { ...DEFAULT_TRADE_WINDOW }
-      : options.tradeWindow;
+  const draftOnly = options.draftOnly === true;
+  /** A window is chosen on standings, so a league that plays no games cannot hold one. */
+  let tradeWindow = draftOnly
+    ? null
+    : stored
+      ? stored.tradeWindow
+      : options.tradeWindow === undefined
+        ? { ...DEFAULT_TRADE_WINDOW }
+        : options.tradeWindow;
   if (tradeWindow && (!Number.isSafeInteger(tradeWindow.afterWeek) || tradeWindow.afterWeek < 1)) {
     throw new Error('trade window week must be a positive integer');
   }
@@ -280,6 +285,7 @@ export async function runDraftLeague(
           format: board.format,
           sequential_weeks: sequentialWeeks,
           closed_sheets: options.closedSheets === true,
+          draft_only: draftOnly,
           trade_window: tradeWindow ? { after_week: tradeWindow.afterWeek } : null,
           entrants,
           team_names: teamNames,
@@ -372,6 +378,11 @@ export async function runDraftLeague(
       draft_notes: draftNotes,
       contributor: options.contributor ?? null,
     });
+  }
+
+  if (draftOnly) {
+    options.onEvent?.({ type: 'draft', draft: draftView(true) });
+    return [];
   }
 
   phase = 'roundrobin';

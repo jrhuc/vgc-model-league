@@ -538,7 +538,7 @@ textarea { min-height: 170px; resize: vertical; font: 12px/1.5 var(--mono); }
 .board-toggle { display: flex; align-items: center; gap: 7px; color: var(--ink-soft); font: 700 10px/1 var(--mono); letter-spacing: .06em; text-transform: uppercase; white-space: nowrap; }
 .board-toggle input { width: auto; accent-color: var(--blue); }
 .board-count { min-width: 64px; color: var(--ink-soft); font: 700 10px/1 var(--mono); text-align: right; }
-.board-order { display: flex; border: 1px solid var(--line-strong); background: white; }
+.board-order { display: flex; margin: 0; padding: 0; border: 1px solid var(--line-strong); background: white; }
 .board-order button { padding: 8px 12px; border: 0; background: none; color: var(--ink-soft); font: 700 10px/1 var(--mono); letter-spacing: .06em; text-transform: uppercase; white-space: nowrap; cursor: pointer; }
 .board-order button + button { border-left: 1px solid var(--line-strong); }
 .board-order button:hover { color: var(--ink); }

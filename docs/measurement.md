@@ -39,7 +39,17 @@ The harness must never provide:
 - Corrections for known model biases. When many models share a wrong prior,
   measuring which ones overcome it is the point.
 - Steering through data. Never adjust board prices, menu ordering, or example
-  choices to nudge models toward play you consider correct.
+  choices to nudge models toward play you consider correct. Ordering is part
+  of this: a list sorted by one attribute makes that attribute the axis the
+  option space is read along, so the draft board sorts by name and leaves cost
+  as a column.
+- Derived quantities the model can compute itself. Stating the budget and the
+  rule that every slot must be filled is parity; computing the resulting
+  ceiling and leading with it hands over an accounting frame.
+- A prescribed shape for private reasoning. Notebook and scratchpad fields ask
+  for notes, not for a plan, a needs list, or any other structure. What
+  representation a model reaches for is itself a measurement, and it is
+  confounded the moment the harness names one.
 - Web search or any external live source. Reasoning stays endogenous, and
   models cannot copy human draft or set choices for the format.
 

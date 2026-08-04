@@ -35,7 +35,7 @@ const DRAFT_PROMPT_POLICY = {
     '- If you bring more than one Mega entry to a match, which of them evolves is a choice you make in play, game by game.',
     '- After the draft you keep this roster for the whole season: a round robin of best-of-three matches, then playoffs.',
     '- Before each match you choose 6 of your {{picks}} and build every set yourself: item, ability, nature, moves, and EVs.',
-    '  Nothing about a set is fixed by the draft, so draft for options and roles rather than for one preset build.',
+    '  Nothing about a set is fixed by the draft.',
     '- Games are 4-of-6 doubles. You will see your opponent’s full roster before you build, and they will see yours.',
     '',
     'You have the Showdown dex tools. Use them to check anything the board summary does not answer: what a Mega',
@@ -53,13 +53,13 @@ const DRAFT_PROMPT_POLICY = {
     'ability plus its coach\'s lab), "Unburdened Sneaslers" (Sneasler\'s ability doubled as a mood), "Golden State ' +
     'Gholdengos" (an NBA pun). A plain "<coach name> <first pick>s" is the lazy floor. Reply with a single JSON object ' +
     '{"pick": "<board-id>", "team_name": "<your franchise name>", "reasoning": "<2-4 sentences>", ' +
-    '"notebook": "<concise full roster plan and needs to carry to your next pick>"} and nothing else.',
+    '"notebook": "<notes to carry to your next pick>"} and nothing else.',
   turnInstruction:
     'Reply with a single JSON object {"pick": "<board-id>", "reasoning": "<2-4 sentences>", ' +
-    '"notebook": "<updated concise full roster plan and needs to carry to your next pick>"} and nothing else.',
+    '"notebook": "<updated notes to carry to your next pick>"} and nothing else.',
   turnTemplate:
-    'Overall pick {{pick}} of {{total}}. You have {{budget}} points and {{remaining}} left; the most you can ' +
-    'spend on this pick and still fill your remaining slots is {{affordable}}.',
+    'Overall pick {{pick}} of {{total}}. You have {{budget}} points and {{remaining}} left, and every remaining ' +
+    'slot has to be filled from what is still on the board.',
   boardHeading: 'DRAFT BOARD (id | cost | name | types | base stats | abilities):',
   takenHeading: 'ALREADY DRAFTED:',
   nothingTaken: '- (nothing yet; you have the first pick)',
@@ -401,7 +401,7 @@ export function draftBoardTable(
   const { Dex } = loadShowdown(psDir);
   const dex = Dex.mod(Dex.formats.get(board.format).mod || 'base');
   const lines: string[] = [heading];
-  for (const mon of [...mons].sort((a, b) => b.cost - a.cost || a.name.localeCompare(b.name))) {
+  for (const mon of [...mons].sort((a, b) => a.name.localeCompare(b.name))) {
     const species = dex.species.get(mon.forme ?? mon.species);
     const stats = species.baseStats;
     const abilities = Object.values(species.abilities ?? {})
@@ -435,36 +435,27 @@ function draftSystemPrompt(board: DraftBoard, models: string[], drafter: number,
     .join('\n');
 }
 
-function draftUserPrompt(
+export function draftUserPrompt(
   state: DraftState,
   drafter: number,
   models: string[],
   pickNumber: number,
-  legal: readonly DraftBoardMon[],
   notebook: string,
 ): string {
   const lines: string[] = [];
   const slotsLeft = state.board.picks - state.rosters[drafter]!.length;
-  const affordable = maxAffordable(legal);
-  lines.push(
-    DRAFT_PROMPT_POLICY.turnTemplate
-      .replace('{{pick}}', String(pickNumber + 1))
-      .replace('{{total}}', String(models.length * state.board.picks))
-      .replace('{{budget}}', String(state.budgets[drafter]))
-      .replace('{{remaining}}', `${slotsLeft} ${slotsLeft === 1 ? 'pick' : 'picks'}`)
-      .replace('{{affordable}}', `${affordable} ${affordable === 1 ? 'point' : 'points'}`),
-  );
 
-  lines.push('', DRAFT_PROMPT_POLICY.takenHeading);
+  lines.push(DRAFT_PROMPT_POLICY.takenHeading);
   const taken = [...state.taken.entries()];
   if (!taken.length) lines.push(DRAFT_PROMPT_POLICY.nothingTaken);
   for (const [index, model] of models.entries()) {
     const roster = state.rosters[index]!;
     if (!roster.length) continue;
     const label = index === drafter ? 'you' : state.teamNames[index] || model;
+    const budget = `${state.budgets[index]} points left`;
     lines.push(
-      `- ${label}${index === drafter ? '' : ` (${model})`}: ` +
-        `${roster.map((mon) => `${mon.name} (${mon.cost})`).join(', ')} — ${state.budgets[index]} points left`,
+      `- ${label} (${index === drafter ? budget : `${model}, ${budget}`}): ` +
+        `${roster.map((mon) => `${mon.name} (${mon.cost})`).join(', ')}`,
     );
   }
 
@@ -477,6 +468,14 @@ function draftUserPrompt(
       : [DRAFT_PROMPT_POLICY.emptyRoster]),
   );
   if (notebook) lines.push('', DRAFT_PROMPT_POLICY.notebookHeading, notebook);
+  lines.push(
+    '',
+    DRAFT_PROMPT_POLICY.turnTemplate
+      .replace('{{pick}}', String(pickNumber + 1))
+      .replace('{{total}}', String(models.length * state.board.picks))
+      .replace('{{budget}}', String(state.budgets[drafter]))
+      .replace('{{remaining}}', `${slotsLeft} ${slotsLeft === 1 ? 'pick' : 'picks'}`),
+  );
   lines.push(
     '',
     state.rosters[drafter]!.length ? DRAFT_PROMPT_POLICY.turnInstruction : DRAFT_PROMPT_POLICY.firstTurnInstruction,
@@ -533,7 +532,7 @@ export function parsePick(
   if (!state.rosters[drafter]!.length && !teamName) return '"team_name" is required with your first pick';
   const notebook =
     typeof record.notebook === 'string' ? clip(record.notebook.trim(), DRAFT_PROMPT_POLICY.notebookLimit) : '';
-  if (!notebook) return '"notebook" must be a concise full roster plan to carry to your next pick';
+  if (!notebook) return '"notebook" must be a note to carry to your next pick';
   return {
     mon,
     reasoning: String(record.reasoning ?? '').trim(),
@@ -605,7 +604,7 @@ export async function runDraft(models: string[], board: DraftBoard, options: Run
     if (provider) {
       const system = systemPrompts[drafter]!;
       const messages: ProviderMessage[] = [
-        { role: 'user', content: draftUserPrompt(state, drafter, models, pickNumber, legal, notebooks[drafter]!) },
+        { role: 'user', content: draftUserPrompt(state, drafter, models, pickNumber, notebooks[drafter]!) },
       ];
       let lastError = '';
       for (let attempt = 1; attempt <= DRAFT_PROMPT_POLICY.attempts && !chosen; attempt += 1) {
