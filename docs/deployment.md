@@ -40,7 +40,8 @@ GITHUB_CLIENT_SECRET=<oauth-app-client-secret>
 
 Set `VGC_LEAGUE_OPERATOR_GITHUB_IDS` to a comma-separated list of numeric
 GitHub account IDs. These accounts receive the operator role. The variable is
-optional.
+optional. The list is authoritative at service startup: removing an ID demotes
+that account's existing sessions to contributor, while adding it promotes them.
 
 Do not set `VGC_LEAGUE_ENABLE_MUTATIONS=true` on a public service. This setting
 permits unauthenticated changes. Use it only behind separate private access

@@ -92,6 +92,7 @@ export async function buildPool(manifestFile: string): Promise<string> {
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const manifest = process.argv[2];
-  if (!manifest || process.argv.length !== 3) throw new Error('Usage: npm run build-pool -- teams/<pool>/sources.json');
+  if (!manifest || process.argv.length !== 3)
+    throw new Error('Usage: pnpm run build-pool -- teams/<pool>/sources.json');
   await buildPool(manifest);
 }

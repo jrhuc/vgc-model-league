@@ -119,7 +119,7 @@ function LeagueCard({ card, onOpen }: { card: LeagueCardView; onOpen: () => void
           : `${card.seriesCount} series recorded · ${
               card.tradeWindowAfterWeek === null
                 ? 'locked rosters'
-                : `free agency after week ${card.tradeWindowAfterWeek}`
+                : `trade window after week ${card.tradeWindowAfterWeek}`
             }`}
       </span>
     </button>
@@ -749,6 +749,9 @@ function TeamPage({
   const name = (entrant: number) => league.franchises[entrant]?.teamName ?? `Coach ${entrant + 1}`;
   const liveSeries = league.liveSeries.filter((entry) => entry.sides?.includes(franchise.entrant));
   const windowDecision = league.tradeWindow?.decisions.find((entry) => entry.entrant === franchise.entrant);
+  const tradeOffers = (league.tradeWindow?.offers ?? []).filter(
+    (entry) => entry.from === franchise.entrant || entry.to === franchise.entrant,
+  );
   const seasonReview = league.seasonReviews?.find((entry) => entry.entrant === franchise.entrant);
   const rosterNames = new Map(
     league.franchises.flatMap((entry) =>
@@ -825,14 +828,28 @@ function TeamPage({
         <section class="panel">
           <div class="section-head">
             <div>
-              <h2>Mid-season free agency</h2>
+              <h2>Mid-season trade window</h2>
               <p>
-                After week {league.tradeWindow.afterWeek}, the lowest seed chose first with up to six swaps from the
-                undrafted pool.
+                After week {league.tradeWindow.afterWeek}, the lowest seed chose first. Coach offers resolved before up
+                to six swaps from the undrafted pool.
               </p>
             </div>
           </div>
           <div class="draft-feed">
+            {tradeOffers.map((offer, index) => (
+              <div class="draft-feed-item" key={`${offer.from}:${offer.to}:${offer.give}:${offer.get}:${index}`}>
+                <span class="draft-feed-head">
+                  {offer.to === null
+                    ? `${name(offer.from)} made no trade offer`
+                    : `${name(offer.from)} offered ${rosterNames.get(offer.give ?? '') ?? offer.give} for ${
+                        rosterNames.get(offer.get ?? '') ?? offer.get
+                      } from ${name(offer.to)} · ${offer.accepted ? 'accepted' : 'declined'}`}
+                </span>
+                {offer.message ? <p>“{offer.message}”</p> : null}
+                {offer.offerReasoning ? <p>Offer reasoning: {offer.offerReasoning}</p> : null}
+                {offer.responseReasoning ? <p>Response reasoning: {offer.responseReasoning}</p> : null}
+              </div>
+            ))}
             {windowDecision ? (
               <>
                 <div class="draft-feed-item">

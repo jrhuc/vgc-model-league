@@ -23,13 +23,14 @@ test('decision prompt leads with merged state and keeps mechanics compact', () =
     menus: [[{ label: 'Protect', part: 'move 1', kind: 'move' }]],
   });
   assert.ok(
-    prompt.indexOf('Authoritative battle state and roster reference:') < prompt.indexOf('Active type matchups'),
+    prompt.indexOf('Authoritative battle state and roster reference:') < prompt.indexOf('Active matchup reference'),
   );
-  assert.ok(prompt.indexOf('Active type matchups') < prompt.indexOf('Choose for Swampert'));
+  assert.ok(prompt.indexOf('Active matchup reference') < prompt.indexOf('Choose for Swampert'));
   assert.match(
     prompt,
-    /notebook":"durable cross-game facts and future plans only; no current HP, active board, or turn recap/,
+    /notebook":"durable cross-game facts and future plans only; no current HP, active board, or turn recap"/,
   );
+  assert.doesNotMatch(prompt, /at most \d+ characters/);
   assert.equal(prompt.match(/"choices"/g)?.length, 1);
 });
 

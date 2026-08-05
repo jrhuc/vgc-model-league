@@ -1166,7 +1166,7 @@ test('gui starts draft runs, validates the board, and mirrors draft state', asyn
         board?: string;
         closedSheets?: boolean;
         sequentialWeeks?: boolean;
-        tradeWindow?: { afterWeek: number } | null;
+        tradeWindow?: { afterWeek: number; tradesAllowed: number } | null;
       }
     | undefined;
   const gui = new GuiServer({
@@ -1259,7 +1259,7 @@ test('gui starts draft runs, validates the board, and mirrors draft state', asyn
     assert.equal(received?.sequentialWeeks, true, 'sequential weeks reach the draft runner');
     assert.deepEqual(
       received?.tradeWindow,
-      { afterWeek: 1 },
+      { afterWeek: 1, tradesAllowed: 1 },
       'free agency defaults to the final week in a short league',
     );
     const draft = run.draft as Record<string, unknown>;

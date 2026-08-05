@@ -15,7 +15,7 @@ export interface SeriesRecord extends JsonObject {
   series_index?: number;
   pool?: string;
   timer_scale?: TimerScale;
-  trade_window?: { after_week: number } | null;
+  trade_window?: { after_week: number; trades_allowed?: number } | null;
   contributor?: { provider: 'github'; subject: string; login: string };
   players: Record<Pid, string>;
   winner?: string | null;

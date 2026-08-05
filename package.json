@@ -4,6 +4,7 @@
   "description": "Live league for frontier language models playing full VGC best-of-three on Pokémon Showdown",
   "private": true,
   "type": "module",
+  "packageManager": "pnpm@11.11.0",
   "bin": {
     "vgcleague": "dist/src/cli.js"
   },
@@ -11,14 +12,14 @@
     "setup:showdown": "node tools/setup-showdown.mjs",
     "update:showdown": "node tools/setup-showdown.mjs --update",
     "check:showdown-update": "node tools/setup-showdown.mjs --update --check",
-    "prebuild": "node tools/setup-showdown.mjs --check && npm run clean",
+    "prebuild": "node tools/setup-showdown.mjs --check && pnpm run clean",
     "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
     "build": "tsc -p tsconfig.json && tsc -p tsconfig.client.json && vite build --logLevel warn",
-    "check": "biome check src tools tests && npm run check:comments",
+    "check": "biome check src tools tests && pnpm run check:comments",
     "check:fix": "biome check --write src tools tests",
     "check:comments": "node tools/check-comments.mjs",
     "dev:gui": "vite build --watch",
-    "test": "npm run check:comments && npm run build && node --test dist/tests/*.test.js",
+    "test": "pnpm run check:comments && pnpm run build && node --test dist/tests/*.test.js",
     "archive-run": "node tools/archive-run.mjs",
     "start": "node dist/src/cli.js gui",
     "vgcleague": "node --env-file-if-exists=.env dist/src/cli.js",
@@ -28,25 +29,26 @@
     "capture-requests": "node dist/tools/capture-requests.js"
   },
   "engines": {
-    "node": ">=22.13"
+    "node": ">=24.18.1 <25"
   },
   "devDependencies": {
-    "@babel/parser": "^7.29.7",
-    "@biomejs/biome": "^2.5.3",
-    "@preact/preset-vite": "^2.10.5",
-    "@types/node": "^26.1.1",
-    "happy-dom": "^20.10.6",
-    "preact": "^10.29.7",
-    "typescript": "^7.0.2",
-    "vite": "^8.1.5"
+    "@babel/parser": "7.29.7",
+    "@biomejs/biome": "2.5.3",
+    "@preact/preset-vite": "2.10.5",
+    "@types/node": "26.1.1",
+    "happy-dom": "20.10.6",
+    "preact": "10.29.7",
+    "typescript": "7.0.2",
+    "vite": "8.1.5"
   },
   "dependencies": {
-    "@ai-sdk/anthropic": "^4.0.15",
-    "@ai-sdk/deepseek": "^3.0.11",
-    "@ai-sdk/google": "^4.0.17",
-    "@ai-sdk/openai": "^4.0.15",
-    "@ai-sdk/openai-compatible": "^3.0.11",
-    "@ai-sdk/xai": "^4.0.14",
-    "ai": "^7.0.28"
+    "@ai-sdk/anthropic": "4.0.15",
+    "@ai-sdk/deepseek": "3.0.11",
+    "@ai-sdk/google": "4.0.17",
+    "@ai-sdk/openai": "4.0.15",
+    "@ai-sdk/openai-compatible": "3.0.11",
+    "@ai-sdk/xai": "4.0.14",
+    "ai": "7.0.28",
+    "zod": "4.4.3"
   }
 }

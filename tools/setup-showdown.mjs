@@ -1,22 +1,31 @@
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const directory = path.join(root, 'pokemon-showdown');
 const lockPath = path.join(root, 'showdown.lock.json');
+const repository = 'https://github.com/smogon/pokemon-showdown.git';
 const lockText = fs.readFileSync(lockPath, 'utf8');
 const lock = JSON.parse(lockText);
 const checkOnly = process.argv.includes('--check');
 const updateIndex = process.argv.indexOf('--update');
 const updateMode = updateIndex >= 0;
-const updateArgument = process.argv[updateIndex + 1];
-const requestedRef = updateArgument && !updateArgument.startsWith('--') ? updateArgument : 'HEAD';
+const updateArguments = updateMode
+  ? process.argv.slice(2).filter((argument) => !['--', '--check', '--update'].includes(argument))
+  : [];
+const requestedRef = updateArguments[0] ?? 'HEAD';
 const requiredBuildFiles = ['dist/sim/index.js', 'dist/sim/index.d.ts', 'dist/server/room-battle.js'];
+const runtimePackages = ['ts-chacha20'];
 
-if (typeof lock.repository !== 'string' || !/^[0-9a-f]{40}$/.test(lock.commit)) {
-  throw new Error('showdown.lock.json must contain a repository URL and full commit SHA');
+if (lock.repository !== repository || !/^[0-9a-f]{40}$/.test(lock.commit)) {
+  throw new Error('showdown.lock.json must contain the official repository URL and a full commit SHA');
+}
+
+if (updateArguments.length > 1 || requestedRef.startsWith('-') || requestedRef.length > 200) {
+  throw new Error('Pokémon Showdown update ref must be a branch, tag, or commit');
 }
 
 function output(command, args) {
@@ -36,15 +45,58 @@ function revision() {
 }
 
 function assertBuild() {
-  const missing = requiredBuildFiles.filter((file) => !fs.existsSync(path.join(directory, file)));
+  const requiredFiles = [
+    ...requiredBuildFiles,
+    ...runtimePackages.map((name) => `node_modules/${name}/package.json`),
+  ];
+  const missing = requiredFiles.filter((file) => !fs.existsSync(path.join(directory, file)));
   if (missing.length) {
-    throw new Error(`Pokémon Showdown is not built (${missing.join(', ')} missing); run npm run setup:showdown`);
+    throw new Error(`Pokémon Showdown is not built (${missing.join(', ')} missing); run pnpm run setup:showdown`);
+  }
+}
+
+function dependencyLock() {
+  const packageLock = JSON.parse(fs.readFileSync(path.join(directory, 'package-lock.json'), 'utf8'));
+  if (![2, 3].includes(packageLock.lockfileVersion) || !packageLock.packages) {
+    throw new Error('Pokémon Showdown must use an integrity-bearing npm lock');
+  }
+  for (const [location, entry] of Object.entries(packageLock.packages)) {
+    if (!location.startsWith('node_modules/')) continue;
+    if (!entry.resolved?.startsWith('https://registry.npmjs.org/') || !entry.integrity?.startsWith('sha512-')) {
+      throw new Error(`Review Pokémon Showdown's non-registry dependency at ${location}`);
+    }
+  }
+  return packageLock;
+}
+
+function retainRuntimePackages(packageLock) {
+  const installedRoot = path.join(directory, 'node_modules');
+  const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-showdown-runtime-'));
+  try {
+    for (const name of runtimePackages) {
+      const entry = packageLock.packages?.[`node_modules/${name}`];
+      if (!entry) throw new Error(`Pokémon Showdown's lock is missing runtime package ${name}`);
+      const dependencies = { ...entry.dependencies, ...entry.optionalDependencies, ...entry.peerDependencies };
+      if (entry.hasInstallScript || Object.keys(dependencies).length) {
+        throw new Error(`Review ${name}'s new install or runtime dependencies before updating Pokémon Showdown`);
+      }
+      fs.cpSync(path.join(installedRoot, name), path.join(temporaryRoot, name), { recursive: true });
+    }
+    fs.rmSync(installedRoot, { recursive: true, force: true });
+    fs.mkdirSync(installedRoot, { recursive: true });
+    for (const name of runtimePackages) {
+      fs.cpSync(path.join(temporaryRoot, name), path.join(installedRoot, name), { recursive: true });
+    }
+  } finally {
+    fs.rmSync(temporaryRoot, { recursive: true, force: true });
   }
 }
 
 function buildRevision(commit) {
-  run('npm', ['ci', '--prefix', directory]);
-  run('npm', ['run', 'build-npm', '--prefix', directory]);
+  const packageLock = dependencyLock();
+  run('npm', ['--ignore-scripts', '--prefix', directory, 'ci']);
+  run('npm', ['--ignore-scripts', '--prefix', directory, 'run', 'build-npm']);
+  retainRuntimePackages(packageLock);
   fs.writeFileSync(path.join(directory, 'dist', '.vgc-model-league-revision'), `${commit}\n`, 'utf8');
   assertBuild();
 }
@@ -58,7 +110,7 @@ function writeLock(commit) {
 function main() {
   let created = false;
   if (!fs.existsSync(directory)) {
-    if (checkOnly) throw new Error('Pokémon Showdown is not installed; run npm run setup:showdown');
+    if (checkOnly) throw new Error('Pokémon Showdown is not installed; run pnpm run setup:showdown');
     fs.mkdirSync(directory, { recursive: true });
     run('git', ['-C', directory, 'init']);
     run('git', ['-C', directory, 'remote', 'add', 'origin', lock.repository]);
@@ -73,12 +125,12 @@ function main() {
 
   const current = created ? '' : revision();
   if (updateMode && current !== lock.commit) {
-    throw new Error(`Pokémon Showdown is at ${current || 'an unknown revision'}; run npm run setup:showdown first`);
+    throw new Error(`Pokémon Showdown is at ${current || 'an unknown revision'}; run pnpm run setup:showdown first`);
   }
 
   let target = lock.commit;
   if (updateMode) {
-    run('git', ['-C', directory, 'fetch', '--depth=1', lock.repository, requestedRef]);
+    run('git', ['-C', directory, 'fetch', '--depth=1', '--no-tags', lock.repository, requestedRef]);
     target = output('git', ['-C', directory, 'rev-parse', 'FETCH_HEAD^{commit}']);
     if (checkOnly) {
       console.log(
@@ -94,7 +146,7 @@ function main() {
     if (checkOnly) {
       throw new Error(`Pokémon Showdown is at ${current || 'an unknown revision'}; expected ${target}`);
     }
-    if (!updateMode) run('git', ['-C', directory, 'fetch', '--depth=1', lock.repository, target]);
+    if (!updateMode) run('git', ['-C', directory, 'fetch', '--depth=1', '--no-tags', lock.repository, target]);
     run('git', ['-C', directory, 'checkout', '--detach', target]);
   }
 
@@ -108,7 +160,7 @@ function main() {
     buildRevision(target);
     if (updateMode) {
       writeLock(target);
-      run('npm', ['test']);
+      run('pnpm', ['test']);
       console.log(`Pokémon Showdown ${target.slice(0, 12)} is pinned, built, and verified`);
     } else {
       console.log(`Pokémon Showdown ${target.slice(0, 12)} is ready`);

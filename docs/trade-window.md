@@ -1,4 +1,4 @@
-# Trade window (mid-season free agency)
+# Trade window (coach trades and free agency)
 
 Draft leagues open one free-agent window mid-season by default. Locked-roster
 runs remain available as a labeled control variant; the delta between the two
@@ -35,8 +35,9 @@ mid-season change week. We adopt the S2 shape (single window) with the S1 cap
 Coach-to-coach trades were excluded from v1 on the grounds that parallel
 series leave seats no channel to negotiate. The barrier the window already
 runs on removes that objection: every seat is paused at the same point in the
-season, so two coaches can be live at once. Trades are specified below and
-are a v2 addition, not part of the shipped free-agency window.
+season, so two coaches can be live at once. Trades are the v2 addition and run
+before free agency by default. Historical configs without `trades_allowed`
+remain free-agency-only when resumed.
 
 ## Rules
 
@@ -90,8 +91,10 @@ teambuilds, so a seat that swaps (or doesn't) carries its own rationale
 forward. The window prompt gets its own policy object and hash, recorded in
 `scaffold` alongside the draft and battle revisions; `DRAFT_PROMPT_POLICY`
 itself is untouched so draft scaffolds stay comparable across variants.
+Standings, results, and roster ownership identify seats by coach/model
+identity. GUI franchise names are not supplied to the trading models.
 
-## Coach-to-coach trades (v2, not yet implemented)
+## Coach-to-coach trades (v2)
 
 A trade phase runs immediately before free agency inside the same barrier, in
 the same inverse-standings order. Each seat in turn may offer one trade to one
@@ -236,9 +239,12 @@ K+1. `throughWeek` runs that stop at or before K never open the window.
   mid-window, completed seats' transactions are replayed from a
   `window.jsonl` decision log (same pattern as series decision replay) and
   the remaining seats run live.
-- Run config records `trade_window: { after_week: number } | null`. New runs
+- Run config records
+  `trade_window: { after_week: number, trades_allowed: number } | null`. New runs
   default to week 3, clamped to the final round-robin week in shorter leagues.
-  Null selects the labeled locked-roster control. The GUI exposes both.
+  They allow one offer per coach by default. A missing `trades_allowed` on a
+  historical run means zero. Null selects the labeled locked-roster control.
+  The GUI exposes the default window and the locked-roster variant.
 - Results published from a window run carry the variant label so baseline
   and window standings are never pooled silently.
 

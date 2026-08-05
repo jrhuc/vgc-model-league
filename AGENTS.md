@@ -24,7 +24,7 @@ redundant, delete the old code in the same change — deletion is as important
 as addition.
 
 Comments are for constraints the code cannot express, written as `/** doc */`
-blocks; `npm run check:comments` (part of `npm test`) rejects `//` narration.
+blocks; `pnpm run check:comments` (part of `pnpm test`) rejects `//` narration.
 
 See `docs/measurement.md` for what the harness may and may not surface to
 models, `docs/architecture.md` for the system design, and `docs/usage.md` for

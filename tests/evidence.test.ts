@@ -79,6 +79,8 @@ test('buildEvidence aggregates decision logs, rates, and luck', () => {
   assert.equal(series.winnerLuckDelta, -2, 'the winner suffered two fewer adverse events');
   const traversal = buildEvidence([{ ...row, run_id: '../run-1' } as SeriesRecord], runsDir, 'test');
   assert.equal(traversal.models[0]!.points.length, 0, 'unsafe run ids never reach the filesystem');
+  const parent = buildEvidence([{ ...row, run_id: '..' } as SeriesRecord], runsDir, 'test');
+  assert.equal(parent.models[0]!.points.length, 0, 'parent-directory identifiers never reach the filesystem');
   fs.rmSync(runsDir, { recursive: true, force: true });
 });
 

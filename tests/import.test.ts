@@ -201,6 +201,10 @@ test('importSeries rejects rows it cannot place on disk', () => {
   const store = scratch();
   try {
     assert.throws(() => importSeries({ row: bundleRow({ run_id: '../escape' }) }, store.paths), /path-safe/);
+    assert.throws(() => importSeries({ row: bundleRow({ run_id: '..' }) }, store.paths), /path-safe/);
+    assert.throws(() => importSeries({ row: bundleRow({ run_id: '.' }) }, store.paths), /path-safe/);
+    assert.throws(() => importSeries({ row: bundleRow({ series_id: '..' }) }, store.paths), /path-safe/);
+    assert.throws(() => removeImportedRun('..', store.paths), /path-safe/);
     assert.throws(() => importSeries({ row: bundleRow({ players: { p1: 'a' } }) }, store.paths), /both seats/);
     assert.throws(() => importSeries({ row: bundleRow({ mode: 'ladder' }) }, store.paths), /unknown mode/);
     assert.throws(() => importSeries({ row: bundleRow(), logs: { p1: 'not json' } }, store.paths), /not JSON/);

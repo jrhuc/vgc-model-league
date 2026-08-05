@@ -55,8 +55,16 @@ point budget. It also reserves enough points to fill the remaining roster
 slots.
 
 Each drafter maintains a private, full-replacement roster note across its own
-picks. The final draft note is supplied to every matchup build as revisable
-context.
+picks. The current note is supplied to every matchup build as revisable
+context; a transaction-window decision replaces it for later builds.
+
+Once every pick is complete, each non-random coach gets one isolated naming
+turn over its finished roster. The playful franchise name is stored separately
+from the draft transcript and is presentation metadata for the GUI, CLI,
+records, and archive. It never enters a competitive prompt or private note;
+draft, teambuild, trade, battle, reflection, and review context identify seats
+by their model specifications instead. Historical drafts that recorded a name
+on the first pick still load without exposing that name to later decisions.
 
 Before each series, a coach selects six roster members and builds their sets.
 Showdown validates format rules. The league validates rules that Showdown does
@@ -95,16 +103,15 @@ For each decision, `LLMEngine` sends the model:
 - references for the active matchup.
 
 Optional tools provide species, move, item, ability, nature, type, exact
-format-aware stats, and damage information. Explicit item and ability lookups
-return the simulator's full mechanics descriptions. The tools expose only
-information that is legal in the match.
+format-aware stats, and damage information. In battle, damage calls are bound
+to the live request and open team sheets rather than trusting model-supplied
+state. Explicit item and ability lookups return the simulator's full mechanics
+descriptions. The tools expose only information that is legal in the match.
 
 The model returns one JSON object:
 
 ```json
 {
-  "threats": ["likely opposing actions or knockout threats"],
-  "candidates": ["two or three joint actions"],
   "choices": [0, 2],
   "rationale": "short reason for the final choice",
   "notebook": "private notes for this series"
@@ -134,11 +141,31 @@ The league loads Showdown's compiled battle stream, dex, validator, and room
 timer in the application process. It does not run the Showdown HTTP server.
 Showdown remains the authority for legality and results.
 
+`showdown.lock.json` accepts only the official repository and a full commit
+SHA. Setup rejects non-registry or non-SHA-512 entries in the upstream npm
+lock, installs it with lifecycle scripts disabled, explicitly runs the
+compiler, and retains only `ts-chacha20`, the simulator's sole external runtime
+package. The update path builds and runs the league test suite before keeping a
+new pin.
+
 The Showdown room timer starts only when a run selects a timer scale. Decision
 token limits follow the active clock. A separate wall-clock limit stops
 runaway model calls in every mode.
 
 Each result records the actual Showdown revision.
+
+## Dependency boundary
+
+The root install uses the exact pnpm version declared in `package.json`, exact
+direct versions, and an integrity-bearing frozen lock. Project policy disables
+dependency lifecycle scripts, rejects exotic transitive sources, distrusts
+lockfile metadata until packages are checked, forbids version downgrades, and
+holds ordinary new releases for seven days. A narrowly versioned release-age
+exception may admit a security fix sooner; it does not admit a package range.
+
+Explicit project scripts remain runnable. That distinction lets the repository
+compile its own code and the pinned Showdown source without granting install,
+preinstall, or postinstall hooks to downloaded packages.
 
 ## Run state and evidence
 

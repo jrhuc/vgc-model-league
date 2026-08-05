@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import type { ImportRequest, ImportResponse, LeagueAssets } from './gui/api.js';
+import { SAFE_SEGMENT } from './path-safety.js';
 import { appendRow, loadRows, type SeriesRecord } from './records.js';
 import { createPool, listPools } from './teams.js';
 import type { ExperimentMode, JsonObject, Pid } from './types.js';
@@ -9,7 +10,6 @@ import { isRecord } from './value.js';
 
 export class ImportError extends Error {}
 
-const SAFE_SEGMENT = /^[A-Za-z0-9._-]+$/;
 const MODES: Record<ExperimentMode, true> = { rotation: true, exhibition: true, tournament: true, draft: true };
 const SEATS: Pid[] = ['p1', 'p2'];
 const MAX_LOG_BYTES = 1_000_000;
@@ -37,6 +37,13 @@ function requireSegment(value: unknown, field: string): string {
   const text = typeof value === 'string' ? value : '';
   if (!SAFE_SEGMENT.test(text)) throw new ImportError(`row.${field} must be a path-safe identifier`);
   return text;
+}
+
+function runDirectory(runsDir: string, runId: string): string {
+  const root = path.resolve(runsDir);
+  const target = path.resolve(root, requireSegment(runId, 'run_id'));
+  if (path.dirname(target) !== root) throw new ImportError('row.run_id must stay inside the runs directory');
+  return target;
 }
 
 function validateRow(candidate: unknown): SeriesRecord {
@@ -141,7 +148,7 @@ export interface RemoveResponse {
 }
 
 export function removeImportedRun(runId: string, options: ImportOptions): RemoveResponse {
-  if (!SAFE_SEGMENT.test(runId)) throw new ImportError('runId must be a path-safe identifier');
+  const runDir = runDirectory(options.runsDir, runId);
   const rows = loadRows(options.recordsPath);
   const target = rows.filter((row) => String(row.run_id ?? '') === runId);
   if (target.length === 0) throw new ImportError(`no series held for run ${JSON.stringify(runId)}`);
@@ -151,7 +158,7 @@ export function removeImportedRun(runId: string, options: ImportOptions): Remove
   const staged = `${options.recordsPath}.tmp`;
   fs.writeFileSync(staged, text.length ? `${text}\n` : '', 'utf8');
   fs.renameSync(staged, options.recordsPath);
-  fs.rmSync(path.join(options.runsDir, runId), { recursive: true, force: true });
+  fs.rmSync(runDir, { recursive: true, force: true });
   return { removed: target.length, runId };
 }
 
@@ -169,7 +176,7 @@ export function importSeries(bundle: ImportRequest, options: ImportOptions): Imp
   }
   const known = new Set(loadRows(options.recordsPath).map(seriesKey));
   const pool = ensurePool(bundle, options);
-  const runDir = path.join(options.runsDir, runId);
+  const runDir = runDirectory(options.runsDir, runId);
   const league = writeLeagueAssets(bundle.league, runDir);
   const seriesDir = path.join(runDir, 'series', seriesId);
   const games = writeGameLogs(bundle.games, seriesDir);

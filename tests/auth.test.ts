@@ -162,6 +162,40 @@ test('sessions expire and contributor ownership gates another user', async () =>
   auth.close();
 });
 
+test('the configured operator subjects remain authoritative across restarts', async (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'vgcleague-auth-roles-'));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const dbPath = path.join(directory, 'league.sqlite');
+  const request = (async (input) =>
+    String(input).includes('/login/oauth/access_token')
+      ? json({ access_token: 'token' })
+      : json({ id: 42, login: 'operator', avatar_url: '' })) as typeof fetch;
+  const options = {
+    dbPath,
+    clientId: 'client-id',
+    clientSecret: 'client-secret',
+    publicOrigin: 'https://league.example',
+    fetch: request,
+  };
+
+  const configured = new AuthService({ ...options, operatorSubjects: ['42'] });
+  const firstFlow = configured.beginLogin();
+  const first = await configured.completeLogin('code', firstFlow.state, firstFlow.state, undefined);
+  assert.equal(first.session.user.role, 'operator');
+  configured.close();
+
+  const removed = new AuthService(options);
+  assert.equal(removed.session(first.sessionToken)?.user.role, 'contributor', 'existing sessions lose removed roles');
+  const secondFlow = removed.beginLogin();
+  const second = await removed.completeLogin('code', secondFlow.state, secondFlow.state, first.sessionToken);
+  assert.equal(second.session.user.role, 'contributor', 'a later login cannot restore an unconfigured operator');
+  removed.close();
+
+  const restored = new AuthService({ ...options, operatorSubjects: ['42'] });
+  assert.equal(restored.session(second.sessionToken)?.user.role, 'operator', 're-adding the subject restores the role');
+  restored.close();
+});
+
 test('service restart records interrupted experiments as failed', async (t) => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'vgcleague-auth-recovery-'));
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }));

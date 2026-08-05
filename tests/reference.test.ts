@@ -550,6 +550,25 @@ test('type-changing abilities convert Normal moves in the chart and matchup tool
   );
 });
 
+test('active matchup references apply visible defensive immunities', () => {
+  const reference = new ShowdownReference('gen9championsvgc2026regmb');
+  const chart = reference
+    .renderActiveMatchups(
+      [{ species: 'Swampert', moves: ['Earthquake'], ally: true, ability: 'Damp' }],
+      [{ species: 'Rotom-Heat', moves: [], ally: false, ability: 'Levitate' }],
+    )
+    .join('\n');
+  assert.match(chart, /Rotom-Heat immune via Levitate \(type chart super-effective \(4x\)\)/);
+  const moldBreaker = reference
+    .renderActiveMatchups(
+      [{ species: 'Excadrill', moves: ['Earthquake'], ally: true, ability: 'Mold Breaker' }],
+      [{ species: 'Rotom-Heat', moves: [], ally: false, ability: 'Levitate' }],
+    )
+    .join('\n');
+  assert.match(moldBreaker, /Rotom-Heat super-effective \(4x\)/);
+  assert.doesNotMatch(moldBreaker, /immune via Levitate/);
+});
+
 test('Unaware ignores attacker boosts in the damage estimate', () => {
   const reference = new ShowdownReference('gen9championsvgc2026regmb');
   const range = (result: string) => /(\d+(?:\.\d+)?-\d+(?:\.\d+)?)% of maximum HP/.exec(result)?.[1];

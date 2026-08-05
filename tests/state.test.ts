@@ -82,6 +82,98 @@ test('open team sheets follow active nicknames', () => {
   assert.doesNotMatch(rendered, /Tera Ground/);
 });
 
+test('battle damage binds open-sheet abilities and ignores fabricated caller state', () => {
+  const reference = new ShowdownReference('gen9championsvgc2026regmb');
+  const state = new BattleState('p1');
+  state.feed([
+    '|showteam|p2|Toaster|Rotom-Heat|SitrusBerry|Levitate|overheat,thunderbolt,protect|Timid|||||50',
+    '|switch|p2a: Toaster|Rotom-Heat, L50|100/100',
+  ]);
+  const request: BattleRequest = {
+    active: [{ moves: [{ move: 'Earthquake', id: 'earthquake', target: 'allAdjacent' }] }],
+    side: {
+      pokemon: [
+        {
+          ident: 'p1: Swampert',
+          details: 'Swampert, L50',
+          condition: '187/187',
+          active: true,
+          stats: { atk: 178, def: 130, spa: 103, spd: 130, spe: 112 },
+          moves: ['earthquake'],
+          item: 'swampertite',
+          ability: 'damp',
+        },
+      ],
+    },
+  };
+  const result = state.estimateDamage(
+    {
+      attacker: 'Swampert',
+      defender: 'Rotom-Heat',
+      move: 'Earthquake',
+      attacker_status: 'brn',
+      defender_ability: 'Pressure',
+      attacker_stats: { atk: 1 },
+    },
+    request,
+    reference,
+  );
+  assert.match(result, /defender Rotom-Heat \(Levitate\)/);
+  assert.match(result, /immune or absorbed by Levitate;.*4x.*; 0% damage/);
+  assert.doesNotMatch(result, /Pressure|burned|attacker_stats\.atk 1/);
+});
+
+test('copied abilities are explained and reset from the open sheet on switch', () => {
+  assert.deepEqual(
+    summarizeBattleEvents(['|-ability|p2a: Gardevoir|Mega Launcher|Trace|[from] ability: Trace|[of] p1a: Blastoise']),
+    ["Gardevoir's Trace copied Mega Launcher from Blastoise."],
+  );
+  const state = new BattleState('p1');
+  state.feed([
+    '|showteam|p2|Gardevoir||Gardevoirite|Trace|hypervoice,protect|Timid|||||50]Incineroar||SitrusBerry|Intimidate|fakeout,protect|Careful|||||50',
+    '|switch|p2a: Gardevoir|Gardevoir, L50|100/100',
+    '|-ability|p2a: Gardevoir|Mega Launcher|Trace|[from] ability: Trace|[of] p1a: Blastoise',
+    '|switch|p2a: Incineroar|Incineroar, L50|100/100',
+    '|switch|p2a: Gardevoir|Gardevoir, L50|100/100',
+  ]);
+  assert.match(state.render({}), /Gardevoir;.*ability Trace/);
+  assert.doesNotMatch(state.render({}), /Gardevoir;.*ability Mega Launcher/);
+});
+
+test('suppressed abilities stay suppressed in live damage context', () => {
+  const reference = new ShowdownReference('gen9championsvgc2026regmb');
+  const state = new BattleState('p1');
+  state.feed([
+    '|showteam|p2|Toaster|Rotom-Heat|SitrusBerry|Levitate|overheat,protect|Timid|||||50',
+    '|switch|p2a: Toaster|Rotom-Heat, L50|100/100',
+    '|-endability|p2a: Toaster|Levitate|[from] move: Gastro Acid',
+  ]);
+  const request: BattleRequest = {
+    active: [{ moves: [{ move: 'Earthquake', id: 'earthquake', target: 'allAdjacent' }] }],
+    side: {
+      pokemon: [
+        {
+          ident: 'p1: Swampert',
+          details: 'Swampert, L50',
+          condition: '187/187',
+          active: true,
+          stats: { atk: 178 },
+          moves: ['earthquake'],
+          ability: 'damp',
+        },
+      ],
+    },
+  };
+  const result = state.estimateDamage(
+    { attacker: 'Swampert', defender: 'Rotom-Heat', move: 'Earthquake' },
+    request,
+    reference,
+  );
+  assert.match(result, /defender Rotom-Heat \(ability suppressed\)/);
+  assert.match(result, /super-effective \(4x\)/);
+  assert.doesNotMatch(result, /absorbed by Levitate/);
+});
+
 test('Mega events preserve the detailschange forme', () => {
   const state = new BattleState('p1');
   state.feed([

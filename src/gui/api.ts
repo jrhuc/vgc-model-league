@@ -604,9 +604,21 @@ export interface LeagueTradeWindowDecisionView {
   fallback: boolean;
 }
 
+export interface LeagueTradeOfferView {
+  from: number;
+  to: number | null;
+  give: string | null;
+  get: string | null;
+  message: string | null;
+  accepted: boolean | null;
+  offerReasoning: string;
+  responseReasoning: string;
+}
+
 export interface LeagueTradeWindowView {
   afterWeek: number;
   complete: boolean;
+  offers: LeagueTradeOfferView[];
   decisions: LeagueTradeWindowDecisionView[];
 }
 

@@ -1,0 +1,22 @@
+minimumReleaseAge: 10080
+minimumReleaseAgeStrict: true
+minimumReleaseAgeIgnoreMissingTime: false
+minimumReleaseAgeExclude:
+  - postcss@8.5.23
+trustPolicy: no-downgrade
+trustPolicyIgnoreAfter: 525600
+trustLockfile: false
+blockExoticSubdeps: true
+ignoreScripts: true
+strictDepBuilds: true
+saveExact: true
+engineStrict: true
+autoInstallPeers: false
+verifyStoreIntegrity: true
+strictStorePkgContentCheck: true
+packageManagerStrictVersion: true
+registries:
+  default: https://registry.npmjs.org/
+overrides:
+  '@napi-rs/wasm-runtime': 1.1.6
+  postcss: 8.5.23

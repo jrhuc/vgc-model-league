@@ -22,7 +22,10 @@ The harness must provide:
 - Simulator-computed answers through tools: matchups, exact stats, damage,
   action order. Tools compute from the pinned simulator and their outputs must
   be complete — a tool result that omits a relevant interaction is worse than
-  no tool, because models build plans on it.
+  no tool, because models build plans on it. Battle damage estimates derive
+  visible abilities, items, exact own stats, opposing nature ranges, stages,
+  status, HP, screens, weather, and terrain from the authoritative battle
+  request and open sheets; caller claims cannot replace that state.
 - Format freshness. The Champions format postdates every current model's
   training cutoff, so the legal item list, per-species movepools, and changed
   mechanics are inlined or one lookup away. A human reads the rules of a new
@@ -51,6 +54,10 @@ The harness must never provide:
   measuring which ones overcome it is the point.
 - Steering through data. Never adjust board prices or example choices to nudge
   models toward play you consider correct.
+- Spectator flavor fed back as strategy. Franchise names may use roster-themed
+  wordplay after the draft is complete, but remain display-only metadata;
+  competitive prompts identify other seats by coach/model identity. A label
+  such as "Drought Dodgers" must not become evidence about weather choices.
 - Derived quantities the model can compute itself. Stating the budget and the
   rule that every slot must be filled is parity; computing the resulting
   ceiling and leading with it hands over an accounting frame.
@@ -110,5 +117,5 @@ still only benefits the runs after it.
 When a mode models a real-world format, implement the actual protocol rather
 than a convenient approximation, and check the vintage of any external data
 before adopting it. Where the recreation must deviate, name the deviation in
-the docs — see the trade window's free-agency-only rule in
+the docs — see the trade window's deliberately bounded one-offer trade phase in
 [Trade window](trade-window.md) for the pattern.

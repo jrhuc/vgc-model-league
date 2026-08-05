@@ -24,10 +24,10 @@ import { clip } from './value.js';
 
 const TEAMBUILD_PROMPT_POLICY = {
   systemTemplate: [
-    'You are {{model}}, coach of {{team}} in a Pokémon VGC draft league, format {{format}}.',
+    'You are {{model}}, a coach in a Pokémon VGC draft league, format {{format}}.',
     '',
     'You drafted a roster of {{picks}} Pokémon and keep it all season. Before every match you choose exactly 6 of them',
-    'and build each set from scratch. Your private draft note is supplied below as revisable context, not a constraint.',
+    'and build each set from scratch. Your current private roster notebook is supplied below as revisable context, not a constraint.',
     '',
     'FORMAT RULES',
     '- Doubles. Both coaches register 6 and bring 4 to each game; team sheets are open, so your opponent reads your',
@@ -46,7 +46,8 @@ const TEAMBUILD_PROMPT_POLICY = {
     '',
     'You have the Showdown dex tools. Use them while you build: check what an item or ability actually does here,',
     'what a spread outruns, and how hard an attack lands before you commit EVs to it. They compute from the',
-    'simulator this league runs on, so trust them over recollection — this game is newer than your training data.',
+    'simulator this league runs on. Trust the mechanics and factors each result explicitly says it applied;',
+    'a hypothetical damage result does not imply omitted abilities or field effects. This game is newer than your training data.',
     '',
     'Choose the 6 for this specific opponent and build their sets. Reply with JSON only, in this shape:',
     '{"team_plan": "<2-5 sentences on the matchup and how these six answer it>",',
@@ -56,8 +57,8 @@ const TEAMBUILD_PROMPT_POLICY = {
     'Exactly 6 entries in "sets", each one a board id from YOUR ROSTER below.',
   ],
   rosterHeading: 'YOUR ROSTER (board id | name | types | base stats | abilities | legal moves):',
-  opponentHeading: 'OPPONENT ROSTER — {{model}} of {{team}} (they pick 6 of these):',
-  draftNoteHeading: 'YOUR PRIVATE NOTE AT THE END OF THE DRAFT:',
+  opponentHeading: 'OPPONENT ROSTER — {{model}} (they pick 6 of these):',
+  draftNoteHeading: 'YOUR CURRENT PRIVATE ROSTER NOTE:',
   playoffContextHeading: 'YOUR PRIVATE CONTEXT FROM EARLIER LEAGUE MATCHES:',
   lockedItem: 'MUST hold {{item}}',
   noMega: 'cannot hold a Mega Stone',
@@ -112,8 +113,7 @@ export interface TeambuildRequest {
   stage: 'roundrobin' | 'playoff';
   model: string;
   opponentModel: string;
-  teamName: string;
-  opponentTeamName: string;
+  franchiseName: string;
   roster: DraftBoardMon[];
   opponentRoster: DraftBoardMon[];
   draftNote: string;
@@ -195,7 +195,6 @@ function legalItems(dex: DexLike): string[] {
 function systemPrompt(request: TeambuildRequest, dex: DexLike, evLimit: number, evMax: number): string {
   const values: Record<string, string> = {
     model: request.model,
-    team: request.teamName || request.model,
     format: request.format,
     picks: String(request.roster.length),
     evLimit: String(evLimit),
@@ -216,12 +215,7 @@ function userPrompt(request: TeambuildRequest, dex: DexLike): string {
   const lines: string[] = [TEAMBUILD_PROMPT_POLICY.rosterHeading];
   lines.push(...rosterBlock(dex, request.roster, true));
   if (request.draftNote) lines.push('', TEAMBUILD_PROMPT_POLICY.draftNoteHeading, request.draftNote);
-  lines.push(
-    '',
-    TEAMBUILD_PROMPT_POLICY.opponentHeading
-      .replace('{{model}}', request.opponentModel)
-      .replace('{{team}}', request.opponentTeamName || request.opponentModel),
-  );
+  lines.push('', TEAMBUILD_PROMPT_POLICY.opponentHeading.replace('{{model}}', request.opponentModel));
   lines.push(...rosterBlock(dex, request.opponentRoster, false));
   if (request.stage === 'playoff' && request.playoffContext.length) {
     lines.push(
@@ -580,7 +574,7 @@ export async function runTeambuild(request: TeambuildRequest, options: Teambuild
   };
   fs.appendFileSync(
     path.join(options.logDir, 'teambuild.jsonl'),
-    `${JSON.stringify({ model: request.model, team_name: request.teamName, ...view, packed, timestamp: new Date().toISOString() })}\n`,
+    `${JSON.stringify({ model: request.model, team_name: request.franchiseName, ...view, packed, timestamp: new Date().toISOString() })}\n`,
     'utf8',
   );
   return { packed, view };

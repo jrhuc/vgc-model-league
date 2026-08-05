@@ -810,6 +810,15 @@ test('one action-order call may accompany two standard calls in the single tool 
   });
   assert.equal(await action, 'move 1');
   assert.ok(provider.calls[0]!.options.tools?.some((tool) => tool.name === 'compare_action_order'));
+  const damageTool = provider.calls[0]!.options.tools?.find((tool) => tool.name === 'estimate_damage');
+  const damageProperties = damageTool?.parameters.properties as Record<string, unknown>;
+  assert.deepEqual(Object.keys(damageProperties).sort(), [
+    'attacker',
+    'defender',
+    'helping_hand',
+    'is_critical_hit',
+    'move',
+  ]);
   const replayed = provider.calls[1]!.messages.filter((message) => message.role === 'assistant').flatMap(
     (message) => message.toolCalls ?? [],
   );

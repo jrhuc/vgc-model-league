@@ -20,6 +20,7 @@ import { DEFAULT_TIMER_SCALE } from './timer.js';
 import type { TournamentEvent } from './tournament.js';
 import {
   DEFAULT_TRADE_WINDOW,
+  MAX_TRADE_SWAPS,
   readTradeWindow,
   runTradeWindow,
   type TradeWindowConfig,
@@ -29,7 +30,7 @@ import {
 import type { Pid } from './types.js';
 import { ordinal } from './value.js';
 
-export const DRAFT_PROTOCOL_VERSION = 4;
+export const DRAFT_PROTOCOL_VERSION = 7;
 
 export type DraftLeagueEvent = TournamentEvent | { type: 'draft'; draft: DraftView };
 
@@ -160,11 +161,15 @@ export async function runDraftLeague(
   if (tradeWindow && (!Number.isSafeInteger(tradeWindow.afterWeek) || tradeWindow.afterWeek < 1)) {
     throw new Error('trade window week must be a positive integer');
   }
+  if (tradeWindow && (!Number.isSafeInteger(tradeWindow.tradesAllowed) || tradeWindow.tradesAllowed < 0)) {
+    throw new Error('trade window trades allowed must be a non-negative integer');
+  }
   const entrants = stored ? stored.entrants : shuffle(models, random);
   const weeks = roundRobinWeeks(entrants.length);
   if (tradeWindow && tradeWindow.afterWeek > weeks.length) {
-    if (storedWindow === undefined && options.tradeWindow === undefined) tradeWindow = { afterWeek: weeks.length };
-    else throw new Error(`trade window week must be between 1 and ${weeks.length}`);
+    if (storedWindow === undefined && options.tradeWindow === undefined) {
+      tradeWindow = { afterWeek: weeks.length, tradesAllowed: DEFAULT_TRADE_WINDOW.tradesAllowed };
+    } else throw new Error(`trade window week must be between 1 and ${weeks.length}`);
   }
   const sequentialWeeks = stored
     ? stored.sequentialWeeks
@@ -288,7 +293,9 @@ export async function runDraftLeague(
           sequential_weeks: sequentialWeeks,
           closed_sheets: options.closedSheets === true,
           draft_only: draftOnly,
-          trade_window: tradeWindow ? { after_week: tradeWindow.afterWeek } : null,
+          trade_window: tradeWindow
+            ? { after_week: tradeWindow.afterWeek, trades_allowed: tradeWindow.tradesAllowed }
+            : null,
           entrants,
           team_names: teamNames,
           weeks: weeks.length,
@@ -321,7 +328,9 @@ export async function runDraftLeague(
       const nextConfig = {
         ...priorConfig,
         draft_only: false,
-        trade_window: tradeWindow ? { after_week: tradeWindow.afterWeek } : null,
+        trade_window: tradeWindow
+          ? { after_week: tradeWindow.afterWeek, trades_allowed: tradeWindow.tradesAllowed }
+          : null,
       };
       fs.writeFileSync(configPath, `${JSON.stringify(nextConfig, null, 2)}\n`, 'utf8');
     }
@@ -331,6 +340,9 @@ export async function runDraftLeague(
       psDir,
       logDir: path.join(runDir, 'draft'),
       rng: random,
+      rosterPolicy: tradeWindow
+        ? `- A mid-season transaction window opens after round-robin week ${tradeWindow.afterWeek}. Each coach may make up to ${tradeWindow.tradesAllowed} one-for-one coach-trade ${tradeWindow.tradesAllowed === 1 ? 'offer' : 'offers'}, then may make up to ${MAX_TRADE_SWAPS} free-agent swaps; the resulting roster is used for the rest of the season.`
+        : '- After the draft this roster is locked for the whole season: a round robin of best-of-three matches, then playoffs.',
       ...(options.reasoning === undefined ? {} : { reasoning: options.reasoning }),
       ...(options.reasoningByModel === undefined ? {} : { reasoningByModel: options.reasoningByModel }),
       ...(options.apiKeys === undefined ? {} : { apiKeys: options.apiKeys }),
@@ -340,7 +352,11 @@ export async function runDraftLeague(
         picks = [...picks, view];
         rosters = state.rosters;
         budgets = state.budgets;
-        teamNames = state.teamNames;
+        writeConfig();
+        options.onEvent?.({ type: 'draft', draft: draftView(false) });
+      },
+      onName: (_entrant, _teamName, state) => {
+        teamNames = [...state.teamNames];
         writeConfig();
         options.onEvent?.({ type: 'draft', draft: draftView(false) });
       },
@@ -421,8 +437,7 @@ export async function runDraftLeague(
         stage: plan.stage,
         model: entrants[entrant]!,
         opponentModel: entrants[opponent]!,
-        teamName: teamNames[entrant]!,
-        opponentTeamName: teamNames[opponent]!,
+        franchiseName: teamNames[entrant]!,
         roster: rosters[entrant]!,
         opponentRoster: rosters[opponent]!,
         draftNote: draftNotes[entrant]!,
@@ -461,8 +476,8 @@ export async function runDraftLeague(
       seriesIndex: plan.index,
       players,
       teams: {
-        p1: { id: `${teamNames[a] || entrants[a]} wk${plan.round}`, packed: home.packed },
-        p2: { id: `${teamNames[b] || entrants[b]} wk${plan.round}`, packed: away.packed },
+        p1: { id: `${entrants[a]} wk${plan.round}`, packed: home.packed },
+        p2: { id: `${entrants[b]} wk${plan.round}`, packed: away.packed },
       },
       initialNotebooks: {
         p1: initialBattleNotebook(home.view),
@@ -508,7 +523,9 @@ export async function runDraftLeague(
       round: plan.round,
       ...(plan.stage === 'playoff' ? { advanced: entrants[winnerSide === 'p1' ? a : b]! } : {}),
       board: board.id,
-      trade_window: tradeWindow ? { after_week: tradeWindow.afterWeek } : null,
+      trade_window: tradeWindow
+        ? { after_week: tradeWindow.afterWeek, trades_allowed: tradeWindow.tradesAllowed }
+        : null,
       ...(options.contributor === undefined ? {} : { contributor: options.contributor }),
       run_seed: seed,
       ps_commit: showdownCommit(psDir),
@@ -540,7 +557,7 @@ export async function runDraftLeague(
       const result = winnerSide ? (won ? 'beat' : 'lost to') : 'drew with';
       const summary =
         `${plan.stage === 'playoff' ? `Playoff round ${plan.round}` : `Round-robin week ${plan.round}`}: ${result} ` +
-        `${teamNames[opponent] || entrants[opponent]} ${score[side]}-${score[side === 'p1' ? 'p2' : 'p1']}`;
+        `${entrants[opponent]} ${score[side]}-${score[side === 'p1' ? 'p2' : 'p1']}`;
       const context = coaching ? playoffReview(summary, coaching[side].build, coaching[side].notebook) : summary;
       if (coaching || !playoffContext[entrant]!.has(plan.index)) {
         playoffContext[entrant]!.set(plan.index, context);
@@ -625,6 +642,7 @@ export async function runDraftLeague(
         runDir,
         psDir,
         afterWeek: tradeWindow.afterWeek,
+        tradesAllowed: tradeWindow.tradesAllowed,
         ...(options.reasoning === undefined ? {} : { reasoning: options.reasoning }),
         ...(options.reasoningByModel === undefined ? {} : { reasoningByModel: options.reasoningByModel }),
         ...(options.apiKeys === undefined ? {} : { apiKeys: options.apiKeys }),
@@ -644,7 +662,6 @@ export async function runDraftLeague(
       {
         board,
         models: entrants,
-        teamNames,
         picks,
         rosters,
         window: windowArtifact,
@@ -882,7 +899,7 @@ function loadStoredLeague(runDir: string): StoredLeague | undefined {
     draft_notes?: string[];
     sequential_weeks?: boolean;
     draft_only?: boolean;
-    trade_window?: { after_week?: number } | null;
+    trade_window?: { after_week?: number; trades_allowed?: number } | null;
   };
   if (config.mode !== 'draft') throw new Error(`${runDir} is not a draft league run`);
   if (!config.rosters) return undefined;
@@ -894,11 +911,16 @@ function loadStoredLeague(runDir: string): StoredLeague | undefined {
       ? config.draft_notes.map((note) => (typeof note === 'string' ? note : ''))
       : config.entrants.map(() => '');
   const afterWeek = config.trade_window?.after_week;
+  const tradesAllowed = config.trade_window?.trades_allowed;
   const tradeWindow =
     config.draft_only === true
       ? undefined
       : Number.isSafeInteger(afterWeek) && Number(afterWeek) > 0
-        ? { afterWeek: Number(afterWeek) }
+        ? {
+            afterWeek: Number(afterWeek),
+            tradesAllowed:
+              Number.isSafeInteger(tradesAllowed) && Number(tradesAllowed) >= 0 ? Number(tradesAllowed) : 0,
+          }
         : null;
   return {
     entrants: config.entrants,

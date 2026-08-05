@@ -14,6 +14,7 @@ import {
   legalPicks,
   loadBoard,
   maxAffordable,
+  parseFranchiseName,
   parsePick,
   runDraft,
   snakeOrder,
@@ -31,7 +32,10 @@ import { loadShowdown } from '../src/showdown.js';
 import { runTeambuild, teambuildScaffoldRevision } from '../src/teambuild.js';
 import {
   applyTradeDecision,
+  applyTradeOffer,
   parseTradeDecision,
+  parseTradeOffer,
+  parseTradeResponse,
   runTradeWindow,
   type TradeWindowState,
   tradeWindowScaffoldRevision,
@@ -240,6 +244,153 @@ test('trade-window swaps are atomic and may upgrade a base entry to its Mega', (
   assert.ok(!state.rosters[0]!.some((entry) => entry.id === tyranitar.id || entry.id === mrRime.id));
 });
 
+test('coach trades validate both rosters and apply an accepted exchange atomically', () => {
+  const state = {
+    board: { ...BOARD, picks: 2 },
+    models: ['test:a', 'test:b'],
+    teamNames: ['A', 'B'],
+    rosters: [
+      [mon('charizard-mega-y'), mon('absol')],
+      [mon('tyranitar'), mon('mr-rime')],
+    ],
+    budgets: [79, 83],
+    notebooks: ['', ''],
+    standings: [],
+    results: [[], []],
+    reflections: [[], []],
+  } satisfies TradeWindowState;
+  const parsed = parseTradeOffer(
+    JSON.stringify({
+      offer: { to: 1, give: 'charizard-mega-y', get: 'tyranitar', message: 'A direct exchange.' },
+      reasoning: 'Private valuation.',
+      notebook: 'Plan around Tyranitar.',
+    }),
+    state,
+    0,
+  );
+  assert.match(
+    String(
+      parseTradeOffer(
+        '{"offer":{"to":"1","give":"charizard-mega-y","get":"tyranitar","message":"A direct exchange."},"reasoning":"Private valuation.","notebook":"Plan around Tyranitar."}',
+        state,
+        0,
+      ),
+    ),
+    /entrant index/,
+  );
+  assert.notEqual(typeof parsed, 'string', String(parsed));
+  assert.deepEqual(parseTradeResponse('{"accept":true,"reasoning":"Worth it."}'), {
+    accept: true,
+    reasoning: 'Worth it.',
+  });
+  if (typeof parsed === 'string' || !parsed.offer) return;
+  applyTradeOffer(state, {
+    from: 0,
+    ...parsed.offer,
+    accepted: true,
+    offerReasoning: parsed.reasoning,
+    responseReasoning: 'Worth it.',
+  });
+  assert.deepEqual(
+    state.rosters[0]!.map((entry) => entry.id),
+    ['absol', 'tyranitar'],
+  );
+  assert.deepEqual(
+    state.rosters[1]!.map((entry) => entry.id),
+    ['mr-rime', 'charizard-mega-y'],
+  );
+  assert.equal(state.budgets[0], 85);
+  assert.equal(state.budgets[1], 77);
+});
+
+test('coach offers resolve before free agency and replay without model calls', async (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-coach-trades-'));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const cheap: DraftBoardMon[] = [];
+  const bases = new Set<string>();
+  for (const candidate of BOARD.mons) {
+    if (candidate.cost !== 1 || bases.has(candidate.base)) continue;
+    bases.add(candidate.base);
+    cheap.push(candidate);
+    if (cheap.length === 20) break;
+  }
+  assert.equal(cheap.length, 20);
+  const models = ['test:best', 'test:worst'];
+  const createState = (): TradeWindowState => ({
+    board: BOARD,
+    models,
+    teamNames: ['Best', 'Worst'],
+    rosters: [cheap.slice(0, 10), cheap.slice(10, 20)],
+    budgets: [90, 90],
+    notebooks: ['best', 'worst'],
+    standings: [
+      { entrant: 0, w: 1, l: 0, gw: 2, gl: 0 },
+      { entrant: 1, w: 0, l: 1, gw: 0, gl: 2 },
+    ],
+    results: [[], []],
+    reflections: [[], []],
+  });
+  const queues = new Map<string, string[]>([
+    [
+      models[1]!,
+      [
+        JSON.stringify({
+          offer: { to: 0, give: cheap[10]!.id, get: cheap[0]!.id, message: 'Swap role players?' },
+          reasoning: 'The exchange fits.',
+          notebook: 'Use the incoming role player.',
+        }),
+        JSON.stringify({ swaps: [], reasoning: 'Done.', notebook: 'Use the incoming role player.' }),
+      ],
+    ],
+    [
+      models[0]!,
+      [
+        JSON.stringify({ accept: true, reasoning: 'The exchange also fits us.' }),
+        JSON.stringify({ offer: null, reasoning: 'No outbound offer.', notebook: 'Keep the trade.' }),
+        JSON.stringify({ swaps: [], reasoning: 'Done.', notebook: 'Keep the trade.' }),
+      ],
+    ],
+  ]);
+  const artifact = await runTradeWindow(createState(), {
+    runDir: directory,
+    psDir: defaultPsDir(),
+    afterWeek: 1,
+    tradesAllowed: 1,
+    makeTradeProvider: (spec) => ({
+      complete(): Promise<Completion> {
+        const response = queues.get(spec)?.shift();
+        assert.ok(response, `unexpected call for ${spec}`);
+        return Promise.resolve({ text: response, usage: {}, toolCalls: [] });
+      },
+    }),
+  });
+  assert.equal(artifact.offers.length, 2, 'each seat has an offer-phase record');
+  assert.equal(artifact.offers[0]!.accepted, true);
+  assert.equal(artifact.offers[1]!.to, null);
+  assert.equal(artifact.rosters[0]!.roster.at(-1)?.id, cheap[10]!.id);
+  assert.equal(artifact.rosters[1]!.roster.at(-1)?.id, cheap[0]!.id);
+  assert.deepEqual(
+    loadRows(path.join(directory, 'window.jsonl')).map((row) => row.kind),
+    ['offer', 'offer', 'free_agency', 'free_agency'],
+  );
+
+  let replayCalls = 0;
+  const replayed = await runTradeWindow(createState(), {
+    runDir: directory,
+    psDir: defaultPsDir(),
+    afterWeek: 1,
+    tradesAllowed: 1,
+    makeTradeProvider: () => ({
+      complete(): Promise<Completion> {
+        replayCalls += 1;
+        throw new Error('replay must not call providers');
+      },
+    }),
+  });
+  assert.equal(replayCalls, 0);
+  assert.deepEqual(replayed, artifact);
+});
+
 test('the trade window runs lowest seed first and replays completed seats', async (t) => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-trade-window-'));
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
@@ -290,26 +441,23 @@ test('the trade window runs lowest seed first and replays completed seats', asyn
     reflections: [[], [], []],
   });
   const calls: string[] = [];
-  const systems = new Map<string, string>();
+  const prompts = new Map<string, string>();
   const firstState = createState();
   const artifact = await runTradeWindow(firstState, {
     runDir: directory,
     psDir: defaultPsDir(),
     afterWeek: 2,
     makeTradeProvider: (spec) => ({
-      complete(system: string): Promise<Completion> {
+      complete(system: string, messages: ProviderMessage[]): Promise<Completion> {
         calls.push(spec);
-        systems.set(spec, system);
+        prompts.set(spec, `${system}\n${messages[0]?.content ?? ''}`);
         return Promise.resolve({ text: JSON.stringify(responses.get(spec)), usage: {}, toolCalls: [] });
       },
     }),
   });
   assert.deepEqual(artifact.order, [2, 1, 0]);
-  assert.match(
-    systems.get(models[2]!) ?? '',
-    /coaching Worst /,
-    'a coach is named its own team, so it can find its row in the standings',
-  );
+  assert.match(prompts.get(models[2]!) ?? '', /You are test:worst, a coach/);
+  assert.doesNotMatch(prompts.get(models[2]!) ?? '', /Best|Middle|Worst/);
   assert.deepEqual(calls, [models[2], models[1], models[0]]);
   assert.equal(firstState.rosters[1]![9]?.id, initial[2]![0]!.id, 'an earlier drop becomes available immediately');
   assert.ok(fs.existsSync(path.join(directory, 'window.json')));
@@ -389,7 +537,7 @@ function scriptedProvider(responses: string[], onComplete?: (messages: ProviderM
   };
 }
 
-test('drafters get retries with feedback, and name their franchise on the first pick', async (t) => {
+test('drafters name their franchise only after every pick is complete', async (t) => {
   const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-draft-logs-'));
   t.after(() => fs.rmSync(logDir, { recursive: true, force: true }));
   let receivedReasoning = '';
@@ -400,16 +548,18 @@ test('drafters get retries with feedback, and name their franchise on the first 
     {
       logDir,
       rng: seededRng(1),
+      rosterPolicy: '- A test transaction window opens after week 2.',
       reasoningByModel: { 'fake:model': 'high' },
       makeDraftProvider: (_spec, _apiKey, reasoning) => {
         receivedReasoning = reasoning ?? '';
         return scriptedProvider(
           [
             'I will take {"pick": "not-a-mon", "team_name": "Nowhere Nidokings", "reasoning": "bad id", "notebook": "bad"}',
-            '{"pick": "garchomp", "team_name": "Route 210 Garchomps", "reasoning": "Best ground type available.", "notebook": "Build around Garchomp; add Fake Out and speed control."}',
+            '{"pick": "garchomp", "reasoning": "Best ground type available.", "notebook": "Build around Garchomp; add Fake Out and speed control."}',
             '{"pick": "incineroar", "reasoning": "Fake Out support.", "notebook": "Garchomp plus Incineroar; add speed control and redirection."}',
             '{"pick": "sinistcha", "reasoning": "Redirection.", "notebook": "Ground offense with pivoting and redirection; add speed control."}',
             '{"pick": "farigiraf", "reasoning": "Trick Room insurance.", "notebook": "Complete flexible Ground offense with priority denial and Trick Room."}',
+            '{"team_name":"Route 210 Garchomps"}',
           ],
           (messages) => prompts.push(String(messages.at(-1)?.content ?? '')),
         );
@@ -434,14 +584,40 @@ test('drafters get retries with feedback, and name their franchise on the first 
     .map((line) => JSON.parse(line) as Record<string, unknown>);
   assert.match(String(rows[0]!.error), /is not a board id/);
   assert.ok(String(rows[0]!.system).includes('DRAFT BOARD'), 'the board rides in the cacheable system prompt');
+  assert.match(String(rows[0]!.system), /test transaction window opens after week 2/);
+  assert.doesNotMatch(String(rows[0]!.system), /franchise name|Shadow Cabinet|Drought Dodgers/i);
 
   const transcript = fs
     .readFileSync(path.join(logDir, 'draft.jsonl'), 'utf8')
     .trim()
     .split('\n')
     .map((line) => JSON.parse(line) as Record<string, unknown>);
-  assert.equal(transcript[0]!.team_name, 'Route 210 Garchomps');
+  assert.equal(transcript[0]!.team_name, undefined);
   assert.equal(transcript[0]!.rationale, 'Best ground type available.');
+  const names = loadRows(path.join(logDir, 'franchise-names.jsonl'));
+  assert.equal(names.find((row) => row.entrant === 0)?.team_name, 'Route 210 Garchomps');
+  const namingLog = loadRows(path.join(logDir, 'namer-0-fake-model.jsonl'));
+  assert.match(String(namingLog[0]!.system), /The Shadow Cabinet/);
+  assert.match(String(namingLog[0]!.user), /Garchomp/);
+  assert.match(String(namingLog[0]!.user), /Farigiraf/);
+
+  let replayCalls = 0;
+  const replayed = await runDraft(
+    ['fake:model', 'random'],
+    { ...BOARD, picks: 4 },
+    {
+      logDir,
+      rng: seededRng(1),
+      makeDraftProvider: () => ({
+        complete(): Promise<Completion> {
+          replayCalls += 1;
+          throw new Error('completed picks and names must replay');
+        },
+      }),
+    },
+  );
+  assert.equal(replayCalls, 0);
+  assert.deepEqual(replayed.teamNames, outcome.teamNames);
 });
 
 test('a rejected pick is told which rule it broke', () => {
@@ -457,12 +633,16 @@ test('a rejected pick is told which rule it broke', () => {
 
   const reasons = ['nonsense-id', 'charizard-mega-y', 'garchomp-mega', 'basculegion'].map((id) => {
     const legal = legalPicks(state, 0);
-    const parsed = parsePick(JSON.stringify({ pick: id, reasoning: 'x', notebook: 'plan' }), legal, state, 0);
+    const parsed = parsePick(JSON.stringify({ pick: id, reasoning: 'x', notebook: 'plan' }), legal, state, 0, [
+      'fake:model',
+      'fake:rival',
+    ]);
     return typeof parsed === 'string' ? parsed : 'accepted';
   });
 
   assert.match(reasons[0]!, /is not a board id/);
-  assert.match(reasons[1]!, /already drafted by Rival Rotoms/);
+  assert.match(reasons[1]!, /already drafted by fake:rival/);
+  assert.doesNotMatch(reasons[1]!, /Rival Rotoms/);
   assert.match(reasons[2]!, /shares the species Garchomp with your Garchomp/);
   assert.equal(reasons[3], 'accepted', 'an affordable, untaken, unclashing pick is fine');
 
@@ -472,31 +652,24 @@ test('a rejected pick is told which rule it broke', () => {
   assert.match(String(denied), /costs 19, but you can spend at most \d+ points?/);
 });
 
-test('the first pick requires a franchise name', () => {
+test('picks do not request a franchise name and franchise names normalize separately', () => {
   const state = freshState();
   const legal = legalPicks(state, 0);
-  assert.match(String(parsePick('{"pick":"garchomp"}', legal, state, 0)), /team_name/);
   assert.notEqual(
-    typeof parsePick(
-      '{"pick":"garchomp","team_name":"Route 210 Garchomps","notebook":"Build around Garchomp"}',
-      legal,
-      state,
-      0,
-    ),
+    typeof parsePick('{"pick":"garchomp","notebook":"Build around Garchomp"}', legal, state, 0),
     'string',
   );
+  assert.deepEqual(parseFranchiseName(JSON.stringify({ team_name: '  Prankster\n  Paradise  ' })), {
+    teamName: 'Prankster Paradise',
+  });
+  assert.match(String(parseFranchiseName('{"team_name":""}')), /non-empty/);
 });
 
 test('a pick may be written as the board id or the name shown beside it', () => {
   const state = freshState();
   const legal = legalPicks(state, 0);
   for (const spelling of ['lucario-mega', 'Mega Lucario', 'mega-lucario', 'MEGA LUCARIO']) {
-    const parsed = parsePick(
-      JSON.stringify({ pick: spelling, team_name: 'Mega Evolutions', reasoning: 'x', notebook: 'plan' }),
-      legal,
-      state,
-      0,
-    );
+    const parsed = parsePick(JSON.stringify({ pick: spelling, reasoning: 'x', notebook: 'plan' }), legal, state, 0);
     assert.notEqual(typeof parsed, 'string', `${spelling} should resolve`);
     assert.equal(typeof parsed === 'string' ? '' : parsed.mon.id, 'lucario-mega');
   }
@@ -517,7 +690,7 @@ test('drafters can look up the dex before committing a pick', async (t) => {
       makeDraftProvider: () => ({
         complete(_system, messages, options): Promise<Completion> {
           call += 1;
-          offered = (options?.tools ?? []).map((tool) => tool.name);
+          if (options?.tools?.length) offered = options.tools.map((tool) => tool.name);
           if (call === 1) {
             return Promise.resolve({
               text: '',
@@ -750,7 +923,6 @@ test('transient upstream failures never spend a compliance attempt', async (t) =
 test('a pick written only in the reasoning channel is salvaged without another attempt', async (t) => {
   const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-draft-salvage-'));
   t.after(() => fs.rmSync(logDir, { recursive: true, force: true }));
-  let calls = 0;
   const outcome = await runDraft(
     ['fake:model', 'random'],
     { ...BOARD, picks: 4 },
@@ -759,7 +931,6 @@ test('a pick written only in the reasoning channel is salvaged without another a
       rng: seededRng(4),
       makeDraftProvider: () => ({
         complete(): Promise<Completion> {
-          calls += 1;
           return Promise.resolve({
             text: '',
             reasoning:
@@ -773,7 +944,8 @@ test('a pick written only in the reasoning channel is salvaged without another a
   );
   assert.equal(outcome.rosters[0]![0]!.id, 'garchomp');
   assert.equal(outcome.picks[0]!.fallback, false, 'the pick inside the reasoning is used directly');
-  assert.equal(calls, 10, 'the first pick salvages in one call; later picks reject the taken mon as usual');
+  const firstPickAttempts = loadRows(path.join(logDir, 'drafter-0-fake-model.jsonl')).filter((row) => row.pick === 1);
+  assert.equal(firstPickAttempts.length, 1, 'the first pick salvages in one call');
 });
 
 test('a quota failure pauses for recovery and resumes where it left off', async (t) => {
@@ -929,8 +1101,7 @@ function teambuildRequest(overrides: Record<string, unknown> = {}) {
     stage: 'roundrobin' as const,
     model: 'fake:model',
     opponentModel: 'fake:rival',
-    teamName: 'Test Tauros',
-    opponentTeamName: 'Rival Rotoms',
+    franchiseName: 'Test Tauros',
     roster: TEAMBUILD_ROSTER,
     opponentRoster: TEAMBUILD_ROSTER.slice(0, 10),
     draftNote: 'Flexible Ground offense with two speed-control modes.',
@@ -1031,22 +1202,25 @@ test('an accepted teambuild preserves fewer than four legal moves', async (t) =>
   assert.equal(view.sets[0]!.repaired, false);
 });
 
-test('the teambuild prompt carries the roster, the opponent, and only legal moves', async (t) => {
+test('the teambuild prompt uses coach identities and never franchise names', async (t) => {
   const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-teambuild-prompt-'));
   t.after(() => fs.rmSync(logDir, { recursive: true, force: true }));
   let prompt = '';
-  await runTeambuild(teambuildRequest({ stage: 'playoff', playoffContext: ['Week 1: beat Rival Rotoms 2-0'] }), {
+  await runTeambuild(teambuildRequest({ stage: 'playoff', playoffContext: ['Week 1: beat fake:rival 2-0'] }), {
     logDir,
     rng: seededRng(1),
-    makeTeambuildProvider: () =>
-      scriptedProvider([GOOD_TEAM], (messages) => {
-        prompt = messages[0]!.content ?? '';
-      }),
+    makeTeambuildProvider: () => ({
+      complete(system, messages): Promise<Completion> {
+        prompt = `${system}\n${messages[0]!.content ?? ''}`;
+        return Promise.resolve({ text: GOOD_TEAM, usage: {}, toolCalls: [] });
+      },
+    }),
   });
   assert.ok(prompt.includes('YOUR ROSTER'), 'the model sees its roster');
-  assert.ok(prompt.includes('Rival Rotoms'), 'and who it is playing');
+  assert.ok(prompt.includes('fake:rival'), 'and which coach it is playing');
+  assert.doesNotMatch(prompt, /Test Tauros|Rival Rotoms/);
   assert.ok(prompt.includes('Flexible Ground offense'), 'and its final private draft note');
-  assert.ok(prompt.includes('Week 1: beat Rival Rotoms 2-0'), 'playoff builders receive earlier match context');
+  assert.ok(prompt.includes('Week 1: beat fake:rival 2-0'), 'playoff builders receive earlier match context');
   assert.ok(prompt.includes('MUST hold Charizardite Y'), 'the mega lock is stated');
   assert.match(
     prompt,
@@ -1215,7 +1389,7 @@ test('a full draft league drafts, plays weekly rounds, and crowns a champion', a
     assert.equal(row.draft_scaffold, draftScaffoldRevision());
     assert.equal(row.teambuild_scaffold, teambuildScaffoldRevision());
     assert.equal(row.window_scaffold, tradeWindowScaffoldRevision());
-    assert.deepEqual(row.trade_window, { after_week: 3 });
+    assert.deepEqual(row.trade_window, { after_week: 3, trades_allowed: 1 });
   }
 
   const config = JSON.parse(fs.readFileSync(path.join(directory, 'config.json'), 'utf8')) as Record<string, unknown>;
@@ -1223,7 +1397,11 @@ test('a full draft league drafts, plays weekly rounds, and crowns a champion', a
   assert.equal(config.weeks, 3);
   assert.equal(config.sequential_weeks, false, 'round-robin series run concurrently by default');
   assert.equal(config.closed_sheets, false, 'the stock format keeps its open team sheets by default');
-  assert.deepEqual(config.trade_window, { after_week: 3 }, 'mid-season free agency is the default');
+  assert.deepEqual(
+    config.trade_window,
+    { after_week: 3, trades_allowed: 1 },
+    'coach trades and free agency are the default',
+  );
   assert.deepEqual(config.draft_notes, ['', '', '', '']);
   const rosters = config.rosters as string[][];
   assert.equal(rosters.length, 4);
@@ -1237,10 +1415,13 @@ test('a full draft league drafts, plays weekly rounds, and crowns a champion', a
   const window = JSON.parse(fs.readFileSync(path.join(directory, 'window.json'), 'utf8')) as {
     after_week: number;
     order: number[];
+    offers: Array<{ to: number | null }>;
     decisions: Array<{ swaps: unknown[] }>;
   };
   assert.equal(window.after_week, 3);
   assert.equal(window.decisions.length, 4);
+  assert.equal(window.offers.length, 4);
+  assert.ok(window.offers.every((offer) => offer.to === null));
   assert.ok(window.decisions.every((decision) => decision.swaps.length === 0));
   assert.equal(window.order.length, 4);
 
@@ -1345,7 +1526,11 @@ test('a two-coach league plays one week and a single final', async (t) => {
   const config = JSON.parse(fs.readFileSync(path.join(directory, 'config.json'), 'utf8')) as Record<string, unknown>;
   assert.equal(config.sequential_weeks, true);
   assert.equal(config.closed_sheets, true);
-  assert.deepEqual(config.trade_window, { after_week: 1 }, 'short leagues clamp the default to their final week');
+  assert.deepEqual(
+    config.trade_window,
+    { after_week: 1, trades_allowed: 1 },
+    'short leagues clamp the default to their final week',
+  );
   for (const row of rows) assert.equal(row.closed_sheets, true, 'series records carry the sheet rule');
   const gameLog = fs.readFileSync(path.join(directory, 'series', String(rows[0]!.series_id), 'game-1.log'), 'utf8');
   assert.ok(!gameLog.includes('|showteam|'), 'closed-sheet games publish no team sheets');
@@ -1383,7 +1568,11 @@ test('a draft-only league stops at the rosters and resumes into a full season', 
   const promoted = JSON.parse(fs.readFileSync(path.join(directory, 'config.json'), 'utf8')) as Record<string, unknown>;
   assert.deepEqual(promoted.rosters, config.rosters, 'the drafted rosters carry into the season');
   assert.equal(promoted.draft_only, false, 'a resumed draft-only run is a season');
-  assert.deepEqual(promoted.trade_window, { after_week: 1 }, 'the resumed season chooses a window like a fresh one');
+  assert.deepEqual(
+    promoted.trade_window,
+    { after_week: 1, trades_allowed: 1 },
+    'the resumed season chooses a window like a fresh one',
+  );
   assert.equal(promoted.draft_scaffold, config.draft_scaffold, 'a resume keeps the draft it already ran on record');
   assert.ok(fs.existsSync(path.join(directory, 'window.json')), 'the chosen window opens');
   assert.equal(played[0]!.stage, 'roundrobin');
@@ -1404,6 +1593,10 @@ test('the board is published price-descending the way a draft league publishes o
 
 test('the draft prompt states budget rules without computing a ceiling for the coach', () => {
   const state = freshState();
+  state.teamNames[1] = 'Drought Dodgers';
+  state.rosters[1] = [mon('charizard-mega-y')];
+  state.taken.set('charizard-mega-y', 1);
+  state.budgets[1] = state.budgets[1]! - mon('charizard-mega-y').cost;
   const prompt = draftUserPrompt(state, 0, ['fake:model', 'random'], 0, '');
   assert.ok(!/most you can spend/.test(prompt), 'the harness does not compute an affordable ceiling');
   assert.match(prompt, /every remaining slot has to be filled/, 'the budget rule is still stated');
@@ -1412,6 +1605,8 @@ test('the draft prompt states budget rules without computing a ceiling for the c
     'roster context comes before the budget line',
   );
   assert.ok(!/roster plan and needs/.test(prompt), 'the notebook does not prescribe a needs list');
+  assert.match(prompt, /random/);
+  assert.doesNotMatch(prompt, /Drought Dodgers/);
 });
 
 test('season reviews are written once per coach and replayed on resume', async (t) => {
@@ -1421,7 +1616,6 @@ test('season reviews are written once per coach and replayed on resume', async (
   const state: SeasonReviewState = {
     board: BOARD,
     models,
-    teamNames: ['Champion', 'Eliminated'],
     picks: [
       { pick: 0, entrant: 0, mon: mon('charizard-mega-y').id, rationale: 'Sun opener.', fallback: false },
       { pick: 1, entrant: 1, mon: mon('tyranitar').id, rationale: 'Sand anchor.', fallback: false },
@@ -1430,6 +1624,7 @@ test('season reviews are written once per coach and replayed on resume', async (
     window: {
       after_week: 3,
       order: [1, 0],
+      offers: [],
       decisions: [
         { entrant: 1, model: models[1]!, swaps: [], reasoning: 'Kept it.', notebook: '', fallback: false },
         {
@@ -1447,7 +1642,7 @@ test('season reviews are written once per coach and replayed on resume', async (
       { entrant: 0, w: 1, l: 0, gw: 2, gl: 0 },
       { entrant: 1, w: 0, l: 1, gw: 0, gl: 2 },
     ],
-    series: [['Round-robin week 1: beat Eliminated 2-0'], ['Round-robin week 1: lost to Champion 0-2']],
+    series: [['Round-robin week 1: beat test:eliminated 2-0'], ['Round-robin week 1: lost to test:champion 0-2']],
     notebooks: ['champion plan', 'eliminated plan'],
   };
   const prompts = new Map<string, string>();
@@ -1480,11 +1675,8 @@ test('season reviews are written once per coach and replayed on resume', async (
   );
   assert.ok(reviews.every((review) => !review.fallback));
   assert.match(prompts.get(models[0]!) ?? '', /Traded up\./);
-  assert.match(
-    prompts.get(models[1]!) ?? '',
-    /coaching Eliminated /,
-    'a coach is named its own team, so it can find its row in the standings',
-  );
+  assert.match(prompts.get(models[1]!) ?? '', /You are test:eliminated, a coach/);
+  assert.doesNotMatch(prompts.get(models[1]!) ?? '', /Champion|Eliminated/);
   assert.match(prompts.get(models[1]!) ?? '', /You made no swaps/);
   assert.match(prompts.get(models[1]!) ?? '', /Sand anchor\./);
   assert.equal(loadRows(path.join(directory, 'season.jsonl')).length, 2);
@@ -1568,7 +1760,10 @@ test('search_board filters the board by price, type, ability, and legal movepool
   for (const id of cheapFireIds) {
     const entry = mon(id);
     assert.ok(entry.cost <= 10, `${id} respects max_cost`);
-    assert.ok(entry.types.some((type) => type.toLowerCase() === 'fire'), `${id} is Fire`);
+    assert.ok(
+      entry.types.some((type) => type.toLowerCase() === 'fire'),
+      `${id} is Fire`,
+    );
   }
 
   const fakeOut = ids(search.run({ learns: 'Fake Out', limit: 100 }));
@@ -1597,7 +1792,11 @@ test('search_board sorts by price by default and reaches entries the board burie
 
   const byName = search.run({ sort: 'name', limit: 100 }).split('\n').slice(1);
   const names = byName.map((line) => line.split(' | ')[2]!);
-  assert.deepEqual(names, [...names].sort((a, b) => a.localeCompare(b)), 'name sort is alphabetical');
+  assert.deepEqual(
+    names,
+    [...names].sort((a, b) => a.localeCompare(b)),
+    'name sort is alphabetical',
+  );
 
   const bst = search.run({ min_bst: 600, limit: 100 });
   assert.ok(ids(bst).length > 0, 'the base stat filter returns entries');

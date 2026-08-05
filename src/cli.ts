@@ -353,7 +353,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
           sequential_weeks?: boolean;
           closed_sheets?: boolean;
           draft_only?: boolean;
-          trade_window?: { after_week?: number } | null;
+          trade_window?: { after_week?: number; trades_allowed?: number } | null;
         })
       : undefined;
     const models = storedConfig
@@ -378,7 +378,14 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
       storedConfig && storedConfig.draft_only !== true
         ? storedConfig.trade_window === undefined || storedConfig.trade_window === null
           ? null
-          : { afterWeek: positiveInteger('trade-window', String(storedConfig.trade_window.after_week)) }
+          : {
+              afterWeek: positiveInteger('trade-window', String(storedConfig.trade_window.after_week)),
+              tradesAllowed:
+                Number.isSafeInteger(storedConfig.trade_window.trades_allowed) &&
+                Number(storedConfig.trade_window.trades_allowed) >= 0
+                  ? Number(storedConfig.trade_window.trades_allowed)
+                  : 0,
+            }
         : undefined;
     const tradeWindowValue =
       storedWindow !== undefined
@@ -387,7 +394,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
           ? undefined
           : values['trade-window'] === 'off'
             ? null
-            : { afterWeek: positiveInteger('trade-window', values['trade-window']) };
+            : { afterWeek: positiveInteger('trade-window', values['trade-window']), tradesAllowed: 1 };
     const runDir = resumeDir ?? makeRunDirectory();
     armModelOverrides(runDir);
     let lastTeambuilds = 0;

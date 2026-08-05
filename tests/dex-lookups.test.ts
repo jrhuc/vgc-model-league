@@ -136,10 +136,7 @@ test('search_board is offered and dispatched only when a board search is supplie
   const calls: { messages: ProviderMessage[]; options?: CompleteOptions }[] = [];
   const lookups: { name: string; result: string }[] = [];
   const completion = await completeWithDexTools({
-    provider: scriptedProvider(
-      [reply({ toolCalls: [toolCall] }), reply({ text: '{"pick": "incineroar"}' })],
-      calls,
-    ),
+    provider: scriptedProvider([reply({ toolCalls: [toolCall] }), reply({ text: '{"pick": "incineroar"}' })], calls),
     system: 'sys',
     messages: [{ role: 'user', content: 'pick' }],
     spec: 'test:model',

@@ -2,22 +2,34 @@
 
 ## Install
 
-Use Node.js 22.13 or later.
+Use Node.js 24.18.1 and pnpm 11.11.0. If pnpm is not installed yet, bootstrap
+that exact version without lifecycle scripts:
 
 ```sh
-npm install
-npm run setup:showdown
-npm run build
+npm install --global pnpm@11.11.0 --ignore-scripts --no-audit --no-fund
+pnpm install --frozen-lockfile
+pnpm run setup:showdown
+pnpm run build
 ```
 
 `setup:showdown` installs the Pokémon Showdown revision in
-`showdown.lock.json`. Each build checks this revision.
+`showdown.lock.json`. Each build checks this revision and its compiled output.
+The project configuration requires exact dependencies, verifies lockfile and
+store content, waits seven days before admitting ordinary new releases, blocks
+exotic transitive sources, and disables dependency lifecycle scripts. The one
+release-age exception is an exact security-patched PostCSS version.
+
+Showdown is the deliberate special case: setup fetches only its official,
+full-commit pin, installs its upstream npm lock with lifecycle scripts disabled,
+runs its named build script explicitly, then removes everything except the one
+external package the simulator and room timer need at runtime. This project
+does not install or run Showdown's HTTP server dependencies.
 
 Use these commands to review or update the pinned revision:
 
 ```sh
-npm run check:showdown-update
-npm run update:showdown
+pnpm run check:showdown-update
+pnpm run update:showdown
 ```
 
 The update command builds and tests the candidate revision. It restores the
@@ -30,13 +42,13 @@ legal-action baseline. CLI runs read provider keys from environment variables.
 GUI runs use the keys that you enter in the browser.
 
 ```sh
-npm run vgcleague -- gui
-npm run vgcleague -- selfcheck
+pnpm run vgcleague -- gui
+pnpm run vgcleague -- selfcheck
 
-npm run vgcleague -- rotation   --models <spec> <spec> --pool regmb-202607 --series-per-pair 4
-npm run vgcleague -- tournament --models <spec> <spec> <spec> <spec> --pool regmb-202607
-npm run vgcleague -- draft      --models <spec> <spec> <spec> <spec> --board regmb-202607
-npm run vgcleague -- exhibition --opponent <spec>
+pnpm run vgcleague -- rotation   --models <spec> <spec> --pool regmb-202607 --series-per-pair 4
+pnpm run vgcleague -- tournament --models <spec> <spec> <spec> <spec> --pool regmb-202607
+pnpm run vgcleague -- draft      --models <spec> <spec> <spec> <spec> --board regmb-202607
+pnpm run vgcleague -- exhibition --opponent <spec>
 ```
 
 The GUI provides the default flow for one match. `selfcheck` runs one
@@ -74,13 +86,15 @@ which picks its free-agency window from `--trade-window` like a fresh league
 because a draft-only run never held one. The GUI offers the same choice as the
 run scope on the draft form.
 
-Draft leagues open a free-agent window after week 3 by default, or after the
+Draft leagues open a trade window after week 3 by default, or after the
 final round-robin week when a shorter league has fewer than three weeks.
-Lowest seed chooses first; each coach atomically submits zero to six
-drop-and-add swaps from the undrafted board while keeping the original roster
-size and budget. Earlier drops become available to later coaches. Use
+Lowest seed chooses first. Each coach may make one 1-for-1 offer to another
+coach, resolved immediately by that counterparty, before atomically submitting
+zero to six drop-and-add swaps from the undrafted board. Unequal-price trades
+are legal when both resulting rosters remain within budget; earlier trades and
+drops are visible to later coaches. Use
 `--trade-window <week>` to move the barrier or `--trade-window off` for the
-locked-roster control. Coach-to-coach offers are not part of this mode. See
+locked-roster control. See
 [Trade window](trade-window.md) for the full rules and provenance.
 
 When a coach's season ends — missing the playoff cut, losing a semifinal or the
@@ -99,10 +113,19 @@ one. Coaches also get `search_board` during the draft and the free-agent
 window, which filters and re-sorts it by type, price range, ability, base stat
 total, or which entries legally learn a given move.
 
-Draft coaches carry a private roster note across their picks. Each matchup's
-teambuild plan carries into its own best-of-three. Round-robin matchups do not
-share notes or results; playoff coaches receive their own earlier builds,
-results, and final battle notes.
+Draft coaches carry a private roster note across their picks. A transaction
+window replaces that note with the coach's updated plan for later matchups.
+Each matchup's teambuild plan carries into its own best-of-three. Round-robin
+matchups do not otherwise share notes or results; playoff coaches receive
+their own earlier builds, results, and final battle notes.
+
+After the last draft pick, each model names its finished franchise in a
+separate presentation-only turn. These names appear in the GUI, CLI, records,
+and archive, but models see coach/model identities—not franchise names—during
+drafting, matchup preparation, trades, battles, reflections, and season
+reviews. Naming writes `draft/franchise-names.jsonl`; completed names replay on
+resume without another model call. Older runs whose first picks contain
+`team_name` remain readable.
 
 OpenRouter model specs pass variant suffixes through unchanged, so
 `openrouter:<model>:nitro` requests throughput-sorted routing. `--nitro` (or
@@ -123,7 +146,7 @@ results.
 Build a pool from Poképaste sources:
 
 ```sh
-npm run build-pool -- teams/<pool>/sources.json
+pnpm run build-pool -- teams/<pool>/sources.json
 ```
 
 You can also paste Showdown teambuilder exports into the GUI pool manager. The
@@ -133,14 +156,14 @@ Draft boards are immutable snapshots in `boards/<board>.json`. Build a board
 from a team pool:
 
 ```sh
-npm run build-board -- <pool>
+pnpm run build-board -- <pool>
 ```
 
 ## Inspect evidence
 
 ```sh
-npm run vgcleague -- standings --pool regmb-202607
-npm run vgcleague -- report    --pool regmb-202607
+pnpm run vgcleague -- standings --pool regmb-202607
+pnpm run vgcleague -- report    --pool regmb-202607
 ```
 
 The GUI archives finished runs: draft leagues under **Draft leagues** (rosters,
@@ -161,7 +184,7 @@ record of a season but only the published subset is ever queried, so cold runs
 do not belong on the production volume.
 
 ```sh
-npm run archive-run -- <run-id> [<run-id>...]
+pnpm run archive-run -- <run-id> [<run-id>...]
 ```
 
 Each run packs into `$VGC_RUN_ARCHIVE_DIR` (default `~/vgc-run-archive`) as a
@@ -181,9 +204,9 @@ already holds backfills any game logs it is missing.
 export VGC_LEAGUE_PUBLISH_ORIGIN=https://<deployment>
 export VGC_LEAGUE_IMPORT_TOKEN=<operator-secret>
 
-npm run vgcleague -- publish --dry-run
-npm run vgcleague -- publish
-npm run vgcleague -- publish --pool regmb-202607
+pnpm run vgcleague -- publish --dry-run
+pnpm run vgcleague -- publish
+pnpm run vgcleague -- publish --pool regmb-202607
 ```
 
 The command does not add a series that the deployment already has. Without
@@ -196,4 +219,3 @@ pool. The deployment must use the same import token. See
 The host creates an agent workspace in `runs/<run>/agent/` by default. The
 workspace contains `seat.mjs`, `SEAT.md`, and a connection token. Start the
 terminal agent in that directory.
-

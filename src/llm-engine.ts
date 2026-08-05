@@ -171,7 +171,24 @@ const ACTION_ORDER_TOOL: ToolDefinition = {
   },
 };
 
-const DECISION_TOOLS = [...DEX_TOOLS, ACTION_ORDER_TOOL];
+const DECISION_TOOLS = [
+  ...DEX_TOOLS.map((tool) => {
+    if (tool.name !== 'estimate_damage') return tool;
+    const properties = tool.parameters.properties as Record<string, unknown>;
+    return {
+      ...tool,
+      description:
+        'Estimate damage using the current battle request and open team sheets. Supply only the two visible Pokémon and move; the harness applies known abilities, items, exact own stats, opposing nature ranges, boosts, status, HP, screens, weather, and terrain. Helping Hand and critical-hit flags are optional hypothetical modifiers.',
+      parameters: {
+        ...tool.parameters,
+        properties: Object.fromEntries(
+          ['attacker', 'defender', 'move', 'helping_hand', 'is_critical_hit'].map((name) => [name, properties[name]]),
+        ),
+      },
+    };
+  }),
+  ACTION_ORDER_TOOL,
+];
 
 /** reasoning_tokens is a breakdown of output_tokens, so summing input and output covers the full spend. */
 function totalTokens(usage: Record<string, number> | undefined): number {
@@ -541,7 +558,7 @@ export class LLMEngine extends BaseEngine {
     const renderedState = this.state.render(request, (mon) => this.reference.describeCompact(mon));
     const speed = request.teamPreview ? '' : this.state.renderEffectiveSpeeds(this.reference);
     const state = speed ? `${renderedState}\n${speed}` : renderedState;
-    const sides = this.state.activeMatchupSides();
+    const sides = this.state.activeMatchupSides(this.reference);
     const matchups = this.reference.renderActiveMatchups(
       [...sides.allies, ...sides.foes],
       [...sides.foes, ...sides.allies],
@@ -751,7 +768,9 @@ export class LLMEngine extends BaseEngine {
                 ? `[identical to an earlier call this decision] ${cached}`
                 : call.name === ACTION_ORDER_TOOL.name
                   ? this.state.compareActionOrder(call.arguments, this.reference)
-                  : this.reference.lookup(call.name, call.arguments);
+                  : call.name === 'estimate_damage'
+                    ? this.state.estimateDamage(call.arguments, request, this.reference)
+                    : this.reference.lookup(call.name, call.arguments);
             if (cached === undefined) seenToolResults.set(seenKey, result);
             toolCalls.push({ name: call.name, arguments: call.arguments, result });
             messages.push(toolResultMessage(call.id, result));

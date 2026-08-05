@@ -66,6 +66,7 @@ export class AuthService {
     this.operatorSubjects = new Set(options.operatorSubjects ?? []);
     this.db.exec('PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000;');
     this.migrate();
+    this.reconcileOperators();
     this.recoverInterruptedExperiments();
   }
 
@@ -192,7 +193,7 @@ export class AuthService {
              login = excluded.login,
              avatar_url = excluded.avatar_url,
              updated_at = excluded.updated_at,
-             role = CASE WHEN excluded.role = 'operator' THEN 'operator' ELSE users.role END
+             role = excluded.role
            RETURNING id, provider_subject, login, avatar_url, role`,
         )
         .get(subject, login, avatarUrl, role, timestamp, timestamp) as Record<string, unknown>;
@@ -323,6 +324,21 @@ export class AuthService {
     const timestamp = this.now();
     this.db.prepare('DELETE FROM oauth_flows WHERE expires_at <= ?').run(timestamp);
     this.db.prepare('DELETE FROM sessions WHERE expires_at <= ?').run(timestamp);
+  }
+
+  private reconcileOperators(): void {
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      this.db.prepare("UPDATE users SET role = 'contributor' WHERE role = 'operator'").run();
+      const promote = this.db.prepare(
+        "UPDATE users SET role = 'operator' WHERE provider = 'github' AND provider_subject = ?",
+      );
+      for (const subject of this.operatorSubjects) promote.run(subject);
+      this.db.exec('COMMIT');
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
   }
 
   private insertAudit(

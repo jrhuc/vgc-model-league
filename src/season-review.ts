@@ -22,21 +22,21 @@ import { clip } from './value.js';
 
 const SEASON_REVIEW_PROMPT_POLICY = {
   systemTemplate: [
-    'You are {{model}}, coaching {{team}} in a Pokémon VGC draft league played in the format {{format}}. Your season is over.',
+    'You are {{model}}, a coach in a Pokémon VGC draft league played in the format {{format}}. Your season is over.',
     '',
     'This is a retrospective, not a decision. Nothing you write changes a result; it is published on your team page.',
-    '- Judge the whole season: the roster you drafted, what you did with the free-agency window, the six you registered for each series, and how you piloted them.',
+    '- Judge the whole season: the roster you drafted, what you did with coach trades and free agency, the six you registered for each series, and how you piloted them.',
     '- Say which of those three a result belongs to. A series lost to a hole no registration could cover is a draft or window result, not a piloting one, and the reverse also holds.',
-    '- Name the specific picks, swaps, and games that decided your season. General principles about VGC are not an answer.',
+    '- Name the specific picks, trades, swaps, and games that decided your season. General principles about VGC are not an answer.',
     '- Credit what you got right as plainly as what you got wrong. A season that went well still had weak spots, and a season that went badly still had sound calls.',
     '- Keeping a roster unchanged at the window was a decision like any other; judge it as one.',
     '',
     'You have the same Showdown dex tools as during the draft. Use them only to check a fact you intend to state.',
   ],
   outcomeHeading: 'HOW YOUR SEASON ENDED:',
-  standingsHeading: 'FINAL LEAGUE STANDINGS (rank | team | W-L | games):',
+  standingsHeading: 'FINAL LEAGUE STANDINGS (rank | coach | W-L | games):',
   draftHeading: 'YOUR DRAFT (pick | name | cost | your reasoning at the time):',
-  windowHeading: 'YOUR FREE-AGENCY WINDOW:',
+  windowHeading: 'YOUR MID-SEASON TRADE WINDOW:',
   rosterHeading: 'YOUR FINAL ROSTER:',
   seasonHeading: 'YOUR SERIES, IN ORDER:',
   wordsHeading: 'YOUR PRIVATE WORDS:',
@@ -70,7 +70,6 @@ export interface SeasonReview {
 export interface SeasonReviewState {
   board: DraftBoard;
   models: string[];
-  teamNames: string[];
   picks: DraftPickView[];
   rosters: DraftBoardMon[][];
   window: TradeWindowArtifact | undefined;
@@ -152,7 +151,6 @@ export function parseSeasonReview(response: string): ParsedSeasonReview | string
 function systemPrompt(state: SeasonReviewState, entrant: number): string {
   const values: Record<string, string> = {
     model: state.models[entrant]!,
-    team: state.teamNames[entrant] || state.models[entrant]!,
     format: state.board.format,
   };
   return SEASON_REVIEW_PROMPT_POLICY.systemTemplate
@@ -175,9 +173,7 @@ function userPrompt(state: SeasonReviewState, entrant: number, outcome: string):
     SEASON_REVIEW_PROMPT_POLICY.standingsHeading,
   ];
   for (const [rank, row] of state.standings.entries()) {
-    lines.push(
-      `${rank + 1}. ${state.teamNames[row.entrant] || state.models[row.entrant]} | ${row.w}-${row.l} | ${row.gw}-${row.gl}`,
-    );
+    lines.push(`${rank + 1}. ${state.models[row.entrant]} | ${row.w}-${row.l} | ${row.gw}-${row.gl}`);
   }
 
   lines.push('', SEASON_REVIEW_PROMPT_POLICY.draftHeading);
@@ -198,6 +194,25 @@ function userPrompt(state: SeasonReviewState, entrant: number, outcome: string):
     lines.push(
       `- The window opened after week ${state.window.after_week}, with coaches choosing in inverse standings order.`,
     );
+    for (const offer of state.window.offers) {
+      if (offer.from === entrant) {
+        if (offer.to === null || offer.give === null || offer.get === null) {
+          lines.push(`- You made no coach-trade offer. Your reasoning: ${offer.offerReasoning || '(none recorded)'}`);
+        } else {
+          const team = state.models[offer.to];
+          lines.push(
+            `- You offered ${name(offer.give)} for ${name(offer.get)} from ${team}; ${offer.accepted ? 'accepted' : 'declined'}. ` +
+              `Your message: ${offer.message || '(none recorded)'}. Your reasoning: ${offer.offerReasoning || '(none recorded)'}`,
+          );
+        }
+      } else if (offer.to === entrant && offer.give !== null && offer.get !== null) {
+        const team = state.models[offer.from];
+        lines.push(
+          `- ${team} offered you ${name(offer.give)} for ${name(offer.get)}; you ${offer.accepted ? 'accepted' : 'declined'}. ` +
+            `Its message: ${offer.message || '(none recorded)'}. Your response reasoning: ${offer.responseReasoning || '(none recorded)'}`,
+        );
+      }
+    }
     if (!decision) lines.push('- (no stored decision)');
     else {
       lines.push(
@@ -211,7 +226,7 @@ function userPrompt(state: SeasonReviewState, entrant: number, outcome: string):
     }
     for (const other of state.window.decisions) {
       if (other.entrant === entrant) continue;
-      const team = state.teamNames[other.entrant] || state.models[other.entrant];
+      const team = state.models[other.entrant];
       lines.push(
         other.swaps.length
           ? `- ${team}: ${other.swaps.map((swap) => `-${name(swap.drop)} +${name(swap.add)}`).join(', ')}`
@@ -233,7 +248,7 @@ function userPrompt(state: SeasonReviewState, entrant: number, outcome: string):
   lines.push(
     '',
     SEASON_REVIEW_PROMPT_POLICY.wordsHeading,
-    `- Final draft notebook: ${state.notebooks[entrant] || '(empty)'}`,
+    `- Final private roster notebook: ${state.notebooks[entrant] || '(empty)'}`,
     '',
     ...SEASON_REVIEW_PROMPT_POLICY.replyTemplate,
   );

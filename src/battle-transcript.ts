@@ -52,7 +52,16 @@ export function summarizeBattleEvents(lines: string[], pov?: 'p1' | 'p2'): strin
       else summary.push(`${ident(args[0])} could not act (${args[1]}).`);
     } else if (kind === '-status' && args.length >= 2) summary.push(`${ident(args[0])} became ${args[1]}.`);
     else if (kind === '-curestatus' && args.length >= 2) summary.push(`${ident(args[0])} was cured of ${args[1]}.`);
-    else if (kind === '-ability' && args.length >= 2) summary.push(`${ident(args[0])} revealed ${args[1]}.`);
+    else if (kind === '-ability' && args.length >= 2) {
+      const copiedBy = args.find((arg) => arg.startsWith('[from] ability: '))?.slice('[from] ability: '.length);
+      const source = args.find((arg) => arg.startsWith('[of] '))?.slice('[of] '.length);
+      summary.push(
+        copiedBy && source
+          ? `${ident(args[0])}'s ${copiedBy} copied ${args[1]} from ${ident(source)}.`
+          : `${ident(args[0])} revealed ${args[1]}.`,
+      );
+    } else if (kind === '-endability' && args[0])
+      summary.push(`${ident(args[0])}'s ability${args[1] ? ` ${args[1]}` : ''} was suppressed.`);
     else if (kind === '-mega' && args[0]) summary.push(`${ident(args[0])} Mega Evolved.`);
     else if (kind === '-miss' && args.length >= 2) summary.push(`${ident(args[0])} missed ${ident(args[1])}.`);
     else if (kind === '-prepare' && args.length >= 2)

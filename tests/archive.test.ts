@@ -390,6 +390,7 @@ test('buildLeague joins config, rosters, draft, teambuilds, results, and spend',
   assert.equal(league.spend.reasoningTokens, 80);
   assert.equal(league.spend.cost, 1);
   assert.equal(buildLeague(LEAGUE_ROWS, runsDir, '../evil'), null, 'unsafe run ids never reach the filesystem');
+  assert.equal(buildLeague(LEAGUE_ROWS, runsDir, '..'), null, 'parent-directory ids never reach the filesystem');
   assert.equal(buildLeague(LEAGUE_ROWS, runsDir, 'unknown-run'), null);
   fs.rmSync(runsDir, { recursive: true, force: true });
 });

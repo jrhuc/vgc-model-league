@@ -1151,7 +1151,7 @@ export class GuiServer {
     if (mode === 'draft') {
       const weeks = roundRobinWeeks(models.length).length;
       if (body.tradeWindow === undefined) {
-        tradeWindow = { afterWeek: Math.min(3, weeks) };
+        tradeWindow = { afterWeek: Math.min(3, weeks), tradesAllowed: 1 };
       } else if (body.tradeWindow === null) {
         tradeWindow = null;
       } else if (isRecord(body.tradeWindow)) {
@@ -1159,7 +1159,11 @@ export class GuiServer {
         if (!Number.isSafeInteger(afterWeek) || afterWeek < 1 || afterWeek > weeks) {
           throw new HttpError(400, `trade window week must be between 1 and ${weeks}`);
         }
-        tradeWindow = { afterWeek };
+        const tradesAllowed = body.tradeWindow.tradesAllowed === undefined ? 1 : Number(body.tradeWindow.tradesAllowed);
+        if (!Number.isSafeInteger(tradesAllowed) || tradesAllowed < 0) {
+          throw new HttpError(400, 'trade window tradesAllowed must be a non-negative integer');
+        }
+        tradeWindow = { afterWeek, tradesAllowed };
       } else {
         throw new HttpError(400, 'tradeWindow must be null or an object with afterWeek');
       }

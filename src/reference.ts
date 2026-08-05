@@ -253,6 +253,8 @@ export interface MatchupMon {
   moves: string[];
   ally?: boolean;
   ability?: string;
+  item?: string;
+  itemConsumed?: boolean;
 }
 
 function id(value: string): string {
@@ -270,6 +272,36 @@ function uniqueNames(values: Array<string | null | undefined>): string[] {
     if (clean) names.set(id(clean), names.get(id(clean)) ?? clean);
   }
   return [...names.values()].sort((a, b) => id(a).localeCompare(id(b)));
+}
+
+const TYPE_BLOCKING_ABILITIES: Readonly<Record<string, readonly string[]>> = {
+  ground: ['levitate', 'eartheater'],
+  fire: ['flashfire', 'wellbakedbody'],
+  water: ['waterabsorb', 'stormdrain', 'dryskin'],
+  electric: ['voltabsorb', 'lightningrod', 'motordrive'],
+  grass: ['sapsipper'],
+};
+
+function visibleDamageBlock(
+  attacker: MatchupMon,
+  defender: MatchupMon,
+  move: { flags: { sound?: unknown; bullet?: unknown; wind?: unknown }; ignoreAbility?: boolean | undefined },
+  moveType: string,
+  modifier: number,
+): string | undefined {
+  if (id(defender.item ?? '') === 'airballoon' && !defender.itemConsumed && id(moveType) === 'ground') {
+    return defender.item;
+  }
+  const attackerAbility = id(attacker.ability ?? '');
+  const ignoresAbility = move.ignoreAbility || ['moldbreaker', 'teravolt', 'turboblaze'].includes(attackerAbility);
+  if (ignoresAbility) return undefined;
+  const ability = id(defender.ability ?? '');
+  if ((TYPE_BLOCKING_ABILITIES[id(moveType)] ?? []).includes(ability)) return defender.ability;
+  if (ability === 'soundproof' && move.flags.sound) return defender.ability;
+  if (ability === 'bulletproof' && move.flags.bullet) return defender.ability;
+  if (ability === 'windrider' && move.flags.wind) return defender.ability;
+  if (ability === 'wonderguard' && modifier <= 1) return defender.ability;
+  return undefined;
 }
 
 function cleanDescription(value: unknown): string {
@@ -585,6 +617,13 @@ export class ShowdownReference {
     return showdownCommit(this.psDir).slice(0, 12);
   }
 
+  speciesAbility(name: string): string | undefined {
+    const species = this.getSpecies(name);
+    if (!species.exists) return undefined;
+    const abilities = uniqueNames(Object.values(species.abilities));
+    return abilities.length === 1 ? abilities[0] : undefined;
+  }
+
   static renderRevision(): string {
     const prototype = ShowdownReference.prototype as unknown as Record<string, unknown>;
     const surfaces = [
@@ -817,7 +856,9 @@ export class ShowdownReference {
           if (!target.exists) continue;
           examined = true;
           const mod = typeModifier(this.dex, moveType, target.types);
-          if (mod !== 1) bits.push(`${target.name} ${effectivenessLabel(mod)}`);
+          const blockedBy = visibleDamageBlock(attacker, defender, move, moveType, mod);
+          if (blockedBy) bits.push(`${target.name} immune via ${blockedBy} (type chart ${effectivenessLabel(mod)})`);
+          else if (mod !== 1) bits.push(`${target.name} ${effectivenessLabel(mod)}`);
         }
         if (bits.length) lines.push(`- ${species.name} ${move.name} (${typeLabel}): ${bits.join('; ')}`);
       }

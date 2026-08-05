@@ -53,11 +53,13 @@ export function showdownCommit(psDir = defaultPsDir()): string {
 function assertShowdownInstallation(resolved: string): void {
   const missing = requiredBuildFiles.filter((file) => !fs.existsSync(path.join(resolved, file)));
   if (missing.length) {
-    throw new Error(`Pokémon Showdown is not built at ${resolved}; run npm run setup:showdown`);
+    throw new Error(`Pokémon Showdown is not built at ${resolved}; run pnpm run setup:showdown`);
   }
   const revision = showdownCommit(resolved);
   if (resolved === PINNED_PS_DIR && revision !== SHOWDOWN_LOCK.commit) {
-    throw new Error(`Pokémon Showdown is at ${revision}; expected ${SHOWDOWN_LOCK.commit}. Run npm run setup:showdown`);
+    throw new Error(
+      `Pokémon Showdown is at ${revision}; expected ${SHOWDOWN_LOCK.commit}. Run pnpm run setup:showdown`,
+    );
   }
 }
 

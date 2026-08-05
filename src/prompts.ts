@@ -8,7 +8,7 @@ const SYSTEM_CORE = [
   'Within a turn, all switches resolve first, then Mega Evolutions in Speed order, then moves by priority and then Speed; apart from Speed ties the order is deterministic, never random.',
   'On-entry abilities such as weather trigger at the moment their Pokémon switches in or Mega Evolves; simultaneous triggers resolve in Speed order, and a newer weather or terrain replaces the current one.',
   'Open team sheets reveal sets and natures, but not exact opposing IVs/EVs. Your own request stats are exact; foe damage must stay a range.',
-  "Verify type effectiveness with lookup_matchup, KO ranges with estimate_damage, and speed order with compare_action_order instead of recalling them: the tools compute from the simulator's own data and are authoritative when they disagree with your memory. Pass your own Pokémon's exact stats to estimate_damage on either side of a calculation to narrow the range.",
+  'lookup_matchup reports only the type chart. For actual KO ranges, use estimate_damage: it binds known abilities, items, stats, stages, status, HP, screens, weather, and terrain from the current battle and open team sheets. Use compare_action_order for Speed order. Trust a tool only for the factors its result says it applied.',
   'Your private notebook is a full replacement carried across turns and games.',
 ];
 
@@ -25,8 +25,7 @@ export const TIMED_SYSTEM = [
 const REFLECTION_EVIDENCE =
   'Use only the supplied private battle evidence and authoritative outcome. Do not invent hidden information.';
 const REFLECTION_PREVIEW_PLAN =
-  'Question the team-preview plan itself — whether the four brought, and which Mega Stone holder (if any) you evolved, suited this opponent — not only how the game was piloted.';
-const REFLECTION_CONCISE = 'Give concise conclusions.';
+  'Assess the team-preview plan separately from piloting: whether the four brought, and which Mega Stone holder (if any) you evolved, suited this opponent.';
 
 export const REFLECTION_SYSTEM = [
   'You are reviewing one completed game in a best-of-three VGC series.',
@@ -34,7 +33,6 @@ export const REFLECTION_SYSTEM = [
   'Identify the main reason for the result and one concrete adjustment for the next game.',
   REFLECTION_PREVIEW_PLAN,
   'Update the private notebook with only durable opponent tendencies, revealed strategic facts, and future plans; omit current HP, active positions, turn recaps, and repeated roster facts.',
-  REFLECTION_CONCISE,
   'Respond with exactly one JSON object: {"summary":"why the game was won or lost","adjustment":"what to do better next game","notebook":"updated durable series notes"}.',
 ].join('\n');
 
@@ -51,7 +49,6 @@ export const SERIES_REFLECTION_SYSTEM = [
   SERIES_REFLECTION_RESULT,
   REFLECTION_PREVIEW_PLAN,
   'Rewrite the private notebook for a possible future rematch: only durable opponent tendencies and revealed strategic facts worth carrying forward; omit current HP, active positions, turn recaps, and repeated roster facts.',
-  REFLECTION_CONCISE,
   SERIES_REFLECTION_SHAPE,
 ].join('\n');
 
@@ -60,9 +57,8 @@ export const DRAFT_SERIES_REFLECTION_SYSTEM = [
   REFLECTION_EVIDENCE,
   SERIES_REFLECTION_RESULT,
   REFLECTION_PREVIEW_PLAN,
-  'Also review the preparation for this series: whether the six you registered from your full draft roster, and the sets you built for them, fit this opponent, and whether any Pokémon you left behind would have. Judge what your prep got right as well as what it got wrong.',
+  'Also assess the preparation for this series: how well the six you registered and their sets fit this opponent, what worked, and whether the full roster offered a materially better alternative.',
   'Rewrite the private notebook for a possible future rematch: durable opponent tendencies, revealed strategic facts, and brief prep conclusions worth carrying forward; omit current HP, active positions, turn recaps, and repeated roster facts.',
-  REFLECTION_CONCISE,
   SERIES_REFLECTION_SHAPE,
 ].join('\n');
 
@@ -80,7 +76,12 @@ export function renderDecision(input: DecisionPrompt): string {
   const lines: string[] = [];
   if (input.seriesContext) lines.push('Match context:', input.seriesContext, '');
   lines.push('Authoritative battle state and roster reference:', input.state, '');
-  if (input.matchups?.length) lines.push('Active type matchups (chart only):', ...input.matchups, '');
+  if (input.matchups?.length)
+    lines.push(
+      'Active matchup reference (type chart with known direct ability/item immunities; use estimate_damage for actual damage):',
+      ...input.matchups,
+      '',
+    );
   lines.push(`Private notebook: ${input.notebook || '(empty)'}`, '');
   if (input.transcript?.length) lines.push('Compact private battle timeline (your POV):', ...input.transcript, '');
 
@@ -108,7 +109,7 @@ export function renderDecision(input: DecisionPrompt): string {
   }
   lines.push(
     '',
-    `Return exactly {"choices":[${input.menus.map((_, index) => `N${index + 1}`).join(',')}],"rationale":"final reason, at most 500 characters","notebook":"durable cross-game facts and future plans only; no current HP, active board, or turn recap; at most 1600 characters"}.`,
+    `Return exactly {"choices":[${input.menus.map((_, index) => `N${index + 1}`).join(',')}],"rationale":"final reason","notebook":"durable cross-game facts and future plans only; no current HP, active board, or turn recap"}.`,
     `Each choice is the zero-based index for its displayed slot${sharedTeamMenu ? ' or ordered team position' : ''}. Include no prose outside JSON.`,
   );
   return lines.join('\n');

@@ -34,14 +34,15 @@ const DRAFT_PROMPT_POLICY = {
     '- A Mega entry plays as its base forme holding its Mega Stone, with the option to Mega Evolve during a game;',
     '  drafting the base forme instead means it can hold any item but never a Mega Stone. The board lists both, priced differently.',
     '- If you bring more than one Mega entry to a match, which of them evolves is a choice you make in play, game by game.',
-    '- After the draft you keep this roster for the whole season: a round robin of best-of-three matches, then playoffs.',
+    '{{rosterPolicy}}',
     '- Before each match you choose 6 of your {{picks}} and build every set yourself: item, ability, nature, moves, and EVs.',
     '  Nothing about a set is fixed by the draft.',
     '- Games are 4-of-6 doubles. You will see your opponent’s full roster before you build, and they will see yours.',
     '',
     'You have the Showdown dex tools. Use them to check anything the board summary does not answer: what a Mega',
     'becomes, how a type matchup reads, what a spread outruns, or roughly how hard an attack hits. They compute',
-    'from the simulator this league runs on, so trust them over recollection. search_board filters and re-sorts the',
+    'from the simulator this league runs on. Trust the mechanics and factors each result explicitly says it applied;',
+    'a hypothetical damage result does not imply omitted abilities or field effects. search_board filters and re-sorts the',
     'board itself by type, price, ability, base stat total, or which entries legally learn a given move.',
     '',
     'Your roster is judged matchup by matchup: over the season it needs a winning 6 against each of the other',
@@ -49,13 +50,6 @@ const DRAFT_PROMPT_POLICY = {
     '',
     '{{board}}',
   ],
-  firstTurnInstruction:
-    'This is your first pick, so also choose your franchise name. Good names carry a second layer beyond naming ' +
-    'a Pokémon — wordplay on an ability, your own identity, or a real franchise: "Moonshot Shadowtags" (Gengar\'s ' +
-    'ability plus its coach\'s lab), "Unburdened Sneaslers" (Sneasler\'s ability doubled as a mood), "Golden State ' +
-    'Gholdengos" (an NBA pun). A plain "<coach name> <first pick>s" is the lazy floor. Reply with a single JSON object ' +
-    '{"pick": "<board-id>", "team_name": "<your franchise name>", "reasoning": "<2-4 sentences>", ' +
-    '"notebook": "<notes to carry to your next pick>"} and nothing else.',
   turnInstruction:
     'Reply with a single JSON object {"pick": "<board-id>", "reasoning": "<2-4 sentences>", ' +
     '"notebook": "<updated notes to carry to your next pick>"} and nothing else.',
@@ -86,8 +80,27 @@ const DRAFT_PROMPT_POLICY = {
   maxCallsPerRound: 6,
 } as const;
 
+const FRANCHISE_NAME_PROMPT_POLICY = {
+  systemTemplate: [
+    'You are {{model}}. The competitive draft is complete.',
+    'Choose a concise, playful franchise name for the spectator-facing league display based on your finished roster.',
+    "Wordplay and personality are welcome. The Shadow Cabinet, Prankster's Paradise, and Drought Dodgers are examples of the tone, not names to copy.",
+    'The name is presentation only: coaches never see franchise names during competitive decisions.',
+    'Reply with exactly one JSON object {"team_name":"<your franchise name>"} and nothing else.',
+  ],
+  rosterHeading: 'YOUR COMPLETED ROSTER:',
+  rejectionTemplate: 'That name was rejected: {{error}} Reply again with only the JSON object.',
+  maxTokens: 1_024,
+  timeoutSeconds: 120,
+  attempts: 3,
+  nameLimit: 60,
+} as const;
+
 export function draftScaffoldRevision(): string {
-  return createHash('sha256').update(JSON.stringify(DRAFT_PROMPT_POLICY)).digest('hex').slice(0, 12);
+  return createHash('sha256')
+    .update(JSON.stringify({ draft: DRAFT_PROMPT_POLICY, naming: FRANCHISE_NAME_PROMPT_POLICY }))
+    .digest('hex')
+    .slice(0, 12);
 }
 
 export interface DraftBoardMon {
@@ -305,6 +318,15 @@ interface DraftSeatLog {
   error?: string;
 }
 
+interface FranchiseNameSeatLog {
+  attempt: number;
+  system?: string;
+  user: string;
+  response: string;
+  usage?: Record<string, number>;
+  error?: string;
+}
+
 export interface RunDraftOptions extends ModelReasoningConfig {
   psDir?: string;
   apiKeys?: Readonly<Record<string, string>>;
@@ -312,7 +334,9 @@ export interface RunDraftOptions extends ModelReasoningConfig {
   rng: Rng;
   signal?: AbortSignal;
   recovery?: RecoveryGate;
+  rosterPolicy?: string;
   onPick?: (view: DraftPickView, state: DraftState) => void;
+  onName?: (entrant: number, teamName: string, state: DraftState) => void;
   makeDraftProvider?: (spec: string, apiKey: string | undefined, reasoning: ReasoningLevel | undefined) => Provider;
 }
 
@@ -414,7 +438,13 @@ export function draftBoardTable(
   return lines.join('\n');
 }
 
-function draftSystemPrompt(board: DraftBoard, models: string[], drafter: number, psDir: string): string {
+function draftSystemPrompt(
+  board: DraftBoard,
+  models: string[],
+  drafter: number,
+  psDir: string,
+  rosterPolicy: string,
+): string {
   const values: Record<string, string> = {
     model: models[drafter]!,
     format: board.format,
@@ -422,6 +452,7 @@ function draftSystemPrompt(board: DraftBoard, models: string[], drafter: number,
     picks: String(board.picks),
     budget: String(board.budget),
     board: draftBoardTable(board, psDir),
+    rosterPolicy,
   };
   return DRAFT_PROMPT_POLICY.systemTemplate
     .map((line) =>
@@ -449,12 +480,9 @@ export function draftUserPrompt(
   for (const [index, model] of models.entries()) {
     const roster = state.rosters[index]!;
     if (!roster.length) continue;
-    const label = index === drafter ? 'you' : state.teamNames[index] || model;
+    const label = index === drafter ? 'you' : model;
     const budget = `${state.budgets[index]} points left`;
-    lines.push(
-      `- ${label} (${index === drafter ? budget : `${model}, ${budget}`}): ` +
-        `${roster.map((mon) => `${mon.name} (${mon.cost})`).join(', ')}`,
-    );
+    lines.push(`- ${label} (${budget}): ${roster.map((mon) => `${mon.name} (${mon.cost})`).join(', ')}`);
   }
 
   lines.push('', DRAFT_PROMPT_POLICY.rosterHeading);
@@ -474,26 +502,28 @@ export function draftUserPrompt(
       .replace('{{budget}}', String(state.budgets[drafter]))
       .replace('{{remaining}}', `${slotsLeft} ${slotsLeft === 1 ? 'pick' : 'picks'}`),
   );
-  lines.push(
-    '',
-    state.rosters[drafter]!.length ? DRAFT_PROMPT_POLICY.turnInstruction : DRAFT_PROMPT_POLICY.firstTurnInstruction,
-  );
+  lines.push('', DRAFT_PROMPT_POLICY.turnInstruction);
   return lines.join('\n');
 }
 
 interface ParsedPick {
   mon: DraftBoardMon;
   reasoning: string;
-  teamName: string;
   notebook: string;
 }
 
-function rejection(pickId: string, legal: DraftBoardMon[], state: DraftState, drafter: number): string {
+function rejection(
+  pickId: string,
+  legal: DraftBoardMon[],
+  state: DraftState,
+  drafter: number,
+  models?: readonly string[],
+): string {
   const entry = state.board.mons.find((candidate) => candidate.id === pickId || slug(candidate.name) === pickId);
   if (!entry) return `"${pickId}" is not a board id. Copy an id exactly as it appears in the board list.`;
   const owner = state.taken.get(entry.id);
   if (owner !== undefined) {
-    return `${entry.name} was already drafted by ${state.teamNames[owner] || `coach ${owner + 1}`}.`;
+    return `${entry.name} was already drafted by ${models?.[owner] || `coach ${owner + 1}`}.`;
   }
   const clash = state.rosters[drafter]!.find((candidate) => candidate.base === entry.base);
   if (clash) {
@@ -511,6 +541,7 @@ export function parsePick(
   legal: DraftBoardMon[],
   state: DraftState,
   drafter: number,
+  models?: readonly string[],
 ): ParsedPick | string {
   const match = /\{[\s\S]*\}/.exec(response);
   if (!match) return 'the reply contained no JSON object';
@@ -523,20 +554,162 @@ export function parsePick(
   const record = parsed as Record<string, unknown>;
   const pickId = slug(String(record.pick ?? ''));
   const mon = legal.find((candidate) => candidate.id === pickId || slug(candidate.name) === pickId);
-  if (!mon) return rejection(pickId, legal, state, drafter);
-  const teamName = String(record.team_name ?? '')
-    .trim()
-    .slice(0, 60);
-  if (!state.rosters[drafter]!.length && !teamName) return '"team_name" is required with your first pick';
+  if (!mon) return rejection(pickId, legal, state, drafter, models);
   const notebook =
     typeof record.notebook === 'string' ? clip(record.notebook.trim(), DRAFT_PROMPT_POLICY.notebookLimit) : '';
   if (!notebook) return '"notebook" must be a note to carry to your next pick';
   return {
     mon,
     reasoning: String(record.reasoning ?? '').trim(),
-    teamName,
     notebook,
   };
+}
+
+interface ParsedFranchiseName {
+  teamName: string;
+}
+
+export function parseFranchiseName(response: string): ParsedFranchiseName | string {
+  const match = /\{[\s\S]*\}/.exec(response);
+  if (!match) return 'the reply contained no JSON object';
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(match[0]);
+  } catch {
+    return 'the JSON object did not parse';
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    return 'the reply must be one JSON object';
+  }
+  const value = (parsed as Record<string, unknown>).team_name;
+  if (typeof value !== 'string') return '"team_name" must be a non-empty string';
+  const teamName = value.trim().replace(/\s+/g, ' ').slice(0, FRANCHISE_NAME_PROMPT_POLICY.nameLimit);
+  return teamName ? { teamName } : '"team_name" must be a non-empty string';
+}
+
+function franchiseNameSystemPrompt(model: string): string {
+  return FRANCHISE_NAME_PROMPT_POLICY.systemTemplate.map((line) => line.replace('{{model}}', model)).join('\n');
+}
+
+function franchiseNameUserPrompt(roster: readonly DraftBoardMon[]): string {
+  return [
+    FRANCHISE_NAME_PROMPT_POLICY.rosterHeading,
+    ...roster.map((mon) => `- ${mon.name}${mon.item ? ` (${mon.item})` : ''}`),
+  ].join('\n');
+}
+
+function replayFranchiseNames(file: string, models: readonly string[], state: DraftState): void {
+  let raw: string;
+  try {
+    raw = fs.readFileSync(file, 'utf8');
+  } catch {
+    return;
+  }
+  for (const line of raw.split('\n')) {
+    if (!line.trim()) continue;
+    const row = JSON.parse(line) as Record<string, unknown>;
+    const entrant = Number(row.entrant);
+    if (!Number.isInteger(entrant) || entrant < 0 || entrant >= models.length) {
+      throw new Error(`${file} holds an invalid franchise-name entrant`);
+    }
+    if (row.model !== models[entrant]) {
+      throw new Error(`${file} names ${String(row.model)} for entrant ${entrant}, expected ${models[entrant]}`);
+    }
+    const parsed = parseFranchiseName(JSON.stringify({ team_name: row.team_name }));
+    if (typeof parsed === 'string') throw new Error(`${file} holds an invalid franchise name for entrant ${entrant}`);
+    if (state.teamNames[entrant] && state.teamNames[entrant] !== parsed.teamName) {
+      throw new Error(`${file} conflicts with the draft transcript for entrant ${entrant}`);
+    }
+    state.teamNames[entrant] = parsed.teamName;
+  }
+}
+
+async function nameFranchises(
+  models: string[],
+  providers: Array<Provider | undefined>,
+  state: DraftState,
+  options: RunDraftOptions,
+): Promise<void> {
+  const transcript = path.join(options.logDir, 'franchise-names.jsonl');
+  replayFranchiseNames(transcript, models, state);
+  await Promise.all(
+    models.map(async (model, entrant) => {
+      if (state.teamNames[entrant]) {
+        options.onName?.(entrant, state.teamNames[entrant]!, state);
+        return;
+      }
+      const provider = providers[entrant];
+      const fallbackName = model === 'random' ? `Random Coach ${entrant + 1}` : `Coach ${entrant + 1}`;
+      let teamName = '';
+      let fallback = false;
+      if (provider) {
+        const system = franchiseNameSystemPrompt(model);
+        const messages: ProviderMessage[] = [
+          { role: 'user', content: franchiseNameUserPrompt(state.rosters[entrant]!) },
+        ];
+        const seatLog = path.join(options.logDir, `namer-${entrant}-${slug(model)}.jsonl`);
+        for (let attempt = 1; attempt <= FRANCHISE_NAME_PROMPT_POLICY.attempts && !teamName; attempt += 1) {
+          options.signal?.throwIfAborted();
+          const user = messages[messages.length - 1]!.content ?? '';
+          let response = '';
+          let usage: Record<string, number> | undefined;
+          let error: string | undefined;
+          try {
+            const completion = await provider.complete(system, messages, {
+              maxTokens: FRANCHISE_NAME_PROMPT_POLICY.maxTokens,
+              timeout: FRANCHISE_NAME_PROMPT_POLICY.timeoutSeconds,
+              ...(options.signal === undefined ? {} : { signal: options.signal }),
+            });
+            response = completion.text;
+            usage = completion.usage;
+            const parsed = parseFranchiseName(response);
+            if (typeof parsed === 'string') {
+              error = parsed;
+              messages.push({ role: 'assistant', content: response || '[the reply contained no visible text]' });
+              messages.push({
+                role: 'user',
+                content: FRANCHISE_NAME_PROMPT_POLICY.rejectionTemplate.replace('{{error}}', parsed),
+              });
+            } else teamName = parsed.teamName;
+          } catch (cause) {
+            if (options.signal?.aborted) throw cause;
+            error = classifyProviderFailure(cause, model).summary;
+            fallback = true;
+          }
+          fs.appendFileSync(
+            seatLog,
+            `${JSON.stringify({
+              attempt,
+              ...(attempt === 1 ? { system } : {}),
+              user,
+              response,
+              ...(usage ? { usage } : {}),
+              ...(error ? { error } : {}),
+            } satisfies FranchiseNameSeatLog)}\n`,
+            'utf8',
+          );
+          if (fallback) break;
+        }
+      }
+      if (!teamName) {
+        teamName = fallbackName;
+        fallback = true;
+      }
+      state.teamNames[entrant] = teamName;
+      fs.appendFileSync(
+        transcript,
+        `${JSON.stringify({
+          entrant,
+          model,
+          team_name: teamName,
+          fallback,
+          timestamp: new Date().toISOString(),
+        })}\n`,
+        'utf8',
+      );
+      options.onName?.(entrant, teamName, state);
+    }),
+  );
 }
 
 export interface DraftOutcome {
@@ -572,7 +745,10 @@ export async function runDraft(models: string[], board: DraftBoard, options: Run
   });
   const reference = new ShowdownReference(board.format, psDir);
   const boardSearch = createBoardSearch(board, psDir);
-  const systemPrompts = models.map((_, drafter) => draftSystemPrompt(board, models, drafter, psDir));
+  const rosterPolicy =
+    options.rosterPolicy ??
+    '- After the draft this roster is locked for the whole season: a round robin of best-of-three matches, then playoffs.';
+  const systemPrompts = models.map((_, drafter) => draftSystemPrompt(board, models, drafter, psDir, rosterPolicy));
   const seatLogs = models.map((model, index) => path.join(options.logDir, `drafter-${index}-${slug(model)}.jsonl`));
   const transcript = path.join(options.logDir, 'draft.jsonl');
   const picks: DraftPickView[] = [];
@@ -633,10 +809,10 @@ export async function runDraft(models: string[], board: DraftBoard, options: Run
           usage = completion.usage;
           const truncated = completion.finishReason === 'length';
           if (!response.trim() && !truncated && completion.reasoning) {
-            const salvaged = parsePick(completion.reasoning, legal, state, drafter);
+            const salvaged = parsePick(completion.reasoning, legal, state, drafter, models);
             if (typeof salvaged !== 'string') response = completion.reasoning;
           }
-          const parsed = parsePick(response, legal, state, drafter);
+          const parsed = parsePick(response, legal, state, drafter, models);
           if (typeof parsed === 'string') {
             error = truncated ? `the reply used its whole token budget before naming a pick` : parsed;
             lastError = error;
@@ -655,7 +831,6 @@ export async function runDraft(models: string[], board: DraftBoard, options: Run
           } else {
             chosen = parsed.mon;
             reasoning = parsed.reasoning;
-            if (parsed.teamName && !state.teamNames[drafter]) state.teamNames[drafter] = parsed.teamName;
             notebooks[drafter] = parsed.notebook;
           }
         } catch (cause) {
@@ -699,10 +874,8 @@ export async function runDraft(models: string[], board: DraftBoard, options: Run
     } else {
       chosen = legal[Math.floor(options.rng() * legal.length)]!;
       reasoning = 'random baseline pick';
-      if (!state.teamNames[drafter]) state.teamNames[drafter] = `Random Coach ${drafter + 1}`;
     }
 
-    if (!state.teamNames[drafter]) state.teamNames[drafter] = `Coach ${drafter + 1}`;
     state.taken.set(chosen.id, drafter);
     state.rosters[drafter]!.push(chosen);
     state.budgets[drafter]! -= chosen.cost;
@@ -719,7 +892,6 @@ export async function runDraft(models: string[], board: DraftBoard, options: Run
       `${JSON.stringify({
         pick: pickNumber + 1,
         model: models[drafter],
-        team_name: state.teamNames[drafter],
         mon: chosen.id,
         name: chosen.name,
         cost: chosen.cost,
@@ -733,6 +905,8 @@ export async function runDraft(models: string[], board: DraftBoard, options: Run
     );
     options.onPick?.(view, state);
   }
+
+  await nameFranchises(models, providers, state, options);
 
   return { rosters: state.rosters, picks, budgets: state.budgets, teamNames: state.teamNames, notebooks };
 }

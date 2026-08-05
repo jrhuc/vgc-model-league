@@ -12,11 +12,11 @@ import type {
   TournamentSummary,
   TournamentsResponse,
 } from './gui/api.js';
+import { SAFE_SEGMENT } from './path-safety.js';
 import { modelKey, type SeriesRecord, scopeRows, TEST_POOL } from './records.js';
 import { buildBracket } from './tournament.js';
 import type { Pid } from './types.js';
 
-export const SAFE_SEGMENT = /^[A-Za-z0-9._-]+$/;
 const MAX_POINTS_PER_MODEL = 600;
 
 const LUCK_FIELDS = ['misses', 'crits_taken', 'flinched_turns', 'full_paralysis'] as const;

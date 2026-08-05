@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-const USAGE = `Usage: npm run archive-run -- <run-id> [<run-id>...]
+const USAGE = `Usage: pnpm run archive-run -- <run-id> [<run-id>...]
 
 Packs runs/<run-id> (every trace, log, and config) into a compressed tarball
 under $VGC_RUN_ARCHIVE_DIR (default ~/vgc-run-archive) with a manifest and

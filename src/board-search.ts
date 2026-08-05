@@ -16,14 +16,19 @@ export const BOARD_SEARCH_TOOL: ToolDefinition = {
       types: {
         type: 'array',
         items: { type: 'string' },
-        description: 'Entries carrying every listed type. ["Fire"] matches Fire/Flying; ["Fire","Flying"] matches only both.',
+        description:
+          'Entries carrying every listed type. ["Fire"] matches Fire/Flying; ["Fire","Flying"] matches only both.',
       },
       max_cost: { type: 'integer' },
       min_cost: { type: 'integer' },
       learns: { type: 'string', description: 'Move name. Entries whose legal movepool in this format contains it.' },
       ability: { type: 'string', description: 'Ability name, matched against every ability slot.' },
       min_bst: { type: 'integer', description: 'Minimum base stat total.' },
-      sort: { type: 'string', enum: [...SORTS], description: 'cost and bst sort high to low, name A to Z. Defaults to cost.' },
+      sort: {
+        type: 'string',
+        enum: [...SORTS],
+        description: 'cost and bst sort high to low, name A to Z. Defaults to cost.',
+      },
       limit: { type: 'integer', description: 'Rows returned, 1 to 100. Defaults to 40.' },
     },
     required: [],
@@ -83,7 +88,9 @@ export function createBoardSearch(board: DraftBoard, psDir: string): BoardSearch
     definition: BOARD_SEARCH_TOOL,
     run(args: JsonObject): string {
       const rawTypes = Array.isArray(args.types) ? args.types : [];
-      const types = rawTypes.filter((value): value is string => typeof value === 'string').map((value) => normalize(value));
+      const types = rawTypes
+        .filter((value): value is string => typeof value === 'string')
+        .map((value) => normalize(value));
       const maxCost = readInteger(args, 'max_cost');
       const minCost = readInteger(args, 'min_cost');
       const minBst = readInteger(args, 'min_bst');

@@ -36,6 +36,7 @@ export class MonState {
   item: string | undefined;
   itemConsumed = false;
   ability: string | undefined;
+  abilitySuppressed = false;
   nature: string | undefined;
   mega = false;
   fainted = false;
@@ -158,6 +159,10 @@ export class BattleState {
       this.setHp(mon, args[2]!);
       const [side, slot] = this.identParts(args[0]!);
       if (side) {
+        if (kind !== 'replace') {
+          mon.ability = undefined;
+          mon.abilitySuppressed = false;
+        }
         this.mergeSheetMon(mon, this.sides[side]);
         const previous = this.sides[side].active[slot];
         const previousMon = previous ? this.sides[side].mons.get(previous) : undefined;
@@ -178,7 +183,10 @@ export class BattleState {
       const mon = this.mon(args[0]!);
       const previous = mon.species;
       this.setDetails(mon, args[1]!);
-      if (this.speciesKey(previous) !== this.speciesKey(mon.species)) mon.ability = undefined;
+      if (this.speciesKey(previous) !== this.speciesKey(mon.species)) {
+        mon.ability = undefined;
+        mon.abilitySuppressed = false;
+      }
     } else if (kind === 'poke' && args.length >= 2 && (args[0] === 'p1' || args[0] === 'p2')) {
       const species = args[1]!.split(',', 1)[0]!.trim();
       const mon = this.mon(`${args[0]}: ${species}`);
@@ -285,16 +293,25 @@ export class BattleState {
       if (args[1]) mon.item = args[1];
       mon.itemConsumed = true;
       mon.choiceLock = undefined;
-    } else if (kind === '-ability' && args.length >= 2) this.mon(args[0]!).ability = args[1];
-    else if (kind === '-mega' && args[0]) {
+    } else if (kind === '-ability' && args.length >= 2) {
+      const mon = this.mon(args[0]!);
+      mon.ability = args[1];
+      mon.abilitySuppressed = false;
+    } else if (kind === '-endability' && args[0]) {
+      const mon = this.mon(args[0]);
+      mon.ability = undefined;
+      mon.abilitySuppressed = true;
+    } else if (kind === '-mega' && args[0]) {
       const mon = this.mon(args[0]);
       mon.mega = true;
       mon.ability = undefined;
+      mon.abilitySuppressed = false;
     } else if (kind === '-formechange' && args.length >= 2) {
       const mon = this.mon(args[0]!);
       mon.species = args[1]!;
       mon.formes.add(this.speciesKey(args[1]!));
       mon.ability = undefined;
+      mon.abilitySuppressed = false;
     } else if (kind === 'showteam' && args.length >= 2) this.showTeam(args[0]!, args.slice(1).join('|'));
     else if (kind === 't:' && Number.isFinite(Number(args[0]))) this.logClockMs = Number(args[0]) * 1000;
     else if (kind === '-vgctimer' && (args[0] === 'p1' || args[0] === 'p2')) {
@@ -382,19 +399,22 @@ export class BattleState {
     return reduced;
   }
 
-  activeMatchupSides(): { allies: MatchupMon[]; foes: MatchupMon[] } {
+  activeMatchupSides(reference?: ShowdownReference): { allies: MatchupMon[]; foes: MatchupMon[] } {
     const collect = (pid: Pid, ally: boolean): MatchupMon[] => {
       const side = this.sides[pid];
       return (['a', 'b'] as const).flatMap((slot) => {
         const key = side.active[slot];
         const mon = key ? side.mons.get(key) : undefined;
         if (!mon || mon.fainted) return [];
+        const ability = mon.abilitySuppressed ? undefined : (mon.ability ?? reference?.speciesAbility(mon.species));
         return [
           {
             species: mon.species,
             moves: [...mon.moves.values()].map((move) => move.name),
             ally,
-            ...(mon.ability === undefined ? {} : { ability: mon.ability }),
+            ...(ability === undefined ? {} : { ability }),
+            ...(mon.item === undefined ? {} : { item: mon.item }),
+            itemConsumed: mon.itemConsumed,
           },
         ];
       });
@@ -552,6 +572,70 @@ export class BattleState {
         );
     }
     return lines.join('\n');
+  }
+
+  estimateDamage(args: Record<string, unknown>, request: BattleRequest, reference: ShowdownReference): string {
+    this.updateOwnRequest(request);
+    const attackerName = typeof args.attacker === 'string' ? args.attacker.trim() : '';
+    const defenderName = typeof args.defender === 'string' ? args.defender.trim() : '';
+    const move = typeof args.move === 'string' ? args.move.trim() : '';
+    if (!attackerName || !defenderName || !move) return 'attacker, defender, and move are required.';
+    const attacker = this.findMon(attackerName);
+    const defender = this.findMon(defenderName);
+    const visible = this.activeEntries().map(
+      (entry) => `${entry.pid === this.pid ? 'ally' : 'foe'} ${entry.slot}: ${entry.mon.species}`,
+    );
+    if (!attacker || !defender) {
+      const missing = !attacker ? attackerName : defenderName;
+      return `Could not resolve ${JSON.stringify(missing)} on the visible battle rosters. Active Pokémon: ${visible.join('; ') || 'none'}.`;
+    }
+    if (attacker.mon === defender.mon) return 'attacker and defender must identify different Pokémon.';
+
+    const exactStats = (entry: { pid: Pid; mon: MonState }, includeHp: boolean): Record<string, number> => {
+      if (entry.pid !== this.pid) return {};
+      const stats = { ...entry.mon.stats };
+      if (includeHp) {
+        const maximum = /\/(\d+)/.exec(entry.mon.hp ?? '')?.[1];
+        if (maximum) stats.hp = Number(maximum);
+      }
+      return stats;
+    };
+    const ability = (mon: MonState) =>
+      mon.abilitySuppressed ? undefined : (mon.ability ?? reference.speciesAbility(mon.species));
+    const authoritative: Record<string, unknown> = {
+      attacker: attacker.mon.species,
+      defender: defender.mon.species,
+      move,
+    };
+    const setMon = (side: 'attacker' | 'defender', entry: { pid: Pid; mon: MonState }): void => {
+      const monAbility = ability(entry.mon);
+      if (monAbility) authoritative[`${side}_ability`] = monAbility;
+      if (entry.mon.item && !entry.mon.itemConsumed) authoritative[`${side}_item`] = entry.mon.item;
+      if (entry.mon.nature) authoritative[`${side}_nature`] = entry.mon.nature;
+      if (entry.mon.status) authoritative[`${side}_status`] = entry.mon.status;
+      if (Object.keys(entry.mon.boosts).length) authoritative[`${side}_boosts`] = { ...entry.mon.boosts };
+      if (entry.mon.hpPercent !== undefined) authoritative[`${side}_hp_percent`] = entry.mon.hpPercent;
+      const stats = exactStats(entry, side === 'defender');
+      if (Object.keys(stats).length) authoritative[`${side}_stats`] = stats;
+    };
+    setMon('attacker', attacker);
+    setMon('defender', defender);
+    const screens = [...this.sides[defender.pid].conditions.keys()].filter((condition) => SCREEN_MOVES.has(condition));
+    if (screens.length) authoritative.defender_screens = screens;
+    if (this.weather) authoritative.weather = this.weather.name;
+    const terrain = [...this.fields.values()].find((effect) => /terrain/i.test(effect.name));
+    if (terrain) authoritative.terrain = terrain.name;
+    if (args.helping_hand === true) authoritative.helping_hand = true;
+    if (args.is_critical_hit === true) authoritative.is_critical_hit = true;
+
+    const known = (entry: { pid: Pid; mon: MonState }, side: string) => {
+      const monAbility = ability(entry.mon);
+      return `${side} ${entry.mon.species}${
+        monAbility ? ` (${monAbility})` : entry.mon.abilitySuppressed ? ' (ability suppressed)' : ' (ability unknown)'
+      }`;
+    };
+    const context = `Live battle and open-sheet state applied: ${known(attacker, 'attacker')}; ${known(defender, 'defender')}. Caller-supplied abilities, items, stats, stages, status, HP, screens, weather, and terrain are ignored.`;
+    return `${context}\n${reference.lookup('estimate_damage', authoritative)}`;
   }
 
   private activeEntries(): Array<{ pid: Pid; slot: number; mon: MonState }> {
@@ -815,6 +899,7 @@ export class BattleState {
         else if (reference?.speed) attrs.push(`raw Speed range ${reference.speed}`);
         if (mon.item) attrs.push(`item ${mon.item}${mon.itemConsumed ? ' (consumed)' : ''}`);
         if (mon.ability) attrs.push(`ability ${mon.ability}`);
+        else if (mon.abilitySuppressed) attrs.push('ability suppressed');
         if (mon.nature) attrs.push(`stat alignment ${mon.nature}`);
         if (mon.mega) attrs.push('Mega Evolved');
         if (!mon.mega && reference?.mega) attrs.push(reference.mega);
@@ -867,6 +952,7 @@ export class BattleState {
       } else if (reference?.speed) attrs.push(`raw Speed range ${reference.speed}`);
       if (mon.item) attrs.push(`item ${mon.item}${mon.itemConsumed ? ' (consumed)' : ''}`);
       if (mon.ability) attrs.push(`ability ${mon.ability}`);
+      else if (mon.abilitySuppressed) attrs.push('ability suppressed');
       if (mon.nature) attrs.push(`stat alignment ${mon.nature}`);
       if (mon.mega) attrs.push('Mega Evolved');
       if (!mon.mega && reference?.mega) attrs.push(reference.mega);
@@ -898,6 +984,7 @@ export class BattleState {
       mon.status = conditionParts[1] && conditionParts[1] !== 'fnt' ? conditionParts[1] : undefined;
       mon.item = text(pokemon.item) || mon.item;
       mon.ability = text(pokemon.ability) || text(pokemon.baseAbility) || mon.ability;
+      if (text(pokemon.ability) || text(pokemon.baseAbility)) mon.abilitySuppressed = false;
       const stats = asRecord(pokemon.stats);
       mon.stats = Object.fromEntries(
         Object.entries(stats).filter(

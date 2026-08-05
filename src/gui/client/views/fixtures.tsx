@@ -385,8 +385,8 @@ export function FixturesView({ app, run, onStarted, onPools }: FixturesProps) {
   const tradeWindowOptions = [
     {
       value: 'default',
-      label: 'Mid-season free agency (default)',
-      description: 'Opens after week 3, or the final round-robin week in a shorter league.',
+      label: 'Mid-season trade window (default)',
+      description: 'Coach trades run before free agency after week 3, or the final week in a shorter league.',
     },
     {
       value: 'off',
@@ -397,8 +397,8 @@ export function FixturesView({ app, run, onStarted, onPools }: FixturesProps) {
       .filter((week) => week !== 3)
       .map((week) => ({
         value: String(week),
-        label: `Free agency after week ${week}`,
-        description: 'Lowest seed chooses first; each coach may make up to six free-agent swaps.',
+        label: `Trade window after week ${week}`,
+        description: 'Lowest seed chooses first; coach trades run before up to six free-agent swaps.',
       })),
   ];
   const teamsMode = mode === 'match' || (mode === 'tournament' && teamSource === 'custom');

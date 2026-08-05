@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { count, decisionLogPath, quantile, readDecisionLog, SAFE_SEGMENT } from './evidence.js';
+import { count, decisionLogPath, quantile, readDecisionLog } from './evidence.js';
 import type {
   BattleLogEntryView,
   BattleSnapshot,
@@ -30,6 +30,7 @@ import type {
   TeambuildSetView,
 } from './gui/api.js';
 import { BattleLog } from './gui/battlelog.js';
+import { SAFE_SEGMENT } from './path-safety.js';
 import { modelKey, type SeriesRecord, TEST_POOL } from './records.js';
 import { loadShowdown } from './showdown.js';
 import { BattleState, type MonState } from './state.js';
@@ -444,6 +445,16 @@ function tradeWindowView(runsDir: string, runId: string): LeagueTradeWindowView 
   return {
     afterWeek,
     complete: Boolean(artifact),
+    offers: (artifact?.offers ?? []).map((offer) => ({
+      from: offer.from,
+      to: offer.to,
+      give: offer.give,
+      get: offer.get,
+      message: offer.message,
+      accepted: offer.accepted,
+      offerReasoning: offer.offerReasoning,
+      responseReasoning: offer.responseReasoning,
+    })),
     decisions: decisions.map((value) => {
       const row = value as Record<string, unknown>;
       return {
