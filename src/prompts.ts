@@ -24,8 +24,13 @@ export const TIMED_SYSTEM = [
 
 const REFLECTION_EVIDENCE =
   'Use only the supplied private battle evidence and authoritative outcome. Do not invent hidden information.';
-const REFLECTION_PREVIEW_PLAN =
-  'Assess the team-preview plan separately from piloting: whether the four brought, and which Mega Stone holder (if any) you evolved, suited this opponent.';
+const REFLECTION_PREVIEW_PLAN = [
+  'Assess the team-preview plan separately from piloting. The plan is the four you brought and which Mega Stone holder,',
+  'if any, you evolved; the piloting is the targets, switches, protects, and ordering you chose.',
+  'Say which of the two decided the result: whether the four you brought made it near-certain either way,',
+  'or whether a different line of play would have changed it.',
+  'Judge that from the timeline, which records both, not from the plan alone.',
+].join(' ');
 
 export const REFLECTION_SYSTEM = [
   'You are reviewing one completed game in a best-of-three VGC series.',
@@ -57,7 +62,7 @@ export const DRAFT_SERIES_REFLECTION_SYSTEM = [
   REFLECTION_EVIDENCE,
   SERIES_REFLECTION_RESULT,
   REFLECTION_PREVIEW_PLAN,
-  'Also assess the preparation for this series: how well the six you registered and their sets fit this opponent, what worked, and whether the full roster offered a materially better alternative.',
+  'Also assess the preparation for this series: how well the six you registered and their sets fit this opponent, what worked, and whether a different six from your roster would have fit better.',
   'Rewrite the private notebook for a possible future rematch: durable opponent tendencies, revealed strategic facts, and brief prep conclusions worth carrying forward; omit current HP, active positions, turn recaps, and repeated roster facts.',
   SERIES_REFLECTION_SHAPE,
 ].join('\n');
