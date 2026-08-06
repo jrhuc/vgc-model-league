@@ -329,7 +329,7 @@ test('gui validates teambuilder pastes and creates immutable pools', async () =>
     assert.equal(duplicateName.status, 400);
     assert.match(String(duplicateName.data.error), /already exists/);
 
-    const duplicateSpecies = await apiJson(`${base}api/pool`, {
+    const duplicateTeam = await apiJson(`${base}api/pool`, {
       name: 'gui-pool-2',
       format: FORMAT,
       teams: [
@@ -337,8 +337,19 @@ test('gui validates teambuilder pastes and creates immutable pools', async () =>
         { id: 'team-a-again', paste: pasteA },
       ],
     });
-    assert.equal(duplicateSpecies.status, 400);
-    assert.match(String(duplicateSpecies.data.error), /same species set/);
+    assert.equal(duplicateTeam.status, 400);
+    assert.match(String(duplicateTeam.data.error), /byte-for-byte the same team/);
+
+    const respread = await apiJson(`${base}api/pool`, {
+      name: 'gui-pool-3',
+      format: FORMAT,
+      teams: [
+        { id: 'team-a', paste: pasteA },
+        { id: 'team-a-respread', paste: pasteA.replace(/^EVs: .*$/m, 'EVs: 1 HP') },
+      ],
+    });
+    assert.equal(respread.status, 200, JSON.stringify(respread.data));
+    assert.equal(loadPool('gui-pool-3', teamsDir).teams.length, 2);
   } finally {
     gui.close();
     fs.rmSync(teamsDir, { recursive: true, force: true });

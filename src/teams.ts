@@ -224,7 +224,7 @@ export function createPool(
   if (fs.existsSync(poolDir))
     throw new Error(`pool ${JSON.stringify(name)} already exists; pools are immutable snapshots, so pick a new name`);
   const seenIds = new Set<string>();
-  const seenSpecies = new Map<string, string>();
+  const seenTeams = new Map<string, string>();
   const teams = drafts.map((draft) => {
     const id = draft.id.trim();
     if (!POOL_SLUG.test(id))
@@ -238,13 +238,9 @@ export function createPool(
       const detail = error instanceof Error ? error.message : String(error);
       throw new Error(`team ${JSON.stringify(id)} is not legal in ${format}:\n${detail}`);
     }
-    const speciesKey = unpackTeam(packed, psDir)
-      .species.map((species) => species.toLowerCase().replace(/[^a-z0-9]/g, ''))
-      .sort()
-      .join(',');
-    const clash = seenSpecies.get(speciesKey);
-    if (clash) throw new Error(`team ${JSON.stringify(id)} has the same species set as ${JSON.stringify(clash)}`);
-    seenSpecies.set(speciesKey, id);
+    const clash = seenTeams.get(packed);
+    if (clash) throw new Error(`team ${JSON.stringify(id)} is byte-for-byte the same team as ${JSON.stringify(clash)}`);
+    seenTeams.set(packed, id);
     return { id, packed };
   });
   fs.mkdirSync(poolDir, { recursive: true });

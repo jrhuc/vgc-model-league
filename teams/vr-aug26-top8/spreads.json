@@ -1,0 +1,429 @@
+{
+  "pool": "vr-aug26-top8",
+  "teams": [
+    {
+      "team": "1st-ogushi-raichu-staraptor",
+      "sets": [
+        {
+          "species": "Staraptor",
+          "item": "Staraptite",
+          "nature": "Jolly",
+          "evs": "25 HP / 9 Atk / 32 Spe",
+          "source": "https://pokepast.es/0a136a5de6376a04",
+          "basis": "1/1 closest Jolly Staraptor sets ran 25 HP / 9 Atk / 32 Spe; matched 4/4 moves and the item"
+        },
+        {
+          "species": "Raichu",
+          "item": "Raichunite Y",
+          "nature": "Timid",
+          "evs": "30 HP / 13 Def / 23 Spe",
+          "source": "https://pokepast.es/5d52aaf2a42f26e8",
+          "basis": "2/3 closest Timid Raichu sets ran 30 HP / 13 Def / 23 Spe; matched 4/4 moves and the item"
+        },
+        {
+          "species": "Sylveon",
+          "item": "Fairy Feather",
+          "nature": "Modest",
+          "evs": "9 HP / 22 Def / 20 SpA / 15 Spe",
+          "source": "https://pokepast.es/09a60c7af9da90a4",
+          "basis": "2/7 closest Modest Sylveon sets ran 9 HP / 22 Def / 20 SpA / 15 Spe; matched 4/4 moves and the item"
+        },
+        {
+          "species": "Farigiraf",
+          "item": "Sitrus Berry",
+          "nature": "Calm",
+          "evs": "32 HP / 2 Def / 32 SpD",
+          "source": "authored",
+          "basis": "Trick Room setter on Sitrus Berry: the corpus only runs Relaxed physical-side Farigiraf, and Calm invests the special side instead. Speed stays at zero because the set exists to move last under its own Trick Room."
+        },
+        {
+          "species": "Arcanine-Hisui",
+          "item": "Focus Sash",
+          "nature": "Jolly",
+          "evs": "1 HP / 32 Atk / 1 Def / 32 Spe",
+          "source": "https://pokepast.es/9ac0cafd2bbaebdf",
+          "basis": "1/1 closest Jolly Arcanine-Hisui sets ran 1 HP / 32 Atk / 1 Def / 32 Spe; matched 4/4 moves and the item"
+        },
+        {
+          "species": "Kingambit",
+          "item": "Life Orb",
+          "nature": "Adamant",
+          "evs": "32 HP / 15 Atk / 18 SpD / 1 Spe",
+          "source": "https://pokepast.es/8631596549d4d8f3",
+          "basis": "1/2 closest Adamant Kingambit sets ran 32 HP / 15 Atk / 18 SpD / 1 Spe; matched 4/4 moves and the item"
+        }
+      ]
+    },
+    {
+      "team": "2nd-kaieda-raichu-staraptor",
+      "sets": [
+        {
+          "species": "Raichu",
+          "item": "Raichunite Y",
+          "nature": "Timid",
+          "evs": "30 HP / 13 Def / 23 Spe",
+          "source": "https://pokepast.es/5d52aaf2a42f26e8",
+          "basis": "2/3 closest Timid Raichu sets ran 30 HP / 13 Def / 23 Spe; matched 3/4 moves and the item"
+        },
+        {
+          "species": "Arcanine-Hisui",
+          "item": "Focus Sash",
+          "nature": "Jolly",
+          "evs": "1 HP / 32 Atk / 1 Def / 32 Spe",
+          "source": "https://pokepast.es/9ac0cafd2bbaebdf",
+          "basis": "1/1 closest Jolly Arcanine-Hisui sets ran 1 HP / 32 Atk / 1 Def / 32 Spe; matched 4/4 moves and the item"
+        },
+        {
+          "species": "Staraptor",
+          "item": "Staraptite",
+          "nature": "Jolly",
+          "evs": "25 HP / 9 Atk / 32 Spe",
+          "source": "https://pokepast.es/0a136a5de6376a04",
+          "basis": "1/1 closest Jolly Staraptor sets ran 25 HP / 9 Atk / 32 Spe; matched 4/4 moves and the item"
+        },
+        {
+          "species": "Farigiraf",
+          "item": "Sitrus Berry",
+          "nature": "Calm",
+          "evs": "32 HP / 2 Def / 32 SpD",
+          "source": "authored",
+          "basis": "Same Calm Sitrus Trick Room setter as the first-place team, which this list otherwise matches move for move outside Raichu."
+        },
+        {
+          "species": "Sylveon",
+          "item": "Fairy Feather",
+          "nature": "Modest",
+          "evs": "9 HP / 22 Def / 20 SpA / 15 Spe",
+          "source": "https://pokepast.es/09a60c7af9da90a4",
+          "basis": "2/7 closest Modest Sylveon sets ran 9 HP / 22 Def / 20 SpA / 15 Spe; matched 4/4 moves and the item"
+        },
+        {
+          "species": "Kingambit",
+          "item": "Life Orb",
+          "nature": "Adamant",
+          "evs": "32 HP / 15 Atk / 18 SpD / 1 Spe",
+          "source": "https://pokepast.es/8631596549d4d8f3",
+          "basis": "1/2 closest Adamant Kingambit sets ran 32 HP / 15 Atk / 18 SpD / 1 Spe; matched 4/4 moves and the item"
+        }
+      ]
+    },
+    {
+      "team": "3rd-zuniga-froslass-scovillain",
+      "sets": [
+        {
+          "species": "Kingambit",
+          "item": "Life Orb",
+          "nature": "Adamant",
+          "evs": "32 HP / 15 Atk / 18 SpD / 1 Spe",
+          "source": "https://pokepast.es/8631596549d4d8f3",
+          "basis": "1/2 closest Adamant Kingambit sets ran 32 HP / 15 Atk / 18 SpD / 1 Spe; matched 4/4 moves and the item"
+        },
+        {
+          "species": "Sneasler",
+          "item": "White Herb",
+          "nature": "Adamant",
+          "evs": "18 HP / 10 Atk / 21 Def / 17 Spe",
+          "source": "https://pokepast.es/7d544ca4586ae118",
+          "basis": "1/3 closest Adamant Sneasler sets ran 18 HP / 10 Atk / 21 Def / 17 Spe; matched 4/4 moves and the item"
+        },
+        {
+          "species": "Froslass",
+          "item": "Froslassite",
+          "nature": "Timid",
+          "evs": "10 HP / 10 Def / 30 SpA / 1 SpD / 15 Spe",
+          "source": "https://pokepast.es/3b4dc0c1bad2bff4",
+          "basis": "1/3 closest Timid Froslass sets ran 10 HP / 10 Def / 30 SpA / 1 SpD / 15 Spe; matched 3/4 moves and the item"
+        },
+        {
+          "species": "Lycanroc-Dusk",
+          "item": "Focus Sash",
+          "nature": "Adamant",
+          "evs": "1 HP / 32 Atk / 1 Def / 32 Spe",
+          "source": "https://pokepast.es/465a003d36a77d6a",
+          "basis": "2/3 closest Adamant Lycanroc-Dusk sets ran 1 HP / 32 Atk / 1 Def / 32 Spe; matched 4/4 moves and the item"
+        },
+        {
+          "species": "Basculegion",
+          "item": "Mystic Water",
+          "nature": "Adamant",
+          "evs": "12 HP / 32 Atk / 7 Def / 15 Spe",
+          "source": "https://pokepast.es/7d0d8f36a4fc312b",
+          "basis": "2/8 closest Adamant Basculegion sets ran 12 HP / 32 Atk / 7 Def / 15 Spe; matched 4/4 moves and the item"
+        },
+        {
+          "species": "Scovillain",
+          "item": "Scovillainite",
+          "nature": "Bold",
+          "evs": "32 HP / 32 Def / 2 SpD",
+          "source": "https://pokepast.es/b683d04264dfe8c5",
+          "basis": "1/1 closest Bold Scovillain sets ran 32 HP / 32 Def / 2 SpD; matched 3/4 moves and the item"
+        }
+      ]
+    },
+    {
+      "team": "4th-yang-charizard-floette",
+      "sets": [
+        {
+          "species": "Charizard",
+          "item": "Charizardite Y",
+          "nature": "Modest",
+          "evs": "22 HP / 18 Def / 11 SpA / 15 Spe",
+          "source": "https://pokepast.es/0d2858207078a94f",
+          "basis": "2/26 closest Modest Charizard sets ran 22 HP / 18 Def / 11 SpA / 15 Spe; matched 4/4 moves and the item"
+        },
+        {
+          "species": "Garchomp",
+          "item": "Life Orb",
+          "nature": "Jolly",
+          "evs": "2 HP / 32 Atk / 32 Spe",
+          "source": "https://pokepast.es/b683d04264dfe8c5",
+          "basis": "1/5 closest Jolly Garchomp sets ran 2 HP / 32 Atk / 32 Spe; matched 4/4 moves and the item"
+        },
+        {
+          "species": "Whimsicott",
+          "item": "Focus Sash",
+          "nature": "Timid",
+          "evs": "2 HP / 32 SpA / 32 Spe",
+          "source": "https://pokepast.es/0b6204a01a06be02",
+          "basis": "14/18 closest Timid Whimsicott sets ran 2 HP / 32 SpA / 32 Spe; matched 4/4 moves and the item"
+        },
+        {
+          "species": "Basculegion",
+          "item": "Mystic Water",
+          "nature": "Adamant",
+          "evs": "12 HP / 32 Atk / 7 Def / 15 Spe",
+          "source": "https://pokepast.es/7d0d8f36a4fc312b",
+          "basis": "2/8 closest Adamant Basculegion sets ran 12 HP / 32 Atk / 7 Def / 15 Spe; matched 4/4 moves and the item"
+        },
+        {
+          "species": "Floette-Eternal",
+          "item": "Floettite",
+          "nature": "Modest",
+          "evs": "2 HP / 32 SpA / 32 Spe",
+          "source": "https://pokepast.es/126c2dd2034d9908",
+          "basis": "3/13 closest Modest Floette-Eternal sets ran 2 HP / 32 SpA / 32 Spe; matched 4/4 moves and the item"
+        },
+        {
+          "species": "Kingambit",
+          "item": "Chople Berry",
+          "nature": "Adamant",
+          "evs": "23 HP / 32 Atk / 11 Spe",
+          "source": "https://pokepast.es/d415854daa8fac88",
+          "basis": "1/10 closest Adamant Kingambit sets ran 23 HP / 32 Atk / 11 Spe; matched 4/4 moves and the item"
+        }
+      ]
+    },
+    {
+      "team": "5th-koh-charizard-floette",
+      "sets": [
+        {
+          "species": "Whimsicott",
+          "item": "Focus Sash",
+          "nature": "Timid",
+          "evs": "2 HP / 32 SpA / 32 Spe",
+          "source": "https://pokepast.es/0b6204a01a06be02",
+          "basis": "14/18 closest Timid Whimsicott sets ran 2 HP / 32 SpA / 32 Spe; matched 4/4 moves and the item"
+        },
+        {
+          "species": "Floette-Eternal",
+          "item": "Floettite",
+          "nature": "Timid",
+          "evs": "1 HP / 1 Def / 32 SpA / 32 Spe",
+          "source": "https://pokepast.es/7baeaa7a04b7bc04",
+          "basis": "1/2 closest Timid Floette-Eternal sets ran 1 HP / 1 Def / 32 SpA / 32 Spe; matched 4/4 moves and the item"
+        },
+        {
+          "species": "Basculegion",
+          "item": "Life Orb",
+          "nature": "Adamant",
+          "evs": "32 Atk / 13 Def / 21 Spe",
+          "source": "https://pokepast.es/711c62a5f1970266",
+          "basis": "3/9 closest Adamant Basculegion sets ran 32 Atk / 13 Def / 21 Spe; matched 4/4 moves and the item"
+        },
+        {
+          "species": "Kingambit",
+          "item": "Occa Berry",
+          "nature": "Adamant",
+          "evs": "25 HP / 25 Atk / 16 Spe",
+          "source": "https://pokepast.es/69dcb3672f175bcc",
+          "basis": "1/2 closest Adamant Kingambit sets ran 25 HP / 25 Atk / 16 Spe; matched 3/4 moves and the item"
+        },
+        {
+          "species": "Charizard",
+          "item": "Charizardite Y",
+          "nature": "Modest",
+          "evs": "22 HP / 23 Def / 1 SpA / 20 Spe",
+          "source": "https://pokepast.es/bdd115f2322aaf89",
+          "basis": "1/1 closest Modest Charizard sets ran 22 HP / 23 Def / 1 SpA / 20 Spe; matched 4/4 moves and the item"
+        },
+        {
+          "species": "Garchomp",
+          "item": "Roseli Berry",
+          "nature": "Jolly",
+          "evs": "16 HP / 29 Atk / 21 Spe",
+          "source": "https://pokepast.es/e63f3cbd94b85986",
+          "basis": "1/1 closest Jolly Garchomp sets ran 16 HP / 29 Atk / 21 Spe; matched 4/4 moves and the item"
+        }
+      ]
+    },
+    {
+      "team": "6th-markl-floette-sneasler",
+      "sets": [
+        {
+          "species": "Sneasler",
+          "item": "White Herb",
+          "nature": "Adamant",
+          "evs": "18 HP / 10 Atk / 21 Def / 17 Spe",
+          "source": "https://pokepast.es/7d544ca4586ae118",
+          "basis": "1/3 closest Adamant Sneasler sets ran 18 HP / 10 Atk / 21 Def / 17 Spe; matched 4/4 moves and the item"
+        },
+        {
+          "species": "Basculegion",
+          "item": "Choice Scarf",
+          "nature": "Jolly",
+          "evs": "32 Atk / 2 Def / 32 Spe",
+          "source": "https://pokepast.es/0b6204a01a06be02",
+          "basis": "4/14 closest Jolly Basculegion sets ran 32 Atk / 2 Def / 32 Spe; matched 4/4 moves and the item"
+        },
+        {
+          "species": "Kingambit",
+          "item": "Black Glasses",
+          "nature": "Adamant",
+          "evs": "32 HP / 32 Atk / 1 SpD / 1 Spe",
+          "source": "https://pokepast.es/465a003d36a77d6a",
+          "basis": "3/7 closest Adamant Kingambit sets ran 32 HP / 32 Atk / 1 SpD / 1 Spe; matched 4/4 moves and the item"
+        },
+        {
+          "species": "Floette-Eternal",
+          "item": "Floettite",
+          "nature": "Timid",
+          "evs": "1 HP / 1 Def / 32 SpA / 32 Spe",
+          "source": "https://pokepast.es/7baeaa7a04b7bc04",
+          "basis": "1/3 closest Timid Floette-Eternal sets ran 1 HP / 1 Def / 32 SpA / 32 Spe; matched 2/4 moves and the item"
+        },
+        {
+          "species": "Incineroar",
+          "item": "Sitrus Berry",
+          "nature": "Careful",
+          "evs": "30 HP / 2 Def / 10 SpD / 24 Spe",
+          "source": "https://pokepast.es/5b37157ba2378dc8",
+          "basis": "1/3 closest Careful Incineroar sets ran 30 HP / 2 Def / 10 SpD / 24 Spe; matched 3/4 moves and the item"
+        },
+        {
+          "species": "Sinistcha",
+          "item": "Focus Sash",
+          "nature": "Modest",
+          "evs": "32 HP / 2 Def / 32 SpA",
+          "source": "authored",
+          "basis": "Focus Sash Modest redirector, not the Bold or Relaxed berry sets the corpus carries. The Sash buys the first Rage Powder outright, so the points go to the two stats the set actually uses: Matcha Gotcha damage and the bulk that keeps it redirecting afterwards. Base 5 Speed makes Speed investment worthless."
+        }
+      ]
+    },
+    {
+      "team": "7th-alarcon-delphox-blastoise",
+      "sets": [
+        {
+          "species": "Sneasler",
+          "item": "Focus Sash",
+          "nature": "Jolly",
+          "evs": "2 HP / 32 Atk / 32 Spe",
+          "source": "https://pokepast.es/b622c86faf9129fa",
+          "basis": "1/1 closest Jolly Sneasler sets ran 2 HP / 32 Atk / 32 Spe; matched 4/4 moves and the item"
+        },
+        {
+          "species": "Kingambit",
+          "item": "Life Orb",
+          "nature": "Adamant",
+          "evs": "32 HP / 15 Atk / 18 SpD / 1 Spe",
+          "source": "https://pokepast.es/8631596549d4d8f3",
+          "basis": "1/2 closest Adamant Kingambit sets ran 32 HP / 15 Atk / 18 SpD / 1 Spe; matched 4/4 moves and the item"
+        },
+        {
+          "species": "Incineroar",
+          "item": "Sitrus Berry",
+          "nature": "Impish",
+          "evs": "31 HP / 20 Def / 7 SpD / 8 Spe",
+          "source": "https://pokepast.es/180c9919cae71f22",
+          "basis": "1/11 closest Impish Incineroar sets ran 31 HP / 20 Def / 7 SpD / 8 Spe; matched 4/4 moves and the item"
+        },
+        {
+          "species": "Blastoise",
+          "item": "Blastoisinite",
+          "nature": "Modest",
+          "evs": "2 HP / 32 SpA / 32 Spe",
+          "source": "https://pokepast.es/124511a5e19b5e92",
+          "basis": "3/3 closest Modest Blastoise sets ran 2 HP / 32 SpA / 32 Spe; matched 4/4 moves and the item"
+        },
+        {
+          "species": "Sinistcha",
+          "item": "Occa Berry",
+          "nature": "Bold",
+          "evs": "32 HP / 4 Def / 30 SpD",
+          "source": "https://pokepast.es/b622c86faf9129fa",
+          "basis": "1/1 closest Bold Sinistcha sets ran 32 HP / 4 Def / 30 SpD; matched 4/4 moves and the item"
+        },
+        {
+          "species": "Delphox",
+          "item": "Delphoxite",
+          "nature": "Timid",
+          "evs": "1 HP / 1 Def / 32 SpA / 32 Spe",
+          "source": "https://pokepast.es/180c9919cae71f22",
+          "basis": "1/7 closest Timid Delphox sets ran 1 HP / 1 Def / 32 SpA / 32 Spe; matched 3/4 moves and the item"
+        }
+      ]
+    },
+    {
+      "team": "8th-endo-gengar-swampert",
+      "sets": [
+        {
+          "species": "Gengar",
+          "item": "Gengarite",
+          "nature": "Modest",
+          "evs": "30 HP / 1 Def / 1 SpA / 28 SpD / 6 Spe",
+          "source": "https://pokepast.es/062ba26e30b09342",
+          "basis": "1/2 closest Modest Gengar sets ran 30 HP / 1 Def / 1 SpA / 28 SpD / 6 Spe; matched 4/4 moves and the item"
+        },
+        {
+          "species": "Swampert",
+          "item": "Swampertite",
+          "nature": "Adamant",
+          "evs": "2 HP / 32 Atk / 32 Spe",
+          "source": "https://pokepast.es/062ba26e30b09342",
+          "basis": "2/4 closest Adamant Swampert sets ran 2 HP / 32 Atk / 32 Spe; matched 4/4 moves and the item"
+        },
+        {
+          "species": "Politoed",
+          "item": "Sitrus Berry",
+          "nature": "Calm",
+          "evs": "31 HP / 23 Def / 12 SpD",
+          "source": "https://pokepast.es/062ba26e30b09342",
+          "basis": "2/2 closest Calm Politoed sets ran 31 HP / 23 Def / 12 SpD; matched 4/4 moves and the item"
+        },
+        {
+          "species": "Kommo-o",
+          "item": "Leftovers",
+          "nature": "Modest",
+          "evs": "3 HP / 1 Def / 31 SpA / 1 SpD / 30 Spe",
+          "source": "https://pokepast.es/77b5d41e12cfe28c",
+          "basis": "1/1 closest Modest Kommo-o sets ran 3 HP / 1 Def / 31 SpA / 1 SpD / 30 Spe; matched 4/4 moves and the item"
+        },
+        {
+          "species": "Vivillon-Tundra",
+          "item": "Focus Sash",
+          "nature": "Timid",
+          "evs": "2 HP / 32 SpA / 32 Spe",
+          "source": "authored",
+          "basis": "No Vivillon appears anywhere in the corpus. Focus Sash guarantees the turn regardless of bulk, so a Timid Compound Eyes Sleep Powder lead spends everything on getting the sleep off first and on Hurricane damage behind it."
+        },
+        {
+          "species": "Incineroar",
+          "item": "Passho Berry",
+          "nature": "Impish",
+          "evs": "32 HP / 10 Def / 24 SpD",
+          "source": "https://pokepast.es/062ba26e30b09342",
+          "basis": "1/1 closest Impish Incineroar sets ran 32 HP / 10 Def / 24 SpD; matched 4/4 moves and the item"
+        }
+      ]
+    }
+  ]
+}
