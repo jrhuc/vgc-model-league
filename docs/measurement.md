@@ -130,7 +130,10 @@ and sets the corpus cannot serve carry an authored spread with its reasoning.
 Three deviations follow, and all three are stated to the models as well as
 here: the spreads are ours and not the players', the top-cut pairings were
 never published so the bracket seeds by finishing order, and the models did not
-build these teams. Letting each model spend its own stat points was rejected
+build these teams. The seeding stays out of the prompt even though it decides
+the pairings. Where a team finished is a result of games these models never
+played, and a seat told it holds the list that lost the final would read that
+as a verdict on the team rather than on its former pilot. Letting each model spend its own stat points was rejected
 for this mode — it would measure teambuilding, which the draft league already
 measures, and would leave eight teams that no longer are the top cut the
 provenance disclosure describes.

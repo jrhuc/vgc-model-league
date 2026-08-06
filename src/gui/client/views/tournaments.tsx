@@ -123,7 +123,7 @@ function EventHeader({ archive }: { archive: TournamentArchiveView }) {
       <p class="muted">
         {archive.provenance === 'blind'
           ? 'Seats were told nothing about where these teams came from.'
-          : 'Each seat was told the event and how both teams in front of it finished.'}
+          : 'Each seat was told the event and that both teams in the match made that cut, but not which team placed where.'}
         {event.reconstructedSpreads
           ? ' Stat points were rebuilt from public sets of the same Pokémon in this regulation; the published lists carried none.'
           : ''}

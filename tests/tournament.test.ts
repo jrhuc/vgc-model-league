@@ -9,7 +9,7 @@ import { loadRows } from '../src/records.js';
 import { loadPool } from '../src/teams.js';
 import type { TournamentEvent } from '../src/tournament.js';
 import {
-  briefEntrant,
+  briefEvent,
   buildBracket,
   runTournament,
   seedPositions,
@@ -190,14 +190,14 @@ test('a seeded pool keeps the real bracket order and briefs both sides on it', a
   assert.equal(config.event, pool.event!.name);
 });
 
-test('a briefing names both finishes and disowns the rebuilt spreads', () => {
+test('a briefing establishes the cut without ranking anyone inside it', () => {
   const pool = loadPool('vr-aug26-top8');
-  const byPlacement = (place: number) => ({ model: 'random', team: pool.teams.find((t) => t.seed === place)! });
-  const brief = briefEntrant(pool.event!, byPlacement(3), byPlacement(6), 8);
+  const brief = briefEvent(pool.event!, 8);
   assert.match(brief, /Victory Road August Challenge #1/);
   assert.match(brief, /top 8/);
-  assert.match(brief, /you have the team that finished 3rd/i);
-  assert.match(brief, /opponent has the team that finished 6th/i);
+  assert.match(brief, /took to that top cut/i);
+  assert.match(brief, /placed where is not disclosed/i);
   assert.match(brief, /no stat points/i, 'the seat is told the spreads are not the players own');
+  assert.doesNotMatch(brief, /\b(1st|2nd|3rd|[4-8]th)\b/, 'no seat learns which team outplaced which');
   assert.doesNotMatch(brief, /Kazuki|Jonathan|Markl/, 'player names stay out of competitive context');
 });

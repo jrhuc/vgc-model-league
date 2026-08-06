@@ -42,24 +42,16 @@ interface Entrant {
   team: Team;
 }
 
-function ordinal(place: number): string {
-  const tens = place % 100;
-  if (tens >= 11 && tens <= 13) return `${place}th`;
-  return `${place}${['th', 'st', 'nd', 'rd'][place % 10] ?? 'th'}`;
-}
-
-export function briefEntrant(event: PoolEvent, entrant: Entrant, opponent: Entrant, count: number): string {
+export function briefEvent(event: PoolEvent, count: number): string {
   const field = event.players ? `${event.players}-player ` : '';
   const where = [event.dates, event.location].filter(Boolean).join(', ');
-  const finish = (side: Entrant): string =>
-    side.team.provenance?.placement ? `finished ${ordinal(side.team.provenance.placement)}` : 'played';
   const lines = [
     `This bracket replays the top ${count} of ${event.name}, a ${field}${event.game} tournament played ${where} under ${event.regulation}${event.structure ? ` (${event.structure})` : ''}.`,
-    `Every team here is one a player took to that top cut; nobody in this bracket built their own. You have the team that ${finish(entrant)}, and your opponent has the team that ${finish(opponent)}.`,
+    'Every team here, yours and your opponent\u2019s alike, is one a player took to that top cut; nobody in this bracket built their own. Which of them placed where is not disclosed.',
   ];
   if (event.reconstructedSpreads)
     lines.push(
-      'The published lists gave species, items, abilities, natures and moves but no stat points, so every spread here was rebuilt from public sets of the same Pokémon in this regulation and is not the players’ own.',
+      'The published lists gave species, items, abilities, natures and moves but no stat points, so every spread here was rebuilt from public sets of the same Pok\u00e9mon in this regulation and is not the players\u2019 own.',
     );
   return lines.join('\n');
 }
@@ -169,10 +161,7 @@ export async function runTournament(
     team: assignedTeams[position]!,
   }));
   const provenance = options.provenance ?? DEFAULT_PROVENANCE;
-  const briefingFor =
-    provenance === 'disclosed' && event
-      ? (entrant: Entrant, opponent: Entrant) => briefEntrant(event, entrant, opponent, entrants.length)
-      : undefined;
+  const briefing = provenance === 'disclosed' && event ? briefEvent(event, entrants.length) : undefined;
   const rounds = buildBracket(entrants.length);
   const matches = rounds.flat();
   const seriesCount = entrants.length - 1;
@@ -264,7 +253,7 @@ export async function runTournament(
         signal: controller.signal,
         seriesSeeds: seriesSeeds[match.seriesIndex!]!,
         provenance,
-        ...(briefingFor === undefined ? {} : { briefingFor }),
+        ...(briefing === undefined ? {} : { briefing }),
         ...(options.reasoning === undefined ? {} : { reasoning: options.reasoning }),
         ...(options.apiKeys === undefined ? {} : { apiKeys: options.apiKeys }),
         ...(options.recovery === undefined ? {} : { recovery: options.recovery }),
@@ -325,7 +314,7 @@ async function playMatch(
     scaffold: string;
     psDir: string;
     seriesSeeds: { gameSeeds: Array<[number, number, number, number]>; engineSeeds: Record<Pid, number> };
-    briefingFor?: (entrant: Entrant, opponent: Entrant) => string;
+    briefing?: string;
     provenance: ProvenanceMode;
     apiKeys?: Readonly<Record<string, string>>;
     onEvent?: (event: TournamentEvent) => void;
@@ -350,14 +339,7 @@ async function playMatch(
     psDir: context.psDir,
     runDir: context.runDir,
     requireWinner: true,
-    ...(context.briefingFor === undefined
-      ? {}
-      : {
-          briefings: {
-            p1: context.briefingFor(sides.p1, sides.p2),
-            p2: context.briefingFor(sides.p2, sides.p1),
-          },
-        }),
+    ...(context.briefing === undefined ? {} : { briefings: { p1: context.briefing, p2: context.briefing } }),
     ...(context.reasoningByModel === undefined ? {} : { reasoningByModel: context.reasoningByModel }),
     ...(context.reasoning === undefined ? {} : { reasoning: context.reasoning }),
     timerScale: context.timerScale,

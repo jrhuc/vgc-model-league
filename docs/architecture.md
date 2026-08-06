@@ -48,10 +48,13 @@ each team a seed and the finish it earned, and `tools/build-event-pool.ts`
 builds it. Seeded teams hold their bracket positions instead of drawing at
 random, so the field meets in the pairings it earned; the models are still
 shuffled across the teams. `--provenance disclosed`, the default, tells each
-seat which event this is and where both teams in the match finished, and says
-outright when the stat points were rebuilt rather than published. `blind`
-withholds all of it and is the control arm. Player names never enter a
-competitive prompt; they appear only in the GUI and the pool manifest.
+seat which event this is and that both teams in the match came out of that cut,
+and says outright when the stat points were rebuilt rather than published. It
+withholds the finishing order: holding the team that lost the final is a fact
+about a game these models did not play, and it would steer play rather than
+inform it. `blind` withholds all of it and is the control arm. Player names
+never enter a competitive prompt; they appear only in the GUI and the pool
+manifest.
 
 ### Draft League
 
