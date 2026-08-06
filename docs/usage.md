@@ -47,6 +47,7 @@ pnpm run vgcleague -- selfcheck
 
 pnpm run vgcleague -- rotation   --models <spec> <spec> --pool regmb-202607 --series-per-pair 4
 pnpm run vgcleague -- tournament --models <spec> <spec> <spec> <spec> --pool regmb-202607
+pnpm run vgcleague -- tournament --models <8 specs> --pool vr-aug26-top8
 pnpm run vgcleague -- draft      --models <spec> <spec> <spec> <spec> --board regmb-202607
 pnpm run vgcleague -- exhibition --opponent <spec>
 ```
@@ -65,6 +66,14 @@ random-versus-random series.
 Each experiment command accepts `--seed` and `--reasoning <level>`. Rotation,
 tournament, and draft also accept `--concurrency` and
 `--timer-scale <n|off>`.
+
+`vr-aug26-top8` holds the eight teams from the top cut of Victory Road's
+August 2026 Challenge #1, each seeded by where it finished, so eight models
+play that bracket in its real pairings with one team apiece. Tournaments on
+such a pool take `--provenance disclosed` (the default), which tells each seat
+the event and both teams' finishes, or `--provenance blind`, which tells it
+nothing — run the pair to measure what knowing is worth. Build a pool like it
+with `node dist/tools/build-event-pool.js teams/<pool>/sources.json`.
 
 Battles are untimed by default. `--timer-scale 1` uses the standard VGC clock.
 Values from 0.5 through 4 scale every Showdown clock. Each run records the
