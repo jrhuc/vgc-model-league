@@ -8,7 +8,13 @@ import type { BracketView } from '../src/gui/api.js';
 import { loadRows } from '../src/records.js';
 import { loadPool } from '../src/teams.js';
 import type { TournamentEvent } from '../src/tournament.js';
-import { buildBracket, runTournament, seedPositions, TOURNAMENT_PROTOCOL_VERSION } from '../src/tournament.js';
+import {
+  briefEvent,
+  buildBracket,
+  runTournament,
+  seedPositions,
+  TOURNAMENT_PROTOCOL_VERSION,
+} from '../src/tournament.js';
 
 test('seed order spreads byes across distinct first-round matches', () => {
   assert.deepEqual(seedPositions(4), [0, 3, 1, 2]);
@@ -136,4 +142,131 @@ test('inline teams must cover every model', async () => {
     }),
     /one team per model/,
   );
+});
+
+test('a seeded pool keeps the real bracket order and briefs both sides on it', async (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-model-league-tournament-seeded-'));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const pool = loadPool('vr-aug26-top8');
+  assert.ok(pool.event, 'the pool carries its event');
+  assert.equal(pool.teams.length, 8);
+
+  const events: TournamentEvent[] = [];
+  await runTournament(
+    Array.from({ length: 8 }, () => 'random'),
+    directory,
+    {
+      seed: 5,
+      concurrency: 4,
+      pool: 'vr-aug26-top8',
+      recordsPath: path.join(directory, 'results.jsonl'),
+      onEvent: (event) => events.push(event),
+    },
+  );
+
+  const bracket = events.filter(
+    (event): event is Extract<TournamentEvent, { type: 'bracket' }> => event.type === 'bracket',
+  )[0]!.bracket;
+  const placementOf = (slot: number): number =>
+    pool.teams.find((team) => team.id === bracket.entrants[slot]!.team)!.seed!;
+  assert.deepEqual(
+    bracket.entrants.map((_, index) => placementOf(index)),
+    [1, 2, 3, 4, 5, 6, 7, 8],
+    'bracket positions follow the finishing order the event published',
+  );
+  assert.deepEqual(
+    bracket.rounds[0]!.map((match) => [placementOf(match.slots[0]!), placementOf(match.slots[1]!)]),
+    [
+      [1, 8],
+      [4, 5],
+      [2, 7],
+      [3, 6],
+    ],
+    'the quarterfinals pair the standard seeding',
+  );
+
+  const config = JSON.parse(fs.readFileSync(path.join(directory, 'config.json'), 'utf8')) as Record<string, unknown>;
+  assert.equal(config.provenance, 'disclosed');
+  assert.equal(config.event, pool.event!.name);
+});
+
+test('a stopped bracket resumes on its records and replays the interrupted series', async (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-model-league-tournament-resume-'));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const recordsPath = path.join(directory, 'results.jsonl');
+  const models = Array.from({ length: 4 }, () => 'random');
+  const controller = new AbortController();
+  const stopped = await runTournament(models, directory, {
+    seed: 7,
+    concurrency: 1,
+    recordsPath,
+    signal: controller.signal,
+    onEvent: (event) => {
+      if (event.type === 'game-end') controller.abort();
+    },
+  });
+  assert.equal(stopped.length, 0, 'the bracket stops inside its first series');
+  const interrupted = fs.readdirSync(path.join(directory, 'series'));
+  assert.equal(interrupted.length, 1, 'the interrupted series left one directory behind');
+  const config = fs.readFileSync(path.join(directory, 'config.json'), 'utf8');
+
+  const resumed = await runTournament(models, directory, {
+    seed: 7,
+    concurrency: 1,
+    recordsPath,
+    resume: true,
+  });
+
+  assert.equal(resumed.length, 3, 'the resumed bracket plays every series once');
+  assert.deepEqual(
+    resumed.map((row) => row.series_index),
+    [0, 1, 2],
+  );
+  assert.equal(loadRows(recordsPath).length, 3, 'no series is recorded twice');
+  const played = fs.readdirSync(path.join(directory, 'series'));
+  assert.equal(played.length, 3, 'the interrupted series reuses its directory');
+  assert.ok(played.includes(interrupted[0]!), 'and keeps the one it already opened');
+  const first = resumed.find((row) => row.series_index === 0)!;
+  assert.equal(
+    ((first.games as Array<Record<string, unknown>>)[0] ?? {}).resumed,
+    true,
+    'the game that already finished is replayed from its log, not bought again',
+  );
+  assert.equal(fs.readFileSync(path.join(directory, 'config.json'), 'utf8'), config, 'a resume rewrites no provenance');
+});
+
+test('a resume refuses a bracket whose stored seats no longer match the draw', async (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-model-league-tournament-mismatch-'));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const models = Array.from({ length: 4 }, () => 'random');
+  await runTournament(models, directory, {
+    seed: 3,
+    concurrency: 2,
+    recordsPath: path.join(directory, 'results.jsonl'),
+  });
+  const configPath = path.join(directory, 'config.json');
+  const config = JSON.parse(fs.readFileSync(configPath, 'utf8')) as { entrants: Array<{ team: string }> };
+  config.entrants[0]!.team = 'some-other-team';
+  fs.writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`, 'utf8');
+  await assert.rejects(
+    runTournament(models, directory, {
+      seed: 3,
+      concurrency: 2,
+      recordsPath: path.join(directory, 'results.jsonl'),
+      resume: true,
+    }),
+    /cannot resume/,
+  );
+});
+
+test('a briefing establishes the cut without ranking anyone inside it', () => {
+  const pool = loadPool('vr-aug26-top8');
+  const brief = briefEvent(pool.event!, 8);
+  assert.match(brief, /Victory Road August Challenge #1/);
+  assert.match(brief, /top 8/);
+  assert.match(brief, /took to that top cut/i);
+  assert.match(brief, /placed where is not disclosed/i);
+  assert.match(brief, /no stat points/i, 'the seat is told the spreads are not the players own');
+  assert.doesNotMatch(brief, /\b(1st|2nd|3rd|[4-8]th)\b/, 'no seat learns which team outplaced which');
+  assert.doesNotMatch(brief, /Kazuki|Jonathan|Markl/, 'player names stay out of competitive context');
 });

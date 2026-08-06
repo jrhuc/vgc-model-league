@@ -126,6 +126,11 @@ export interface DraftView {
 export interface BracketEntrantView {
   model: string;
   team: string;
+  seed?: number | null;
+  placement?: number | null;
+  player?: string;
+  paste?: string;
+  teamSheet?: TeambuildSetView[];
 }
 
 interface BracketMatchView {
@@ -197,7 +202,7 @@ export interface AppState {
   boards: BoardInfo[];
   auth: AuthView;
   run: RunSnapshot | null;
-  externalRun: { runId: string; mode: 'draft' } | null;
+  externalRun: { runId: string; mode: 'draft' | 'tournament' } | null;
 }
 
 export interface MonView {
@@ -379,10 +384,33 @@ export interface EvidenceResponse {
 }
 
 export interface ArchivedMatchView {
+  seriesIndex: number | null;
   slots: [number | null, number | null];
   winner: number | null;
   score: [number, number] | null;
   turns: number | null;
+}
+
+export interface TournamentEventView {
+  name: string;
+  game: string;
+  regulation: string;
+  location: string;
+  dates: string;
+  players: number | null;
+  structure: string;
+  url: string;
+  reconstructedSpreads: boolean;
+}
+
+export interface TournamentLiveSeriesView {
+  seriesId: string;
+  seriesIndex: number | null;
+  round: number | null;
+  slots: [number | null, number | null];
+  game: number;
+  turn: number;
+  decisions: number;
 }
 
 export interface TournamentArchiveView {
@@ -393,6 +421,10 @@ export interface TournamentArchiveView {
   rounds: ArchivedMatchView[][];
   champion: number | null;
   complete: boolean;
+  live: boolean;
+  liveSeries: TournamentLiveSeriesView[];
+  event: TournamentEventView | null;
+  provenance: 'disclosed' | 'blind' | null;
 }
 
 export interface TournamentsResponse {

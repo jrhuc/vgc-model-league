@@ -1,0 +1,115 @@
+{
+  "id": "vr-aug26-top8",
+  "format": "gen9championsvgc2026regmbbo3",
+  "event": {
+    "name": "Victory Road August Challenge #1",
+    "game": "Pokémon Champions",
+    "regulation": "VGC Regulation Set M-B",
+    "location": "Online",
+    "dates": "1-2 August 2026",
+    "players": 194,
+    "structure": "8+2 Swiss rounds, X-2 top cut, open team lists",
+    "url": "https://victoryroad.pro/vr-aug26/",
+    "cut": 8
+  },
+  "spreads": {
+    "published": false,
+    "corpus": "https://docs.google.com/spreadsheets/d/1axlwmzPA49rYkqXh7zHvAtSP-TKbM0ijGYBPRflLSWw/export?format=csv&gid=1774271567",
+    "corpusName": "VGCPastes Repository (Champions M-B Featured Teams)",
+    "reason": "Victory Road open team lists publish species, item, ability, nature, level and moves but no EVs or IVs. Champions allots 66 stat points with a per-stat cap of 32, so a zero-point team is not the team that top cut. Each set adopts a real spread from a same-species, same-nature set in the corpus, preferring the same item and then the closest movepool; sets the corpus cannot serve carry an authored override with its reasoning."
+  },
+  "teams": [
+    {
+      "id": "1st-ogushi-raichu-staraptor",
+      "placement": 1,
+      "player": "Kazuki Ogushi",
+      "handle": "わとり",
+      "swiss": "8-2",
+      "paste": "https://www.vrpastes.com/VgWRdF9j",
+      "overrides": [
+        {
+          "species": "Farigiraf",
+          "evs": "32 HP / 2 Def / 32 SpD",
+          "why": "Trick Room setter on Sitrus Berry: the corpus only runs Relaxed physical-side Farigiraf, and Calm invests the special side instead. Speed stays at zero because the set exists to move last under its own Trick Room."
+        }
+      ]
+    },
+    {
+      "id": "2nd-kaieda-raichu-staraptor",
+      "placement": 2,
+      "player": "Joji Kaieda",
+      "handle": "S",
+      "swiss": "8-2",
+      "paste": "https://www.vrpastes.com/ezNsnG89",
+      "overrides": [
+        {
+          "species": "Farigiraf",
+          "evs": "32 HP / 2 Def / 32 SpD",
+          "why": "Same Calm Sitrus Trick Room setter as the first-place team, which this list otherwise matches move for move outside Raichu."
+        }
+      ]
+    },
+    {
+      "id": "3rd-zuniga-froslass-scovillain",
+      "placement": 3,
+      "player": "Jonathan Zuniga",
+      "handle": "Jawnzu",
+      "swiss": "8-2",
+      "paste": "https://vrpastes.com/4s98LdpI"
+    },
+    {
+      "id": "4th-yang-charizard-floette",
+      "placement": 4,
+      "player": "Ethan Yang",
+      "handle": "Ayabe",
+      "swiss": "8-2",
+      "paste": "https://www.vrpastes.com/q3GvjUbW"
+    },
+    {
+      "id": "5th-koh-charizard-floette",
+      "placement": 5,
+      "player": "Marcus Koh",
+      "handle": "Calculus",
+      "swiss": "9-1",
+      "paste": "https://vrpastes.com/xsv5uMTj"
+    },
+    {
+      "id": "6th-markl-floette-sneasler",
+      "placement": 6,
+      "player": "Louis Markl",
+      "handle": "Louis",
+      "swiss": "9-1",
+      "paste": "https://www.vrpastes.com/FVOGBfkW",
+      "overrides": [
+        {
+          "species": "Sinistcha",
+          "evs": "32 HP / 32 SpA / 2 Def",
+          "why": "Focus Sash Modest redirector, not the Bold or Relaxed berry sets the corpus carries. The Sash buys the first Rage Powder outright, so the points go to the two stats the set actually uses: Matcha Gotcha damage and the bulk that keeps it redirecting afterwards. Base 5 Speed makes Speed investment worthless."
+        }
+      ]
+    },
+    {
+      "id": "7th-alarcon-delphox-blastoise",
+      "placement": 7,
+      "player": "Luca Alarcón",
+      "handle": "Luca",
+      "swiss": "8-2",
+      "paste": "https://vrpastes.com/o86fp7LQ"
+    },
+    {
+      "id": "8th-endo-gengar-swampert",
+      "placement": 8,
+      "player": "Shuji Endo",
+      "handle": "えげ",
+      "swiss": "8-2",
+      "paste": "https://www.vrpastes.com/NGV3vjH5",
+      "overrides": [
+        {
+          "species": "Vivillon-Tundra",
+          "evs": "2 HP / 32 SpA / 32 Spe",
+          "why": "No Vivillon appears anywhere in the corpus. Focus Sash guarantees the turn regardless of bulk, so a Timid Compound Eyes Sleep Powder lead spends everything on getting the sleep off first and on Hurricane damage behind it."
+        }
+      ]
+    }
+  ]
+}

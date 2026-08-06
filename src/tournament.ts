@@ -7,13 +7,13 @@ import type { ModelReasoningConfig } from './providers.js';
 import { validateModelExecution } from './providers.js';
 import { resolveSeed, seededRng, seriesEntropy, shuffle } from './random.js';
 import type { SeriesRecord } from './records.js';
-import { appendRow } from './records.js';
+import { appendRow, loadRows } from './records.js';
 import type { RecoveryGate } from './recovery.js';
 import type { RotationEvent } from './rotation.js';
 import type { ExperimentOptions } from './series.js';
 import { playRecordedSeries } from './series.js';
 import { showdownCommit } from './showdown.js';
-import type { Team } from './teams.js';
+import type { PoolEvent, Team } from './teams.js';
 import { loadPool, validatePool, validateTeam } from './teams.js';
 import { DEFAULT_TIMER_SCALE } from './timer.js';
 import type { ContributorAttribution, Pid, TimerScale } from './types.js';
@@ -25,16 +25,60 @@ export type TournamentEvent =
   | { type: 'bracket'; bracket: BracketView }
   | { type: 'series-players'; index: number; players: Record<Pid, string> };
 
+export type ProvenanceMode = 'disclosed' | 'blind';
+
+export const DEFAULT_PROVENANCE: ProvenanceMode = 'disclosed';
+
 export interface TournamentOptions extends ExperimentOptions {
   pool?: string;
   teams?: Team[];
   format?: string;
+  provenance?: ProvenanceMode;
+  resume?: boolean;
   onEvent?: (event: TournamentEvent) => void;
 }
 
 interface Entrant {
   model: string;
   team: Team;
+}
+
+interface StoredTournament {
+  entrants: Array<{ model: string; team: string }>;
+}
+
+function loadStoredTournament(runDir: string): StoredTournament {
+  const configPath = path.join(runDir, 'config.json');
+  if (!fs.existsSync(configPath)) throw new Error(`${runDir} holds no tournament config to resume`);
+  const config = JSON.parse(fs.readFileSync(configPath, 'utf8')) as {
+    mode?: string;
+    entrants?: Array<{ model?: unknown; team?: unknown }>;
+  };
+  if (config.mode !== 'tournament') throw new Error(`${runDir} is not a tournament run`);
+  const entrants = config.entrants ?? [];
+  if (entrants.length < 2) throw new Error(`${runDir} holds no bracket to resume`);
+  return {
+    entrants: entrants.map((entrant) => {
+      if (typeof entrant.model !== 'string' || !entrant.model || typeof entrant.team !== 'string' || !entrant.team) {
+        throw new Error(`${runDir} holds an entrant without a model and team; it cannot resume`);
+      }
+      return { model: entrant.model, team: entrant.team };
+    }),
+  };
+}
+
+export function briefEvent(event: PoolEvent, count: number): string {
+  const field = event.players ? `${event.players}-player ` : '';
+  const where = [event.dates, event.location].filter(Boolean).join(', ');
+  const lines = [
+    `This bracket replays the top ${count} of ${event.name}, a ${field}${event.game} tournament played ${where} under ${event.regulation}${event.structure ? ` (${event.structure})` : ''}.`,
+    'Every team here, yours and your opponent\u2019s alike, is one a player took to that top cut; nobody in this bracket built their own. Which of them placed where is not disclosed.',
+  ];
+  if (event.reconstructedSpreads)
+    lines.push(
+      'The published lists gave species, items, abilities, natures and moves but no stat points, so every spread here was rebuilt from public sets of the same Pok\u00e9mon in this regulation and is not the players\u2019 own.',
+    );
+  return lines.join('\n');
 }
 
 export interface BracketMatch {
@@ -89,9 +133,13 @@ export async function runTournament(
   options: TournamentOptions = {},
 ): Promise<SeriesRecord[]> {
   if (models.length < 2) throw new Error('a tournament needs at least two models');
-  validateModelExecution(models, options);
 
   fs.mkdirSync(runDir, { recursive: true });
+  const runId = path.basename(runDir);
+  const stored = options.resume ? loadStoredTournament(runDir) : undefined;
+  if (stored && stored.entrants.length !== models.length) {
+    throw new Error(`run ${runId} seats ${stored.entrants.length} entrants, not ${models.length}; it cannot resume`);
+  }
   const recordsPath = options.recordsPath ?? RESULTS_PATH;
   const psDir = options.psDir ?? defaultPsDir();
   const seed = resolveSeed(options.seed);
@@ -102,6 +150,7 @@ export async function runTournament(
   let format: string;
   let poolId: string | null;
   let assignedTeams: Team[];
+  let event: PoolEvent | null = null;
   if (options.teams) {
     if (options.teams.length !== models.length) throw new Error('inline tournaments need one team per model');
     if (!options.format) throw new Error('inline teams need an explicit format');
@@ -125,14 +174,37 @@ export async function runTournament(
     }
     format = pool.format;
     poolId = pool.id;
-    assignedTeams = shuffle(pool.teams, random).slice(0, models.length);
+    event = pool.event;
+    const seeded = pool.teams.every((team) => team.seed !== undefined);
+    assignedTeams = seeded
+      ? [...pool.teams].sort((a, b) => a.seed! - b.seed!).slice(0, models.length)
+      : shuffle(pool.teams, random).slice(0, models.length);
   }
 
   const placement = shuffle(
     models.map((_, index) => index),
     random,
   );
-  const entrants: Entrant[] = placement.map((index) => ({ model: models[index]!, team: assignedTeams[index]! }));
+  const entrants: Entrant[] = placement.map((modelIndex, position) => ({
+    model: stored ? stored.entrants[position]!.model : models[modelIndex]!,
+    team: assignedTeams[position]!,
+  }));
+  if (stored) {
+    for (const [position, entrant] of entrants.entries()) {
+      const seat = stored.entrants[position]!;
+      if (seat.team !== entrant.team.id) {
+        throw new Error(
+          `run ${runId} seats ${seat.team} at entrant ${position + 1}, not ${entrant.team.id}; it cannot resume`,
+        );
+      }
+    }
+  }
+  validateModelExecution(
+    entrants.map((entrant) => entrant.model),
+    options,
+  );
+  const provenance = options.provenance ?? DEFAULT_PROVENANCE;
+  const briefing = provenance === 'disclosed' && event ? briefEvent(event, entrants.length) : undefined;
   const rounds = buildBracket(entrants.length);
   const matches = rounds.flat();
   const seriesCount = entrants.length - 1;
@@ -146,29 +218,37 @@ export async function runTournament(
     champion: rounds[rounds.length - 1]![0]!.winner,
   });
 
-  fs.writeFileSync(
-    path.join(runDir, 'config.json'),
-    `${JSON.stringify(
-      {
-        mode: 'tournament',
-        protocol_version: TOURNAMENT_PROTOCOL_VERSION,
-        scaffold,
-        models,
-        seed,
-        concurrency: options.concurrency ?? 2,
-        reasoning: options.reasoning ?? null,
-        pool: poolId,
-        reasoning_by_model: options.reasoningByModel ?? null,
-        timer_scale: timerScale,
-        format,
-        entrants: entrants.map((entrant) => ({ model: entrant.model, team: entrant.team.id })),
-        contributor: options.contributor ?? null,
-      },
-      null,
-      2,
-    )}\n`,
-    'utf8',
-  );
+  if (!stored)
+    fs.writeFileSync(
+      path.join(runDir, 'config.json'),
+      `${JSON.stringify(
+        {
+          mode: 'tournament',
+          protocol_version: TOURNAMENT_PROTOCOL_VERSION,
+          scaffold,
+          models,
+          seed,
+          concurrency: options.concurrency ?? 2,
+          reasoning: options.reasoning ?? null,
+          pool: poolId,
+          reasoning_by_model: options.reasoningByModel ?? null,
+          timer_scale: timerScale,
+          format,
+          provenance,
+          event: event?.name ?? null,
+          entrants: entrants.map((entrant) => ({
+            model: entrant.model,
+            team: entrant.team.id,
+            seed: entrant.team.seed ?? null,
+            placement: entrant.team.provenance?.placement ?? null,
+          })),
+          contributor: options.contributor ?? null,
+        },
+        null,
+        2,
+      )}\n`,
+      'utf8',
+    );
 
   const playersFor = (match: BracketMatch): Record<Pid, string> => ({
     p1: match.slots[0] === null ? 'TBD' : entrants[match.slots[0]]!.model,
@@ -193,10 +273,44 @@ export async function runTournament(
     if (next && match.winner !== null) next.slots[position % 2] = match.winner;
   };
   for (const match of rounds[0]!) if (match.seriesIndex === null) propagate(match);
-  options.onEvent?.({ type: 'bracket', bracket: bracketView() });
 
   const results: SeriesRecord[] = [];
   const started = new Set<BracketMatch>();
+  if (stored) {
+    const recorded = new Map<number, SeriesRecord>();
+    for (const row of loadRows(recordsPath)) {
+      if (row.run_id !== runId || row.mode !== 'tournament') continue;
+      recorded.set(row.series_index as number, row);
+    }
+    let settled = true;
+    while (settled) {
+      settled = false;
+      for (const match of matches) {
+        if (match.seriesIndex === null || started.has(match)) continue;
+        if (match.slots[0] === null || match.slots[1] === null) continue;
+        const row = recorded.get(match.seriesIndex);
+        if (!row) continue;
+        const seeds = row.seeds as Record<Pid, unknown> | undefined;
+        if (seeds?.p1 !== match.slots[0] || seeds.p2 !== match.slots[1]) {
+          throw new Error(
+            `run ${runId} series ${match.seriesIndex} was played by other seats than the rebuilt bracket pairs; it cannot resume`,
+          );
+        }
+        const winnerSide = row.winner_side as Pid | null | undefined;
+        if (winnerSide !== 'p1' && winnerSide !== 'p2') {
+          throw new Error(`run ${runId} series ${match.seriesIndex} recorded no winner; it cannot resume`);
+        }
+        match.winner = match.slots[winnerSide === 'p1' ? 0 : 1]!;
+        started.add(match);
+        results.push(row);
+        propagate(match);
+        options.onEvent?.({ type: 'series-end', index: match.seriesIndex, record: row });
+        settled = true;
+      }
+    }
+  }
+  options.onEvent?.({ type: 'bracket', bracket: bracketView() });
+
   const active = new Set<Promise<void>>();
   const controller = new AbortController();
   const forwardAbort = () => controller.abort();
@@ -216,6 +330,8 @@ export async function runTournament(
         psDir,
         signal: controller.signal,
         seriesSeeds: seriesSeeds[match.seriesIndex!]!,
+        provenance,
+        ...(briefing === undefined ? {} : { briefing }),
         ...(options.reasoning === undefined ? {} : { reasoning: options.reasoning }),
         ...(options.apiKeys === undefined ? {} : { apiKeys: options.apiKeys }),
         ...(options.recovery === undefined ? {} : { recovery: options.recovery }),
@@ -276,6 +392,8 @@ async function playMatch(
     scaffold: string;
     psDir: string;
     seriesSeeds: { gameSeeds: Array<[number, number, number, number]>; engineSeeds: Record<Pid, number> };
+    briefing?: string;
+    provenance: ProvenanceMode;
     apiKeys?: Readonly<Record<string, string>>;
     onEvent?: (event: TournamentEvent) => void;
     signal?: AbortSignal;
@@ -293,12 +411,14 @@ async function playMatch(
   const { winnerSide, fields } = await playRecordedSeries({
     players,
     teams: { p1: sides.p1.team, p2: sides.p2.team },
+    seriesIndex: index,
     gameSeeds: context.seriesSeeds.gameSeeds,
     engineSeeds: context.seriesSeeds.engineSeeds,
     format: context.format,
     psDir: context.psDir,
     runDir: context.runDir,
     requireWinner: true,
+    ...(context.briefing === undefined ? {} : { briefings: { p1: context.briefing, p2: context.briefing } }),
     ...(context.reasoningByModel === undefined ? {} : { reasoningByModel: context.reasoningByModel }),
     ...(context.reasoning === undefined ? {} : { reasoning: context.reasoning }),
     timerScale: context.timerScale,
@@ -324,6 +444,7 @@ async function playMatch(
     round: match.round + 1,
     entrant_count: entrants.length,
     seeds: { p1: match.slots[0], p2: match.slots[1] },
+    provenance: context.provenance,
     ...(context.poolId === null ? {} : { pool: context.poolId }),
     ...(context.contributor === undefined ? {} : { contributor: context.contributor }),
     advanced: entrants[match.winner]!.model,

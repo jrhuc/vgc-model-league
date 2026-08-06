@@ -1201,3 +1201,31 @@ test('abandoning a decision aborts its provider request', async () => {
   assert.equal(await action, '');
   assert.deepEqual(engine.decisionStats(), emptyStats);
 });
+
+test('an event briefing reaches the provider on decisions and reflections', async () => {
+  const briefing = 'This bracket replays the top 8 of Some Real Open.';
+  const briefed = new ScriptedProvider([
+    decision([0], 'briefed', ''),
+    JSON.stringify({ summary: 's', adjustment: 'a', notebook: 'n' }),
+  ]);
+  const engine = new LLMEngine('p1', 'scripted', { provider: briefed, decisionLog: [], briefing });
+  await engine.act(request(), { povLines: ['|turn|1'] });
+  await engine.endGame({
+    gameNumber: 1,
+    outcome: { winner: 'opponent', won: false, turns: 9 },
+    seriesScore: { p1: 0, p2: 1 },
+  });
+
+  assert.equal(briefed.calls.length, 2, 'one decision and one reflection');
+  for (const call of briefed.calls) {
+    assert.ok(call.system.includes(briefing), 'every call carries the briefing');
+    assert.ok(call.system.indexOf(briefing) > 0, 'the briefing follows the shared system prompt, not replaces it');
+  }
+  assert.ok(briefed.calls[1]!.system.startsWith(REFLECTION_SYSTEM), 'the reflection keeps its own system prompt');
+
+  const plain = new ScriptedProvider([decision([0], 'plain', '')]);
+  await new LLMEngine('p1', 'scripted', { provider: plain, decisionLog: [] }).act(request(), {
+    povLines: ['|turn|1'],
+  });
+  assert.doesNotMatch(plain.calls[0]!.system, /replays the top/, 'a blind seat gets no briefing');
+});

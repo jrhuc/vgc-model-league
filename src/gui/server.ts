@@ -11,7 +11,7 @@ import {
   buildLeagueGame,
   buildLeagues,
   buildModelProfile,
-  findLiveDraftRun,
+  findLiveCliRun,
   snapshotBattle,
 } from '../archive.js';
 import type { AuthService, AuthSession, AuthUser } from '../auth.js';
@@ -19,7 +19,7 @@ import { AuthError } from '../auth.js';
 import { describeBoardMon, listBoards, loadBoard } from '../draft.js';
 import type { DraftLeagueEvent } from '../draftleague.js';
 import { DRAFT_PROTOCOL_VERSION, roundRobinWeeks, runDraftLeague } from '../draftleague.js';
-import { buildEvidence, buildTournaments } from '../evidence.js';
+import { buildEvidence, buildTournamentGame, buildTournaments } from '../evidence.js';
 import { ImportError, importSeries, isImported, removeImportedRun } from '../import.js';
 import { discoverModels } from '../model-catalog.js';
 import { DATA_DIR, makeRunDirectory, prepareDataDirectories, RESULTS_PATH, RUNS_DIR, TEAMS_DIR } from '../paths.js';
@@ -44,6 +44,7 @@ import { BattleState } from '../state.js';
 import type { Team, TeamDraft } from '../teams.js';
 import { createPool, inspectTeam, listPools, loadPool, packTeam, validateTeam } from '../teams.js';
 import { parseTimerScale } from '../timer.js';
+import type { ProvenanceMode } from '../tournament.js';
 import { runTournament, TOURNAMENT_PROTOCOL_VERSION } from '../tournament.js';
 import type { TradeWindowConfig } from '../trade-window.js';
 import type { ExperimentMode, JsonObject, Pid, TimerScale } from '../types.js';
@@ -191,6 +192,7 @@ interface RunConfig extends ModelReasoningConfig {
   sequentialWeeks?: boolean;
   tradeWindow?: TradeWindowConfig | null;
   draftOnly?: boolean;
+  provenance?: ProvenanceMode;
 }
 
 function isActiveRunState(state: RunSnapshot['state']): state is 'running' | 'paused' {
@@ -540,6 +542,16 @@ export class GuiServer {
       this.json(response, 200, this.tournamentsBody(url.searchParams.get('pool')));
     else if (key === 'GET /api/leagues') this.json(response, 200, this.leaguesBody());
     else if (key === 'GET /api/league') this.json(response, 200, this.leagueBody(url.searchParams.get('run') ?? ''));
+    else if (key === 'GET /api/tournament/game')
+      this.json(
+        response,
+        200,
+        this.tournamentGameBody(
+          url.searchParams.get('run') ?? '',
+          url.searchParams.get('series') ?? '',
+          url.searchParams.get('game') ?? '',
+        ),
+      );
     else if (key === 'GET /api/league/game')
       this.json(
         response,
@@ -822,8 +834,7 @@ export class GuiServer {
 
   private externalRunBody(): AppState['externalRun'] {
     if (this.run && isActiveRunState(this.run.state)) return null;
-    const runId = findLiveDraftRun(this.options.runsDir ?? RUNS_DIR);
-    return runId ? { runId, mode: 'draft' } : null;
+    return findLiveCliRun(this.options.runsDir ?? RUNS_DIR);
   }
 
   private boardBody(id: string): BoardResponse {
@@ -930,7 +941,7 @@ export class GuiServer {
   private tournamentsBody(poolParam: string | null): TournamentsResponse {
     const all = loadRows(this.options.recordsPath ?? RESULTS_PATH);
     const pool = poolParam?.trim() || null;
-    return buildTournaments(all, this.options.runsDir ?? RUNS_DIR, pool);
+    return buildTournaments(all, this.options.runsDir ?? RUNS_DIR, pool, this.options.teamsDir ?? TEAMS_DIR);
   }
 
   private leaguesBody(): JsonObject {
@@ -953,6 +964,25 @@ export class GuiServer {
     }
     const all = loadRows(this.options.recordsPath ?? RESULTS_PATH);
     const view = buildLeagueGame(all, this.options.runsDir ?? RUNS_DIR, run.trim(), seriesIndex, gameNumber);
+    if (!view) throw new HttpError(404, `no stored game ${game} for series ${series} of ${JSON.stringify(run)}`);
+    return view as unknown as JsonObject;
+  }
+
+  private tournamentGameBody(run: string, series: string, game: string): JsonObject {
+    const seriesIndex = Number(series);
+    const gameNumber = Number(game);
+    if (!Number.isInteger(seriesIndex) || seriesIndex < 0 || !Number.isInteger(gameNumber) || gameNumber < 1) {
+      throw new HttpError(400, 'series and game must be non-negative integers');
+    }
+    const all = loadRows(this.options.recordsPath ?? RESULTS_PATH);
+    const view = buildTournamentGame(
+      all,
+      this.options.runsDir ?? RUNS_DIR,
+      run.trim(),
+      seriesIndex,
+      gameNumber,
+      this.options.teamsDir ?? TEAMS_DIR,
+    );
     if (!view) throw new HttpError(404, `no stored game ${game} for series ${series} of ${JSON.stringify(run)}`);
     return view as unknown as JsonObject;
   }
@@ -1193,6 +1223,7 @@ export class GuiServer {
       ...(mode === 'draft' && body.sequentialWeeks === true ? { sequentialWeeks: true } : {}),
       ...(mode === 'draft' ? { tradeWindow: tradeWindow! } : {}),
       ...(mode === 'draft' && body.draftOnly === true ? { draftOnly: true } : {}),
+      ...(mode === 'tournament' && body.provenance === 'blind' ? { provenance: 'blind' as const } : {}),
     };
     const run = new ActiveRun(config, apiKeys, owner, this.options.runsDir);
     if (owner && this.options.auth) {
@@ -1320,6 +1351,7 @@ export class GuiServer {
           ...(run.config.pool ? { pool: run.config.pool } : {}),
           ...(run.config.teams === undefined ? {} : { teams: run.config.teams }),
           ...(run.config.format === undefined ? {} : { format: run.config.format }),
+          ...(run.config.provenance === undefined ? {} : { provenance: run.config.provenance }),
         });
       } else {
         await (this.options.runner ?? runRotation)(run.config.models, run.config.seriesPerPair, run.runDir, {
@@ -1536,6 +1568,7 @@ export class GuiServer {
       ...(run.config.sequentialWeeks === true ? { sequentialWeeks: true } : {}),
       ...(run.config.tradeWindow === undefined ? {} : { tradeWindow: run.config.tradeWindow }),
       ...(run.config.draftOnly === true ? { draftOnly: true } : {}),
+      ...(run.config.provenance === undefined ? {} : { provenance: run.config.provenance }),
       ...(run.owner
         ? {
             contributor: {

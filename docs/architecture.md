@@ -43,6 +43,25 @@ team pastes. An entrant keeps the same team through the bracket. Ready matches
 run up to the selected concurrency. A draw advances the higher seed but keeps
 `winner: null` in the result.
 
+A bracket resumes like a league: the run's seed rebuilds the same draw, the
+stored config's entrants are its seat-to-team identity, recorded results settle
+their matches and advance their winners, and each series carries its schedule
+slot into `src/series.ts` so an interrupted one adopts its directory and
+replays what it already played.
+
+A pool may reproduce a real event. Its manifest carries the event and gives
+each team a seed and the finish it earned, and `tools/build-event-pool.ts`
+builds it. Seeded teams hold their bracket positions instead of drawing at
+random, so the field meets in the pairings it earned; the models are still
+shuffled across the teams. `--provenance disclosed`, the default, tells each
+seat which event this is and that both teams in the match came out of that cut,
+and says outright when the stat points were rebuilt rather than published. It
+withholds the finishing order: holding the team that lost the final is a fact
+about a game these models did not play, and it would steer play rather than
+inform it. `blind` withholds all of it and is the control arm. Player names
+never enter a competitive prompt; they appear only in the GUI and the pool
+manifest.
+
 ### Draft League
 
 `src/draft.ts` owns the draft. `src/teambuild.ts` owns team construction. A

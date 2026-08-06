@@ -172,6 +172,34 @@ test('gui serves the built app shell and setup state', async () => {
   }
 });
 
+test('live run identifies an external CLI tournament instead of labeling every run as a draft league', async () => {
+  const runsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-gui-external-run-'));
+  const draftId = '20260806T200000.000000Z-draft000';
+  const tournamentId = '20260806T210000.000000Z-cup00000';
+  for (const [runId, mode] of [
+    [draftId, 'draft'],
+    [tournamentId, 'tournament'],
+  ] as const) {
+    const runDir = path.join(runsDir, runId);
+    fs.mkdirSync(runDir);
+    fs.writeFileSync(path.join(runDir, 'config.json'), `${JSON.stringify({ mode })}\n`, 'utf8');
+    fs.writeFileSync(
+      path.join(runDir, 'status.json'),
+      `${JSON.stringify({ state: 'running', pid: process.pid, start_time: new Date().toISOString() })}\n`,
+      'utf8',
+    );
+  }
+  const gui = new GuiServer({ runsDir });
+  const base = await gui.listen(0);
+  try {
+    const { data } = await apiJson(`${base}api/state`);
+    assert.deepEqual(data.externalRun, { runId: tournamentId, mode: 'tournament' });
+  } finally {
+    gui.close();
+    fs.rmSync(runsDir, { recursive: true, force: true });
+  }
+});
+
 test('gui rejects spoofed hosts, cross-origin posts, and non-json posts', async () => {
   const gui = new GuiServer({ runsDir: RUNS_SCRATCH });
   const base = await gui.listen(0);
@@ -329,7 +357,7 @@ test('gui validates teambuilder pastes and creates immutable pools', async () =>
     assert.equal(duplicateName.status, 400);
     assert.match(String(duplicateName.data.error), /already exists/);
 
-    const duplicateSpecies = await apiJson(`${base}api/pool`, {
+    const duplicateTeam = await apiJson(`${base}api/pool`, {
       name: 'gui-pool-2',
       format: FORMAT,
       teams: [
@@ -337,8 +365,19 @@ test('gui validates teambuilder pastes and creates immutable pools', async () =>
         { id: 'team-a-again', paste: pasteA },
       ],
     });
-    assert.equal(duplicateSpecies.status, 400);
-    assert.match(String(duplicateSpecies.data.error), /same species set/);
+    assert.equal(duplicateTeam.status, 400);
+    assert.match(String(duplicateTeam.data.error), /byte-for-byte the same team/);
+
+    const respread = await apiJson(`${base}api/pool`, {
+      name: 'gui-pool-3',
+      format: FORMAT,
+      teams: [
+        { id: 'team-a', paste: pasteA },
+        { id: 'team-a-respread', paste: pasteA.replace(/^EVs: .*$/m, 'EVs: 1 HP') },
+      ],
+    });
+    assert.equal(respread.status, 200, JSON.stringify(respread.data));
+    assert.equal(loadPool('gui-pool-3', teamsDir).teams.length, 2);
   } finally {
     gui.close();
     fs.rmSync(teamsDir, { recursive: true, force: true });

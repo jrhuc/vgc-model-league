@@ -15,6 +15,7 @@ import { writeReport } from './report.js';
 import { restartGui, stopGui } from './restart.js';
 import { runRotation } from './rotation.js';
 import { withRunStatus } from './run-status.js';
+import type { Team } from './teams.js';
 import { parseTimerScale } from './timer.js';
 import type { TimerScale } from './types.js';
 
@@ -48,7 +49,12 @@ Commands:
       [--timer-scale <n|off>] [--nitro]
   tournament --models <spec> <spec>...  play a single-elimination BO3 bracket; each model keeps one team
       [--pool <name>] [--seed <n>] [--concurrency <n>] [--reasoning <level>] [--timer-scale <n|off>]
-      [--nitro]
+      [--nitro] [--provenance <disclosed|blind>] [--resume <run-dir>]
+      a pool that seeds its teams keeps the real bracket order instead of drawing positions at random
+      --provenance disclosed (default) names the event and both teams' finishes; blind withholds both
+      --resume continues a stopped bracket: finished series stand, the interrupted one replays its
+      recorded games and decisions at no provider cost (models, pool, seed, and provenance come from
+      the run's config, so a seat rewired there plays on under its new spec)
   draft --models <spec> <spec>...     snake-draft rosters from a board, then a weekly round robin and playoffs
       each coach drafts 10 within a 100-point budget, then picks 6 and builds every set before each match
       [--board <name>] [--seed <n>] [--concurrency <n>] [--reasoning <level>] [--timer-scale <n|off>]
@@ -306,17 +312,63 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
       options: {
         ...EXPERIMENT_CLI_OPTIONS,
         pool: { type: 'string', default: 'test' },
+        provenance: { type: 'string' },
+        resume: { type: 'string' },
       },
     });
-    const models = experimentModels(command, values.models, positionals, values.nitro);
-    const execution = experimentExecution(values);
-    const { runTournament } = await import('./tournament.js');
-    const runDir = makeRunDirectory();
+    const { runTournament, DEFAULT_PROVENANCE } = await import('./tournament.js');
+    const resumeDir = values.resume ? path.resolve(values.resume) : undefined;
+    const storedConfig = resumeDir
+      ? (JSON.parse(fs.readFileSync(path.join(resumeDir, 'config.json'), 'utf8')) as {
+          models: string[];
+          seed: number;
+          pool?: string | null;
+          format?: string;
+          provenance?: string;
+          concurrency?: number;
+          reasoning?: string | null;
+          reasoning_by_model?: Record<string, string> | null;
+          timer_scale?: number | 'off';
+        })
+      : undefined;
+    const storedTeams =
+      storedConfig && !storedConfig.pool
+        ? (JSON.parse(fs.readFileSync(path.join(resumeDir!, 'teams.json'), 'utf8')) as Team[])
+        : undefined;
+    const models = storedConfig
+      ? storedConfig.models
+      : experimentModels(command, values.models, positionals, values.nitro);
+    let execution: ReturnType<typeof experimentExecution>;
+    if (storedConfig) {
+      const storedReasoning = storedConfig.reasoning ? reasoningLevel(storedConfig.reasoning) : undefined;
+      const storedByModel = Object.entries(storedConfig.reasoning_by_model ?? {}).flatMap(([model, level]) => {
+        const parsed = reasoningLevel(level);
+        return parsed === undefined ? [] : [[model, parsed] as const];
+      });
+      execution = {
+        recordsPath: RESULTS_PATH,
+        seed: storedConfig.seed,
+        ...(storedReasoning === undefined ? {} : { reasoning: storedReasoning }),
+        ...(storedByModel.length === 0 ? {} : { reasoningByModel: Object.fromEntries(storedByModel) }),
+        ...(storedConfig.timer_scale === undefined ? {} : { timerScale: storedConfig.timer_scale }),
+        recovery: autoResumeGate(),
+      };
+    } else {
+      execution = experimentExecution(values);
+    }
+    const provenance = storedConfig?.provenance ?? values.provenance ?? DEFAULT_PROVENANCE;
+    if (provenance !== 'disclosed' && provenance !== 'blind')
+      throw new Error('--provenance must be "disclosed" or "blind"');
+    const runDir = resumeDir ?? makeRunDirectory();
     armModelOverrides(runDir);
     const rows = await withRunStatus(runDir, () =>
       runTournament(models, runDir, {
-        pool: values.pool,
-        concurrency: positiveInteger('concurrency', values.concurrency),
+        ...(storedTeams
+          ? { teams: storedTeams, ...(storedConfig?.format ? { format: storedConfig.format } : {}) }
+          : { pool: storedConfig?.pool ?? values.pool }),
+        provenance,
+        concurrency: storedConfig?.concurrency ?? positiveInteger('concurrency', values.concurrency),
+        ...(resumeDir ? { resume: true } : {}),
         ...execution,
       }),
     );

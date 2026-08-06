@@ -119,3 +119,21 @@ than a convenient approximation, and check the vintage of any external data
 before adopting it. Where the recreation must deviate, name the deviation in
 the docs — see the trade window's deliberately bounded one-offer trade phase in
 [Trade window](trade-window.md) for the pattern.
+
+A bracket rebuilt from a real event inherits that rule. Open team lists publish
+species, items, abilities, natures and moves but no stat points, and Champions
+allots 66 of them, so a zero-point copy is not the team that cut. Each set
+adopts a real spread from a same-species, same-nature set in a public corpus of
+the same regulation, preferring the same item because the item decides whether
+points buy bulk at all; every choice is recorded in the pool's `spreads.json`,
+and sets the corpus cannot serve carry an authored spread with its reasoning.
+Three deviations follow, and all three are stated to the models as well as
+here: the spreads are ours and not the players', the top-cut pairings were
+never published so the bracket seeds by finishing order, and the models did not
+build these teams. The seeding stays out of the prompt even though it decides
+the pairings. Where a team finished is a result of games these models never
+played, and a seat told it holds the list that lost the final would read that
+as a verdict on the team rather than on its former pilot. Letting each model spend its own stat points was rejected
+for this mode — it would measure teambuilding, which the draft league already
+measures, and would leave eight teams that no longer are the top cut the
+provenance disclosure describes.

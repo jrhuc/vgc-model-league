@@ -140,7 +140,8 @@ export function Side({
   spend,
   receivedAt,
   warning,
-  player,
+  model,
+  label,
   team,
 }: {
   pid: string;
@@ -150,7 +151,8 @@ export function Side({
   spend: SpendView | undefined;
   receivedAt: number;
   warning: string;
-  player?: string | undefined;
+  model?: string | undefined;
+  label?: string | undefined;
   team?: TeambuildSetView[] | undefined;
 }) {
   const [openSet, setOpenSet] = useState<number | null>(null);
@@ -171,8 +173,8 @@ export function Side({
       <div class="side-name">
         <div class="side-model">
           {warningLabel && <span class="side-fallback-warning" role="img" aria-label={warningLabel} title={warning} />}
-          <Mark spec={side.player} size={16} />
-          <b>{player ?? side.player}</b>
+          <Mark spec={model ?? side.player} size={16} />
+          <b>{label ?? model ?? side.player}</b>
         </div>
         <span>
           {pid.toUpperCase()} · {side.conditions.length ? side.conditions.join(' · ') : 'No side conditions'}
@@ -217,6 +219,7 @@ export function Battlefield({
   snapshot,
   receivedAt,
   players,
+  labels,
   warnings,
   teams,
   meta,
@@ -224,6 +227,7 @@ export function Battlefield({
   snapshot: BattleSnapshot;
   receivedAt: number;
   players?: Partial<Record<'p1' | 'p2', string>>;
+  labels?: Partial<Record<'p1' | 'p2', string>>;
   warnings?: Partial<Record<'p1' | 'p2', string>>;
   teams?: Partial<Record<'p1' | 'p2', TeambuildSetView[] | undefined>>;
   meta?: ComponentChildren;
@@ -248,7 +252,8 @@ export function Battlefield({
           spend={snapshot.spend?.p1}
           receivedAt={receivedAt}
           warning={warnings?.p1 ?? ''}
-          player={players?.p1}
+          model={players?.p1}
+          label={labels?.p1}
           team={teams?.p1}
         />
         <div class="center-mark">VS</div>
@@ -260,7 +265,8 @@ export function Battlefield({
           spend={snapshot.spend?.p2}
           receivedAt={receivedAt}
           warning={warnings?.p2 ?? ''}
-          player={players?.p2}
+          model={players?.p2}
+          label={labels?.p2}
           team={teams?.p2}
         />
       </div>

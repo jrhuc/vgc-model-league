@@ -4,9 +4,9 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { defaultPsDir } from '../src/paths.js';
-import { loadShowdown } from '../src/showdown.js';
 import { packTeam, validateTeam } from '../src/teams.js';
 import { asRecords, text } from '../src/value.js';
+import { publishPool } from './pool-output.js';
 
 async function fetchPaste(url: string): Promise<string> {
   const response = await fetch(`${url.replace(/^http:/, 'https:').replace(/\/$/, '')}/raw`, {
@@ -28,12 +28,7 @@ export async function buildPool(manifestFile: string): Promise<string> {
   const format = text(data.format);
   const sources = asRecords(data.teams);
   if (!poolId || !format || !sources.length) throw new Error(`invalid manifest ${manifestPath}`);
-  const names = [...sources.map((team) => `${text(team.id)}.team`), 'pool.json'];
-  const existing = names.map((name) => path.join(poolDir, name)).find((file) => fs.existsSync(file));
-  if (existing) throw new Error(`refusing to overwrite existing output: ${existing}`);
-
   const psDir = defaultPsDir();
-  const { Teams } = loadShowdown(psDir);
   const seen = new Map<string, string>();
   const teams: Array<{ id: string; packed: string; source: Record<string, unknown> }> = [];
   for (const source of sources) {
@@ -41,51 +36,20 @@ export async function buildPool(manifestFile: string): Promise<string> {
     if (!id) throw new Error('every source team needs an id');
     const packed = packTeam(await fetchPaste(text(source.paste)), psDir);
     validateTeam(packed, format, psDir);
-    const key = (Teams.unpack(packed) ?? [])
-      .map((set) => set.species.toLowerCase().replace(/[^a-z0-9]/g, ''))
-      .sort()
-      .join(',');
-    const duplicate = seen.get(key);
-    if (duplicate) throw new Error(`${id} duplicates the species set of ${duplicate}: ${key}`);
-    seen.set(key, id);
+    const duplicate = seen.get(packed);
+    if (duplicate) throw new Error(`${id} is byte-for-byte the same team as ${duplicate}`);
+    seen.set(packed, id);
     const { id: _, ...metadata } = source;
     teams.push({ id, packed, source: metadata });
-    console.log(`${id}: ok (${key.split(',').length} mons)`);
+    console.log(`${id}: ok`);
   }
 
-  const staging = fs.mkdtempSync(path.join(path.dirname(poolDir), `.${path.basename(poolDir)}.`));
-  try {
-    for (const team of teams) fs.writeFileSync(path.join(staging, `${team.id}.team`), `${team.packed}\n`, 'utf8');
-    fs.writeFileSync(
-      path.join(staging, 'pool.json'),
-      `${JSON.stringify(
-        {
-          id: poolId,
-          format,
-          teams: teams.map((team) => ({ id: team.id, file: `${team.id}.team`, source: team.source })),
-        },
-        null,
-        2,
-      )}\n`,
-      'utf8',
-    );
-    const conflict = names.map((name) => path.join(poolDir, name)).find((file) => fs.existsSync(file));
-    if (conflict) throw new Error(`refusing to overwrite existing output: ${conflict}`);
-    const published: string[] = [];
-    try {
-      for (const name of names) {
-        const target = path.join(poolDir, name);
-        fs.linkSync(path.join(staging, name), target);
-        published.push(target);
-      }
-    } catch (error) {
-      for (const target of published.reverse()) fs.rmSync(target, { force: true });
-      throw error;
-    }
-  } finally {
-    fs.rmSync(staging, { recursive: true, force: true });
-  }
-  const output = path.join(poolDir, 'pool.json');
+  const output = publishPool(poolDir, {
+    id: poolId,
+    format,
+    teams: teams.map((team) => ({ id: team.id, file: `${team.id}.team`, source: team.source })),
+    files: Object.fromEntries(teams.map((team) => [`${team.id}.team`, `${team.packed}\n`])),
+  });
   console.log(`wrote ${output} with ${teams.length} teams`);
   return output;
 }

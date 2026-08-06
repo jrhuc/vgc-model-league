@@ -4,16 +4,16 @@ import type {
   BoardInfo,
   LeagueCardView,
   LeagueFranchiseView,
-  LeagueGameResponse,
   LeagueResponse,
   LeagueSeriesView,
   LeaguesResponse,
   LeagueTeambuildView,
 } from '../../api';
-import { Battlefield } from '../components/battlefield';
 import { BoardBrowser, type DraftRecord, STAT_ORDER, useBoard } from '../components/boardbrowser';
 import { StatTile } from '../components/chartkit';
 import { Mark } from '../components/mark';
+import { MatchGame, useMatchGame } from '../components/matchgame';
+import { MatchMenu, MatchMenuRow } from '../components/matchmenu';
 import { SetCard } from '../components/setcard';
 import { Sprite } from '../components/sprite';
 import { api, apiFresh } from '../http';
@@ -319,10 +319,6 @@ function ScheduleTable({
   );
 }
 
-function secondsLabel(ms: number | null): string {
-  return ms === null ? '' : `${Math.round(ms / 1000)}s`;
-}
-
 function GamePage({
   league,
   seriesIndex,
@@ -338,236 +334,44 @@ function GamePage({
   onOpenTeam: (entrant: number) => void;
   onBack: () => void;
 }) {
-  const [view, setView] = useState<(LeagueGameResponse & { receivedAt: number }) | null>(null);
-  const [error, setError] = useState('');
-  useEffect(() => {
-    setView(null);
-    api<LeagueGameResponse>(
-      `/api/league/game?run=${encodeURIComponent(league.runId)}&series=${seriesIndex}&game=${game}`,
-    )
-      .then((response) => {
-        setView({ ...response, receivedAt: Date.now() });
-        setError('');
-      })
-      .catch((failure: Error) => setError(failure.message));
-  }, [league.runId, seriesIndex, game]);
-
-  useEffect(() => {
-    if (!view?.live) return;
-    const timer = setInterval(() => {
-      apiFresh<LeagueGameResponse>(
-        `/api/league/game?run=${encodeURIComponent(league.runId)}&series=${seriesIndex}&game=${game}`,
-      )
-        .then((response) => setView({ ...response, receivedAt: Date.now() }))
-        .catch(() => {});
-    }, 10_000);
-    return () => clearInterval(timer);
-  }, [view?.live, league.runId, seriesIndex, game]);
-
+  const path = `/api/league/game?run=${encodeURIComponent(league.runId)}&series=${seriesIndex}&game=${game}`;
+  const { view, error } = useMatchGame(path, 10_000);
   const series = league.series.find((entry) => entry.seriesIndex === seriesIndex);
   if (error) return <div class="message error">Could not load this game: {error}</div>;
   if (!view) return <p class="muted">Loading the game…</p>;
 
-  const turns = [
-    ...new Set([...view.log.map((entry) => entry.turn), ...view.decisions.map((entry) => entry.turn)]),
-  ].sort((a, b) => a - b);
-  const sideWarning = (side: 0 | 1): string => {
-    for (let index = view.decisions.length - 1; index >= 0; index -= 1) {
-      const decision = view.decisions[index]!;
-      if (decision.side !== side || decision.automatic) continue;
-      return decision.fallback ? 'Latest model decision used a fallback.' : '';
-    }
-    return '';
-  };
-  const seriesOver = view.reflections.some((reflection) => reflection.seriesOver);
-  const modelLabel = (side: 0 | 1): string => {
-    const model = league.franchises[view.sides[side] ?? -1]?.model;
-    return model ? displaySpec(model) : (view.teamNames[side] ?? '');
-  };
-  const buildFor = (side: 0 | 1) =>
-    league.teambuilds.find((build) => build.seriesIndex === seriesIndex && build.entrant === view.sides[side]);
-  const seriesScore: [number, number] = [
-    view.gameWinners.filter((winner) => winner === view.sides[0]).length,
-    view.gameWinners.filter((winner) => winner === view.sides[1]).length,
-  ];
-  const chipSide = (winner: number | null): string =>
-    winner === view.sides[0] ? 'left' : winner === view.sides[1] ? 'right' : '';
+  const firstModel = league.franchises[view.sides[0]]?.model;
+  const secondModel = league.franchises[view.sides[1]]?.model;
+  const players: [string, string] = [firstModel ?? view.teamNames[0], secondModel ?? view.teamNames[1]];
+  const details: [string, string] | undefined =
+    firstModel && secondModel ? [displaySpec(firstModel), displaySpec(secondModel)] : undefined;
+  const teams = ([0, 1] as const).map(
+    (side) =>
+      league.teambuilds.find((entry) => entry.seriesIndex === seriesIndex && entry.entrant === view.sides[side])?.sets,
+  ) as [LeagueTeambuildView['sets'] | undefined, LeagueTeambuildView['sets'] | undefined];
+
   return (
-    <div class="league-view">
-      <header class="page-heading league-heading">
-        <div>
-          <p class="eyebrow">
-            <button type="button" class="text-link" onClick={onBack}>
-              ← {league.board ?? 'League'} · {when(league.when)}
-            </button>{' '}
-            / {seriesLabel(series ?? view, league.playoffRounds)}
-          </p>
-          <h1 class="matchup-heading">
-            {view.teamNames[0]} vs {view.teamNames[1]}.
-          </h1>
-        </div>
-        <div class="lede team-lede">
-          <span>
-            {view.live ? <span class="live-dot" aria-hidden="true" /> : null} Game {view.game} of {view.games.length}
-            {view.winner !== null
-              ? ` · ${league.franchises[view.winner]?.teamName ?? `Coach ${view.winner + 1}`} won`
-              : view.live
-                ? ' · in progress'
-                : ' · no winner recorded'}
-            {seriesScore[0] + seriesScore[1] > 0 ? ` · series ${seriesScore[0]}–${seriesScore[1]}` : ''}
-          </span>
-          <span class="game-switcher">
-            {view.games.map((number, index) => (
-              <button
-                key={number}
-                type="button"
-                class={`game-chip ${chipSide(view.gameWinners[index] ?? null)} ${number === view.game ? 'on' : ''}`}
-                onClick={() => onOpenGame(seriesIndex, number)}
-              >
-                {number}
-              </button>
-            ))}
-            {view.sides.map((entrant) => (
-              <button key={entrant} type="button" class="text-link" onClick={() => onOpenTeam(entrant)}>
-                {league.franchises[entrant]?.teamName ?? `Coach ${entrant + 1}`} →
-              </button>
-            ))}
-          </span>
-        </div>
-      </header>
-
-      {view.snapshot ? (
-        <section class="panel battlefield">
-          <Battlefield
-            snapshot={view.snapshot}
-            receivedAt={view.receivedAt}
-            players={{ p1: modelLabel(0), p2: modelLabel(1) }}
-            warnings={{ p1: sideWarning(0), p2: sideWarning(1) }}
-            teams={{ p1: buildFor(0)?.sets, p2: buildFor(1)?.sets }}
-            meta={<span class="turn-badge">{view.snapshot.turn ? `Turn ${view.snapshot.turn}` : 'Team preview'}</span>}
-          />
-        </section>
-      ) : view.live && view.winner === null ? (
-        <section class="panel battlefield">
-          <div class="field-surface">
-            <div class="field-empty" aria-live="polite">
-              <h2>Battle starting</h2>
-              <p>Waiting for the first team-preview event.</p>
-            </div>
-          </div>
-        </section>
-      ) : buildFor(0) || buildFor(1) ? (
-        <section class="panel">
-          <div class="section-head">
-            <div>
-              <h2>The teams they brought</h2>
-              <p>The six each coach built for this series, with the sets from the open team sheet.</p>
-            </div>
-          </div>
-          <div class="lineup-grid">
-            {([0, 1] as const).map((side) => {
-              const build = buildFor(side);
-              return (
-                <div class="lineup-side" key={side}>
-                  <h3>
-                    <Mark spec={league.franchises[view.sides[side] ?? -1]?.model ?? ''} size={16} />
-                    {view.teamNames[side]}
-                  </h3>
-                  {build ? (
-                    <div class="teambuild-sets">
-                      {build.sets.map((set) => (
-                        <SetCard set={set} key={set.species} />
-                      ))}
-                    </div>
-                  ) : (
-                    <p class="muted">No stored teambuild.</p>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        </section>
-      ) : null}
-
-      <section class="panel">
-        <div class="section-head">
-          <div>
-            <h2>Turn by turn</h2>
-            <p>Both coaches' choices with their recorded reasoning, then what the simulator resolved.</p>
-          </div>
-        </div>
-        <div class="game-timeline">
-          {turns.length === 0 ? <p class="empty-note">Waiting for the first battle event.</p> : null}
-          {turns.map((turn) => (
-            <div class="game-turn" key={turn}>
-              {view.decisions
-                .filter((decision) => decision.turn === turn)
-                .map((decision, index) => (
-                  <details class={`game-decision side-${decision.side}`} key={`${turn}:${decision.side}:${index}`}>
-                    <summary>
-                      <b>{view.teamNames[decision.side]}</b>
-                      <span class="game-decision-choice">
-                        {decision.selection.length > 0 ? decision.selection.join(' · ') : decision.action}
-                      </span>
-                      {decision.fallback ? <span class="game-decision-flag">fallback</span> : null}
-                      {decision.automatic ? <span class="game-decision-flag">auto</span> : null}
-                      <small>
-                        {secondsLabel(decision.latencyMs)}
-                        {decision.reasoningTokens
-                          ? ` · ${decision.reasoningTokens.toLocaleString()} reasoning tok`
-                          : ''}
-                      </small>
-                    </summary>
-                    <p>{decision.rationale || 'No stored rationale.'}</p>
-                    {decision.notebook ? <p class="game-decision-notebook">{decision.notebook}</p> : null}
-                  </details>
-                ))}
-              {view.log
-                .filter((entry) => entry.turn === turn)
-                .map((entry, index) => (
-                  <div class={`log-line ${entry.kind}`} key={`${turn}:${index}`}>
-                    {entry.text}
-                  </div>
-                ))}
-            </div>
-          ))}
-        </div>
-      </section>
-
-      {view.reflections.length > 0 ? (
-        <section class="panel">
-          <div class="section-head">
-            <div>
-              <h2>{seriesOver ? 'Series reflections' : 'Post-game reflections'}</h2>
-              <p>
-                {seriesOver
-                  ? 'What each coach learned from the series and would change in a rematch.'
-                  : 'What each coach took from this game and plans to change in the next.'}
-              </p>
-            </div>
-          </div>
-          <div class="reflection-grid">
-            {view.reflections.map((reflection) => (
-              <article class={`reflection-card side-${reflection.side}`} key={reflection.side}>
-                <header>
-                  <b>{view.teamNames[reflection.side]}</b>
-                  <span class={`reflection-result ${reflection.result}`}>{reflection.result}</span>
-                  {reflection.fallback ? <span class="game-decision-flag">fallback</span> : null}
-                </header>
-                <p>{reflection.summary || 'No stored reflection.'}</p>
-                {reflection.adjustment ? <p class="reflection-adjustment">{reflection.adjustment}</p> : null}
-                {reflection.notebook ? (
-                  <details>
-                    <summary>{seriesOver ? 'Notes for a rematch' : 'Notebook carried forward'}</summary>
-                    <p class="game-decision-notebook">{reflection.notebook}</p>
-                  </details>
-                ) : null}
-              </article>
-            ))}
-          </div>
-        </section>
-      ) : null}
-    </div>
+    <MatchGame
+      view={view}
+      eyebrow={
+        <>
+          <button type="button" class="text-link" onClick={onBack}>
+            ← {league.board ?? 'League'} · {when(league.when)}
+          </button>{' '}
+          / {seriesLabel(series ?? view, league.playoffRounds)}
+        </>
+      }
+      titles={view.teamNames}
+      players={players}
+      {...(details ? { details } : {})}
+      teams={teams}
+      onOpenGame={(number) => onOpenGame(seriesIndex, number)}
+      actions={view.sides.map((entrant) => (
+        <button key={entrant} type="button" class="text-link" onClick={() => onOpenTeam(entrant)}>
+          {league.franchises[entrant]?.teamName ?? `Coach ${entrant + 1}`} →
+        </button>
+      ))}
+    />
   );
 }
 
@@ -676,35 +480,36 @@ function LiveSeriesFeed({
   onOpenGame: (seriesIndex: number, game: number) => void;
 }) {
   return (
-    <ul class="live-feed">
+    <MatchMenu count={entries.length}>
       {entries.map((entry) => (
-        <li class="live-series" key={entry.seriesId}>
-          <span class="live-series-matchup">
-            {entry.sides ? (
-              <>
-                <button type="button" class="text-link" onClick={() => onOpenTeam(entry.sides![0])}>
-                  {league.franchises[entry.sides[0]]?.teamName ?? '?'}
-                </button>
-                <span class="muted"> vs </span>
-                <button type="button" class="text-link" onClick={() => onOpenTeam(entry.sides![1])}>
-                  {league.franchises[entry.sides[1]]?.teamName ?? '?'}
-                </button>
-              </>
-            ) : (
-              <b>Series {entry.seriesId.slice(0, 6)}…</b>
-            )}
-          </span>
-          <span class="live-series-state">
-            Game {entry.game} · {entry.turn > 0 ? `turn ${entry.turn}` : 'team preview'} · {entry.decisions} decisions
-          </span>
-          {entry.seriesIndex !== null ? (
-            <button type="button" class="button" onClick={() => onOpenGame(entry.seriesIndex!, entry.game)}>
-              Watch live
-            </button>
-          ) : null}
-        </li>
+        <MatchMenuRow
+          key={entry.seriesId}
+          eyebrow={
+            entry.stage === null || entry.round === null
+              ? `Series ${entry.seriesId.slice(0, 6)}…`
+              : seriesLabel({ stage: entry.stage, round: entry.round }, league.playoffRounds)
+          }
+          sides={
+            entry.sides
+              ? ([0, 1] as const).map((side) => (
+                  <span class="match-menu-side" key={side}>
+                    {side === 1 && <i>vs</i>}
+                    <button type="button" class="text-link" onClick={() => onOpenTeam(entry.sides![side])}>
+                      {league.franchises[entry.sides![side]]?.teamName ?? '?'}
+                    </button>
+                  </span>
+                ))
+              : 'Matchup forming'
+          }
+          state={
+            <>
+              Game {entry.game} · {entry.turn > 0 ? `Turn ${entry.turn}` : 'Team preview'} · {entry.decisions} decisions
+            </>
+          }
+          onWatch={entry.seriesIndex === null ? undefined : () => onOpenGame(entry.seriesIndex!, entry.game)}
+        />
       ))}
-    </ul>
+    </MatchMenu>
   );
 }
 

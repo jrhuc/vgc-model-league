@@ -100,6 +100,7 @@ export interface LLMEngineOptions {
   /** Full draft roster with the registered six marked; its presence switches the series-final
    * reflection to the draft variant that also reviews the registration itself. */
   draftRoster?: string;
+  briefing?: string;
 }
 
 const RETRY_ATTEMPTS = 3;
@@ -735,7 +736,7 @@ export class LLMEngine extends BaseEngine {
               ...(deadline === undefined ? { timeout: UNTIMED_CALL_TIMEOUT_S } : {}),
             },
             generation,
-            request.timer ? TIMED_SYSTEM : SYSTEM,
+            this.briefed(request.timer ? TIMED_SYSTEM : SYSTEM),
             () => deadline,
             decisionSignal,
             () => {
@@ -867,6 +868,10 @@ export class LLMEngine extends BaseEngine {
         generation,
       });
     return decision.choices;
+  }
+
+  private briefed(system: string): string {
+    return this.options.briefing ? `${system}\n${this.options.briefing}` : system;
   }
 
   private async completeRecoverably(
@@ -1227,7 +1232,9 @@ export class LLMEngine extends BaseEngine {
           messages,
           { maxTokens: REFLECTION_MAX_TOKENS, temperature: DECISION_TEMPERATURE, timeout: REFLECTION_TIMEOUT_S },
           this.generation,
-          draftRoster ? DRAFT_SERIES_REFLECTION_SYSTEM : seriesOver ? SERIES_REFLECTION_SYSTEM : REFLECTION_SYSTEM,
+          this.briefed(
+            draftRoster ? DRAFT_SERIES_REFLECTION_SYSTEM : seriesOver ? SERIES_REFLECTION_SYSTEM : REFLECTION_SYSTEM,
+          ),
         );
         for (const [key, value] of Object.entries(completion.usage)) {
           usage[key] = (usage[key] ?? 0) + (key === 'cost' ? value : Math.trunc(value));
