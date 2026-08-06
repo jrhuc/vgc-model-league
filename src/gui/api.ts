@@ -591,6 +591,8 @@ export interface LeagueGameResponse {
 export interface LeagueLiveSeriesView {
   seriesId: string;
   seriesIndex: number | null;
+  stage: 'roundrobin' | 'playoff' | null;
+  round: number | null;
   game: number;
   turn: number;
   decisions: number;
@@ -641,6 +643,7 @@ export interface LeagueResponse {
   budget: number | null;
   picksPerEntrant: number | null;
   weeks: number | null;
+  playoffRounds: number;
   phase: LeaguePhase;
   week: number;
   champion: LeagueChampionView | null;

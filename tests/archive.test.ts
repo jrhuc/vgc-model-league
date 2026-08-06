@@ -335,6 +335,75 @@ test('live league games expose battlefield sprites before the series is recorded
   }
 });
 
+test('an in-progress semifinal advances the live archive to playoffs', () => {
+  const runsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-archive-live-semi-'));
+  const runId = '20260806T120000.000000Z-feed0003';
+  const runDir = path.join(runsDir, runId);
+  const seriesDir = path.join(runDir, 'series', 'live-semi');
+  const teamNames = ['Aces', 'Bandits', 'Comets', 'Dodgers', 'Embers', 'Foxes'];
+  fs.mkdirSync(seriesDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(runDir, 'config.json'),
+    JSON.stringify({
+      mode: 'draft',
+      entrants: teamNames.map((_, index) => `openai:model${index}`),
+      team_names: teamNames,
+      weeks: 5,
+      board: 'test-board',
+      format: 'gen9testformat',
+    }),
+  );
+  fs.writeFileSync(
+    path.join(runDir, 'status.json'),
+    JSON.stringify({
+      state: 'running',
+      error: null,
+      notices: [],
+      start_time: '2026-08-06T12:00:00.000Z',
+      end_time: null,
+      pid: process.pid,
+    }),
+  );
+  fs.writeFileSync(
+    path.join(seriesDir, 'series.json'),
+    JSON.stringify({ players: { p1: 'openai:model0', p2: 'openai:model3' }, series_index: 15 }),
+  );
+  fs.writeFileSync(path.join(seriesDir, 'game-1.log'), '');
+  const roundRobin = leagueRow({
+    run_id: runId,
+    series_index: 14,
+    series_id: 'week-five',
+    stage: 'roundrobin',
+    round: 5,
+    timestamp: '2026-08-06T11:00:00.000Z',
+    players: { p1: 'openai:model4', p2: 'openai:model5' },
+    teams: { p1: 'Embers wk5', p2: 'Foxes wk5' },
+    winner: 'openai:model4',
+    winner_side: 'p1',
+    score: { p1: 2, p2: 0 },
+    games: [],
+  });
+  try {
+    const card = buildLeagues([roundRobin], runsDir).leagues[0]!;
+    assert.equal(card.phase, 'playoffs', 'the league card sees a playoff before its result is recorded');
+    assert.equal(card.week, 5);
+
+    const league = buildLeague([roundRobin], runsDir, runId)!;
+    assert.equal(league.phase, 'playoffs');
+    assert.equal(league.playoffRounds, 2, 'six entrants have semifinals followed by a final');
+    assert.deepEqual(
+      league.liveSeries.map(({ seriesIndex, stage, round }) => ({ seriesIndex, stage, round })),
+      [{ seriesIndex: 15, stage: 'playoff', round: 1 }],
+    );
+
+    const game = buildLeagueGame([roundRobin], runsDir, runId, 15, 1);
+    assert.equal(game?.stage, 'playoff');
+    assert.equal(game?.round, 1);
+  } finally {
+    fs.rmSync(runsDir, { recursive: true, force: true });
+  }
+});
+
 test('buildLeagues lists a stored league with its champion', () => {
   const runsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-archive-'));
   writeLeagueFixture(runsDir);
@@ -545,6 +614,7 @@ test('a finished semifinal is not mistaken for the final while the bracket is un
   });
   const league = buildLeague([semi], runsDir, runId)!;
   assert.ok(league);
+  assert.equal(league.playoffRounds, 2, 'the expected bracket depth does not depend on completed playoff rounds');
   assert.equal(league.champion, null, 'no champion until the final is played');
   assert.equal(league.phase, 'playoffs');
   assert.equal(league.franchises[3]!.finish, '', 'a semifinal winner has no placing yet');
