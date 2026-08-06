@@ -1,9 +1,12 @@
 import { useEffect, useState } from 'preact/hooks';
 
-import type { TournamentArchiveView, TournamentSummary, TournamentsResponse } from '../../api';
+import type { LeagueGameResponse, TournamentArchiveView, TournamentSummary, TournamentsResponse } from '../../api';
+import { Battlefield } from '../components/battlefield';
+import { BracketGrid, roundName } from '../components/bracket';
 import { StatTile, Tooltip, useTip } from '../components/chartkit';
+import { GameReflections, GameTimeline } from '../components/gamelog';
 import { Mark } from '../components/mark';
-import { api } from '../http';
+import { api, apiFresh } from '../http';
 
 function when(iso: string): string {
   const date = new Date(iso);
@@ -97,45 +100,221 @@ function TournamentLanes({ summary }: { summary: TournamentSummary }) {
   );
 }
 
-function roundName(index: number, count: number): string {
-  const fromEnd = count - 1 - index;
-  if (fromEnd === 0) return 'Final';
-  if (fromEnd === 1) return 'Semifinals';
-  if (fromEnd === 2) return 'Quarterfinals';
-  return `Round ${index + 1}`;
+function EventHeader({ archive }: { archive: TournamentArchiveView }) {
+  const event = archive.event;
+  if (!event) return null;
+  const field = event.players ? `${event.players} players` : '';
+  return (
+    <div class="event-provenance">
+      <p>
+        Replaying the top {archive.entrants.length} of{' '}
+        {event.url ? (
+          <a href={event.url} target="_blank" rel="noreferrer">
+            {event.name}
+          </a>
+        ) : (
+          event.name
+        )}
+        {event.game ? ` · ${event.game}` : ''}
+        {event.regulation ? ` · ${event.regulation}` : ''}
+        {event.dates ? ` · ${event.dates}` : ''}
+        {field ? ` · ${field}` : ''}
+      </p>
+      <p class="muted">
+        {archive.provenance === 'blind'
+          ? 'Seats were told nothing about where these teams came from.'
+          : 'Each seat was told the event and how both teams in front of it finished.'}
+        {event.reconstructedSpreads
+          ? ' Stat points were rebuilt from public sets of the same Pokémon in this regulation; the published lists carried none.'
+          : ''}
+      </p>
+    </div>
+  );
 }
 
-function ArchivedBracket({ archive }: { archive: TournamentArchiveView }) {
-  const name = (slot: number | null) => (slot === null ? 'TBD' : (archive.entrants[slot]?.model ?? 'TBD'));
-  const team = (slot: number | null) => (slot === null ? '' : (archive.entrants[slot]?.team ?? ''));
+function EntrantTable({ archive }: { archive: TournamentArchiveView }) {
+  const seeded = archive.entrants.some((entrant) => (entrant.placement ?? entrant.seed ?? null) !== null);
+  if (!seeded) return null;
   return (
-    <div class="bracket-scroll">
-      <div class="bracket">
-        {archive.rounds.map((round, roundIndex) => (
-          <div class="bracket-round" key={roundIndex}>
-            <h3>{roundName(roundIndex, archive.rounds.length)}</h3>
-            {round.map((match, matchIndex) => {
-              const bye = match.score === null && match.winner !== null && roundIndex === 0;
-              return (
-                <div key={matchIndex} class={`bracket-match archived ${bye ? 'bye' : ''}`}>
-                  {([0, 1] as const).map((side) => (
-                    <span
-                      class={`bracket-slot ${match.winner !== null && match.slots[side] === match.winner ? 'winner' : ''}`}
-                      key={side}
-                    >
-                      <span class="bracket-name">
-                        {bye && match.slots[side] === null ? 'Bye' : name(match.slots[side])}
-                      </span>
-                      {team(match.slots[side]) && <small>{team(match.slots[side])}</small>}
-                      <span class="bracket-score">{match.score ? match.score[side] : ''}</span>
-                    </span>
-                  ))}
-                </div>
-              );
-            })}
+    <div class="table-scroll">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th class="num">Finish</th>
+            <th>Team</th>
+            <th>Original player</th>
+            <th>Piloted by</th>
+          </tr>
+        </thead>
+        <tbody>
+          {archive.entrants
+            .map((entrant, index) => ({ entrant, index }))
+            .sort(
+              (a, b) => (a.entrant.placement ?? a.entrant.seed ?? 99) - (b.entrant.placement ?? b.entrant.seed ?? 99),
+            )
+            .map(({ entrant, index }) => (
+              <tr key={index}>
+                <td class="num">{entrant.placement ?? entrant.seed ?? '–'}</td>
+                <td>
+                  {entrant.paste ? (
+                    <a href={entrant.paste} target="_blank" rel="noreferrer">
+                      {entrant.team}
+                    </a>
+                  ) : (
+                    entrant.team
+                  )}
+                </td>
+                <td>{entrant.player || '–'}</td>
+                <td class="spec-cell">
+                  <Mark spec={entrant.model} size={14} /> {entrant.model}
+                </td>
+              </tr>
+            ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function MatchGame({
+  archive,
+  seriesIndex,
+  game,
+  onOpenGame,
+  onBack,
+}: {
+  archive: TournamentArchiveView;
+  seriesIndex: number;
+  game: number;
+  onOpenGame: (seriesIndex: number, game: number) => void;
+  onBack: () => void;
+}) {
+  const [view, setView] = useState<(LeagueGameResponse & { receivedAt: number }) | null>(null);
+  const [error, setError] = useState('');
+  const path = `/api/tournament/game?run=${encodeURIComponent(archive.runId)}&series=${seriesIndex}&game=${game}`;
+
+  useEffect(() => {
+    setView(null);
+    api<LeagueGameResponse>(path)
+      .then((response) => {
+        setView({ ...response, receivedAt: Date.now() });
+        setError('');
+      })
+      .catch((failure: Error) => setError(failure.message));
+  }, [path]);
+
+  useEffect(() => {
+    if (!view?.live) return;
+    const timer = setInterval(() => {
+      apiFresh<LeagueGameResponse>(path)
+        .then((response) => setView({ ...response, receivedAt: Date.now() }))
+        .catch(() => {});
+    }, 10_000);
+    return () => clearInterval(timer);
+  }, [view?.live, path]);
+
+  if (error) return <div class="message error">Could not load this game: {error}</div>;
+  if (!view) return <p class="muted">Loading the game…</p>;
+
+  const names: [string, string] = [
+    archive.entrants[view.sides[0]]?.model ?? view.teamNames[0],
+    archive.entrants[view.sides[1]]?.model ?? view.teamNames[1],
+  ];
+  const seriesScore: [number, number] = [
+    view.gameWinners.filter((winner) => winner === view.sides[0]).length,
+    view.gameWinners.filter((winner) => winner === view.sides[1]).length,
+  ];
+  const sideWarning = (side: 0 | 1): string => {
+    for (let index = view.decisions.length - 1; index >= 0; index -= 1) {
+      const decision = view.decisions[index]!;
+      if (decision.side !== side || decision.automatic) continue;
+      return decision.fallback ? 'Latest model decision used a fallback.' : '';
+    }
+    return '';
+  };
+  const seriesOver = view.reflections.some((reflection) => reflection.seriesOver);
+  return (
+    <div class="league-view">
+      <header class="page-heading league-heading">
+        <div>
+          <p class="eyebrow">
+            <button type="button" class="text-link" onClick={onBack}>
+              ← Bracket · {when(archive.when)}
+            </button>{' '}
+            / {roundName(view.round - 1, archive.rounds.length)}
+          </p>
+          <h1 class="matchup-heading">
+            {names[0]} vs {names[1]}.
+          </h1>
+        </div>
+        <div class="lede team-lede">
+          <span>
+            {view.live ? <span class="live-dot" aria-hidden="true" /> : null} Game {view.game} of {view.games.length}
+            {view.winner !== null
+              ? ` · ${archive.entrants[view.winner]?.model ?? 'winner'} took it`
+              : view.live
+                ? ' · in progress'
+                : ' · no winner recorded'}
+            {seriesScore[0] + seriesScore[1] > 0 ? ` · series ${seriesScore[0]}–${seriesScore[1]}` : ''}
+          </span>
+          <span class="game-switcher">
+            {view.games.map((number, index) => (
+              <button
+                key={number}
+                type="button"
+                class={`game-chip ${
+                  view.gameWinners[index] === view.sides[0]
+                    ? 'left'
+                    : view.gameWinners[index] === view.sides[1]
+                      ? 'right'
+                      : ''
+                } ${number === view.game ? 'on' : ''}`}
+                onClick={() => onOpenGame(seriesIndex, number)}
+              >
+                {number}
+              </button>
+            ))}
+          </span>
+        </div>
+      </header>
+
+      {view.snapshot ? (
+        <section class="panel battlefield">
+          <Battlefield
+            snapshot={view.snapshot}
+            receivedAt={view.receivedAt}
+            players={{ p1: names[0], p2: names[1] }}
+            warnings={{ p1: sideWarning(0), p2: sideWarning(1) }}
+            meta={<span class="turn-badge">{view.snapshot.turn ? `Turn ${view.snapshot.turn}` : 'Team preview'}</span>}
+          />
+        </section>
+      ) : null}
+
+      <section class="panel">
+        <div class="section-head">
+          <div>
+            <h2>Turn by turn</h2>
+            <p>Both seats' choices with their recorded reasoning, then what the simulator resolved.</p>
           </div>
-        ))}
-      </div>
+        </div>
+        <GameTimeline decisions={view.decisions} log={view.log} names={names} />
+      </section>
+
+      {view.reflections.length > 0 ? (
+        <section class="panel">
+          <div class="section-head">
+            <div>
+              <h2>{seriesOver ? 'Series reflections' : 'Post-game reflections'}</h2>
+              <p>What each seat took from the game it just played.</p>
+            </div>
+          </div>
+          <GameReflections
+            reflections={view.reflections}
+            names={names}
+            notebookLabel={seriesOver ? 'Notes for a rematch' : 'Notebook carried forward'}
+          />
+        </section>
+      ) : null}
     </div>
   );
 }
@@ -144,17 +323,32 @@ function TournamentCard({
   archive,
   open,
   onToggle,
+  onOpenGame,
 }: {
   archive: TournamentArchiveView;
   open: boolean;
   onToggle: () => void;
+  onOpenGame: (seriesIndex: number, game: number) => void;
 }) {
   const champion = archive.champion === null ? null : archive.entrants[archive.champion];
+  const liveIndexes = new Set(
+    archive.liveSeries.map((entry) => entry.seriesIndex).filter((index): index is number => index !== null),
+  );
   return (
     <section class="panel tournament-card">
       <button type="button" class="tournament-card-head" onClick={onToggle} aria-expanded={open}>
         <div class="tournament-card-title">
-          {champion ? (
+          {archive.live ? (
+            <>
+              <span class="eyebrow">
+                <span class="live-dot" aria-hidden="true" /> Live
+              </span>
+              <b>{archive.event?.name ?? 'Bracket in progress'}</b>
+              <small>
+                {archive.liveSeries.length} match{archive.liveSeries.length === 1 ? '' : 'es'} running
+              </small>
+            </>
+          ) : champion ? (
             <>
               <span class="eyebrow">Champion</span>
               <b>
@@ -164,8 +358,8 @@ function TournamentCard({
             </>
           ) : (
             <>
-              <span class="eyebrow">In progress</span>
-              <b>Bracket unresolved</b>
+              <span class="eyebrow">Unresolved</span>
+              <b>{archive.event?.name ?? 'Bracket unresolved'}</b>
             </>
           )}
         </div>
@@ -178,7 +372,42 @@ function TournamentCard({
           <span class="tournament-card-toggle">{open ? 'Hide bracket' : 'View bracket'}</span>
         </div>
       </button>
-      {open && <ArchivedBracket archive={archive} />}
+      {open && (
+        <>
+          <EventHeader archive={archive} />
+          <BracketGrid
+            entrants={archive.entrants}
+            rounds={archive.rounds}
+            scoreFor={(match, side) => (match.score ? String(match.score[side]) : '')}
+            live={liveIndexes}
+            onSelect={(index) => onOpenGame(index, 1)}
+          />
+          {archive.liveSeries.length > 0 && (
+            <ul class="live-feed">
+              {archive.liveSeries.map((entry) => (
+                <li class="live-series" key={entry.seriesId}>
+                  <span class="live-series-matchup">
+                    <span class="live-dot" aria-hidden="true" />
+                    {entry.round === null ? 'Match' : roundName(entry.round, archive.rounds.length)} ·{' '}
+                    {archive.entrants[entry.slots[0] ?? -1]?.model ?? 'TBD'} vs{' '}
+                    {archive.entrants[entry.slots[1] ?? -1]?.model ?? 'TBD'}
+                  </span>
+                  <span class="live-series-state">
+                    game {entry.game}
+                    {entry.turn ? ` · turn ${entry.turn}` : ' · team preview'}
+                    {entry.seriesIndex !== null && (
+                      <button type="button" class="button" onClick={() => onOpenGame(entry.seriesIndex!, entry.game)}>
+                        Watch live
+                      </button>
+                    )}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+          <EntrantTable archive={archive} />
+        </>
+      )}
     </section>
   );
 }
@@ -199,6 +428,7 @@ export function TournamentsView({
   const [data, setData] = useState<TournamentsResponse | null>(null);
   const [error, setError] = useState('');
   const [openRun, setOpenRun] = useState(run ?? '');
+  const [game, setGame] = useState<{ runId: string; seriesIndex: number; game: number } | null>(null);
 
   useEffect(() => setOpenRun(run ?? ''), [run]);
 
@@ -212,12 +442,39 @@ export function TournamentsView({
       .catch((failure: Error) => setError(failure.message));
   }, [active, epoch]);
 
-  const summary = data?.summary ?? { tournaments: 0, matches: 0, standings: [] };
   const archives = data?.tournaments ?? [];
+  const anyLive = archives.some((archive) => archive.live);
+  useEffect(() => {
+    if (!active || !anyLive) return;
+    const timer = setInterval(() => {
+      apiFresh<TournamentsResponse>('/api/tournaments')
+        .then((response) => setData(response))
+        .catch(() => {});
+    }, 15_000);
+    return () => clearInterval(timer);
+  }, [active, anyLive]);
+
+  const summary = data?.summary ?? { tournaments: 0, matches: 0, standings: [] };
   const finished = archives.filter((archive) => archive.complete);
   const latest = finished[0];
   const reigning = latest && latest.champion !== null ? latest.entrants[latest.champion] : null;
   const titleLeader = summary.standings[0];
+
+  if (game) {
+    const archive = archives.find((entry) => entry.runId === game.runId);
+    if (archive) {
+      return (
+        <MatchGame
+          archive={archive}
+          seriesIndex={game.seriesIndex}
+          game={game.game}
+          onOpenGame={(seriesIndex, number) => setGame({ runId: game.runId, seriesIndex, game: number })}
+          onBack={() => setGame(null)}
+        />
+      );
+    }
+  }
+
   return (
     <div class="league-view">
       <header class="page-heading league-heading">
@@ -226,7 +483,8 @@ export function TournamentsView({
           <h1>Tournaments.</h1>
         </div>
         <p class="lede">
-          Single-elimination archives: brackets, titles, and match records. Brackets never touch the rated Elo.
+          Single-elimination brackets, live and archived. A pool taken from a real event keeps that event's seeding, so
+          the top cut meets in the pairings the field earned. Brackets never touch the rated Elo.
         </p>
       </header>
       {error ? <div class="message error">Could not load the brackets: {error}</div> : null}
@@ -234,7 +492,7 @@ export function TournamentsView({
         <StatTile
           label="Brackets"
           value={String(summary.tournaments)}
-          note={`${finished.length} finished, ${summary.tournaments - finished.length} unresolved`}
+          note={`${finished.length} finished, ${archives.length - finished.length} unresolved`}
         />
         <StatTile label="Matches" value={String(summary.matches)} note="best-of-three series" />
         <StatTile
@@ -263,12 +521,13 @@ export function TournamentsView({
           <TournamentCard
             key={archive.runId}
             archive={archive}
-            open={openRun === archive.runId}
+            open={openRun === archive.runId || archive.live}
             onToggle={() => {
               const next = openRun === archive.runId ? '' : archive.runId;
               setOpenRun(next);
               onOpenRun(next);
             }}
+            onOpenGame={(seriesIndex, number) => setGame({ runId: archive.runId, seriesIndex, game: number })}
           />
         ))
       )}

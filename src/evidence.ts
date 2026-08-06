@@ -1,19 +1,24 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
+import { buildSeriesGame, isRunLive, scanUnfinishedSeries } from './archive.js';
 import type {
   ArchivedMatchView,
   BracketEntrantView,
   EvidenceResponse,
   LatencyPoint,
+  LeagueGameResponse,
   ModelEvidence,
   SeriesLuckEntry,
   TournamentArchiveView,
+  TournamentEventView,
+  TournamentLiveSeriesView,
   TournamentSummary,
   TournamentsResponse,
 } from './gui/api.js';
 import { SAFE_SEGMENT } from './path-safety.js';
 import { modelKey, type SeriesRecord, scopeRows, TEST_POOL } from './records.js';
+import { loadPool } from './teams.js';
 import { buildBracket } from './tournament.js';
 import type { Pid } from './types.js';
 
@@ -330,18 +335,75 @@ export function buildEvidence(allRows: SeriesRecord[], runsDir: string, pool: st
   };
 }
 
-function configEntrants(runsDir: string, runId: string): BracketEntrantView[] | null {
+function liveTournamentRuns(runsDir: string): string[] {
+  let entries: string[];
+  try {
+    entries = fs.readdirSync(runsDir);
+  } catch {
+    return [];
+  }
+  return entries.filter(
+    (runId) =>
+      SAFE_SEGMENT.test(runId) && runConfig(runsDir, runId)?.mode === 'tournament' && isRunLive(runsDir, runId),
+  );
+}
+
+function runConfig(runsDir: string, runId: string): Record<string, unknown> | null {
   if (!SAFE_SEGMENT.test(runId)) return null;
   try {
-    const config = JSON.parse(fs.readFileSync(path.join(runsDir, runId, 'config.json'), 'utf8'));
-    if (!Array.isArray(config.entrants)) return null;
-    const entrants = config.entrants.map((entry: Record<string, unknown>) => ({
-      model: String(entry.model ?? ''),
-      team: String(entry.team ?? ''),
-    }));
-    return entrants.every((entry: BracketEntrantView) => entry.model) ? entrants : null;
+    return JSON.parse(fs.readFileSync(path.join(runsDir, runId, 'config.json'), 'utf8')) as Record<string, unknown>;
   } catch {
     return null;
+  }
+}
+
+function configEntrants(runsDir: string, runId: string): BracketEntrantView[] | null {
+  const config = runConfig(runsDir, runId);
+  if (!config || !Array.isArray(config.entrants)) return null;
+  const entrants = (config.entrants as Array<Record<string, unknown>>).map((entry) => ({
+    model: String(entry.model ?? ''),
+    team: String(entry.team ?? ''),
+  }));
+  return entrants.every((entry: BracketEntrantView) => entry.model) ? entrants : null;
+}
+
+function poolProvenance(poolId: string | null): {
+  event: TournamentEventView | null;
+  teams: Map<string, BracketEntrantView>;
+} {
+  const teams = new Map<string, BracketEntrantView>();
+  if (!poolId) return { event: null, teams };
+  try {
+    const pool = loadPool(poolId);
+    for (const team of pool.teams) {
+      teams.set(team.id, {
+        model: '',
+        team: team.id,
+        seed: team.seed ?? null,
+        placement: team.provenance?.placement ?? null,
+        player: team.provenance?.player ?? '',
+        paste: team.provenance?.paste ?? '',
+      });
+    }
+    const event = pool.event;
+    return {
+      event: event
+        ? {
+            name: event.name,
+            game: event.game,
+            regulation: event.regulation,
+            location: event.location,
+            dates: event.dates,
+            players: event.players,
+            structure: event.structure,
+            url: event.url,
+            reconstructedSpreads: event.reconstructedSpreads,
+          }
+        : null,
+      teams,
+    };
+  } catch {
+    return { event: null, teams };
   }
 }
 
@@ -389,23 +451,106 @@ function archiveTournament(runId: string, rows: SeriesRecord[], runsDir: string)
         if (row.winner_side === 'p1') winner = slots[0];
         else if (row.winner_side === 'p2') winner = slots[1];
       }
-      views.push({ slots, winner, score, turns });
+      views.push({ seriesIndex: match.seriesIndex, slots, winner, score, turns });
     }
     for (const [matchIndex, view] of views.entries()) winners.set(matchIndex, view.winner);
     rounds.push(views);
   }
   const champion = rounds[rounds.length - 1]![0]!.winner;
   const timestamps = rows.map((row) => String(row.timestamp ?? '')).filter(Boolean);
-  const poolField = rows.find((row) => typeof row.pool === 'string')?.pool;
+  const config = runConfig(runsDir, runId);
+  const poolField = rows.find((row) => typeof row.pool === 'string')?.pool ?? config?.pool;
+  const pool = typeof poolField === 'string' ? poolField : null;
+  const { event, teams } = poolProvenance(pool);
+  const detailed = entrants.map((entrant) => ({
+    ...entrant,
+    ...(teams.get(entrant.team) ?? {}),
+    model: entrant.model,
+  }));
+  const live = isRunLive(runsDir, runId);
+  const slotsOf = new Map<number, [number | null, number | null]>();
+  for (const [roundIndex, round] of rounds.entries()) {
+    for (const [matchIndex, view] of round.entries()) {
+      const source = buildBracket(entrants.length)[roundIndex]![matchIndex]!;
+      if (source.seriesIndex !== null) slotsOf.set(source.seriesIndex, view.slots);
+    }
+  }
+  const roundOf = new Map<number, number>();
+  for (const [roundIndex, round] of buildBracket(entrants.length).entries()) {
+    for (const match of round) if (match.seriesIndex !== null) roundOf.set(match.seriesIndex, roundIndex);
+  }
+  const liveSeries: TournamentLiveSeriesView[] = live
+    ? scanUnfinishedSeries(runsDir, runId, rows)
+        .filter((entry) => entry.decisions > 0 || entry.players)
+        .map((entry) => ({
+          seriesId: entry.seriesId,
+          seriesIndex: entry.seriesIndex,
+          round: entry.seriesIndex === null ? null : (roundOf.get(entry.seriesIndex) ?? null),
+          slots: entry.seriesIndex === null ? [null, null] : (slotsOf.get(entry.seriesIndex) ?? [null, null]),
+          game: entry.game,
+          turn: entry.turn,
+          decisions: entry.decisions,
+        }))
+    : [];
+  const provenance = config?.provenance;
   return {
     runId,
     when: timestamps.sort()[0] ?? '',
-    pool: typeof poolField === 'string' ? poolField : null,
-    entrants,
+    pool,
+    entrants: detailed,
     rounds,
     champion,
     complete: champion !== null,
+    live,
+    liveSeries,
+    event,
+    provenance: provenance === 'disclosed' || provenance === 'blind' ? provenance : null,
   };
+}
+
+export function buildTournamentGame(
+  allRows: SeriesRecord[],
+  runsDir: string,
+  runId: string,
+  seriesIndex: number,
+  game: number,
+): LeagueGameResponse | null {
+  if (!SAFE_SEGMENT.test(runId)) return null;
+  const rows = allRows.filter((row) => row.mode === 'tournament' && String(row.run_id ?? '') === runId);
+  const archive = archiveTournament(runId, rows, runsDir);
+  if (!archive) return null;
+  const bracket = buildBracket(archive.entrants.length);
+  let slots: [number | null, number | null] | null = null;
+  let roundIndex = 0;
+  for (const [index, round] of bracket.entries()) {
+    for (const [matchIndex, match] of round.entries()) {
+      if (match.seriesIndex !== seriesIndex) continue;
+      slots = archive.rounds[index]![matchIndex]!.slots;
+      roundIndex = index;
+    }
+  }
+  if (!slots || slots[0] === null || slots[1] === null) return null;
+  const row = rows.find((entry) => count(entry.series_index) === seriesIndex);
+  const seriesId =
+    row !== undefined
+      ? String(row.series_id ?? '')
+      : (scanUnfinishedSeries(runsDir, runId, rows).find((entry) => entry.seriesIndex === seriesIndex)?.seriesId ?? '');
+  if (!seriesId) return null;
+  return buildSeriesGame(
+    runsDir,
+    runId,
+    seriesIndex,
+    game,
+    {
+      seriesId,
+      sides: [slots[0], slots[1]],
+      stage: 'playoff',
+      round: roundIndex + 1,
+      models: archive.entrants.map((entrant) => entrant.model),
+      labels: archive.entrants.map((entrant) => entrant.team || entrant.model),
+    },
+    row,
+  );
 }
 
 export function buildTournaments(allRows: SeriesRecord[], runsDir: string, pool: string | null): TournamentsResponse {
@@ -432,6 +577,7 @@ export function buildTournaments(allRows: SeriesRecord[], runsDir: string, pool:
     list.push(row);
     runs.set(runId, list);
   }
+  for (const runId of liveTournamentRuns(runsDir)) if (!runs.has(runId)) runs.set(runId, []);
   const tournaments = [...runs.entries()]
     .map(([runId, rows]) => archiveTournament(runId, rows, runsDir))
     .filter((archive): archive is TournamentArchiveView => archive !== null)

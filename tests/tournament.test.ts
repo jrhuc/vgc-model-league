@@ -152,13 +152,17 @@ test('a seeded pool keeps the real bracket order and briefs both sides on it', a
   assert.equal(pool.teams.length, 8);
 
   const events: TournamentEvent[] = [];
-  await runTournament(Array.from({ length: 8 }, () => 'random'), directory, {
-    seed: 5,
-    concurrency: 4,
-    pool: 'vr-aug26-top8',
-    recordsPath: path.join(directory, 'results.jsonl'),
-    onEvent: (event) => events.push(event),
-  });
+  await runTournament(
+    Array.from({ length: 8 }, () => 'random'),
+    directory,
+    {
+      seed: 5,
+      concurrency: 4,
+      pool: 'vr-aug26-top8',
+      recordsPath: path.join(directory, 'results.jsonl'),
+      onEvent: (event) => events.push(event),
+    },
+  );
 
   const bracket = events.filter(
     (event): event is Extract<TournamentEvent, { type: 'bracket' }> => event.type === 'bracket',

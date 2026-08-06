@@ -13,6 +13,7 @@ import type {
 import { Battlefield } from '../components/battlefield';
 import { BoardBrowser, type DraftRecord, STAT_ORDER, useBoard } from '../components/boardbrowser';
 import { StatTile } from '../components/chartkit';
+import { GameReflections, GameTimeline } from '../components/gamelog';
 import { Mark } from '../components/mark';
 import { SetCard } from '../components/setcard';
 import { Sprite } from '../components/sprite';
@@ -319,10 +320,6 @@ function ScheduleTable({
   );
 }
 
-function secondsLabel(ms: number | null): string {
-  return ms === null ? '' : `${Math.round(ms / 1000)}s`;
-}
-
 function GamePage({
   league,
   seriesIndex,
@@ -368,9 +365,6 @@ function GamePage({
   if (error) return <div class="message error">Could not load this game: {error}</div>;
   if (!view) return <p class="muted">Loading the game…</p>;
 
-  const turns = [
-    ...new Set([...view.log.map((entry) => entry.turn), ...view.decisions.map((entry) => entry.turn)]),
-  ].sort((a, b) => a - b);
   const sideWarning = (side: 0 | 1): string => {
     for (let index = view.decisions.length - 1; index >= 0; index -= 1) {
       const decision = view.decisions[index]!;
@@ -496,42 +490,7 @@ function GamePage({
             <p>Both coaches' choices with their recorded reasoning, then what the simulator resolved.</p>
           </div>
         </div>
-        <div class="game-timeline">
-          {turns.length === 0 ? <p class="empty-note">Waiting for the first battle event.</p> : null}
-          {turns.map((turn) => (
-            <div class="game-turn" key={turn}>
-              {view.decisions
-                .filter((decision) => decision.turn === turn)
-                .map((decision, index) => (
-                  <details class={`game-decision side-${decision.side}`} key={`${turn}:${decision.side}:${index}`}>
-                    <summary>
-                      <b>{view.teamNames[decision.side]}</b>
-                      <span class="game-decision-choice">
-                        {decision.selection.length > 0 ? decision.selection.join(' · ') : decision.action}
-                      </span>
-                      {decision.fallback ? <span class="game-decision-flag">fallback</span> : null}
-                      {decision.automatic ? <span class="game-decision-flag">auto</span> : null}
-                      <small>
-                        {secondsLabel(decision.latencyMs)}
-                        {decision.reasoningTokens
-                          ? ` · ${decision.reasoningTokens.toLocaleString()} reasoning tok`
-                          : ''}
-                      </small>
-                    </summary>
-                    <p>{decision.rationale || 'No stored rationale.'}</p>
-                    {decision.notebook ? <p class="game-decision-notebook">{decision.notebook}</p> : null}
-                  </details>
-                ))}
-              {view.log
-                .filter((entry) => entry.turn === turn)
-                .map((entry, index) => (
-                  <div class={`log-line ${entry.kind}`} key={`${turn}:${index}`}>
-                    {entry.text}
-                  </div>
-                ))}
-            </div>
-          ))}
-        </div>
+        <GameTimeline decisions={view.decisions} log={view.log} names={view.teamNames} />
       </section>
 
       {view.reflections.length > 0 ? (
@@ -546,25 +505,11 @@ function GamePage({
               </p>
             </div>
           </div>
-          <div class="reflection-grid">
-            {view.reflections.map((reflection) => (
-              <article class={`reflection-card side-${reflection.side}`} key={reflection.side}>
-                <header>
-                  <b>{view.teamNames[reflection.side]}</b>
-                  <span class={`reflection-result ${reflection.result}`}>{reflection.result}</span>
-                  {reflection.fallback ? <span class="game-decision-flag">fallback</span> : null}
-                </header>
-                <p>{reflection.summary || 'No stored reflection.'}</p>
-                {reflection.adjustment ? <p class="reflection-adjustment">{reflection.adjustment}</p> : null}
-                {reflection.notebook ? (
-                  <details>
-                    <summary>{seriesOver ? 'Notes for a rematch' : 'Notebook carried forward'}</summary>
-                    <p class="game-decision-notebook">{reflection.notebook}</p>
-                  </details>
-                ) : null}
-              </article>
-            ))}
-          </div>
+          <GameReflections
+            reflections={view.reflections}
+            names={view.teamNames}
+            notebookLabel={seriesOver ? 'Notes for a rematch' : 'Notebook carried forward'}
+          />
         </section>
       ) : null}
     </div>

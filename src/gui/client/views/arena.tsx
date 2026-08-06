@@ -8,6 +8,7 @@ import type {
   SeriesRowView,
 } from '../../api';
 import { Battlefield } from '../components/battlefield';
+import { BracketGrid } from '../components/bracket';
 import { Mark } from '../components/mark';
 import { api } from '../http';
 
@@ -38,14 +39,6 @@ function rowState(row: SeriesRowView): string {
   return 'Queued';
 }
 
-function roundName(index: number, count: number): string {
-  const fromEnd = count - 1 - index;
-  if (fromEnd === 0) return 'Final';
-  if (fromEnd === 1) return 'Semifinals';
-  if (fromEnd === 2) return 'Quarterfinals';
-  return `Round ${index + 1}`;
-}
-
 function Bracket({
   bracket,
   rows,
@@ -57,9 +50,13 @@ function Bracket({
   selected: number | null;
   onSelect: (index: number) => void;
 }) {
-  const name = (slot: number | null) => (slot === null ? 'TBD' : (bracket.entrants[slot]?.model ?? 'TBD'));
-  const team = (slot: number | null) => (slot === null ? '' : (bracket.entrants[slot]?.team ?? ''));
   const champion = bracket.champion === null ? null : bracket.entrants[bracket.champion];
+  const live = new Set(
+    bracket.rounds
+      .flat()
+      .filter((match) => match.seriesIndex !== null && rows[match.seriesIndex]?.status === 'running')
+      .map((match) => match.seriesIndex!),
+  );
   return (
     <section class="panel bracket-panel">
       <div class="section-head">
@@ -79,43 +76,17 @@ function Bracket({
           </div>
         )}
       </div>
-      <div class="bracket-scroll">
-        <div class="bracket">
-          {bracket.rounds.map((round, roundIndex) => (
-            <div class="bracket-round" key={roundIndex}>
-              <h3>{roundName(roundIndex, bracket.rounds.length)}</h3>
-              {round.map((match, matchIndex) => {
-                const row = match.seriesIndex === null ? null : rows[match.seriesIndex];
-                const clickable = match.seriesIndex !== null;
-                return (
-                  <button
-                    type="button"
-                    key={matchIndex}
-                    disabled={!clickable}
-                    class={`bracket-match ${clickable && selected === match.seriesIndex ? 'selected' : ''} ${match.seriesIndex === null ? 'bye' : ''}`}
-                    onClick={() => {
-                      if (match.seriesIndex !== null) onSelect(match.seriesIndex);
-                    }}
-                  >
-                    {([0, 1] as const).map((side) => (
-                      <span
-                        class={`bracket-slot ${match.winner !== null && match.slots[side] === match.winner ? 'winner' : ''}`}
-                        key={side}
-                      >
-                        <span class="bracket-name">
-                          {match.seriesIndex === null && match.slots[side] === null ? 'Bye' : name(match.slots[side])}
-                        </span>
-                        {team(match.slots[side]) && <small>{team(match.slots[side])}</small>}
-                        <span class="bracket-score">{row ? (side === 0 ? row.score.p1 : row.score.p2) : ''}</span>
-                      </span>
-                    ))}
-                  </button>
-                );
-              })}
-            </div>
-          ))}
-        </div>
-      </div>
+      <BracketGrid
+        entrants={bracket.entrants}
+        rounds={bracket.rounds}
+        scoreFor={(match, side) => {
+          const row = match.seriesIndex === null ? null : rows[match.seriesIndex];
+          return row ? String(side === 0 ? row.score.p1 : row.score.p2) : '';
+        }}
+        selected={selected}
+        onSelect={onSelect}
+        live={live}
+      />
     </section>
   );
 }

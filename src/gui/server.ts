@@ -19,7 +19,7 @@ import { AuthError } from '../auth.js';
 import { describeBoardMon, listBoards, loadBoard } from '../draft.js';
 import type { DraftLeagueEvent } from '../draftleague.js';
 import { DRAFT_PROTOCOL_VERSION, roundRobinWeeks, runDraftLeague } from '../draftleague.js';
-import { buildEvidence, buildTournaments } from '../evidence.js';
+import { buildEvidence, buildTournamentGame, buildTournaments } from '../evidence.js';
 import { ImportError, importSeries, isImported, removeImportedRun } from '../import.js';
 import { discoverModels } from '../model-catalog.js';
 import { DATA_DIR, makeRunDirectory, prepareDataDirectories, RESULTS_PATH, RUNS_DIR, TEAMS_DIR } from '../paths.js';
@@ -542,6 +542,16 @@ export class GuiServer {
       this.json(response, 200, this.tournamentsBody(url.searchParams.get('pool')));
     else if (key === 'GET /api/leagues') this.json(response, 200, this.leaguesBody());
     else if (key === 'GET /api/league') this.json(response, 200, this.leagueBody(url.searchParams.get('run') ?? ''));
+    else if (key === 'GET /api/tournament/game')
+      this.json(
+        response,
+        200,
+        this.tournamentGameBody(
+          url.searchParams.get('run') ?? '',
+          url.searchParams.get('series') ?? '',
+          url.searchParams.get('game') ?? '',
+        ),
+      );
     else if (key === 'GET /api/league/game')
       this.json(
         response,
@@ -955,6 +965,18 @@ export class GuiServer {
     }
     const all = loadRows(this.options.recordsPath ?? RESULTS_PATH);
     const view = buildLeagueGame(all, this.options.runsDir ?? RUNS_DIR, run.trim(), seriesIndex, gameNumber);
+    if (!view) throw new HttpError(404, `no stored game ${game} for series ${series} of ${JSON.stringify(run)}`);
+    return view as unknown as JsonObject;
+  }
+
+  private tournamentGameBody(run: string, series: string, game: string): JsonObject {
+    const seriesIndex = Number(series);
+    const gameNumber = Number(game);
+    if (!Number.isInteger(seriesIndex) || seriesIndex < 0 || !Number.isInteger(gameNumber) || gameNumber < 1) {
+      throw new HttpError(400, 'series and game must be non-negative integers');
+    }
+    const all = loadRows(this.options.recordsPath ?? RESULTS_PATH);
+    const view = buildTournamentGame(all, this.options.runsDir ?? RUNS_DIR, run.trim(), seriesIndex, gameNumber);
     if (!view) throw new HttpError(404, `no stored game ${game} for series ${series} of ${JSON.stringify(run)}`);
     return view as unknown as JsonObject;
   }

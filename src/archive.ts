@@ -239,12 +239,16 @@ function speciesMatchesPick(pickId: string, species: string): boolean {
   return pickId === species || pickId.startsWith(`${species}-`);
 }
 
-function liveSeriesViews(
-  runsDir: string,
-  runId: string,
-  rows: SeriesRecord[],
-  identity: LeagueIdentity,
-): LeagueLiveSeriesView[] {
+export interface UnfinishedSeries {
+  seriesId: string;
+  seriesIndex: number | null;
+  game: number;
+  turn: number;
+  decisions: number;
+  players: Record<Pid, string> | null;
+}
+
+export function scanUnfinishedSeries(runsDir: string, runId: string, rows: SeriesRecord[]): UnfinishedSeries[] {
   const seen = new Set(rows.map((row) => String(row.series_id ?? '')));
   let entries: string[] = [];
   try {
@@ -252,7 +256,7 @@ function liveSeriesViews(
   } catch {
     return [];
   }
-  const views: LeagueLiveSeriesView[] = [];
+  const found: UnfinishedSeries[] = [];
   for (const seriesId of entries) {
     if (!SAFE_SEGMENT.test(seriesId) || seen.has(seriesId)) continue;
     let decisions = 0;
@@ -268,28 +272,48 @@ function liveSeriesViews(
       }
     }
     const meta = readRunJson(runsDir, runId, 'series', seriesId, 'series.json') as Record<string, unknown> | null;
-    const players = (meta?.players ?? null) as Record<string, unknown> | null;
-    let sides: [number, number] | null = null;
-    if (players && typeof players.p1 === 'string' && typeof players.p2 === 'string') {
-      const a = entrantForSpec(identity, players.p1);
-      const b = entrantForSpec(identity, players.p2);
-      if (a >= 0 && b >= 0) sides = [a, b];
-    }
-    if (decisions === 0 && !sides) continue;
-    const seriesIndex = typeof meta?.series_index === 'number' ? meta.series_index : null;
-    const slot = seriesIndex === null ? null : leagueSeriesSlot(seriesIndex, identity.models.length);
-    views.push({
+    const raw = (meta?.players ?? null) as Record<string, unknown> | null;
+    const players = raw && typeof raw.p1 === 'string' && typeof raw.p2 === 'string' ? { p1: raw.p1, p2: raw.p2 } : null;
+    found.push({
       seriesId,
-      seriesIndex,
-      stage: slot?.stage ?? null,
-      round: slot?.round ?? null,
+      seriesIndex: typeof meta?.series_index === 'number' ? meta.series_index : null,
       game: Math.max(1, game),
       turn,
       decisions,
+      players,
+    });
+  }
+  return found.sort((a, b) => a.seriesId.localeCompare(b.seriesId));
+}
+
+function liveSeriesViews(
+  runsDir: string,
+  runId: string,
+  rows: SeriesRecord[],
+  identity: LeagueIdentity,
+): LeagueLiveSeriesView[] {
+  const views: LeagueLiveSeriesView[] = [];
+  for (const entry of scanUnfinishedSeries(runsDir, runId, rows)) {
+    let sides: [number, number] | null = null;
+    if (entry.players) {
+      const a = entrantForSpec(identity, entry.players.p1);
+      const b = entrantForSpec(identity, entry.players.p2);
+      if (a >= 0 && b >= 0) sides = [a, b];
+    }
+    if (entry.decisions === 0 && !sides) continue;
+    const slot = entry.seriesIndex === null ? null : leagueSeriesSlot(entry.seriesIndex, identity.models.length);
+    views.push({
+      seriesId: entry.seriesId,
+      seriesIndex: entry.seriesIndex,
+      stage: slot?.stage ?? null,
+      round: slot?.round ?? null,
+      game: entry.game,
+      turn: entry.turn,
+      decisions: entry.decisions,
       sides,
     });
   }
-  return views.sort((a, b) => a.seriesId.localeCompare(b.seriesId));
+  return views;
 }
 
 interface LeagueIdentity {
@@ -1102,6 +1126,15 @@ function liveSeriesByIndex(
   return null;
 }
 
+export interface SeriesSlot {
+  seriesId: string;
+  sides: [number, number];
+  stage: 'roundrobin' | 'playoff';
+  round: number;
+  models: string[];
+  labels: string[];
+}
+
 export function buildLeagueGame(
   allRows: SeriesRecord[],
   runsDir: string,
@@ -1113,24 +1146,37 @@ export function buildLeagueGame(
   const rows = draftRuns(allRows).get(runId) ?? [];
   const identity = leagueIdentity(runsDir, runId, rows);
   const row = rows.find((entry) => count(entry.series_index) === seriesIndex);
-  let seriesId: string;
-  let sides: [number, number];
-  let stage: 'roundrobin' | 'playoff';
-  let round: number;
+  let slot: SeriesSlot;
   if (row) {
-    seriesId = String(row.series_id ?? '');
     const a = sideEntrant(row, 'p1', identity);
     const b = sideEntrant(row, 'p2', identity);
     if (a < 0 || b < 0) return null;
-    sides = [a, b];
-    stage = row.stage === 'playoff' ? 'playoff' : 'roundrobin';
-    round = count(row.round);
+    slot = {
+      seriesId: String(row.series_id ?? ''),
+      sides: [a, b],
+      stage: row.stage === 'playoff' ? 'playoff' : 'roundrobin',
+      round: count(row.round),
+      models: identity.models,
+      labels: identity.teamNames,
+    };
   } else {
     const found = liveSeriesByIndex(runsDir, runId, seriesIndex, identity);
     if (!found) return null;
-    ({ seriesId, sides, stage, round } = found);
+    slot = { ...found, models: identity.models, labels: identity.teamNames };
   }
-  if (!SAFE_SEGMENT.test(seriesId)) return null;
+  return buildSeriesGame(runsDir, runId, seriesIndex, game, slot, row);
+}
+
+export function buildSeriesGame(
+  runsDir: string,
+  runId: string,
+  seriesIndex: number,
+  game: number,
+  slot: SeriesSlot,
+  row: SeriesRecord | undefined,
+): LeagueGameResponse | null {
+  const { seriesId, sides, stage, round } = slot;
+  if (!SAFE_SEGMENT.test(runId) || !SAFE_SEGMENT.test(seriesId)) return null;
 
   let seriesFiles: string[];
   try {
@@ -1204,7 +1250,7 @@ export function buildLeagueGame(
       ms: decisions.reduce((total, entry) => total + (entry.side === side ? (entry.latencyMs ?? 0) : 0), 0),
       tokens: decisions.reduce((total, entry) => total + (entry.side === side ? (entry.totalTokens ?? 0) : 0), 0),
     });
-    snapshot = snapshotBattle(state, { p1: identity.models[sides[0]]!, p2: identity.models[sides[1]]! }, [], [], {
+    snapshot = snapshotBattle(state, { p1: slot.models[sides[0]]!, p2: slot.models[sides[1]]! }, [], [], {
       p1: spendFor(0),
       p2: spendFor(1),
     });
@@ -1245,10 +1291,7 @@ export function buildLeagueGame(
     games,
     gameWinners: games.map(winnerOf),
     sides,
-    teamNames: [
-      identity.teamNames[sides[0]] ?? `Coach ${sides[0] + 1}`,
-      identity.teamNames[sides[1]] ?? `Coach ${sides[1] + 1}`,
-    ],
+    teamNames: [slot.labels[sides[0]] ?? `Seat ${sides[0] + 1}`, slot.labels[sides[1]] ?? `Seat ${sides[1] + 1}`],
     winner: winnerOf(game),
     live,
     snapshot,
