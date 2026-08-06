@@ -2,7 +2,13 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { ChoiceSubstitution } from '../src/battle-agent.js';
 import { BaseEngine, RandomEngine } from '../src/battle-agent.js';
-import { decisionTokenBudget, LLMEngine, updatedPace } from '../src/llm-engine.js';
+import {
+  DECISION_MAX_TOKENS_CEILING,
+  decisionTokenBudget,
+  LLMEngine,
+  REFLECTION_MAX_TOKENS,
+  updatedPace,
+} from '../src/llm-engine.js';
 import { DRAFT_SERIES_REFLECTION_SYSTEM, REFLECTION_SYSTEM, SERIES_REFLECTION_SYSTEM } from '../src/prompts.js';
 import { ApiError } from '../src/providers.js';
 import { RecoveryGate } from '../src/recovery.js';
@@ -505,7 +511,7 @@ test('decision token budgets track generation pace against the remaining turn ti
   assert.equal(await engine.act(request(), { povLines: [] }), 'move 2');
   assert.deepEqual(
     provider.calls.map((call) => call.options.maxTokens),
-    [5376, 2304, 1024, 32_768],
+    [5376, 2304, 1024, DECISION_MAX_TOKENS_CEILING],
   );
   assert.match(
     String(provider.calls[0]!.messages[0]!.content),
@@ -524,11 +530,11 @@ test('decision token budgets track generation pace against the remaining turn ti
 });
 
 test('decisionTokenBudget clamps pace-feasible tokens between the minimum and ceiling', () => {
-  assert.equal(decisionTokenBudget(Number.POSITIVE_INFINITY, 75), 32_768);
+  assert.equal(decisionTokenBudget(Number.POSITIVE_INFINITY, 75), DECISION_MAX_TOKENS_CEILING);
   assert.equal(decisionTokenBudget(90_000, 75), 5376);
   assert.equal(decisionTokenBudget(90_000, 140), 9984);
   assert.equal(decisionTokenBudget(5000, 75), 1024);
-  assert.equal(decisionTokenBudget(600_000, 100), 32_768);
+  assert.equal(decisionTokenBudget(1_200_000, 100), DECISION_MAX_TOKENS_CEILING);
 });
 
 test('updatedPace averages qualifying samples and ignores noise', () => {
@@ -568,14 +574,14 @@ test('untimed truncation records a legal fallback with the truncation summary', 
   const decisions: Record<string, unknown>[] = [];
   const engine = new LLMEngine('p1', 'opencode-go:deepseek-v4-flash', { provider, decisionLog: decisions });
   assert.equal(await engine.act(request(), { povLines: [] }), 'move 1');
-  assert.equal(provider.calls[0]!.options.maxTokens, 32_768);
+  assert.equal(provider.calls[0]!.options.maxTokens, DECISION_MAX_TOKENS_CEILING);
   const wallClock = provider.calls[0]!.options.timeout ?? 0;
   assert.ok(
     wallClock >= provider.calls[0]!.options.maxTokens! / 20,
     'the untimed wall clock must outlast a full-budget reply at 20 tokens per second, or it shapes play',
   );
   assert.equal(decisions[0]!.fallback, true);
-  assert.equal(decisions[0]!.error, 'reasoning exhausted the 32768-token response budget');
+  assert.equal(decisions[0]!.error, `reasoning exhausted the ${DECISION_MAX_TOKENS_CEILING}-token response budget`);
   assert.equal(
     decisions[0]!.error_summary,
     'OpenCode Go API spent the whole response budget on reasoning and returned no answer.',
@@ -587,7 +593,7 @@ test('a decision cut off mid-reasoning blames the budget, not the model formatti
    * that never sets finishReason: 'length'. */
   const rambled = (): Completion => ({
     text: 'Turn 6. I need to weigh Garchomp and Whimsicott. "choices" will follow once I finish',
-    usage: { input_tokens: 10, output_tokens: 32_768 },
+    usage: { input_tokens: 10, output_tokens: DECISION_MAX_TOKENS_CEILING },
     toolCalls: [],
   });
   const decisions: Record<string, unknown>[] = [];
@@ -600,7 +606,7 @@ test('a decision cut off mid-reasoning blames the budget, not the model formatti
   assert.equal(decisions[0]!.fallback, true);
   assert.equal(
     decisions[0]!.error,
-    'reasoning exhausted the 32768-token response budget before a choice was submitted',
+    `reasoning exhausted the ${DECISION_MAX_TOKENS_CEILING}-token response budget before a choice was submitted`,
     'a truncated ramble must not be logged as a JSON format failure',
   );
 });
@@ -609,7 +615,7 @@ test('a truncated retry is not fed its own overrun reasoning', async () => {
   const long = 'x'.repeat(5_000);
   const rambled = (): Completion => ({
     text: `Turn 6 deliberation ${long}`,
-    usage: { input_tokens: 10, output_tokens: 32_768 },
+    usage: { input_tokens: 10, output_tokens: DECISION_MAX_TOKENS_CEILING },
     toolCalls: [],
   });
   const provider = new ScriptedProvider([rambled(), rambled(), rambled(), rambled()]);
@@ -620,7 +626,7 @@ test('a truncated retry is not fed its own overrun reasoning', async () => {
   const replayed = retry.map((message) => String(message.content ?? '')).join('\n');
   assert.ok(!replayed.includes(long), 'the overrun reasoning must not be replayed into the retry');
   assert.match(replayed, /cut off before a choice was submitted/);
-  assert.match(replayed, /ran past its 32768-token budget/, 'the retry names the real problem');
+  assert.match(replayed, /ran past its \d+-token budget/, 'the retry names the real problem');
 });
 
 test('a genuine format failure is still reported as one', async () => {
@@ -651,7 +657,7 @@ test('reflections use a reasoning-safe token budget', async () => {
     outcome: { winner: 'opponent', won: false, turns: 8 },
     seriesScore: { p1: 0, p2: 1 },
   });
-  assert.equal(provider.calls[0]!.options.maxTokens, 8192);
+  assert.equal(provider.calls[0]!.options.maxTokens, REFLECTION_MAX_TOKENS);
   assert.equal(decisions[0]!.kind, 'game_reflection');
   assert.equal(decisions[0]!.fallback, false);
 });
@@ -738,7 +744,7 @@ test('untimed tool batches allow wide verification across many rounds', async ()
   const engine = new LLMEngine('p1', 'scripted', { provider, decisionLog: [], traceLog: traces });
   assert.equal(await engine.act(request(), { povLines: [] }), 'move 2');
   assert.equal(provider.calls.length, 5);
-  assert.equal(provider.calls[0]!.options.maxTokens, 32_768);
+  assert.equal(provider.calls[0]!.options.maxTokens, DECISION_MAX_TOKENS_CEILING);
   for (const call of provider.calls) {
     assert.equal(call.options.toolChoice, 'auto', 'four rounds sit well under the untimed cap');
   }

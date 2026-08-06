@@ -48,7 +48,7 @@ const SEASON_REVIEW_PROMPT_POLICY = {
     'Your previous reply used the whole {{budget}}-token budget before completing the JSON object. Reply now with only the JSON object.',
   fieldLimit: 2_000,
   maxTokens: 32_768,
-  timeoutSeconds: 600,
+  timeoutSeconds: 1800,
   attempts: 3,
   providerRetries: 4,
   retryBaseMs: 2_000,

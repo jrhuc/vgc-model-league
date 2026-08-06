@@ -815,7 +815,7 @@ test('a pick cut off by its token budget is told so, not blamed for formatting',
   );
 
   assert.ok(!secondPrompt.includes(long), 'the overrun reasoning must not be replayed into the retry');
-  assert.match(secondPrompt, /used the whole 32768-token budget before naming a pick/);
+  assert.match(secondPrompt, /used the whole \d+-token budget before naming a pick/);
   assert.equal(outcome.picks[0]!.fallback, false, 'the model still gets to make its own pick');
 
   const rows = fs
