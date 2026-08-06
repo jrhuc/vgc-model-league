@@ -206,13 +206,9 @@ function FranchiseCard({
   );
 }
 
-function seriesLabel(series: LeagueSeriesView, maxPlayoffRound: number): string {
+function seriesLabel(series: Pick<LeagueSeriesView, 'stage' | 'round'>, playoffRounds: number): string {
   if (series.stage === 'roundrobin') return `Week ${series.round}`;
-  return series.round === maxPlayoffRound && maxPlayoffRound > 1
-    ? 'Final'
-    : maxPlayoffRound > 1
-      ? 'Semifinal'
-      : 'Final';
+  return series.round === playoffRounds && playoffRounds > 1 ? 'Final' : playoffRounds > 1 ? 'Semifinal' : 'Final';
 }
 
 function ScheduleTable({
@@ -224,10 +220,6 @@ function ScheduleTable({
   onOpenTeam: (entrant: number, seriesIndex?: number) => void;
   onOpenGame: (seriesIndex: number, game: number) => void;
 }) {
-  const maxPlayoffRound = Math.max(
-    1,
-    ...league.series.filter((entry) => entry.stage === 'playoff').map((entry) => entry.round),
-  );
   const name = (entrant: number) => league.franchises[entrant]?.teamName ?? `Coach ${entrant + 1}`;
   return (
     <div class="table-scroll">
@@ -244,7 +236,7 @@ function ScheduleTable({
         <tbody>
           {league.series.map((series) => (
             <tr key={series.seriesIndex}>
-              <td class="muted">{seriesLabel(series, maxPlayoffRound)}</td>
+              <td class="muted">{seriesLabel(series, league.playoffRounds)}</td>
               <td class="matchup">
                 {series.sides.map((entrant, index) => (
                   <span key={entrant}>
@@ -287,7 +279,9 @@ function ScheduleTable({
                 <td>
                   <span class="live-status">
                     <span class="live-dot" aria-hidden="true" />
-                    Live
+                    {series.stage && series.round
+                      ? `${seriesLabel({ stage: series.stage, round: series.round }, league.playoffRounds)} · Live`
+                      : 'Live'}
                   </span>
                 </td>
                 <td class="matchup">
@@ -370,10 +364,6 @@ function GamePage({
     return () => clearInterval(timer);
   }, [view?.live, league.runId, seriesIndex, game]);
 
-  const maxPlayoffRound = Math.max(
-    1,
-    ...league.series.filter((entry) => entry.stage === 'playoff').map((entry) => entry.round),
-  );
   const series = league.series.find((entry) => entry.seriesIndex === seriesIndex);
   if (error) return <div class="message error">Could not load this game: {error}</div>;
   if (!view) return <p class="muted">Loading the game…</p>;
@@ -410,7 +400,7 @@ function GamePage({
             <button type="button" class="text-link" onClick={onBack}>
               ← {league.board ?? 'League'} · {when(league.when)}
             </button>{' '}
-            / {series ? seriesLabel(series, maxPlayoffRound) : `Series ${seriesIndex + 1}`}
+            / {seriesLabel(series ?? view, league.playoffRounds)}
           </p>
           <h1 class="matchup-heading">
             {view.teamNames[0]} vs {view.teamNames[1]}.

@@ -277,7 +277,17 @@ function liveSeriesViews(
     }
     if (decisions === 0 && !sides) continue;
     const seriesIndex = typeof meta?.series_index === 'number' ? meta.series_index : null;
-    views.push({ seriesId, seriesIndex, game: Math.max(1, game), turn, decisions, sides });
+    const slot = seriesIndex === null ? null : leagueSeriesSlot(seriesIndex, identity.models.length);
+    views.push({
+      seriesId,
+      seriesIndex,
+      stage: slot?.stage ?? null,
+      round: slot?.round ?? null,
+      game: Math.max(1, game),
+      turn,
+      decisions,
+      sides,
+    });
   }
   return views.sort((a, b) => a.seriesId.localeCompare(b.seriesId));
 }
@@ -349,6 +359,26 @@ interface LeagueProgress {
   eliminatedRound: Map<number, number>;
 }
 
+function playoffRoundsForEntrants(entrants: number): number {
+  return entrants >= 5 ? 2 : 1;
+}
+
+function leagueSeriesSlot(
+  seriesIndex: number,
+  entrants: number,
+): { stage: 'roundrobin' | 'playoff'; round: number } | null {
+  if (!Number.isSafeInteger(seriesIndex) || seriesIndex < 0 || entrants < 2) return null;
+  const roundRobinSeries = (entrants * (entrants - 1)) / 2;
+  if (seriesIndex < roundRobinSeries) {
+    return { stage: 'roundrobin', round: Math.floor(seriesIndex / Math.floor(entrants / 2)) + 1 };
+  }
+  const playoffIndex = seriesIndex - roundRobinSeries;
+  const playoffRounds = playoffRoundsForEntrants(entrants);
+  const playoffSeries = playoffRounds === 2 ? 3 : 1;
+  if (playoffIndex >= playoffSeries) return null;
+  return { stage: 'playoff', round: playoffRounds === 1 || playoffIndex < 2 ? 1 : 2 };
+}
+
 function leagueProgress(rows: SeriesRecord[], identity: LeagueIdentity): LeagueProgress {
   const playoffRows = rows.filter((row) => row.stage === 'playoff');
   const week = Math.max(0, ...rows.filter((row) => row.stage === 'roundrobin').map((row) => count(row.round)));
@@ -357,7 +387,7 @@ function leagueProgress(rows: SeriesRecord[], identity: LeagueIdentity): LeagueP
   let finalists: [number, number] | null = null;
   /** Mirrors the bracket in draftleague.ts: the final is the last round, so a lone finished
    * semifinal must not be mistaken for it while the other semifinal is still playing. */
-  const finalRound = identity.models.length >= 5 ? 2 : 1;
+  const finalRound = playoffRoundsForEntrants(identity.models.length);
   for (const row of playoffRows) {
     const winnerPid = row.winner_side === 'p1' || row.winner_side === 'p2' ? (row.winner_side as Pid) : null;
     if (!winnerPid) continue;
@@ -399,6 +429,7 @@ function leaguePhase(
   runId: string,
   rows: SeriesRecord[],
   progress: LeagueProgress,
+  liveSeries: LeagueLiveSeriesView[],
 ): 'drafting' | 'building' | 'roundrobin' | 'window' | 'playoffs' | 'complete' {
   if (
     fs.existsSync(path.join(runsDir, runId, 'window.jsonl')) &&
@@ -406,6 +437,7 @@ function leaguePhase(
   ) {
     return 'window';
   }
+  if (liveSeries.some((series) => series.stage === 'playoff')) return 'playoffs';
   if (rows.length > 0) return progress.phase;
   /** A draft-only run ends at a full board of picks, so it is complete rather than mid-draft. */
   if (isDraftOnly(runsDir, runId) && !isRunLive(runsDir, runId)) return 'complete';
@@ -484,13 +516,14 @@ export function buildLeagues(allRows: SeriesRecord[], runsDir: string): LeaguesR
     if (identity.models.length < 2) continue;
     const progress = leagueProgress(rows, identity);
     const live = isRunLive(runsDir, runId);
+    const liveSeries = live ? liveSeriesViews(runsDir, runId, rows, identity) : [];
     const timestamps = rows
       .map((row) => String(row.timestamp ?? ''))
       .filter(Boolean)
       .sort();
     const status = readRunJson(runsDir, runId, 'status.json') as Record<string, unknown> | null;
     const started = typeof status?.start_time === 'string' ? status.start_time : '';
-    const phase = leaguePhase(runsDir, runId, rows, progress);
+    const phase = leaguePhase(runsDir, runId, rows, progress, liveSeries);
     leagues.push({
       runId,
       when: timestamps[0] ?? started,
@@ -625,6 +658,7 @@ export function buildLeague(allRows: SeriesRecord[], runsDir: string, runId: str
   const identity = leagueIdentity(runsDir, runId, rows);
   if (identity.models.length < 2) return null;
   const progress = leagueProgress(rows, identity);
+  const liveSeries = live ? liveSeriesViews(runsDir, runId, rows, identity) : [];
   const rosters = readRosters(runsDir, runId, identity);
   const draftRosters = readRosters(runsDir, runId, identity, false);
 
@@ -892,12 +926,13 @@ export function buildLeague(allRows: SeriesRecord[], runsDir: string, runId: str
     budget: sample ? sample.spent + sample.budgetLeft : null,
     picksPerEntrant: rosters.find((entry) => entry.roster.length > 0)?.roster.length ?? null,
     weeks: identity.weeks,
-    phase: leaguePhase(runsDir, runId, rows, progress),
+    playoffRounds: playoffRoundsForEntrants(identity.models.length),
+    phase: leaguePhase(runsDir, runId, rows, progress, liveSeries),
     week: progress.week,
     champion: progress.champion,
     draftOnly: isDraftOnly(runsDir, runId) && rows.length === 0,
     live,
-    liveSeries: live ? liveSeriesViews(runsDir, runId, rows, identity) : [],
+    liveSeries,
     tradeWindow: tradeWindowView(runsDir, runId),
     seasonReviews: seasonReviewViews(runsDir, runId),
     franchises,
@@ -1046,7 +1081,7 @@ function liveSeriesByIndex(
   runId: string,
   seriesIndex: number,
   identity: LeagueIdentity,
-): { seriesId: string; sides: [number, number] } | null {
+): { seriesId: string; sides: [number, number]; stage: 'roundrobin' | 'playoff'; round: number } | null {
   let entries: string[];
   try {
     entries = fs.readdirSync(path.join(runsDir, runId, 'series'));
@@ -1061,7 +1096,8 @@ function liveSeriesByIndex(
     if (typeof players?.p1 !== 'string' || typeof players.p2 !== 'string') continue;
     const a = entrantForSpec(identity, players.p1);
     const b = entrantForSpec(identity, players.p2);
-    if (a >= 0 && b >= 0) return { seriesId, sides: [a, b] };
+    const slot = leagueSeriesSlot(seriesIndex, identity.models.length);
+    if (a >= 0 && b >= 0 && slot) return { seriesId, sides: [a, b], ...slot };
   }
   return null;
 }
@@ -1079,16 +1115,20 @@ export function buildLeagueGame(
   const row = rows.find((entry) => count(entry.series_index) === seriesIndex);
   let seriesId: string;
   let sides: [number, number];
+  let stage: 'roundrobin' | 'playoff';
+  let round: number;
   if (row) {
     seriesId = String(row.series_id ?? '');
     const a = sideEntrant(row, 'p1', identity);
     const b = sideEntrant(row, 'p2', identity);
     if (a < 0 || b < 0) return null;
     sides = [a, b];
+    stage = row.stage === 'playoff' ? 'playoff' : 'roundrobin';
+    round = count(row.round);
   } else {
     const found = liveSeriesByIndex(runsDir, runId, seriesIndex, identity);
     if (!found) return null;
-    ({ seriesId, sides } = found);
+    ({ seriesId, sides, stage, round } = found);
   }
   if (!SAFE_SEGMENT.test(seriesId)) return null;
 
@@ -1199,8 +1239,8 @@ export function buildLeagueGame(
     runId,
     seriesIndex,
     seriesId,
-    stage: row?.stage === 'playoff' ? 'playoff' : 'roundrobin',
-    round: count(row?.round),
+    stage,
+    round,
     game,
     games,
     gameWinners: games.map(winnerOf),
