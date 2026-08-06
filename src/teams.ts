@@ -12,9 +12,32 @@ function id(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]/g, '');
 }
 
+export interface TeamProvenance {
+  placement: number | null;
+  player: string;
+  handle: string;
+  swiss: string;
+  paste: string;
+}
+
+export interface PoolEvent {
+  name: string;
+  game: string;
+  regulation: string;
+  location: string;
+  dates: string;
+  players: number | null;
+  structure: string;
+  url: string;
+  cut: number | null;
+  reconstructedSpreads: boolean;
+}
+
 export interface Team {
   id: string;
   packed: string;
+  seed?: number;
+  provenance?: TeamProvenance;
 }
 
 export function listPools(teamsDir = TEAMS_DIR): PoolInfo[] {
@@ -46,6 +69,42 @@ export interface TeamPool {
   id: string;
   format: string;
   teams: Team[];
+  event: PoolEvent | null;
+}
+
+function readEvent(manifest: Record<string, unknown>): PoolEvent | null {
+  const source = manifest.event;
+  if (typeof source !== 'object' || source === null || Array.isArray(source)) return null;
+  const event = source as Record<string, unknown>;
+  const spreads = (typeof manifest.spreads === 'object' && manifest.spreads !== null ? manifest.spreads : {}) as Record<
+    string,
+    unknown
+  >;
+  return {
+    name: text(event.name),
+    game: text(event.game),
+    regulation: text(event.regulation),
+    location: text(event.location),
+    dates: text(event.dates),
+    players: typeof event.players === 'number' ? event.players : null,
+    structure: text(event.structure),
+    url: text(event.url),
+    cut: typeof event.cut === 'number' ? event.cut : null,
+    reconstructedSpreads: spreads.reconstructed === true,
+  };
+}
+
+function readProvenance(entry: Record<string, unknown>): TeamProvenance | undefined {
+  const source = entry.source;
+  if (typeof source !== 'object' || source === null || Array.isArray(source)) return undefined;
+  const record = source as Record<string, unknown>;
+  return {
+    placement: typeof record.placement === 'number' ? record.placement : null,
+    player: text(record.player),
+    handle: text(record.handle),
+    swiss: text(record.swiss),
+    paste: text(record.paste),
+  };
 }
 
 export function loadPool(name = 'test', teamsDir = TEAMS_DIR): TeamPool {
@@ -82,9 +141,20 @@ export function loadPool(name = 'test', teamsDir = TEAMS_DIR): TeamPool {
     }
     const packed = fs.readFileSync(teamPath, 'utf8').trim();
     if (!packed) throw new Error(`team ${JSON.stringify(teamId)} is empty`);
-    return { id: teamId, packed };
+    const provenance = readProvenance(entry);
+    return {
+      id: teamId,
+      packed,
+      ...(typeof entry.seed === 'number' ? { seed: entry.seed } : {}),
+      ...(provenance ? { provenance } : {}),
+    };
   });
-  return { id, format, teams };
+  const seeded = teams.filter((team) => team.seed !== undefined);
+  if (seeded.length && seeded.length !== teams.length)
+    throw new Error(`${manifestPath} seeds only ${seeded.length} of ${teams.length} teams`);
+  if (new Set(seeded.map((team) => team.seed)).size !== seeded.length)
+    throw new Error(`${manifestPath} repeats a seed`);
+  return { id, format, teams, event: readEvent(manifest) };
 }
 
 type ShowdownSets = NonNullable<ReturnType<ReturnType<typeof loadShowdown>['Teams']['unpack']>>;

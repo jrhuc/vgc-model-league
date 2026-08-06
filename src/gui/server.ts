@@ -44,6 +44,7 @@ import { BattleState } from '../state.js';
 import type { Team, TeamDraft } from '../teams.js';
 import { createPool, inspectTeam, listPools, loadPool, packTeam, validateTeam } from '../teams.js';
 import { parseTimerScale } from '../timer.js';
+import type { ProvenanceMode } from '../tournament.js';
 import { runTournament, TOURNAMENT_PROTOCOL_VERSION } from '../tournament.js';
 import type { TradeWindowConfig } from '../trade-window.js';
 import type { ExperimentMode, JsonObject, Pid, TimerScale } from '../types.js';
@@ -191,6 +192,7 @@ interface RunConfig extends ModelReasoningConfig {
   sequentialWeeks?: boolean;
   tradeWindow?: TradeWindowConfig | null;
   draftOnly?: boolean;
+  provenance?: ProvenanceMode;
 }
 
 function isActiveRunState(state: RunSnapshot['state']): state is 'running' | 'paused' {
@@ -1193,6 +1195,7 @@ export class GuiServer {
       ...(mode === 'draft' && body.sequentialWeeks === true ? { sequentialWeeks: true } : {}),
       ...(mode === 'draft' ? { tradeWindow: tradeWindow! } : {}),
       ...(mode === 'draft' && body.draftOnly === true ? { draftOnly: true } : {}),
+      ...(mode === 'tournament' && body.provenance === 'blind' ? { provenance: 'blind' as const } : {}),
     };
     const run = new ActiveRun(config, apiKeys, owner, this.options.runsDir);
     if (owner && this.options.auth) {
@@ -1320,6 +1323,7 @@ export class GuiServer {
           ...(run.config.pool ? { pool: run.config.pool } : {}),
           ...(run.config.teams === undefined ? {} : { teams: run.config.teams }),
           ...(run.config.format === undefined ? {} : { format: run.config.format }),
+          ...(run.config.provenance === undefined ? {} : { provenance: run.config.provenance }),
         });
       } else {
         await (this.options.runner ?? runRotation)(run.config.models, run.config.seriesPerPair, run.runDir, {
@@ -1536,6 +1540,7 @@ export class GuiServer {
       ...(run.config.sequentialWeeks === true ? { sequentialWeeks: true } : {}),
       ...(run.config.tradeWindow === undefined ? {} : { tradeWindow: run.config.tradeWindow }),
       ...(run.config.draftOnly === true ? { draftOnly: true } : {}),
+      ...(run.config.provenance === undefined ? {} : { provenance: run.config.provenance }),
       ...(run.owner
         ? {
             contributor: {

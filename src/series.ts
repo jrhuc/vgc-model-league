@@ -62,35 +62,33 @@ export async function mapLimit<T, R>(
   return results.filter((result): result is R => result !== undefined);
 }
 
-export function makeEngine(
-  pid: Pid,
-  spec: string,
-  seed: number,
-  decisionLog: DecisionLog,
-  traceLog: DecisionLog,
-  format: string,
-  psDir: string,
-  reasoning?: ReasoningLevel,
-  reference?: ShowdownReference,
-  signal?: AbortSignal,
-  apiKey?: string,
-  recovery?: RecoveryGate,
-  initialNotebook?: string,
-  draftRoster?: string,
-): RandomEngine | LLMEngine {
+export interface EngineSetup {
+  pid: Pid;
+  spec: string;
+  seed: number;
+  decisionLog: DecisionLog;
+  traceLog: DecisionLog;
+  format: string;
+  psDir: string;
+  reasoning?: ReasoningLevel | undefined;
+  reference?: ShowdownReference | undefined;
+  signal?: AbortSignal | undefined;
+  apiKey?: string | undefined;
+  recovery?: RecoveryGate | undefined;
+  initialNotebook?: string | undefined;
+  draftRoster?: string | undefined;
+  briefing?: string | undefined;
+}
+
+export function makeEngine(setup: EngineSetup): RandomEngine | LLMEngine {
+  const { pid, spec, seed, ...rest } = setup;
   if (spec === 'random') return new RandomEngine(pid, seed);
   return new LLMEngine(pid, spec, {
-    ...(apiKey === undefined ? {} : { apiKey }),
-    decisionLog,
-    traceLog,
-    format,
-    psDir,
-    ...(reasoning === undefined ? {} : { reasoning }),
-    ...(reference === undefined ? {} : { reference }),
-    ...(signal === undefined ? {} : { signal }),
-    ...(recovery === undefined ? {} : { recovery }),
-    ...(initialNotebook === undefined ? {} : { initialNotebook }),
-    ...(draftRoster === undefined ? {} : { draftRoster }),
+    ...Object.fromEntries(Object.entries(rest).filter(([, value]) => value !== undefined)),
+    decisionLog: setup.decisionLog,
+    traceLog: setup.traceLog,
+    format: setup.format,
+    psDir: setup.psDir,
   });
 }
 
@@ -279,6 +277,7 @@ export interface RecordedSeriesContext extends ModelReasoningConfig {
   seriesIndex?: number;
   initialNotebooks?: Partial<Record<Pid, string>>;
   draftRosters?: Partial<Record<Pid, string>>;
+  briefings?: Partial<Record<Pid, string>>;
   engineSeeds: Record<Pid, number>;
   format: string;
   psDir: string;
@@ -501,22 +500,23 @@ export async function playRecordedSeries(context: RecordedSeriesContext): Promis
   const engines = Object.fromEntries(
     (['p1', 'p2'] as const).map((pid) => [
       pid,
-      makeEngine(
+      makeEngine({
         pid,
-        context.players[pid],
-        context.engineSeeds[pid],
-        decisionSink(pid),
-        path.join(seriesDir, `${pid}-trace.jsonl`),
-        context.format,
-        context.psDir,
-        reasoning[pid],
+        spec: context.players[pid],
+        seed: context.engineSeeds[pid],
+        decisionLog: decisionSink(pid),
+        traceLog: path.join(seriesDir, `${pid}-trace.jsonl`),
+        format: context.format,
+        psDir: context.psDir,
+        reasoning: reasoning[pid],
         reference,
-        context.signal,
-        context.apiKeys?.[context.players[pid]],
-        context.recovery,
-        adopted?.notebooks[pid] ?? context.initialNotebooks?.[pid],
-        context.draftRosters?.[pid],
-      ),
+        signal: context.signal,
+        apiKey: context.apiKeys?.[context.players[pid]],
+        recovery: context.recovery,
+        initialNotebook: adopted?.notebooks[pid] ?? context.initialNotebooks?.[pid],
+        draftRoster: context.draftRosters?.[pid],
+        briefing: context.briefings?.[pid],
+      }),
     ]),
   ) as Record<Pid, RandomEngine | LLMEngine>;
   for (const pid of ['p1', 'p2'] as const) {

@@ -45,7 +45,7 @@ const TEAMBUILD_PROMPT_POLICY = {
     '  entry, which of them evolves is chosen during play.',
     '',
     'You have the Showdown dex tools. Use them while you build: check what an item or ability actually does here,',
-    'what a spread outruns, and how hard an attack lands before you commit EVs to it. They compute from the',
+    'what a spread outruns, and how hard an attack lands. They compute from the',
     'simulator this league runs on. Trust the mechanics and factors each result explicitly says it applied;',
     'a hypothetical damage result does not imply omitted abilities or field effects. This game is newer than your training data.',
     '',

@@ -56,7 +56,6 @@ function spreadText(evs: Spread): string {
   );
 }
 
-/** Champions allots 66 stat points with a per-stat cap of 32; the validator rejects anything above either. */
 function checkSpread(evs: Spread, label: string): void {
   const total = STATS.reduce((sum, stat) => sum + evs[stat], 0);
   if (total > 66) throw new Error(`${label}: ${total} stat points exceeds the Champions limit of 66`);
@@ -87,10 +86,6 @@ async function fetchText(url: string, accept: string): Promise<string> {
   return response.text();
 }
 
-/**
- * Victory Road open team lists render client side; the paste id resolves to the same record through the
- * site's own backend, which returns everything the list publishes and no stat points.
- */
 async function fetchOpenList(url: string): Promise<OpenSet[]> {
   const id = url.replace(/\/$/, '').split('/').pop() ?? '';
   if (!/^[A-Za-z0-9_-]+$/.test(id)) throw new Error(`could not read a paste id from ${url}`);
@@ -147,13 +142,6 @@ async function fetchCorpus(csvUrl: string, psDir: string): Promise<CorpusSet[]> 
   return corpus;
 }
 
-/**
- * Candidates are ranked by how much of the real set they reproduce, then by how often the metagame ran that
- * exact spread, so the choice is the common answer among the closest sets rather than an arbitrary one.
- * A shared item outranks shared moves because it decides the shape of the spread: 66 points buy survival
- * only where the item does not already guarantee it, so a Sash spread transplanted onto a resist berry
- * invests nothing in the bulk that berry exists to reward. Moves then choose among same-item sets.
- */
 function chooseSpread(target: OpenSet, corpus: CorpusSet[]): ResolvedSpread | null {
   const sameSpecies = corpus.filter((entry) => slug(entry.species) === slug(target.species));
   const candidates = sameSpecies.filter((entry) => slug(entry.nature) === slug(target.nature));

@@ -71,6 +71,7 @@ async function execute(message: RunWorkerStart): Promise<void> {
         ...(message.teams === undefined ? {} : { teams: message.teams }),
         ...(message.format === undefined ? {} : { format: message.format }),
         ...(message.pool ? { pool: message.pool } : {}),
+        ...(message.provenance === undefined ? {} : { provenance: message.provenance }),
       });
     } else {
       await runRotation(message.models, message.seriesPerPair, message.runDir, {

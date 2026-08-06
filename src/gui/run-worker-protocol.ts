@@ -2,6 +2,7 @@ import type { DraftLeagueEvent } from '../draftleague.js';
 import type { ModelReasoningConfig } from '../providers.js';
 import type { RecoveryPause } from '../recovery.js';
 import type { Team } from '../teams.js';
+import type { ProvenanceMode } from '../tournament.js';
 import type { TradeWindowConfig } from '../trade-window.js';
 import type { ContributorAttribution, TimerScale } from '../types.js';
 
@@ -24,6 +25,7 @@ export interface RunWorkerStart extends ModelReasoningConfig {
   sequentialWeeks?: boolean;
   tradeWindow?: TradeWindowConfig | null;
   draftOnly?: boolean;
+  provenance?: ProvenanceMode;
   contributor?: ContributorAttribution;
 }
 

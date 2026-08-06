@@ -48,7 +48,9 @@ Commands:
       [--timer-scale <n|off>] [--nitro]
   tournament --models <spec> <spec>...  play a single-elimination BO3 bracket; each model keeps one team
       [--pool <name>] [--seed <n>] [--concurrency <n>] [--reasoning <level>] [--timer-scale <n|off>]
-      [--nitro]
+      [--nitro] [--provenance <disclosed|blind>]
+      a pool that seeds its teams keeps the real bracket order instead of drawing positions at random
+      --provenance disclosed (default) names the event and both teams' finishes; blind withholds both
   draft --models <spec> <spec>...     snake-draft rosters from a board, then a weekly round robin and playoffs
       each coach drafts 10 within a 100-point budget, then picks 6 and builds every set before each match
       [--board <name>] [--seed <n>] [--concurrency <n>] [--reasoning <level>] [--timer-scale <n|off>]
@@ -306,16 +308,21 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
       options: {
         ...EXPERIMENT_CLI_OPTIONS,
         pool: { type: 'string', default: 'test' },
+        provenance: { type: 'string' },
       },
     });
     const models = experimentModels(command, values.models, positionals, values.nitro);
     const execution = experimentExecution(values);
-    const { runTournament } = await import('./tournament.js');
+    const { runTournament, DEFAULT_PROVENANCE } = await import('./tournament.js');
+    const provenance = values.provenance ?? DEFAULT_PROVENANCE;
+    if (provenance !== 'disclosed' && provenance !== 'blind')
+      throw new Error('--provenance must be "disclosed" or "blind"');
     const runDir = makeRunDirectory();
     armModelOverrides(runDir);
     const rows = await withRunStatus(runDir, () =>
       runTournament(models, runDir, {
         pool: values.pool,
+        provenance,
         concurrency: positiveInteger('concurrency', values.concurrency),
         ...execution,
       }),

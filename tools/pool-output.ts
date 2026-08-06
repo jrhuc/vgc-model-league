@@ -11,10 +11,6 @@ export interface PoolOutput {
   extra?: Record<string, string>;
 }
 
-/**
- * Pools are immutable snapshots, so every file lands together or not at all: the contents are staged in a
- * sibling directory and hard-linked into place only once none of the targets exist.
- */
 export function publishPool(poolDir: string, output: PoolOutput): string {
   const manifest = {
     id: output.id,

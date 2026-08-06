@@ -13,7 +13,7 @@ import type { RotationEvent } from './rotation.js';
 import type { ExperimentOptions } from './series.js';
 import { playRecordedSeries } from './series.js';
 import { showdownCommit } from './showdown.js';
-import type { Team } from './teams.js';
+import type { PoolEvent, Team } from './teams.js';
 import { loadPool, validatePool, validateTeam } from './teams.js';
 import { DEFAULT_TIMER_SCALE } from './timer.js';
 import type { ContributorAttribution, Pid, TimerScale } from './types.js';
@@ -25,16 +25,43 @@ export type TournamentEvent =
   | { type: 'bracket'; bracket: BracketView }
   | { type: 'series-players'; index: number; players: Record<Pid, string> };
 
+export type ProvenanceMode = 'disclosed' | 'blind';
+
+export const DEFAULT_PROVENANCE: ProvenanceMode = 'disclosed';
+
 export interface TournamentOptions extends ExperimentOptions {
   pool?: string;
   teams?: Team[];
   format?: string;
+  provenance?: ProvenanceMode;
   onEvent?: (event: TournamentEvent) => void;
 }
 
 interface Entrant {
   model: string;
   team: Team;
+}
+
+function ordinal(place: number): string {
+  const tens = place % 100;
+  if (tens >= 11 && tens <= 13) return `${place}th`;
+  return `${place}${['th', 'st', 'nd', 'rd'][place % 10] ?? 'th'}`;
+}
+
+export function briefEntrant(event: PoolEvent, entrant: Entrant, opponent: Entrant, count: number): string {
+  const field = event.players ? `${event.players}-player ` : '';
+  const where = [event.dates, event.location].filter(Boolean).join(', ');
+  const finish = (side: Entrant): string =>
+    side.team.provenance?.placement ? `finished ${ordinal(side.team.provenance.placement)}` : 'played';
+  const lines = [
+    `This bracket replays the top ${count} of ${event.name}, a ${field}${event.game} tournament played ${where} under ${event.regulation}${event.structure ? ` (${event.structure})` : ''}.`,
+    `Every team here is one a player took to that top cut; nobody in this bracket built their own. You have the team that ${finish(entrant)}, and your opponent has the team that ${finish(opponent)}.`,
+  ];
+  if (event.reconstructedSpreads)
+    lines.push(
+      'The published lists gave species, items, abilities, natures and moves but no stat points, so every spread here was rebuilt from public sets of the same Pokémon in this regulation and is not the players’ own.',
+    );
+  return lines.join('\n');
 }
 
 export interface BracketMatch {
@@ -102,6 +129,7 @@ export async function runTournament(
   let format: string;
   let poolId: string | null;
   let assignedTeams: Team[];
+  let event: PoolEvent | null = null;
   if (options.teams) {
     if (options.teams.length !== models.length) throw new Error('inline tournaments need one team per model');
     if (!options.format) throw new Error('inline teams need an explicit format');
@@ -125,14 +153,26 @@ export async function runTournament(
     }
     format = pool.format;
     poolId = pool.id;
-    assignedTeams = shuffle(pool.teams, random).slice(0, models.length);
+    event = pool.event;
+    const seeded = pool.teams.every((team) => team.seed !== undefined);
+    assignedTeams = seeded
+      ? [...pool.teams].sort((a, b) => a.seed! - b.seed!).slice(0, models.length)
+      : shuffle(pool.teams, random).slice(0, models.length);
   }
 
   const placement = shuffle(
     models.map((_, index) => index),
     random,
   );
-  const entrants: Entrant[] = placement.map((index) => ({ model: models[index]!, team: assignedTeams[index]! }));
+  const entrants: Entrant[] = placement.map((modelIndex, position) => ({
+    model: models[modelIndex]!,
+    team: assignedTeams[position]!,
+  }));
+  const provenance = options.provenance ?? DEFAULT_PROVENANCE;
+  const briefingFor =
+    provenance === 'disclosed' && event
+      ? (entrant: Entrant, opponent: Entrant) => briefEntrant(event, entrant, opponent, entrants.length)
+      : undefined;
   const rounds = buildBracket(entrants.length);
   const matches = rounds.flat();
   const seriesCount = entrants.length - 1;
@@ -161,7 +201,14 @@ export async function runTournament(
         reasoning_by_model: options.reasoningByModel ?? null,
         timer_scale: timerScale,
         format,
-        entrants: entrants.map((entrant) => ({ model: entrant.model, team: entrant.team.id })),
+        provenance,
+        event: event?.name ?? null,
+        entrants: entrants.map((entrant) => ({
+          model: entrant.model,
+          team: entrant.team.id,
+          seed: entrant.team.seed ?? null,
+          placement: entrant.team.provenance?.placement ?? null,
+        })),
         contributor: options.contributor ?? null,
       },
       null,
@@ -216,6 +263,8 @@ export async function runTournament(
         psDir,
         signal: controller.signal,
         seriesSeeds: seriesSeeds[match.seriesIndex!]!,
+        provenance,
+        ...(briefingFor === undefined ? {} : { briefingFor }),
         ...(options.reasoning === undefined ? {} : { reasoning: options.reasoning }),
         ...(options.apiKeys === undefined ? {} : { apiKeys: options.apiKeys }),
         ...(options.recovery === undefined ? {} : { recovery: options.recovery }),
@@ -276,6 +325,8 @@ async function playMatch(
     scaffold: string;
     psDir: string;
     seriesSeeds: { gameSeeds: Array<[number, number, number, number]>; engineSeeds: Record<Pid, number> };
+    briefingFor?: (entrant: Entrant, opponent: Entrant) => string;
+    provenance: ProvenanceMode;
     apiKeys?: Readonly<Record<string, string>>;
     onEvent?: (event: TournamentEvent) => void;
     signal?: AbortSignal;
@@ -299,6 +350,14 @@ async function playMatch(
     psDir: context.psDir,
     runDir: context.runDir,
     requireWinner: true,
+    ...(context.briefingFor === undefined
+      ? {}
+      : {
+          briefings: {
+            p1: context.briefingFor(sides.p1, sides.p2),
+            p2: context.briefingFor(sides.p2, sides.p1),
+          },
+        }),
     ...(context.reasoningByModel === undefined ? {} : { reasoningByModel: context.reasoningByModel }),
     ...(context.reasoning === undefined ? {} : { reasoning: context.reasoning }),
     timerScale: context.timerScale,
@@ -324,6 +383,7 @@ async function playMatch(
     round: match.round + 1,
     entrant_count: entrants.length,
     seeds: { p1: match.slots[0], p2: match.slots[1] },
+    provenance: context.provenance,
     ...(context.poolId === null ? {} : { pool: context.poolId }),
     ...(context.contributor === undefined ? {} : { contributor: context.contributor }),
     advanced: entrants[match.winner]!.model,

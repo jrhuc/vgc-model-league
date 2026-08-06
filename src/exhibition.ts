@@ -124,17 +124,17 @@ export async function runExhibition(runDir: string, options: ExhibitionOptions):
         psDir,
         reference,
       }),
-      [oppSide]: makeEngine(
-        oppSide,
-        options.opponent,
-        engineSeed,
-        path.join(seriesDir, `${oppSide}-decisions.jsonl`),
-        path.join(seriesDir, `${oppSide}-trace.jsonl`),
-        pool.format,
+      [oppSide]: makeEngine({
+        pid: oppSide,
+        spec: options.opponent,
+        seed: engineSeed,
+        decisionLog: path.join(seriesDir, `${oppSide}-decisions.jsonl`),
+        traceLog: path.join(seriesDir, `${oppSide}-trace.jsonl`),
+        format: pool.format,
         psDir,
-        options.reasoning,
+        reasoning: options.reasoning,
         reference,
-      ),
+      }),
     } as Record<Pid, LLMEngine | RandomEngine>;
 
     const result = await playBo3({
