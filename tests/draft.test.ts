@@ -279,10 +279,12 @@ test('coach trades validate both rosters and apply an accepted exchange atomical
     /entrant index/,
   );
   assert.notEqual(typeof parsed, 'string', String(parsed));
-  assert.deepEqual(parseTradeResponse('{"accept":true,"reasoning":"Worth it."}'), {
+  assert.deepEqual(parseTradeResponse('{"accept":true,"reasoning":"Worth it.","notebook":"Plan around Charizard."}'), {
     accept: true,
     reasoning: 'Worth it.',
+    notebook: 'Plan around Charizard.',
   });
+  assert.match(String(parseTradeResponse('{"accept":true,"reasoning":"Worth it."}')), /notebook/);
   if (typeof parsed === 'string' || !parsed.offer) return;
   applyTradeOffer(state, {
     from: 0,
@@ -345,25 +347,37 @@ test('coach offers resolve before free agency and replay without model calls', a
     [
       models[0]!,
       [
-        JSON.stringify({ accept: true, reasoning: 'The exchange also fits us.' }),
+        JSON.stringify({
+          accept: true,
+          reasoning: 'The exchange also fits us.',
+          notebook: 'Weighed the incoming offer.',
+        }),
         JSON.stringify({ offer: null, reasoning: 'No outbound offer.', notebook: 'Keep the trade.' }),
         JSON.stringify({ swaps: [], reasoning: 'Done.', notebook: 'Keep the trade.' }),
       ],
     ],
   ]);
+  const prompts = new Map<string, string[]>();
   const artifact = await runTradeWindow(createState(), {
     runDir: directory,
     psDir: defaultPsDir(),
     afterWeek: 1,
     tradesAllowed: 1,
     makeTradeProvider: (spec) => ({
-      complete(): Promise<Completion> {
+      complete(_system: string, messages: ProviderMessage[]): Promise<Completion> {
         const response = queues.get(spec)?.shift();
         assert.ok(response, `unexpected call for ${spec}`);
+        const asked = prompts.get(spec) ?? [];
+        asked.push(messages[messages.length - 1]?.content ?? '');
+        prompts.set(spec, asked);
         return Promise.resolve({ text: response, usage: {}, toolCalls: [] });
       },
     }),
   });
+  const answering = prompts.get(models[0]!)?.[0] ?? '';
+  for (const evidence of ['best', models[0]!, models[1]!, cheap[10]!.id]) {
+    assert.ok(answering.includes(evidence), `the counterparty answers without ${evidence}`);
+  }
   assert.equal(artifact.offers.length, 2, 'each seat has an offer-phase record');
   assert.equal(artifact.offers[0]!.accepted, true);
   assert.equal(artifact.offers[1]!.to, null);
