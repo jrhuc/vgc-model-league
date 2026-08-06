@@ -43,6 +43,12 @@ team pastes. An entrant keeps the same team through the bracket. Ready matches
 run up to the selected concurrency. A draw advances the higher seed but keeps
 `winner: null` in the result.
 
+A bracket resumes like a league: the run's seed rebuilds the same draw, the
+stored config's entrants are its seat-to-team identity, recorded results settle
+their matches and advance their winners, and each series carries its schedule
+slot into `src/series.ts` so an interrupted one adopts its directory and
+replays what it already played.
+
 A pool may reproduce a real event. Its manifest carries the event and gives
 each team a seed and the finish it earned, and `tools/build-event-pool.ts`
 builds it. Seeded teams hold their bracket positions instead of drawing at

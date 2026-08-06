@@ -190,6 +190,75 @@ test('a seeded pool keeps the real bracket order and briefs both sides on it', a
   assert.equal(config.event, pool.event!.name);
 });
 
+test('a stopped bracket resumes on its records and replays the interrupted series', async (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-model-league-tournament-resume-'));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const recordsPath = path.join(directory, 'results.jsonl');
+  const models = Array.from({ length: 4 }, () => 'random');
+  const controller = new AbortController();
+  const stopped = await runTournament(models, directory, {
+    seed: 7,
+    concurrency: 1,
+    recordsPath,
+    signal: controller.signal,
+    onEvent: (event) => {
+      if (event.type === 'game-end') controller.abort();
+    },
+  });
+  assert.equal(stopped.length, 0, 'the bracket stops inside its first series');
+  const interrupted = fs.readdirSync(path.join(directory, 'series'));
+  assert.equal(interrupted.length, 1, 'the interrupted series left one directory behind');
+  const config = fs.readFileSync(path.join(directory, 'config.json'), 'utf8');
+
+  const resumed = await runTournament(models, directory, {
+    seed: 7,
+    concurrency: 1,
+    recordsPath,
+    resume: true,
+  });
+
+  assert.equal(resumed.length, 3, 'the resumed bracket plays every series once');
+  assert.deepEqual(
+    resumed.map((row) => row.series_index),
+    [0, 1, 2],
+  );
+  assert.equal(loadRows(recordsPath).length, 3, 'no series is recorded twice');
+  const played = fs.readdirSync(path.join(directory, 'series'));
+  assert.equal(played.length, 3, 'the interrupted series reuses its directory');
+  assert.ok(played.includes(interrupted[0]!), 'and keeps the one it already opened');
+  const first = resumed.find((row) => row.series_index === 0)!;
+  assert.equal(
+    ((first.games as Array<Record<string, unknown>>)[0] ?? {}).resumed,
+    true,
+    'the game that already finished is replayed from its log, not bought again',
+  );
+  assert.equal(fs.readFileSync(path.join(directory, 'config.json'), 'utf8'), config, 'a resume rewrites no provenance');
+});
+
+test('a resume refuses a bracket whose stored seats no longer match the draw', async (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-model-league-tournament-mismatch-'));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const models = Array.from({ length: 4 }, () => 'random');
+  await runTournament(models, directory, {
+    seed: 3,
+    concurrency: 2,
+    recordsPath: path.join(directory, 'results.jsonl'),
+  });
+  const configPath = path.join(directory, 'config.json');
+  const config = JSON.parse(fs.readFileSync(configPath, 'utf8')) as { entrants: Array<{ team: string }> };
+  config.entrants[0]!.team = 'some-other-team';
+  fs.writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`, 'utf8');
+  await assert.rejects(
+    runTournament(models, directory, {
+      seed: 3,
+      concurrency: 2,
+      recordsPath: path.join(directory, 'results.jsonl'),
+      resume: true,
+    }),
+    /cannot resume/,
+  );
+});
+
 test('a briefing establishes the cut without ranking anyone inside it', () => {
   const pool = loadPool('vr-aug26-top8');
   const brief = briefEvent(pool.event!, 8);

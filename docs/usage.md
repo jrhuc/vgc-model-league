@@ -75,6 +75,15 @@ the event and both teams' finishes, or `--provenance blind`, which tells it
 nothing — run the pair to measure what knowing is worth. Build a pool like it
 with `node dist/tools/build-event-pool.js teams/<pool>/sources.json`.
 
+A bracket that stopped continues with `tournament --resume <run-dir>`. Resume
+uses the stored models, pool or inline teams, seed, provenance, reasoning, and
+clock, rebuilds the same draw, and stands on the series already recorded. The
+interrupted series adopts its own directory and replays its finished games and
+each side's recorded decisions before play continues, so a restart costs no
+provider calls for ground already covered. A seat rewired in the run's
+`config.json` plays on under its new spec; a draw that no longer matches the
+stored seats refuses to resume rather than record a different bracket.
+
 Battles are untimed by default. `--timer-scale 1` uses the standard VGC clock.
 Values from 0.5 through 4 scale every Showdown clock. Each run records the
 selected scale. Ratings do not mix results from different scales.

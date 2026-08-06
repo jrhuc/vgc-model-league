@@ -1204,10 +1204,17 @@ test('abandoning a decision aborts its provider request', async () => {
 
 test('an event briefing reaches the provider on decisions and reflections', async () => {
   const briefing = 'This bracket replays the top 8 of Some Real Open.';
-  const briefed = new ScriptedProvider([decision([0], 'briefed', ''), JSON.stringify({ summary: 's', adjustment: 'a', notebook: 'n' })]);
+  const briefed = new ScriptedProvider([
+    decision([0], 'briefed', ''),
+    JSON.stringify({ summary: 's', adjustment: 'a', notebook: 'n' }),
+  ]);
   const engine = new LLMEngine('p1', 'scripted', { provider: briefed, decisionLog: [], briefing });
   await engine.act(request(), { povLines: ['|turn|1'] });
-  await engine.endGame({ gameNumber: 1, outcome: { winner: 'opponent', won: false, turns: 9 }, seriesScore: { p1: 0, p2: 1 } });
+  await engine.endGame({
+    gameNumber: 1,
+    outcome: { winner: 'opponent', won: false, turns: 9 },
+    seriesScore: { p1: 0, p2: 1 },
+  });
 
   assert.equal(briefed.calls.length, 2, 'one decision and one reflection');
   for (const call of briefed.calls) {
