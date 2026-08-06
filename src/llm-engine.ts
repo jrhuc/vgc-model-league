@@ -117,9 +117,11 @@ const DECISION_MAX_TOKENS_DEEP: Partial<Record<ReasoningLevel, number>> = {
   max: 16_384,
 };
 /** Timed budgets follow generation pace so replies arrive before the deadline. The untimed ceiling and wall
- * clock only stop runaway reasoning loops. */
+ * clock only stop runaway reasoning loops. Keep the wall clock at or above the ceiling divided by 20 tokens
+ * per second: below that it aborts replies the token budget still allows, which shapes play instead of
+ * catching hangs. 20 sits under the slowest rate any seat has produced (24 measured over 767 calls). */
 const DECISION_MAX_TOKENS_CEILING = 32_768;
-const UNTIMED_CALL_TIMEOUT_S = 600;
+const UNTIMED_CALL_TIMEOUT_S = 1800;
 const ASSUMED_TOKENS_PER_SECOND = 75;
 const PACE_SAFETY = 0.8;
 const PACE_SAMPLE_MIN_TOKENS = 256;
@@ -144,7 +146,7 @@ const DECISION_NOTE_LIMIT = 8000;
 const DECISION_RATIONALE_LIMIT = 2000;
 const DECISION_TEMPERATURE = 0.2;
 const REFLECTION_MAX_TOKENS = 8192;
-const REFLECTION_TIMEOUT_S = 240;
+const REFLECTION_TIMEOUT_S = 600;
 const TRANSCRIPT_CHARACTER_LIMIT = 24000;
 const TRANSCRIPT_CLIP_MARKER = '[Earlier turns are omitted from this timeline.]';
 

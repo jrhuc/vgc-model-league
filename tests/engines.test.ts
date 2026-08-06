@@ -569,7 +569,11 @@ test('untimed truncation records a legal fallback with the truncation summary', 
   const engine = new LLMEngine('p1', 'opencode-go:deepseek-v4-flash', { provider, decisionLog: decisions });
   assert.equal(await engine.act(request(), { povLines: [] }), 'move 1');
   assert.equal(provider.calls[0]!.options.maxTokens, 32_768);
-  assert.equal(provider.calls[0]!.options.timeout, 600, 'untimed calls carry the loop-catch wall clock');
+  const wallClock = provider.calls[0]!.options.timeout ?? 0;
+  assert.ok(
+    wallClock >= provider.calls[0]!.options.maxTokens! / 20,
+    'the untimed wall clock must outlast a full-budget reply at 20 tokens per second, or it shapes play',
+  );
   assert.equal(decisions[0]!.fallback, true);
   assert.equal(decisions[0]!.error, 'reasoning exhausted the 32768-token response budget');
   assert.equal(
