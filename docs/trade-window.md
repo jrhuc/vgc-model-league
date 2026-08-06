@@ -178,12 +178,30 @@ counterparty rosters with prices, and replies with one JSON object:
 where `offer` may instead be `null`. `message` is the only field the
 counterparty sees; `reasoning` and `notebook` never leave the seat.
 
-The response prompt receives the offering seat's `message`, the two Pokémon
-with prices, its own roster and budget arithmetic, and replies:
+The response prompt receives the same dossier as the offer and free-agency
+prompts — standings, its own results, its own notebook and series reflections,
+every public roster, the remaining board, its own roster and budget — and then
+the offer: the offering seat's identity and `message`, the two Pokémon with
+prices, and the budget arithmetic if it accepts. It replies:
 
 ```
-{"accept": <boolean>, "reasoning": "<2-4 sentences, private>"}
+{"accept": <boolean>, "reasoning": "<2-4 sentences, private>",
+ "notebook": "<updated private plan>"}
 ```
+
+The dossier is shared deliberately. v2 shipped a thin response prompt holding
+only the terms, and the first full run showed why that breaks the measurement:
+a counterparty answering without its own results, notes, or league position is
+exploitable *because of the harness*, so an accepted bad deal could no longer
+be attributed to the seat rather than to what it was denied. Information parity
+is a property of every seat prompt in the window, not only the ones that act
+first. The extra cost is one dossier per offer received.
+
+The response `notebook` replaces the seat's plan exactly as the offer and
+free-agency notebooks do, so a coach that gains or loses a Pokémon here carries
+its own account of why into the rest of the season. It is recorded in
+`window.jsonl` as `responseNotebook` on the offer row and replayed from there;
+rows written before that field existed leave the counterparty's notebook alone.
 
 Types extend the existing ones in `src/trade-window.ts` rather than starting a
 parallel module: add `TradeOffer` (`from`, `to`, `give`, `get`, `message`,
