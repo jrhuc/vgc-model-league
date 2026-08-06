@@ -1,16 +1,22 @@
 import { useEffect, useState } from 'preact/hooks';
 
-import type { LeagueGameResponse, TournamentArchiveView, TournamentSummary, TournamentsResponse } from '../../api';
-import { Battlefield } from '../components/battlefield';
+import type { TournamentArchiveView, TournamentSummary, TournamentsResponse } from '../../api';
 import { BracketGrid, roundName } from '../components/bracket';
 import { StatTile, Tooltip, useTip } from '../components/chartkit';
-import { GameReflections, GameTimeline } from '../components/gamelog';
 import { Mark } from '../components/mark';
+import { MatchGame, useMatchGame } from '../components/matchgame';
+import { MatchMenu, MatchMenuRow } from '../components/matchmenu';
 import { api, apiFresh } from '../http';
+import { entrantOrigin, formatTeamSlug, modelName } from '../lib/labels';
 
 function when(iso: string): string {
   const date = new Date(iso);
   return Number.isNaN(date.getTime()) ? iso : date.toLocaleDateString(undefined, { dateStyle: 'medium' });
+}
+
+function entrantName(archive: TournamentArchiveView, entrant: number | null | undefined, fallback = 'TBD'): string {
+  if (entrant === null || entrant === undefined) return fallback;
+  return archive.entrants[entrant]?.model.trim() || fallback;
 }
 
 const PLACEMENTS = [
@@ -137,13 +143,14 @@ function EntrantTable({ archive }: { archive: TournamentArchiveView }) {
   if (!seeded) return null;
   return (
     <div class="table-scroll">
+      <p class="card-subhead">The field</p>
       <table class="data-table">
         <thead>
           <tr>
-            <th class="num">Finish</th>
+            <th>Seat</th>
             <th>Team</th>
-            <th>Original player</th>
-            <th>Piloted by</th>
+            <th>Built by</th>
+            <th class="num">Event finish</th>
           </tr>
         </thead>
         <tbody>
@@ -154,20 +161,20 @@ function EntrantTable({ archive }: { archive: TournamentArchiveView }) {
             )
             .map(({ entrant, index }) => (
               <tr key={index}>
-                <td class="num">{entrant.placement ?? entrant.seed ?? '–'}</td>
-                <td>
-                  {entrant.paste ? (
-                    <a href={entrant.paste} target="_blank" rel="noreferrer">
-                      {entrant.team}
-                    </a>
-                  ) : (
-                    entrant.team
-                  )}
-                </td>
-                <td>{entrant.player || '–'}</td>
                 <td class="spec-cell">
                   <Mark spec={entrant.model} size={14} /> {entrant.model}
                 </td>
+                <td>
+                  {entrant.paste ? (
+                    <a href={entrant.paste} target="_blank" rel="noreferrer">
+                      {formatTeamSlug(entrant.team)}
+                    </a>
+                  ) : (
+                    formatTeamSlug(entrant.team)
+                  )}
+                </td>
+                <td>{entrant.player || '–'}</td>
+                <td class="num">{entrant.placement ?? entrant.seed ?? '–'}</td>
               </tr>
             ))}
         </tbody>
@@ -176,7 +183,12 @@ function EntrantTable({ archive }: { archive: TournamentArchiveView }) {
   );
 }
 
-function MatchGame({
+function teamCredit(entrant: TournamentArchiveView['entrants'][number] | undefined): string {
+  const origin = entrantOrigin(entrant);
+  return entrant?.player ? `${origin}'s team` : origin;
+}
+
+function TournamentGame({
   archive,
   seriesIndex,
   game,
@@ -189,133 +201,37 @@ function MatchGame({
   onOpenGame: (seriesIndex: number, game: number) => void;
   onBack: () => void;
 }) {
-  const [view, setView] = useState<(LeagueGameResponse & { receivedAt: number }) | null>(null);
-  const [error, setError] = useState('');
   const path = `/api/tournament/game?run=${encodeURIComponent(archive.runId)}&series=${seriesIndex}&game=${game}`;
-
-  useEffect(() => {
-    setView(null);
-    api<LeagueGameResponse>(path)
-      .then((response) => {
-        setView({ ...response, receivedAt: Date.now() });
-        setError('');
-      })
-      .catch((failure: Error) => setError(failure.message));
-  }, [path]);
-
-  useEffect(() => {
-    if (!view?.live) return;
-    const timer = setInterval(() => {
-      apiFresh<LeagueGameResponse>(path)
-        .then((response) => setView({ ...response, receivedAt: Date.now() }))
-        .catch(() => {});
-    }, 10_000);
-    return () => clearInterval(timer);
-  }, [view?.live, path]);
-
+  const { view, error } = useMatchGame(path, 4_000);
   if (error) return <div class="message error">Could not load this game: {error}</div>;
   if (!view) return <p class="muted">Loading the game…</p>;
 
-  const names: [string, string] = [
-    archive.entrants[view.sides[0]]?.model ?? view.teamNames[0],
-    archive.entrants[view.sides[1]]?.model ?? view.teamNames[1],
+  const first = archive.entrants[view.sides[0]];
+  const second = archive.entrants[view.sides[1]];
+  const players: [string, string] = [
+    entrantName(archive, view.sides[0], view.teamNames[0] || 'Player 1'),
+    entrantName(archive, view.sides[1], view.teamNames[1] || 'Player 2'),
   ];
-  const seriesScore: [number, number] = [
-    view.gameWinners.filter((winner) => winner === view.sides[0]).length,
-    view.gameWinners.filter((winner) => winner === view.sides[1]).length,
-  ];
-  const sideWarning = (side: 0 | 1): string => {
-    for (let index = view.decisions.length - 1; index >= 0; index -= 1) {
-      const decision = view.decisions[index]!;
-      if (decision.side !== side || decision.automatic) continue;
-      return decision.fallback ? 'Latest model decision used a fallback.' : '';
-    }
-    return '';
-  };
-  const seriesOver = view.reflections.some((reflection) => reflection.seriesOver);
+  const titles: [string, string] = [modelName(players[0]), modelName(players[1])];
+  const details: [string, string] = [teamCredit(first), teamCredit(second)];
+
   return (
-    <div class="league-view">
-      <header class="page-heading league-heading">
-        <div>
-          <p class="eyebrow">
-            <button type="button" class="text-link" onClick={onBack}>
-              ← Bracket · {when(archive.when)}
-            </button>{' '}
-            / {roundName(view.round - 1, archive.rounds.length)}
-          </p>
-          <h1 class="matchup-heading">
-            {names[0]} vs {names[1]}.
-          </h1>
-        </div>
-        <div class="lede team-lede">
-          <span>
-            {view.live ? <span class="live-dot" aria-hidden="true" /> : null} Game {view.game} of {view.games.length}
-            {view.winner !== null
-              ? ` · ${archive.entrants[view.winner]?.model ?? 'winner'} took it`
-              : view.live
-                ? ' · in progress'
-                : ' · no winner recorded'}
-            {seriesScore[0] + seriesScore[1] > 0 ? ` · series ${seriesScore[0]}–${seriesScore[1]}` : ''}
-          </span>
-          <span class="game-switcher">
-            {view.games.map((number, index) => (
-              <button
-                key={number}
-                type="button"
-                class={`game-chip ${
-                  view.gameWinners[index] === view.sides[0]
-                    ? 'left'
-                    : view.gameWinners[index] === view.sides[1]
-                      ? 'right'
-                      : ''
-                } ${number === view.game ? 'on' : ''}`}
-                onClick={() => onOpenGame(seriesIndex, number)}
-              >
-                {number}
-              </button>
-            ))}
-          </span>
-        </div>
-      </header>
-
-      {view.snapshot ? (
-        <section class="panel battlefield">
-          <Battlefield
-            snapshot={view.snapshot}
-            receivedAt={view.receivedAt}
-            players={{ p1: names[0], p2: names[1] }}
-            warnings={{ p1: sideWarning(0), p2: sideWarning(1) }}
-            meta={<span class="turn-badge">{view.snapshot.turn ? `Turn ${view.snapshot.turn}` : 'Team preview'}</span>}
-          />
-        </section>
-      ) : null}
-
-      <section class="panel">
-        <div class="section-head">
-          <div>
-            <h2>Turn by turn</h2>
-            <p>Both seats' choices with their recorded reasoning, then what the simulator resolved.</p>
-          </div>
-        </div>
-        <GameTimeline decisions={view.decisions} log={view.log} names={names} />
-      </section>
-
-      {view.reflections.length > 0 ? (
-        <section class="panel">
-          <div class="section-head">
-            <div>
-              <h2>{seriesOver ? 'Series reflections' : 'Post-game reflections'}</h2>
-              <p>What each seat took from the game it just played.</p>
-            </div>
-          </div>
-          <GameReflections
-            reflections={view.reflections}
-            names={names}
-            notebookLabel={seriesOver ? 'Notes for a rematch' : 'Notebook carried forward'}
-          />
-        </section>
-      ) : null}
-    </div>
+    <MatchGame
+      view={view}
+      eyebrow={
+        <>
+          <button type="button" class="text-link" onClick={onBack}>
+            ← Bracket · {when(archive.when)}
+          </button>{' '}
+          / {roundName(view.round - 1, archive.rounds.length)}
+        </>
+      }
+      titles={titles}
+      players={players}
+      details={details}
+      teams={[first?.teamSheet, second?.teamSheet]}
+      onOpenGame={(number) => onOpenGame(seriesIndex, number)}
+    />
   );
 }
 
@@ -335,7 +251,7 @@ function TournamentCard({
     archive.liveSeries.map((entry) => entry.seriesIndex).filter((index): index is number => index !== null),
   );
   return (
-    <section class="panel tournament-card">
+    <section class={`panel tournament-card ${archive.live ? 'live' : ''}`}>
       <button type="button" class="tournament-card-head" onClick={onToggle} aria-expanded={open}>
         <div class="tournament-card-title">
           {archive.live ? (
@@ -354,7 +270,7 @@ function TournamentCard({
               <b>
                 <Mark spec={champion.model} size={16} /> {champion.model}
               </b>
-              <small>{champion.team}</small>
+              <small>{formatTeamSlug(champion.team)}</small>
             </>
           ) : (
             <>
@@ -383,27 +299,30 @@ function TournamentCard({
             onSelect={(index) => onOpenGame(index, 1)}
           />
           {archive.liveSeries.length > 0 && (
-            <ul class="live-feed">
+            <MatchMenu count={archive.liveSeries.length}>
               {archive.liveSeries.map((entry) => (
-                <li class="live-series" key={entry.seriesId}>
-                  <span class="live-series-matchup">
-                    <span class="live-dot" aria-hidden="true" />
-                    {entry.round === null ? 'Match' : roundName(entry.round, archive.rounds.length)} ·{' '}
-                    {archive.entrants[entry.slots[0] ?? -1]?.model ?? 'TBD'} vs{' '}
-                    {archive.entrants[entry.slots[1] ?? -1]?.model ?? 'TBD'}
-                  </span>
-                  <span class="live-series-state">
-                    game {entry.game}
-                    {entry.turn ? ` · turn ${entry.turn}` : ' · team preview'}
-                    {entry.seriesIndex !== null && (
-                      <button type="button" class="button" onClick={() => onOpenGame(entry.seriesIndex!, entry.game)}>
-                        Watch live
-                      </button>
-                    )}
-                  </span>
-                </li>
+                <MatchMenuRow
+                  key={entry.seriesId}
+                  eyebrow={entry.round === null ? 'Match' : roundName(entry.round, archive.rounds.length)}
+                  sides={([0, 1] as const).map((side) => {
+                    const spec = entrantName(archive, entry.slots[side]);
+                    return (
+                      <span class="match-menu-side" key={side}>
+                        {side === 1 && <i>vs</i>}
+                        <Mark spec={spec} size={15} />
+                        {modelName(spec)}
+                      </span>
+                    );
+                  })}
+                  state={
+                    <>
+                      Game {entry.game} · {entry.turn ? `Turn ${entry.turn}` : 'Team preview'}
+                    </>
+                  }
+                  onWatch={entry.seriesIndex === null ? undefined : () => onOpenGame(entry.seriesIndex!, entry.game)}
+                />
               ))}
-            </ul>
+            </MatchMenu>
           )}
           <EntrantTable archive={archive} />
         </>
@@ -416,12 +335,14 @@ export function TournamentsView({
   active,
   epoch,
   run,
+  focusRun,
   onOpenRun,
   onOpenModel,
 }: {
   active: boolean;
   epoch: number;
   run: string | undefined;
+  focusRun?: string;
   onOpenRun: (runId: string) => void;
   onOpenModel: (id: string) => void;
 }) {
@@ -464,7 +385,7 @@ export function TournamentsView({
     const archive = archives.find((entry) => entry.runId === game.runId);
     if (archive) {
       return (
-        <MatchGame
+        <TournamentGame
           archive={archive}
           seriesIndex={game.seriesIndex}
           game={game.game}
@@ -473,6 +394,40 @@ export function TournamentsView({
         />
       );
     }
+  }
+
+  if (focusRun) {
+    const archive = archives.find((entry) => entry.runId === focusRun);
+    return (
+      <div class="league-view live-tournament-view">
+        <header class="page-heading league-heading live-tournament-heading">
+          <div>
+            <p class="eyebrow">
+              <span class="live-dot" aria-hidden="true" /> Live run / tournament
+            </p>
+            <h1>{archive?.event?.name || 'Tournament live.'}</h1>
+          </div>
+          <p class="lede">
+            The bracket and battle logs are streaming from the CLI. Open a live match to follow the field, model
+            decisions, and turn-by-turn action.
+          </p>
+        </header>
+        {error ? <div class="message error">Could not load the live tournament: {error}</div> : null}
+        {!archive && !error ? (
+          <section class="panel live-tournament-loading">
+            <span class="live-dot" aria-hidden="true" /> Waiting for the bracket…
+          </section>
+        ) : null}
+        {archive ? (
+          <TournamentCard
+            archive={archive}
+            open={openRun === archive.runId}
+            onToggle={() => setOpenRun(openRun === archive.runId ? '' : archive.runId)}
+            onOpenGame={(seriesIndex, number) => setGame({ runId: archive.runId, seriesIndex, game: number })}
+          />
+        ) : null}
+      </div>
+    );
   }
 
   return (
@@ -498,7 +453,7 @@ export function TournamentsView({
         <StatTile
           label="Reigning champion"
           value={reigning ? reigning.model : '–'}
-          note={reigning ? reigning.team : 'no finished bracket yet'}
+          note={reigning ? formatTeamSlug(reigning.team) : 'no finished bracket yet'}
         />
         <StatTile
           label="Most titles"

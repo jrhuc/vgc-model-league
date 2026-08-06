@@ -1,4 +1,6 @@
 import type { BracketEntrantView } from '../../api';
+import { modelName } from '../lib/labels';
+import { Mark } from './mark';
 
 export interface BracketMatchLike {
   seriesIndex: number | null;
@@ -58,12 +60,13 @@ export function BracketGrid<M extends BracketMatchLike>({
                     class={`bracket-slot ${match.winner !== null && slot === match.winner ? 'winner' : ''}`}
                     key={side}
                   >
+                    {seed && <em class="bracket-seed">{seed}</em>}
                     <span class="bracket-name">
-                      {seed && <em class="bracket-seed">{seed}</em>}
-                      {bye && slot === null ? 'Bye' : entrantLabel(entrant)}
+                      {entrant && <Mark spec={entrant.model} size={13} />}
+                      <b>{bye && slot === null ? 'Bye' : modelName(entrantLabel(entrant))}</b>
                     </span>
-                    {entrant?.team && <small>{entrant.team}</small>}
                     <span class="bracket-score">{scoreFor(match, side)}</span>
+                    {entrant?.team && <small>{entrant.team}</small>}
                   </span>
                 );
               });
@@ -72,12 +75,20 @@ export function BracketGrid<M extends BracketMatchLike>({
               }`;
               return clickable ? (
                 <button type="button" key={matchIndex} class={className} onClick={() => onSelect?.(match.seriesIndex!)}>
-                  {running && <span class="live-dot" role="img" aria-label="live" />}
+                  {running && (
+                    <span class="bracket-live">
+                      <span class="live-dot" aria-hidden="true" /> Live
+                    </span>
+                  )}
                   {slots}
                 </button>
               ) : (
                 <div key={matchIndex} class={`${className} archived`}>
-                  {running && <span class="live-dot" role="img" aria-label="live" />}
+                  {running && (
+                    <span class="bracket-live">
+                      <span class="live-dot" aria-hidden="true" /> Live
+                    </span>
+                  )}
                   {slots}
                 </div>
               );

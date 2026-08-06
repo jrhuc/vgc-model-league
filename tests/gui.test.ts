@@ -172,6 +172,34 @@ test('gui serves the built app shell and setup state', async () => {
   }
 });
 
+test('live run identifies an external CLI tournament instead of labeling every run as a draft league', async () => {
+  const runsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-gui-external-run-'));
+  const draftId = '20260806T200000.000000Z-draft000';
+  const tournamentId = '20260806T210000.000000Z-cup00000';
+  for (const [runId, mode] of [
+    [draftId, 'draft'],
+    [tournamentId, 'tournament'],
+  ] as const) {
+    const runDir = path.join(runsDir, runId);
+    fs.mkdirSync(runDir);
+    fs.writeFileSync(path.join(runDir, 'config.json'), `${JSON.stringify({ mode })}\n`, 'utf8');
+    fs.writeFileSync(
+      path.join(runDir, 'status.json'),
+      `${JSON.stringify({ state: 'running', pid: process.pid, start_time: new Date().toISOString() })}\n`,
+      'utf8',
+    );
+  }
+  const gui = new GuiServer({ runsDir });
+  const base = await gui.listen(0);
+  try {
+    const { data } = await apiJson(`${base}api/state`);
+    assert.deepEqual(data.externalRun, { runId: tournamentId, mode: 'tournament' });
+  } finally {
+    gui.close();
+    fs.rmSync(runsDir, { recursive: true, force: true });
+  }
+});
+
 test('gui rejects spoofed hosts, cross-origin posts, and non-json posts', async () => {
   const gui = new GuiServer({ runsDir: RUNS_SCRATCH });
   const base = await gui.listen(0);

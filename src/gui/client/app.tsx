@@ -281,10 +281,23 @@ export function App() {
 
   const running = run?.state === 'running';
   const paused = run?.state === 'paused';
+  const externalRun = run ? null : app.externalRun;
+  const externallyRunning = externalRun !== null;
   const user = app.auth.user;
-  const headerLabel = running ? 'Run in progress' : paused ? 'Run paused' : run ? `Last run ${run.state}` : 'Idle';
+  const headerLabel = running
+    ? 'Run in progress'
+    : paused
+      ? 'Run paused'
+      : externallyRunning
+        ? externalRun.mode === 'tournament'
+          ? 'Tournament in progress'
+          : 'Draft league in progress'
+        : run
+          ? `Last run ${run.state}`
+          : 'Idle';
   const showLiveTabs = Boolean(run?.mode === 'draft' && run.draft);
   const liveShowsDraft = showLiveTabs && liveTab === 'draft';
+  const externalTournament = externalRun?.mode === 'tournament' ? externalRun : null;
   return (
     <>
       <header class="app-header">
@@ -311,7 +324,7 @@ export function App() {
           ))}
         </nav>
         <div class="header-aside">
-          <div class={`header-state ${running ? 'live' : paused ? 'paused' : ''}`}>
+          <div class={`header-state ${running || externallyRunning ? 'live' : paused ? 'paused' : ''}`}>
             <span class="live-dot" />
             <span>{headerLabel}</span>
           </div>
@@ -358,19 +371,30 @@ export function App() {
               </button>
             </nav>
           ) : null}
-          <div style={liveShowsDraft ? 'display:none' : ''}>
-            <ArenaView
-              run={run}
-              externalRun={app?.externalRun ?? null}
-              battles={battles}
-              selected={selected}
-              onSelect={selectBattle}
-              onLoadGame={loadGame}
-              onFetchBattle={fetchBattle}
-              onGoFixtures={() => navigate('fixtures')}
-              onOpenLeague={openLeague}
+          {externalTournament ? (
+            <TournamentsView
+              active={view === 'arena'}
+              epoch={recordsEpoch}
+              run={externalTournament.runId}
+              focusRun={externalTournament.runId}
+              onOpenRun={openTournament}
+              onOpenModel={openModel}
             />
-          </div>
+          ) : (
+            <div style={liveShowsDraft ? 'display:none' : ''}>
+              <ArenaView
+                run={run}
+                externalRun={externalRun?.mode === 'draft' ? externalRun : null}
+                battles={battles}
+                selected={selected}
+                onSelect={selectBattle}
+                onLoadGame={loadGame}
+                onFetchBattle={fetchBattle}
+                onGoFixtures={() => navigate('fixtures')}
+                onOpenLeague={openLeague}
+              />
+            </div>
+          )}
           {liveShowsDraft ? draftRoomSection : null}
         </section>
         {view === 'leagues' ? (

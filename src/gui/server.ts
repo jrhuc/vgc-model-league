@@ -11,7 +11,7 @@ import {
   buildLeagueGame,
   buildLeagues,
   buildModelProfile,
-  findLiveDraftRun,
+  findLiveCliRun,
   snapshotBattle,
 } from '../archive.js';
 import type { AuthService, AuthSession, AuthUser } from '../auth.js';
@@ -834,8 +834,7 @@ export class GuiServer {
 
   private externalRunBody(): AppState['externalRun'] {
     if (this.run && isActiveRunState(this.run.state)) return null;
-    const runId = findLiveDraftRun(this.options.runsDir ?? RUNS_DIR);
-    return runId ? { runId, mode: 'draft' } : null;
+    return findLiveCliRun(this.options.runsDir ?? RUNS_DIR);
   }
 
   private boardBody(id: string): BoardResponse {
@@ -942,7 +941,7 @@ export class GuiServer {
   private tournamentsBody(poolParam: string | null): TournamentsResponse {
     const all = loadRows(this.options.recordsPath ?? RESULTS_PATH);
     const pool = poolParam?.trim() || null;
-    return buildTournaments(all, this.options.runsDir ?? RUNS_DIR, pool);
+    return buildTournaments(all, this.options.runsDir ?? RUNS_DIR, pool, this.options.teamsDir ?? TEAMS_DIR);
   }
 
   private leaguesBody(): JsonObject {
@@ -976,7 +975,14 @@ export class GuiServer {
       throw new HttpError(400, 'series and game must be non-negative integers');
     }
     const all = loadRows(this.options.recordsPath ?? RESULTS_PATH);
-    const view = buildTournamentGame(all, this.options.runsDir ?? RUNS_DIR, run.trim(), seriesIndex, gameNumber);
+    const view = buildTournamentGame(
+      all,
+      this.options.runsDir ?? RUNS_DIR,
+      run.trim(),
+      seriesIndex,
+      gameNumber,
+      this.options.teamsDir ?? TEAMS_DIR,
+    );
     if (!view) throw new HttpError(404, `no stored game ${game} for series ${series} of ${JSON.stringify(run)}`);
     return view as unknown as JsonObject;
   }

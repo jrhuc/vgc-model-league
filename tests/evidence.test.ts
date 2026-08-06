@@ -4,7 +4,8 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { buildEvidence, buildTournaments } from '../src/evidence.js';
+import { buildEvidence, buildTournamentGame, buildTournaments } from '../src/evidence.js';
+import { TEAMS_DIR } from '../src/paths.js';
 import type { SeriesRecord } from '../src/records.js';
 
 function decisionLine(latency: number, turn: number, extra: Record<string, unknown> = {}): string {
@@ -186,4 +187,86 @@ test('buildTournaments reconstructs a bracket with byes from row seeds', () => {
   assert.deepEqual(final.slots, [0, 2]);
   assert.deepEqual(final.score, [2, 0]);
   assert.equal(buildTournaments(rows, '/nonexistent', 'other-pool').tournaments.length, 0);
+});
+
+test('tournament archives include open team sheets for the shared match viewer', () => {
+  const rows: SeriesRecord[] = [
+    {
+      mode: 'tournament',
+      run_id: 'cup-sheets',
+      timestamp: '2026-08-06T21:00:00.000Z',
+      series_index: 0,
+      round: 1,
+      entrant_count: 2,
+      seeds: { p1: 0, p2: 1 },
+      pool: 'test',
+      players: { p1: 'provider:alpha', p2: 'provider:beta' },
+      teams: { p1: 'boschmans-mega-pyroar', p2: 'cybertron-mega-staraptor' },
+      winner: 'provider:alpha',
+      winner_side: 'p1',
+      score: { p1: 2, p2: 0 },
+      turns: 8,
+    },
+  ];
+  const archive = buildTournaments(rows, '/nonexistent', 'test', TEAMS_DIR).tournaments[0]!;
+  assert.equal(archive.entrants[0]!.teamSheet?.length, 6);
+  assert.equal(archive.entrants[1]!.teamSheet?.length, 6);
+  assert.ok(archive.entrants[0]!.teamSheet?.every((set) => set.spriteId && set.moves.length > 0));
+});
+
+test('live CLI tournament series recover their bracket index from player names', () => {
+  const runsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-live-tournament-'));
+  const runId = 'cup-live';
+  const runDir = path.join(runsDir, runId);
+  const seriesDir = path.join(runDir, 'series', 'series-live');
+  fs.mkdirSync(seriesDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(runDir, 'config.json'),
+    `${JSON.stringify({
+      mode: 'tournament',
+      pool: null,
+      entrants: [
+        { model: 'provider:alpha', team: 'Alpha team' },
+        { model: 'provider:beta', team: 'Beta team' },
+        { model: 'provider:gamma', team: 'Gamma team' },
+        { model: 'provider:delta', team: 'Delta team' },
+      ],
+    })}\n`,
+    'utf8',
+  );
+  fs.writeFileSync(
+    path.join(runDir, 'status.json'),
+    `${JSON.stringify({ state: 'running', pid: process.pid, start_time: '2026-08-06T21:00:00.000Z' })}\n`,
+    'utf8',
+  );
+  fs.writeFileSync(
+    path.join(seriesDir, 'series.json'),
+    `${JSON.stringify({ players: { p1: 'provider:beta', p2: 'provider:gamma' } })}\n`,
+    'utf8',
+  );
+  fs.writeFileSync(path.join(seriesDir, 'p1-decisions.jsonl'), decisionLine(900, 2), 'utf8');
+  fs.writeFileSync(
+    path.join(seriesDir, 'game-1.log'),
+    '|player|p1|p1-provider:beta||\n|player|p2|p2-provider:gamma||\n|turn|2\n',
+    'utf8',
+  );
+  try {
+    const archive = buildTournaments([], runsDir, null).tournaments[0]!;
+    assert.equal(archive.when, '2026-08-06T21:00:00.000Z');
+    assert.deepEqual(archive.liveSeries[0], {
+      seriesId: 'series-live',
+      seriesIndex: 1,
+      round: 0,
+      slots: [1, 2],
+      game: 1,
+      turn: 2,
+      decisions: 1,
+    });
+    const game = buildTournamentGame([], runsDir, runId, 1, 1);
+    assert.ok(game, 'the inferred series index opens the live game');
+    assert.deepEqual(game.teamNames, ['Beta team', 'Gamma team']);
+    assert.equal(game.snapshot?.turn, 2);
+  } finally {
+    fs.rmSync(runsDir, { recursive: true, force: true });
+  }
 });

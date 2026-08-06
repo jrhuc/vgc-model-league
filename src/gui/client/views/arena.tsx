@@ -16,7 +16,7 @@ export type StoredBattle = BattleMessage & { receivedAt: number };
 
 interface ArenaProps {
   run: RunSnapshot | null;
-  externalRun: { runId: string; mode: 'draft' } | null;
+  externalRun: { runId: string; mode: 'draft' | 'tournament' } | null;
   battles: Record<number, StoredBattle>;
   selected: number | null;
   onSelect: (index: number) => void;

@@ -130,6 +130,7 @@ export interface BracketEntrantView {
   placement?: number | null;
   player?: string;
   paste?: string;
+  teamSheet?: TeambuildSetView[];
 }
 
 interface BracketMatchView {
@@ -201,7 +202,7 @@ export interface AppState {
   boards: BoardInfo[];
   auth: AuthView;
   run: RunSnapshot | null;
-  externalRun: { runId: string; mode: 'draft' } | null;
+  externalRun: { runId: string; mode: 'draft' | 'tournament' } | null;
 }
 
 export interface MonView {

@@ -52,6 +52,27 @@ function spriteIdFor(species: string): string {
   return id;
 }
 
+export function viewTeamSheet(packed: string): TeambuildSetView[] {
+  const { Teams } = loadShowdown();
+  return (Teams.unpack(packed) ?? []).map((set) => {
+    const evs = Object.fromEntries(
+      Object.entries(set.evs ?? {}).filter((entry): entry is [string, number] => typeof entry[1] === 'number'),
+    );
+    const species = set.species || set.name || 'Pokémon';
+    return {
+      species,
+      spriteId: spriteIdFor(species),
+      item: set.item,
+      ability: set.ability,
+      nature: set.nature,
+      moves: set.moves,
+      evs,
+      repaired: false,
+      repairs: [],
+    };
+  });
+}
+
 function snapshotMon(battle: BattleState, pid: Pid, mon: MonState): MonView {
   const boosts = Object.entries(mon.boosts)
     .filter(([, value]) => value)
@@ -141,10 +162,21 @@ function draftRunDirs(runsDir: string): string[] {
   });
 }
 
-export function findLiveDraftRun(runsDir: string): string | null {
-  const live = draftRunDirs(runsDir)
-    .filter((runId) => isRunLive(runsDir, runId))
-    .sort();
+export function findLiveCliRun(runsDir: string): { runId: string; mode: 'draft' | 'tournament' } | null {
+  let entries: string[];
+  try {
+    entries = fs.readdirSync(runsDir);
+  } catch {
+    return null;
+  }
+  const live: Array<{ runId: string; mode: 'draft' | 'tournament' }> = [];
+  for (const runId of entries) {
+    if (!SAFE_SEGMENT.test(runId)) continue;
+    const config = readRunJson(runsDir, runId, 'config.json') as Record<string, unknown> | null;
+    const mode = config?.mode;
+    if ((mode === 'draft' || mode === 'tournament') && isRunLive(runsDir, runId)) live.push({ runId, mode });
+  }
+  live.sort((a, b) => a.runId.localeCompare(b.runId));
   return live[live.length - 1] ?? null;
 }
 
