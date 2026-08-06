@@ -117,11 +117,13 @@ const DECISION_MAX_TOKENS_DEEP: Partial<Record<ReasoningLevel, number>> = {
   max: 16_384,
 };
 /** Timed budgets follow generation pace so replies arrive before the deadline. The untimed ceiling and wall
- * clock only stop runaway reasoning loops. Keep the wall clock at or above the ceiling divided by 20 tokens
- * per second: below that it aborts replies the token budget still allows, which shapes play instead of
- * catching hangs. 20 sits under the slowest rate any seat has produced (24 measured over 767 calls). */
-const DECISION_MAX_TOKENS_CEILING = 32_768;
-const UNTIMED_CALL_TIMEOUT_S = 1800;
+ * clock only stop runaway reasoning loops, so both are sized to sit above anything real traffic produces:
+ * the ceiling at least double the largest reply yet seen, the wall clock at least the ceiling divided by 20
+ * tokens per second (under the slowest rate any seat has produced, 24 over 767 calls). A ceiling real
+ * traffic reaches shapes play — the previous 32,768 truncated three battle replies in run 0f155186, each
+ * losing a whole turn of reasoning and retrying. */
+export const DECISION_MAX_TOKENS_CEILING = 65_536;
+const UNTIMED_CALL_TIMEOUT_S = 3600;
 const ASSUMED_TOKENS_PER_SECOND = 75;
 const PACE_SAFETY = 0.8;
 const PACE_SAMPLE_MIN_TOKENS = 256;
@@ -145,8 +147,8 @@ const UNTIMED_EMPTY_RESPONSE_RETRIES = 2;
 const DECISION_NOTE_LIMIT = 8000;
 const DECISION_RATIONALE_LIMIT = 2000;
 const DECISION_TEMPERATURE = 0.2;
-const REFLECTION_MAX_TOKENS = 8192;
-const REFLECTION_TIMEOUT_S = 600;
+export const REFLECTION_MAX_TOKENS = 32_768;
+const REFLECTION_TIMEOUT_S = 1800;
 const TRANSCRIPT_CHARACTER_LIMIT = 24000;
 const TRANSCRIPT_CLIP_MARKER = '[Earlier turns are omitted from this timeline.]';
 

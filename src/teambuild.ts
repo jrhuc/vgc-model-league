@@ -66,7 +66,7 @@ const TEAMBUILD_PROMPT_POLICY = {
   truncatedTemplate:
     'Your previous reply used the whole {{budget}}-token budget before finishing the team. Reply now with only the JSON object, keeping your reasoning short enough to finish inside the budget.',
   maxTokens: 65_536,
-  timeoutSeconds: 900,
+  timeoutSeconds: 3600,
   attempts: 5,
   providerRetries: 4,
   retryBaseMs: 2_000,
