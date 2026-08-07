@@ -21,6 +21,10 @@ export interface Position {
   turn: number;
   requests: Record<Pid, BattleRequest>;
   actual: Record<Pid, string>;
+  /** Which of that side's recorded decisions this position consumed, so a graded position can be
+   * joined back to the rationale the model wrote for it. Turn alone does not identify one: a turn
+   * can hold a move choice and a replacement after a faint. */
+  choiceIndex: Record<Pid, number>;
   snapshot: string;
 }
 
@@ -128,6 +132,7 @@ export function replayGame(source: GameSource, recordedLog?: string[]): Replay {
           p2: battle.getSide('p2').activeRequest as unknown as BattleRequest,
         },
         actual: { p1: taken.p1 as string, p2: taken.p2 as string },
+        choiceIndex: { p1: cursor.p1 - 1, p2: cursor.p2 - 1 },
         snapshot: JSON.stringify(battle.toJSON()),
       });
     }

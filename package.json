@@ -27,7 +27,8 @@
     "build-event-pool": "node dist/tools/build-event-pool.js",
     "build-board": "node dist/tools/build-draft-board.js",
     "fetch-sprites": "node dist/tools/fetch-sprites.js",
-    "capture-requests": "node dist/tools/capture-requests.js"
+    "capture-requests": "node dist/tools/capture-requests.js",
+    "grade-positions": "node dist/tools/grade-positions.js"
   },
   "engines": {
     "node": ">=24.18.1 <25"

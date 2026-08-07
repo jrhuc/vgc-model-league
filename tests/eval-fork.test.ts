@@ -88,6 +88,12 @@ test('every recorded position carries both sides own request and the action each
   assert.equal(preview?.actual.p1, choices.p1[0]);
   assert.equal(preview?.actual.p2, choices.p2[0]);
   for (const [index, position] of positions.entries()) assert.equal(position.index, index);
+
+  for (const position of positions) {
+    for (const pid of ['p1', 'p2'] as const) {
+      assert.equal(choices[pid][position.choiceIndex[pid]], position.actual[pid]);
+    }
+  }
 });
 
 test('the action set offered to a regret matrix is the one the model was shown', () => {
