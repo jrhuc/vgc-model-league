@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  ANONYMOUS,
+  anonymiseLog,
   type CandidatePosition,
   gameOf,
   keyOf,
@@ -113,4 +115,29 @@ test('the graded rows carry everything a candidate needs', () => {
   assert.equal(row?.legal, 88);
   assert.equal(row?.played, 'move 1, move 2');
   assert.equal(readCandidates([{ run_id: 'r' }]).length, 0);
+});
+
+test('a position does not tell a model who played it or who it faced', () => {
+  const names = { p1: 'p1-openrouter:anthropic/claude-opus-5', p2: 'p2-openrouter:x-ai/grok-4.5' };
+  const seen = anonymiseLog(
+    [
+      '|player|p1|p1-openrouter:anthropic/claude-opus-5||',
+      '|player|p2|p2-openrouter:x-ai/grok-4.5||',
+      '|switch|p1a: Whimsicott|Whimsicott, L50, F|137/137',
+      '|win|p2-openrouter:x-ai/grok-4.5',
+    ],
+    names,
+  );
+  assert.equal(
+    seen.some((line) => line.includes('openrouter')),
+    false,
+  );
+  assert.equal(seen[0], '|player|p1|Player 1||');
+  assert.equal(seen[3], `|win|${ANONYMOUS.p2}`);
+  assert.equal(seen[2], '|switch|p1a: Whimsicott|Whimsicott, L50, F|137/137');
+});
+
+test('a seat whose name contains the other seat name is still replaced whole', () => {
+  const seen = anonymiseLog(['|player|p1|alpha||', '|player|p2|alpha-two||'], { p1: 'alpha', p2: 'alpha-two' });
+  assert.deepEqual(seen, ['|player|p1|Player 1||', '|player|p2|Player 2||']);
 });

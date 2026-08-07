@@ -27,5 +27,6 @@ Comments are for constraints the code cannot express, written as `/** doc */`
 blocks; `pnpm run check:comments` (part of `pnpm test`) rejects `//` narration.
 
 See `docs/measurement.md` for what the harness may and may not surface to
-models, `docs/architecture.md` for the system design, and `docs/usage.md` for
+models, `docs/evaluation-plan.md` for what is being measured and what is being
+built next, `docs/architecture.md` for the system design, and `docs/usage.md` for
 usage.

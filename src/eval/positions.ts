@@ -69,6 +69,22 @@ export function readCandidates(rows: JsonObject[]): CandidatePosition[] {
   return candidates;
 }
 
+export const ANONYMOUS: Record<Pid, string> = { p1: 'Player 1', p2: 'Player 2' };
+
+/** A recorded log names both seats by model spec, so replaying a position to a model would tell it
+ * who played the position and who it faced. Reputation is not information a seat earns in play. */
+export function anonymiseLog(lines: string[], names: Record<Pid, string>): string[] {
+  const replacements = (['p1', 'p2'] as const)
+    .map((pid) => ({ from: names[pid], to: ANONYMOUS[pid] }))
+    .filter((entry) => entry.from)
+    .sort((a, b) => b.from.length - a.from.length);
+  return lines.map((line) => {
+    let next = line;
+    for (const { from, to } of replacements) next = next.split(from).join(to);
+    return next;
+  });
+}
+
 export function gameOf(position: CandidatePosition): string {
   return `${position.runId}:${position.seriesId}:${position.gameNumber}`;
 }

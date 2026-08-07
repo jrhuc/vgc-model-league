@@ -6,6 +6,7 @@ import path from 'node:path';
 import { loadGameRecords, verifyGame } from '../src/eval/corpus.js';
 import { legalActions } from '../src/eval/fork.js';
 import {
+  anonymiseLog,
   type CandidatePosition,
   gameOf,
   readCandidates,
@@ -101,7 +102,7 @@ async function main(): Promise<void> {
         turn: live.turn,
         request,
         legal: legalActions(request),
-        seen: verified.replay.pov[position.pid].slice(0, live.seen[position.pid]),
+        seen: anonymiseLog(verified.replay.pov[position.pid].slice(0, live.seen[position.pid]), record.names),
         opponent_request: live.requests[position.pid === 'p1' ? 'p2' : 'p1'],
         spread: position.spread,
         value: position.value,
