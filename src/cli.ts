@@ -71,8 +71,9 @@ Commands:
       [--agent-dir <path>]
   standings [--pool <name>]           print standings and head-to-head from recorded results
   report [--out <path>] [--pool <name>]  write an HTML report
-  publish [--to <origin>] [--pool <name>] [--include-test] [--dry-run]
+  publish [--to <origin>] [--run <id>]... [--pool <name>] [--include-test] [--dry-run]
       send completed local series, their decision logs, and any missing team pool to a deployment
+      --run publishes exactly those runs, whatever their mode or pool; repeat it for several
 
 Runs stay alive through transient provider failures (rate limits, upstream
 outages, exhausted quotas): the affected seat pauses, then retries with backoff
@@ -553,6 +554,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
       args: rest,
       options: {
         to: { type: 'string' },
+        run: { type: 'string', multiple: true },
         pool: { type: 'string' },
         'include-test': { type: 'boolean', default: false },
         'dry-run': { type: 'boolean', default: false },
@@ -569,6 +571,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
       recordsPath: RESULTS_PATH,
       runsDir: RUNS_DIR,
       teamsDir: TEAMS_DIR,
+      ...(values.run === undefined ? {} : { runs: values.run }),
       ...(values.pool === undefined ? {} : { pool: values.pool }),
       includeTest: values['include-test'],
       dryRun: values['dry-run'],

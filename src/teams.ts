@@ -4,6 +4,7 @@ import path from 'node:path';
 import type { PoolInfo } from './gui/api.js';
 import { defaultPsDir, TEAMS_DIR } from './paths.js';
 import { loadShowdown } from './showdown.js';
+import type { JsonObject } from './types.js';
 import { asRecords, text } from './value.js';
 
 const POOL_SLUG = /^[a-z0-9][a-z0-9-]{0,63}$/;
@@ -33,11 +34,16 @@ export interface PoolEvent {
   reconstructedSpreads: boolean;
 }
 
+/**
+ * `provenance` is the normalized reading the views share. `source` keeps the manifest block
+ * verbatim because each event names its own extra keys, and republishing must not drop them.
+ */
 export interface Team {
   id: string;
   packed: string;
   seed?: number;
   provenance?: TeamProvenance;
+  source?: JsonObject;
 }
 
 export function listPools(teamsDir = TEAMS_DIR): PoolInfo[] {
@@ -65,21 +71,34 @@ export function listPools(teamsDir = TEAMS_DIR): PoolInfo[] {
   return pools;
 }
 
+/** The manifest blocks a pool cannot be rebuilt from its team files alone. */
+export interface PoolMetadata {
+  event?: JsonObject;
+  spreads?: JsonObject;
+}
+
 export interface TeamPool {
   id: string;
   format: string;
   teams: Team[];
   event: PoolEvent | null;
+  metadata: PoolMetadata;
+}
+
+function block(value: unknown): JsonObject | undefined {
+  return typeof value === 'object' && value !== null && !Array.isArray(value) ? (value as JsonObject) : undefined;
+}
+
+function readMetadata(manifest: Record<string, unknown>): PoolMetadata {
+  const event = block(manifest.event);
+  const spreads = block(manifest.spreads);
+  return { ...(event ? { event } : {}), ...(spreads ? { spreads } : {}) };
 }
 
 function readEvent(manifest: Record<string, unknown>): PoolEvent | null {
-  const source = manifest.event;
-  if (typeof source !== 'object' || source === null || Array.isArray(source)) return null;
-  const event = source as Record<string, unknown>;
-  const spreads = (typeof manifest.spreads === 'object' && manifest.spreads !== null ? manifest.spreads : {}) as Record<
-    string,
-    unknown
-  >;
+  const event = block(manifest.event);
+  if (!event) return null;
+  const spreads = block(manifest.spreads) ?? {};
   return {
     name: text(event.name),
     game: text(event.game),
@@ -95,9 +114,8 @@ function readEvent(manifest: Record<string, unknown>): PoolEvent | null {
 }
 
 function readProvenance(entry: Record<string, unknown>): TeamProvenance | undefined {
-  const source = entry.source;
-  if (typeof source !== 'object' || source === null || Array.isArray(source)) return undefined;
-  const record = source as Record<string, unknown>;
+  const record = block(entry.source);
+  if (!record) return undefined;
   return {
     placement: typeof record.placement === 'number' ? record.placement : null,
     player: text(record.player),
@@ -142,11 +160,13 @@ export function loadPool(name = 'test', teamsDir = TEAMS_DIR): TeamPool {
     const packed = fs.readFileSync(teamPath, 'utf8').trim();
     if (!packed) throw new Error(`team ${JSON.stringify(teamId)} is empty`);
     const provenance = readProvenance(entry);
+    const source = block(entry.source);
     return {
       id: teamId,
       packed,
       ...(typeof entry.seed === 'number' ? { seed: entry.seed } : {}),
       ...(provenance ? { provenance } : {}),
+      ...(source ? { source } : {}),
     };
   });
   const seeded = teams.filter((team) => team.seed !== undefined);
@@ -154,7 +174,7 @@ export function loadPool(name = 'test', teamsDir = TEAMS_DIR): TeamPool {
     throw new Error(`${manifestPath} seeds only ${seeded.length} of ${teams.length} teams`);
   if (new Set(seeded.map((team) => team.seed)).size !== seeded.length)
     throw new Error(`${manifestPath} repeats a seed`);
-  return { id, format, teams, event: readEvent(manifest) };
+  return { id, format, teams, event: readEvent(manifest), metadata: readMetadata(manifest) };
 }
 
 type ShowdownSets = NonNullable<ReturnType<ReturnType<typeof loadShowdown>['Teams']['unpack']>>;
@@ -228,6 +248,12 @@ export function validateTeam(packed: string, format: string, psDir = defaultPsDi
 export interface TeamDraft {
   id: string;
   paste: string;
+  seed?: number;
+  source?: JsonObject;
+}
+
+export interface PoolContents extends PoolMetadata {
+  teams: TeamDraft[];
 }
 
 interface TeamMember {
@@ -282,10 +308,11 @@ export function inspectTeam(paste: string, format: string, psDir = defaultPsDir(
 export function createPool(
   name: string,
   format: string,
-  drafts: TeamDraft[],
+  contents: PoolContents,
   teamsDir = TEAMS_DIR,
   psDir = defaultPsDir(),
 ): string {
+  const drafts = contents.teams;
   if (!POOL_SLUG.test(name)) throw new Error('pool name must be lowercase letters, digits, and dashes');
   if (!format.endsWith('bo3')) throw new Error('format must be a Pokémon Showdown BO3 format id (ending in "bo3")');
   if (drafts.length < 2) throw new Error('a pool needs at least two teams');
@@ -311,14 +338,21 @@ export function createPool(
     const clash = seenTeams.get(packed);
     if (clash) throw new Error(`team ${JSON.stringify(id)} is byte-for-byte the same team as ${JSON.stringify(clash)}`);
     seenTeams.set(packed, id);
-    return { id, packed };
+    return { id, packed, draft };
   });
   fs.mkdirSync(poolDir, { recursive: true });
   for (const team of teams) fs.writeFileSync(path.join(poolDir, `${team.id}.team`), `${team.packed}\n`, 'utf8');
   const manifest = {
     id: name,
     format,
-    teams: teams.map((team) => ({ id: team.id, file: `${team.id}.team` })),
+    ...(contents.event ? { event: contents.event } : {}),
+    ...(contents.spreads ? { spreads: contents.spreads } : {}),
+    teams: teams.map((team) => ({
+      id: team.id,
+      file: `${team.id}.team`,
+      ...(typeof team.draft.seed === 'number' ? { seed: team.draft.seed } : {}),
+      ...(team.draft.source ? { source: team.draft.source } : {}),
+    })),
   };
   fs.writeFileSync(path.join(poolDir, 'pool.json'), `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
   return poolDir;

@@ -214,9 +214,10 @@ archive directory offsite with your own tooling, for example
 ## Publish local results
 
 `publish` sends completed results to a deployment. It sends result rows,
-decision logs, game logs, run configuration, and missing team pools. It does
-not send prompts or raw model responses. Re-publishing a series the deployment
-already holds backfills any game logs it is missing.
+decision logs, game logs, run configuration, draft league assets, and missing
+team pools. Rotation, tournament, and draft runs all travel the same route. It
+does not send prompts or raw model responses. Re-publishing a series the
+deployment already holds backfills any game logs it is missing.
 
 ```sh
 export VGC_LEAGUE_PUBLISH_ORIGIN=https://<deployment>
@@ -225,11 +226,14 @@ export VGC_LEAGUE_IMPORT_TOKEN=<operator-secret>
 pnpm run vgcleague publish --dry-run
 pnpm run vgcleague publish
 pnpm run vgcleague publish --pool regmb-202607
+pnpm run vgcleague publish --run 20260805T175336.037000Z-0f155186
 ```
 
 The command does not add a series that the deployment already has. Without
 `--pool`, it excludes the `test` pool. Use `--include-test` to include that
-pool. The deployment must use the same import token. See
+pool. `--run` publishes exactly the named runs whatever their mode or pool, and
+is the only way to name a draft league, whose rows carry no pool; repeat it to
+send several. The deployment must use the same import token. See
 [Deployment](deployment.md).
 
 ## Use an exhibition seat

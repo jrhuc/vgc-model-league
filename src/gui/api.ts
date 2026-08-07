@@ -745,7 +745,13 @@ export interface ImportRequest {
   logs?: Partial<Record<Pid, string>>;
   games?: Record<string, string>;
   runConfig?: Record<string, unknown>;
-  pool?: { name: string; format: string; teams: Array<{ id: string; paste: string }> };
+  pool?: {
+    name: string;
+    format: string;
+    event?: Record<string, unknown>;
+    spreads?: Record<string, unknown>;
+    teams: Array<{ id: string; paste: string; seed?: number; source?: Record<string, unknown> }>;
+  };
   league?: LeagueAssets;
 }
 
@@ -754,6 +760,7 @@ export interface LeagueAssets {
   draft?: string;
   teambuild?: string;
   window?: Record<string, unknown>;
+  season?: string;
 }
 
 export interface ImportResponse {
