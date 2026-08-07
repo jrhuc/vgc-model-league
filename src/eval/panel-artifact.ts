@@ -41,6 +41,28 @@ const SEALED_KEYS = [
   'table',
   'task_id',
 ];
+const SOURCE_KEYS = ['game_number', 'pid', 'played', 'played_by', 'position_index', 'run_id', 'scaffold', 'series_id'];
+const TABLE_KEYS = [
+  'anchorAgreement',
+  'heldOutGap',
+  'heldOutSpan',
+  'horizon',
+  'legal',
+  'maxNormalizedRewardDrift',
+  'measurement',
+  'measurementBest',
+  'pid',
+  'rankingStable',
+  'selectionBest',
+  'stability',
+  'stateValue',
+  'turn',
+  'valueSpan',
+];
+const PANEL_KEYS = ['actions', 'draws', 'id', 'matrix', 'matrixDigest', 'seedNamespace', 'span'];
+const DRAW_KEYS = ['battleSeed', 'continuationSeed', 'index', 'opponentAction'];
+const ACTION_VALUE_KEYS = ['action', 'reward', 'samples', 'standardError', 'value'];
+const HELD_OUT_KEYS = ['alternativeAction', 'lower95', 'selectedAction', 'standardError', 'value'];
 
 function object(value: unknown, location: string): JsonObject {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(`${location} must be an object`);
@@ -223,6 +245,117 @@ export function validatePrivatePositionScore(row: JsonObject, index = 0): void {
   finite(heldOut.lower95, `${location}.stability.held_out_span.lower95`);
 }
 
+function validateHeldOut(value: unknown, location: string): [string, string] {
+  const heldOut = object(value, location);
+  exactKeys(heldOut, HELD_OUT_KEYS, location);
+  const selected = string(heldOut.selectedAction, `${location}.selectedAction`);
+  const alternative = string(heldOut.alternativeAction, `${location}.alternativeAction`);
+  finite(heldOut.value, `${location}.value`);
+  if (finite(heldOut.standardError, `${location}.standardError`) < 0)
+    throw new Error(`${location}.standardError must be non-negative`);
+  finite(heldOut.lower95, `${location}.lower95`);
+  return [selected, alternative];
+}
+
+function validateExhaustivePanel(
+  value: unknown,
+  id: string,
+  legal: number,
+  location: string,
+): { actions: string[]; draws: number } {
+  const panel = object(value, location);
+  exactKeys(panel, PANEL_KEYS, location);
+  if (panel.id !== id) throw new Error(`${location}.id must be ${id}`);
+  string(panel.seedNamespace, `${location}.seedNamespace`);
+  string(panel.matrixDigest, `${location}.matrixDigest`);
+  if (finite(panel.span, `${location}.span`) < 0) throw new Error(`${location}.span must be non-negative`);
+
+  if (!Array.isArray(panel.draws) || !panel.draws.length) throw new Error(`${location}.draws must be non-empty`);
+  const draws = panel.draws;
+  for (const [drawIndex, raw] of draws.entries()) {
+    const draw = object(raw, `${location}.draws[${drawIndex}]`);
+    exactKeys(draw, DRAW_KEYS, `${location}.draws[${drawIndex}]`);
+    if (integer(draw.index, `${location}.draws[${drawIndex}].index`) !== drawIndex)
+      throw new Error(`${location}.draws must use contiguous zero-based indices`);
+    if (draw.opponentAction !== null) string(draw.opponentAction, `${location}.draws[${drawIndex}].opponentAction`);
+    if (!Array.isArray(draw.battleSeed) || draw.battleSeed.length !== 4)
+      throw new Error(`${location}.draws[${drawIndex}].battleSeed must contain four words`);
+    draw.battleSeed.forEach((word, wordIndex) => {
+      const parsed = integer(word, `${location}.draws[${drawIndex}].battleSeed[${wordIndex}]`, 1);
+      if (parsed > 0xffff) throw new Error(`${location}.draws[${drawIndex}].battleSeed[${wordIndex}] is too large`);
+    });
+    string(draw.continuationSeed, `${location}.draws[${drawIndex}].continuationSeed`);
+  }
+
+  if (!Array.isArray(panel.actions) || panel.actions.length !== legal)
+    throw new Error(`${location}.actions must contain ${legal} legal actions`);
+  const actions = panel.actions.map((raw, actionIndex) => {
+    const action = object(raw, `${location}.actions[${actionIndex}]`);
+    exactKeys(action, ACTION_VALUE_KEYS, `${location}.actions[${actionIndex}]`);
+    const name = string(action.action, `${location}.actions[${actionIndex}].action`);
+    finite(action.value, `${location}.actions[${actionIndex}].value`);
+    if (finite(action.standardError, `${location}.actions[${actionIndex}].standardError`) < 0)
+      throw new Error(`${location}.actions[${actionIndex}].standardError must be non-negative`);
+    if (integer(action.samples, `${location}.actions[${actionIndex}].samples`, 1) !== draws.length)
+      throw new Error(`${location}.actions[${actionIndex}].samples must match its draws`);
+    const reward = nullableFinite(action.reward, `${location}.actions[${actionIndex}].reward`);
+    if (reward !== null && (reward < 0 || reward > 1))
+      throw new Error(`${location}.actions[${actionIndex}].reward is outside [0, 1]`);
+    return name;
+  });
+
+  if (!Array.isArray(panel.matrix) || panel.matrix.length !== draws.length)
+    throw new Error(`${location}.matrix rows must match its draws`);
+  panel.matrix.forEach((raw, drawIndex) => {
+    if (!Array.isArray(raw) || raw.length !== legal)
+      throw new Error(`${location}.matrix[${drawIndex}] must contain ${legal} action values`);
+    raw.forEach((cell, actionIndex) => {
+      finite(cell, `${location}.matrix[${drawIndex}][${actionIndex}]`);
+    });
+  });
+  return { actions, draws: draws.length };
+}
+
+function validateExhaustiveTable(value: unknown, sourcePid: string, location: string): void {
+  const table = object(value, location);
+  exactKeys(table, TABLE_KEYS, location);
+  if (!['p1', 'p2'].includes(String(table.pid))) throw new Error(`${location}.pid is invalid`);
+  if (table.pid !== sourcePid) throw new Error(`${location}.pid differs from its source`);
+  integer(table.turn, `${location}.turn`);
+  const legal = integer(table.legal, `${location}.legal`, 2);
+  if (table.horizon !== 'end') integer(table.horizon, `${location}.horizon`);
+  finite(table.stateValue, `${location}.stateValue`);
+  const selectionBest = string(table.selectionBest, `${location}.selectionBest`);
+  const measurementBest = string(table.measurementBest, `${location}.measurementBest`);
+  if (typeof table.rankingStable !== 'boolean' || typeof table.anchorAgreement !== 'boolean')
+    throw new Error(`${location} agreement fields must be booleans`);
+  if (finite(table.valueSpan, `${location}.valueSpan`) < 0)
+    throw new Error(`${location}.valueSpan must be non-negative`);
+  const heldOutActions = [
+    ...validateHeldOut(table.heldOutGap, `${location}.heldOutGap`),
+    ...validateHeldOut(table.heldOutSpan, `${location}.heldOutSpan`),
+  ];
+  const drift = nullableFinite(table.maxNormalizedRewardDrift, `${location}.maxNormalizedRewardDrift`);
+  if (drift !== null && drift < 0) throw new Error(`${location}.maxNormalizedRewardDrift must be non-negative`);
+  if (!Array.isArray(table.stability) || table.stability.length !== 2)
+    throw new Error(`${location}.stability must contain two panels`);
+  const panels = [
+    validateExhaustivePanel(table.stability[0], 'stability-a', legal, `${location}.stability[0]`),
+    validateExhaustivePanel(table.stability[1], 'stability-b', legal, `${location}.stability[1]`),
+    validateExhaustivePanel(table.measurement, 'measurement', legal, `${location}.measurement`),
+  ] as const;
+  const actions = panels[0].actions;
+  if (new Set(actions).size !== legal) throw new Error(`${location} legal actions must be unique`);
+  if (panels.slice(1).some((panel) => canonicalJson(panel.actions) !== canonicalJson(actions)))
+    throw new Error(`${location} panels differ in their legal actions`);
+  if (panels.slice(1).some((panel) => panel.draws !== panels[0].draws))
+    throw new Error(`${location} panels differ in their matrix dimensions`);
+  const legalActions = new Set(actions);
+  for (const action of [selectionBest, measurementBest, ...heldOutActions]) {
+    if (!legalActions.has(action)) throw new Error(`${location} references a non-legal action ${action}`);
+  }
+}
+
 export function validateSealedPositionPanel(row: JsonObject, index = 0): void {
   const location = `sealed[${index}]`;
   exactKeys(row, SEALED_KEYS, location);
@@ -230,10 +363,21 @@ export function validateSealedPositionPanel(row: JsonObject, index = 0): void {
   for (const key of ['task_id', 'source_id', 'source_group', 'exact_public_fingerprint'] as const)
     string(row[key], `${location}.${key}`);
   string(row.panel_seed, `${location}.panel_seed`);
-  object(row.source, `${location}.source`);
-  string(row.snapshot, `${location}.snapshot`);
+  const source = object(row.source, `${location}.source`);
+  exactKeys(source, SOURCE_KEYS, `${location}.source`);
+  for (const key of ['run_id', 'series_id', 'scaffold', 'played_by', 'played'] as const)
+    string(source[key], `${location}.source.${key}`);
+  integer(source.game_number, `${location}.source.game_number`, 1);
+  integer(source.position_index, `${location}.source.position_index`);
+  if (!['p1', 'p2'].includes(String(source.pid))) throw new Error(`${location}.source.pid is invalid`);
+  const snapshot = string(row.snapshot, `${location}.snapshot`);
+  try {
+    object(JSON.parse(snapshot), `${location}.snapshot JSON`);
+  } catch {
+    throw new Error(`${location}.snapshot must contain a JSON object`);
+  }
   if (row.opponent_request !== null) object(row.opponent_request, `${location}.opponent_request`);
-  object(row.table, `${location}.table`);
+  validateExhaustiveTable(row.table, String(source.pid), `${location}.table`);
 }
 
 export function validatePositionPanelArtifacts(tasks: JsonObject[], scores: JsonObject[], sealed: JsonObject[]): void {

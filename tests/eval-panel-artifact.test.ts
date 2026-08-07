@@ -78,6 +78,25 @@ function artifacts(): { tasks: JsonObject[]; scores: JsonObject[]; sealed: JsonO
       },
     },
   ];
+  const panel = (id: string): JsonObject => ({
+    id,
+    seedNamespace: `seed:panel:${id}`,
+    draws: [
+      {
+        index: 0,
+        opponentAction: null,
+        battleSeed: [1, 2, 3, 4],
+        continuationSeed: `seed:panel:${id}:continuation:0`,
+      },
+    ],
+    actions: [
+      { action: 'move 1', value: 0, standardError: 0, samples: 1, reward: 0 },
+      { action: 'move 2', value: 1, standardError: 0, samples: 1, reward: 1 },
+    ],
+    matrix: [[0, 1]],
+    matrixDigest: `${id}-digest`,
+    span: 1,
+  });
   const sealed: JsonObject[] = [
     {
       schema_version: 1,
@@ -85,11 +104,48 @@ function artifacts(): { tasks: JsonObject[]; scores: JsonObject[]; sealed: JsonO
       source_id: 'source-a',
       source_group: 'run:series:1',
       exact_public_fingerprint: 'fingerprint',
-      source: {},
+      source: {
+        run_id: 'run',
+        series_id: 'series',
+        game_number: 1,
+        position_index: 2,
+        pid: 'p1',
+        scaffold: 'revision',
+        played_by: 'model',
+        played: 'move 2',
+      },
       snapshot: '{}',
       opponent_request: null,
       panel_seed: 'seed',
-      table: {},
+      table: {
+        pid: 'p1',
+        turn: 1,
+        legal: 2,
+        horizon: 'end',
+        stateValue: 0,
+        selectionBest: 'move 2',
+        measurementBest: 'move 2',
+        rankingStable: true,
+        valueSpan: 1,
+        heldOutGap: {
+          selectedAction: 'move 2',
+          alternativeAction: 'move 1',
+          value: 1,
+          standardError: 0,
+          lower95: 1,
+        },
+        heldOutSpan: {
+          selectedAction: 'move 2',
+          alternativeAction: 'move 1',
+          value: 1,
+          standardError: 0,
+          lower95: 1,
+        },
+        stability: [panel('stability-a'), panel('stability-b')],
+        measurement: panel('measurement'),
+        anchorAgreement: true,
+        maxNormalizedRewardDrift: 0,
+      },
     },
   ];
   return { tasks, scores, sealed };
@@ -126,5 +182,67 @@ test('public, private-score, and sealed panel rows form one exact schema join', 
   assert.throws(
     () => validatePositionPanelArtifacts(brokenJoin.tasks, brokenJoin.scores, brokenJoin.sealed),
     /no exact private and sealed join/,
+  );
+});
+
+test('sealed rows validate provenance, snapshots, and exhaustive panel internals', () => {
+  const badSource = artifacts();
+  (badSource.sealed[0]!.source as JsonObject).extra = true;
+  assert.throws(
+    () => validatePositionPanelArtifacts(badSource.tasks, badSource.scores, badSource.sealed),
+    /sealed\[0\]\.source keys differ/,
+  );
+
+  const badSnapshot = artifacts();
+  badSnapshot.sealed[0]!.snapshot = '[]';
+  assert.throws(
+    () => validatePositionPanelArtifacts(badSnapshot.tasks, badSnapshot.scores, badSnapshot.sealed),
+    /snapshot must contain a JSON object/,
+  );
+
+  const badDraw = artifacts();
+  const badDrawTable = badDraw.sealed[0]!.table as JsonObject;
+  const badDrawPanels = badDrawTable.stability as JsonObject[];
+  const badDraws = badDrawPanels[0]!.draws as JsonObject[];
+  badDraws[0]!.battleSeed = [1, 2, 3];
+  assert.throws(
+    () => validatePositionPanelArtifacts(badDraw.tasks, badDraw.scores, badDraw.sealed),
+    /battleSeed must contain four words/,
+  );
+
+  const mismatchedActions = artifacts();
+  const mismatchedTable = mismatchedActions.sealed[0]!.table as JsonObject;
+  const mismatchedPanels = mismatchedTable.stability as JsonObject[];
+  const panelActions = mismatchedPanels[1]!.actions as JsonObject[];
+  panelActions[1]!.action = 'move 3';
+  assert.throws(
+    () => validatePositionPanelArtifacts(mismatchedActions.tasks, mismatchedActions.scores, mismatchedActions.sealed),
+    /panels differ in their legal actions/,
+  );
+
+  const mismatchedDimensions = artifacts();
+  const dimensionsTable = mismatchedDimensions.sealed[0]!.table as JsonObject;
+  const dimensionsPanels = dimensionsTable.stability as JsonObject[];
+  const secondPanel = dimensionsPanels[1] as JsonObject;
+  const secondDraws = secondPanel.draws as JsonObject[];
+  secondDraws.push({ ...structuredClone(secondDraws[0] as JsonObject), index: 1 });
+  for (const action of secondPanel.actions as JsonObject[]) action.samples = 2;
+  (secondPanel.matrix as unknown[][]).push([0, 1]);
+  assert.throws(
+    () =>
+      validatePositionPanelArtifacts(
+        mismatchedDimensions.tasks,
+        mismatchedDimensions.scores,
+        mismatchedDimensions.sealed,
+      ),
+    /panels differ in their matrix dimensions/,
+  );
+
+  const nonRectangular = artifacts();
+  const nonRectangularTable = nonRectangular.sealed[0]!.table as JsonObject;
+  (nonRectangularTable.measurement as JsonObject).matrix = [[0]];
+  assert.throws(
+    () => validatePositionPanelArtifacts(nonRectangular.tasks, nonRectangular.scores, nonRectangular.sealed),
+    /matrix\[0\] must contain 2 action values/,
   );
 });
