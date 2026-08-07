@@ -158,6 +158,39 @@ legal. The season generates data; it is not the result.
 This is a scope decision, not a presentation preference. Panels, docs and any
 published artifact follow it.
 
+### Winning is the terminal reward; regret is the dense one
+
+The previous decision is about what this project can *measure* on its budget. It
+is not a claim that winning does not matter, and a published environment must not
+read as one. **A `vgc-*` RL environment terminates on win/loss.** It is the
+ground truth, it cannot be reward-hacked, and the objection that games turn on a
+critical hit dissolves at sample sizes a trainer actually runs — variance
+averaging out is the premise of the whole method, not a concession.
+
+Regret is a dense auxiliary alongside it, and the case for it is sample cost
+rather than correctness. A series yields one bit. Separating a 55% seat from a
+50% one at conventional power needs on the order of 780 games; a graded
+per-decision signal extracts roughly thirty observations from each of those games
+instead of one. Whoever trains on the environment has the compute to spend a
+million games and does not need this. This project has hundreds and cannot
+proceed without it. The environment therefore ships both signals, and which one
+dominates is the consumer's choice, not ours.
+
+Framed in their terms, a regret computed by forking the position and searching
+alternatives is close to an **advantage estimated by the simulator instead of by
+a learned critic** — dense, available from the first step, and requiring no value
+head at the point in training where a critic is worth least. That is a direct
+contribution to the credit-assignment problem RAE and hierarchical GRPO exist to
+solve, and it is a better opening than offering another environment.
+
+Two honest caveats travel with it, and both must be stated wherever the claim is.
+The searched value is conditioned on a declared reference, so it is an off-policy
+quantity and a biased estimate of the true advantage under the policy being
+trained. And because the reference defines the target, a weak reference trains
+imitation of a weak policy — a failure mode win/loss does not have. That is the
+second reason the terminal signal is wins: the dense signal is the efficient one,
+and the sparse one is the honest one.
+
 ### Identity is anonymous, continuity is not
 
 A seat is identified to other seats by a pseudonym, never by its model spec.
@@ -244,6 +277,28 @@ whether refusals and unparseable choices are rare, whether regret on fresh
 answers sits in the same range as regret on recorded ones, and whether the strata
 behave. A frontier pass follows once the pilot's findings are fixed; budget about
 $60 for two frontier seats at the same size.
+
+### 1b. Team preview is the cheapest high-value position in the game
+
+Bringing four of six at team preview, and choosing which two lead, is a decision
+worth singling out. The choice space is small enough to search exhaustively —
+fifteen bring-sets, ninety openings once the lead pair is counted — it occurs
+exactly once per game, it is forkable like any other position, and its influence
+on the game is larger than almost any single mid-battle choice. Nothing else in
+the substrate offers that ratio of consequence to search cost.
+
+It is also the point where the commitment chain cashes out. A roster drafted for
+an archetype either appears on the field together or does not, and team preview
+is where that becomes observable rather than inferred. The same forked search
+that grades the choice also reports what the alternatives were worth, which turns
+"never executed the plan" from an accusation into a measured gap.
+
+Teambuilding itself — selecting six of ten from a drafted roster, with spreads
+and items — is the altitude with the least prior art of any here and the most
+strategic depth per decision. It is harder to grade than team preview, because
+valuing a six is closer to valuing a draft pick than to valuing a move, so it is
+approached second and through sampled games rather than exhaustive search.
+Team preview is the tractable end of the same idea and should be built first.
 
 ### 2. Heuristic baselines
 
@@ -340,24 +395,34 @@ the gap between the three is the measurement.
 
 ## Upstream integration
 
-Two goals, in order: retire hand-rolled infrastructure that has an upstream
-equivalent, and position for collaboration with an ecosystem that can fund runs
-this project cannot afford alone.
+Two goals, in order: position for collaboration with an ecosystem that can fund
+runs this project cannot afford alone, and know exactly which hand-rolled
+infrastructure has an upstream equivalent — which is not the same as deleting it.
 
-### What is genuinely duplicated
+### What is duplicated, and why almost none of it should be cut
 
-`llm-engine.ts` and `providers.ts` (~2,400 lines) reimplement what the verifiers
+`llm-engine.ts` and `providers.ts` (2,382 lines) reimplement what the verifiers
 stack does with an **interception server**: the harness never calls the provider,
 model traffic is proxied, and the trace is built live from it. Ours does the same
 work — tool-call loop, retry, failure classification, usage and cost accounting,
-the Anthropic cache-breakpoint fix — with recording tangled into playing rather
-than separated from it. Their seam is the better design regardless of whether the
-integration happens.
-
-More cheaply duplicated: `restart.ts` and `recovery.ts` against their
-`--resume <dir>` semantics; the worker-thread pool against their
-orchestrator/worker split with docker and sandbox runtimes; `runs/<id>/` against
+the Anthropic cache-breakpoint fix. More of the same: `restart.ts` and
+`recovery.ts` (235 lines) against `--resume <dir>`; the worker-thread pool against
+their orchestrator/worker split; `runs/<id>/` against
 `outputs/<env>--<model>--<harness>/<uuid>/traces.jsonl`.
+
+**None of it is scheduled for replacement, and the service boundary is the reason.**
+In a published environment the upstream harness calls the model and this
+repository serves positions and grades them, so our client is not in that loop at
+all. The duplication resolves by being bypassed rather than by being deleted.
+What remains on our side of the line keeps running our own leagues, where it
+already works and carries fixes upstream has no reason to have — provider
+pinning, model-scoped rate-limit pauses, zero-cost replay of in-flight games.
+
+Replacing a working inference client is pure engineering with no measurement
+payoff, which is what the drift check in `AGENTS.md` exists to catch. The value
+of knowing what is duplicated is that it tells us what to *hand over* if control
+is ever inverted, and inverting control is not currently worth doing. Exposure is
+the option; exercising it is a separate decision with its own case to make.
 
 Not duplicated and not portable: `src/eval/fork.ts`, `regret.ts`, the paired
 estimator, the draft, trade and reflection layers, the anonymisation policy, and
