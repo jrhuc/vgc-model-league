@@ -185,6 +185,7 @@ export async function playBo3(context: Bo3Context): Promise<Bo3Result> {
     context.signal?.throwIfAborted();
     const gameNumber = index + 1;
     const gameId = `${seriesId}-${gameNumber}`;
+    fs.rmSync(gameCompletionMarkerPath(context.seriesDir, gameNumber), { force: true });
     const start: GameStart = { gameId, gameNumber, seriesId, seriesScore: { ...score } };
     const modelFallbacksAtStart = Object.fromEntries(
       (['p1', 'p2'] as const).map((pid) => [pid, engines[pid].decisionStats().fallbacks ?? 0]),
@@ -243,6 +244,7 @@ export async function playBo3(context: Bo3Context): Promise<Bo3Result> {
       }),
     );
     fs.writeFileSync(logPath, `${outcome.log.join('\n')}\n`, 'utf8');
+    writeGameCompletionMarker(context.seriesDir, seriesId, gameNumber);
     games.push({
       number: gameNumber,
       winner: winnerSide ? context.players[winnerSide] : null,
@@ -362,9 +364,37 @@ function adoptSeriesDir(context: RecordedSeriesContext): AdoptedSeries | undefin
   return best;
 }
 
-/** A game log is trusted as finished only when it carries a win or tie line. The interrupted game's
- * own decision rows become a replay queue — the deterministic seed re-simulates the battle and each
- * side re-answers from its recording — while anything beyond them is replayed fresh. */
+function gameCompletionMarkerPath(seriesDir: string, gameNumber: number): string {
+  return path.join(seriesDir, `game-${gameNumber}.complete.json`);
+}
+
+function writeGameCompletionMarker(seriesDir: string, seriesId: string, gameNumber: number): void {
+  const file = gameCompletionMarkerPath(seriesDir, gameNumber);
+  const temporary = `${file}.${process.pid}.${randomUUID()}.tmp`;
+  try {
+    fs.writeFileSync(
+      temporary,
+      `${JSON.stringify({ kind: 'game_complete', series_id: seriesId, game_number: gameNumber })}\n`,
+      'utf8',
+    );
+    fs.renameSync(temporary, file);
+  } finally {
+    fs.rmSync(temporary, { force: true });
+  }
+}
+
+function hasGameCompletionMarker(seriesDir: string, seriesId: string, gameNumber: number): boolean {
+  try {
+    const marker = JSON.parse(fs.readFileSync(gameCompletionMarkerPath(seriesDir, gameNumber), 'utf8')) as JsonObject;
+    return marker.kind === 'game_complete' && marker.series_id === seriesId && marker.game_number === gameNumber;
+  } catch {
+    return false;
+  }
+}
+
+/** A game is trusted as finished only when its log carries a result and its marker proves both
+ * post-game reflections completed. Runs from before completion markers fail closed and replay. The
+ * interrupted game's decision rows become a replay queue for deterministic re-simulation. */
 function reconstructAdoptedSeries(
   context: RecordedSeriesContext,
   seriesId: string,
@@ -374,6 +404,7 @@ function reconstructAdoptedSeries(
   const games: JsonObject[] = [];
   const score: Record<Pid, number> = { p1: 0, p2: 0 };
   for (let number = 1; score.p1 < 2 && score.p2 < 2; number += 1) {
+    if (!hasGameCompletionMarker(seriesDir, seriesId, number)) break;
     const logPath = path.join(seriesDir, `game-${number}.log`);
     let lines: string[];
     try {
@@ -434,7 +465,7 @@ function reconstructAdoptedSeries(
         continue;
       }
       decisions[pid].push(row);
-      if (row.kind === 'decision' && typeof row.notebook === 'string' && row.notebook.trim()) {
+      if ((row.kind === 'decision' || row.kind === 'game_reflection') && typeof row.notebook === 'string') {
         notebooks[pid] = row.notebook;
       }
     }
@@ -465,38 +496,52 @@ function pruneDecisionFiles(adopted: AdoptedSeries): void {
   }
 }
 
-function loadAgentContext(seriesDir: string, pid: Pid): AgentContextEvent[] {
+function loadAgentContext(seriesDir: string, seriesId: string, pid: Pid): AgentContextEvent[] {
   const file = path.join(seriesDir, `${pid}-context.jsonl`);
   if (!fs.existsSync(file)) return [];
-  return fs
-    .readFileSync(file, 'utf8')
-    .split('\n')
-    .filter(Boolean)
-    .map((line, index) => {
-      let row: JsonObject;
-      try {
-        row = JSON.parse(line) as JsonObject;
-      } catch (error) {
-        throw new Error(`invalid ${pid} context row ${index + 1}`, { cause: error });
-      }
-      const kind = row.context_kind;
-      if (
-        row.kind !== 'agent_context' ||
-        typeof row.context_id !== 'string' ||
-        !Number.isInteger(row.sequence) ||
-        !['episode', 'observation', 'decision', 'reflection'].includes(String(kind)) ||
-        !row.payload ||
-        typeof row.payload !== 'object' ||
-        Array.isArray(row.payload)
-      )
-        throw new Error(`invalid ${pid} context row ${index + 1}`);
-      return {
-        id: row.context_id,
-        sequence: Number(row.sequence),
-        kind: kind as AgentContextKind,
-        payload: row.payload as JsonObject,
-      };
+  const raw = fs.readFileSync(file, 'utf8');
+  const lines = raw.split('\n');
+  let lastNonempty = lines.length - 1;
+  while (lastNonempty >= 0 && !lines[lastNonempty]) lastNonempty -= 1;
+  const events: AgentContextEvent[] = [];
+  let byteOffset = 0;
+  for (const [index, line] of lines.entries()) {
+    const lineOffset = byteOffset;
+    byteOffset += Buffer.byteLength(line, 'utf8') + (index < lines.length - 1 ? 1 : 0);
+    if (!line) continue;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(line) as unknown;
+    } catch (error) {
+      if (index !== lastNonempty) throw new Error(`invalid ${pid} context row ${index + 1}`, { cause: error });
+      fs.truncateSync(file, lineOffset);
+      break;
+    }
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed))
+      throw new Error(`invalid ${pid} context row ${index + 1}`);
+    const row = parsed as JsonObject;
+    const kind = row.context_kind;
+    const sequence = events.length + 1;
+    if (
+      row.kind !== 'agent_context' ||
+      row.pid !== pid ||
+      row.series_id !== seriesId ||
+      row.context_id !== `ctx-${String(sequence).padStart(8, '0')}` ||
+      row.sequence !== sequence ||
+      !['episode', 'observation', 'decision', 'reflection'].includes(String(kind)) ||
+      !row.payload ||
+      typeof row.payload !== 'object' ||
+      Array.isArray(row.payload)
+    )
+      throw new Error(`invalid ${pid} context row ${index + 1}`);
+    events.push({
+      id: row.context_id,
+      sequence,
+      kind: kind as AgentContextKind,
+      payload: row.payload as JsonObject,
     });
+  }
+  return events;
 }
 
 export async function playRecordedSeries(context: RecordedSeriesContext): Promise<RecordedSeries> {
@@ -546,7 +591,7 @@ export async function playRecordedSeries(context: RecordedSeriesContext): Promis
         decisionLog: decisionSink(pid),
         traceLog: path.join(seriesDir, `${pid}-trace.jsonl`),
         contextLog: path.join(seriesDir, `${pid}-context.jsonl`),
-        initialContext: adopted ? loadAgentContext(seriesDir, pid) : [],
+        initialContext: adopted ? loadAgentContext(seriesDir, seriesId, pid) : [],
         format: context.format,
         psDir: context.psDir,
         reasoning: reasoning[pid],

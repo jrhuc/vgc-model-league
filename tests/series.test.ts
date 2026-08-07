@@ -68,6 +68,51 @@ test('game evidence separates model defaults, simulator substitutions, and timer
   assert.deepEqual(result.games[0]!.timer_autodefaults, { p1: 2, p2: 0 });
 });
 
+test('a result log is not adoptable until both post-game hooks finish', async (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-series-completion-marker-'));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const engines = fakeEngines();
+  engines.p2.endGame = async () => {
+    throw new Error('reflection failed');
+  };
+  const play = () =>
+    playBo3({
+      engines,
+      names: { p1: 'Side One', p2: 'Side Two' },
+      players: { p1: 'model-one', p2: 'model-two' },
+      teams: { p1: { id: 'one', packed: '' }, p2: { id: 'two', packed: '' } },
+      gameSeeds: [[1, 2, 3, 4]],
+      seriesId: 'marker',
+      seriesDir: directory,
+      format: 'test',
+      psDir: '',
+      runBattle: async (_seed, onUpdate) => {
+        onUpdate(['|win|Side One'], ['|win|Side One']);
+        return {
+          winner: 'Side One',
+          turns: 1,
+          log: ['|win|Side One'],
+          pov: { p1: [], p2: [] },
+          errors: { p1: 0, p2: 0 },
+          simulatorSubstitutions: { p1: 0, p2: 0 },
+          timerAutodefaults: { p1: 0, p2: 0 },
+        };
+      },
+    });
+
+  await assert.rejects(play(), /reflection failed/);
+  assert.match(fs.readFileSync(path.join(directory, 'game-1.log'), 'utf8'), /\|win\|Side One/);
+  assert.equal(fs.existsSync(path.join(directory, 'game-1.complete.json')), false);
+
+  engines.p2.endGame = async () => {};
+  await play();
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(directory, 'game-1.complete.json'), 'utf8')), {
+    kind: 'game_complete',
+    series_id: 'marker',
+    game_number: 1,
+  });
+});
+
 test('single elimination plays deterministic tiebreak games until one side wins', async (t) => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-series-tiebreak-'));
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
@@ -247,6 +292,7 @@ test('a resumed series adopts its prior directory, keeps game one, and prunes th
     path.join(priorDir, 'game-1.log'),
     ['|player|p1|p1-old:spec|1|', '|player|p2|p2-random|2|', '|turn|1', '|turn|7', '|win|p1-old:spec', ''].join('\n'),
   );
+  writeGameCompletionMarkerFixture(priorDir, 'priorattempt1', 1);
   fs.writeFileSync(
     path.join(priorDir, 'game-2.log'),
     ['|player|p1|p1-old:spec|1|', '|player|p2|p2-random|2|', '|turn|1', '|turn|3', ''].join('\n'),
@@ -301,4 +347,275 @@ test('a resumed series adopts its prior directory, keeps game one, and prunes th
   const score = fields.score as Record<string, number>;
   assert.ok(score.p1 === 2 || score.p2 === 2, 'the series still finishes with a winner');
   assert.ok(score.p1! >= 1, 'the adopted game one win persists in the score');
+});
+
+function writeGameCompletionMarkerFixture(seriesDir: string, seriesId: string, gameNumber: number): void {
+  fs.writeFileSync(
+    path.join(seriesDir, `game-${gameNumber}.complete.json`),
+    `${JSON.stringify({ kind: 'game_complete', series_id: seriesId, game_number: gameNumber })}\n`,
+  );
+}
+
+function writeDecidedAdoption(runDir: string, seriesId: string, seriesIndex: number): string {
+  const seriesDir = path.join(runDir, 'series', seriesId);
+  fs.mkdirSync(seriesDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(seriesDir, 'series.json'),
+    `${JSON.stringify({ players: { p1: 'old-one', p2: 'old-two' }, series_index: seriesIndex })}\n`,
+  );
+  for (const game of [1, 2]) {
+    fs.writeFileSync(
+      path.join(seriesDir, `game-${game}.log`),
+      ['|player|p1|old-one|1|', '|player|p2|old-two|2|', `|turn|${game}`, '|win|old-one', ''].join('\n'),
+    );
+    writeGameCompletionMarkerFixture(seriesDir, seriesId, game);
+  }
+  return seriesDir;
+}
+
+test('adoption fails closed on legacy result logs without completion markers', async (t) => {
+  const { playRecordedSeries } = await import('../src/series.js');
+  const { loadPool } = await import('../src/teams.js');
+  const { defaultPsDir } = await import('../src/paths.js');
+  const pool = loadPool();
+  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-series-legacy-completion-'));
+  t.after(() => fs.rmSync(runDir, { recursive: true, force: true }));
+  const seriesDir = writeDecidedAdoption(runDir, 'legacyattempt', 11);
+  fs.rmSync(path.join(seriesDir, 'game-1.complete.json'));
+
+  const { fields } = await playRecordedSeries({
+    seriesIndex: 11,
+    players: { p1: 'random', p2: 'random' },
+    teams: { p1: pool.teams[0]!, p2: pool.teams[1]! },
+    gameSeeds: [
+      [1, 2, 3, 4],
+      [5, 6, 7, 8],
+      [9, 10, 11, 12],
+    ],
+    engineSeeds: { p1: 11, p2: 22 },
+    format: pool.format,
+    psDir: defaultPsDir(),
+    runDir,
+  });
+
+  const games = fields.games as Array<Record<string, unknown>>;
+  assert.equal(games[0]!.resumed, undefined);
+  assert.equal(fs.existsSync(path.join(seriesDir, 'game-1.complete.json')), true);
+});
+
+test('adoption restores post-game and explicitly cleared notebooks in decision-file order', async (t) => {
+  const { playRecordedSeries } = await import('../src/series.js');
+  const { loadPool } = await import('../src/teams.js');
+  const { defaultPsDir } = await import('../src/paths.js');
+  const pool = loadPool();
+  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-series-notebook-adopt-'));
+  t.after(() => fs.rmSync(runDir, { recursive: true, force: true }));
+  const seriesDir = writeDecidedAdoption(runDir, 'notebookattempt', 8);
+  fs.writeFileSync(
+    path.join(seriesDir, 'p1-decisions.jsonl'),
+    [
+      JSON.stringify({ kind: 'decision', game_number: 1, notebook: 'turn plan' }),
+      JSON.stringify({ kind: 'game_reflection', game_number: 1, notebook: 'post-game plan' }),
+      JSON.stringify({ kind: 'decision', game_number: 2 }),
+      '',
+    ].join('\n'),
+  );
+  fs.writeFileSync(
+    path.join(seriesDir, 'p2-decisions.jsonl'),
+    [
+      JSON.stringify({ kind: 'decision', game_number: 1, notebook: 'temporary plan' }),
+      JSON.stringify({ kind: 'game_reflection', game_number: 2, notebook: '' }),
+      '',
+    ].join('\n'),
+  );
+
+  const result = await playRecordedSeries({
+    seriesIndex: 8,
+    players: { p1: 'openai:notebook-one', p2: 'openai:notebook-two' },
+    teams: { p1: pool.teams[0]!, p2: pool.teams[1]! },
+    gameSeeds: [
+      [1, 2, 3, 4],
+      [5, 6, 7, 8],
+      [9, 10, 11, 12],
+    ],
+    initialNotebooks: { p1: 'initial one', p2: 'initial two' },
+    engineSeeds: { p1: 11, p2: 22 },
+    format: pool.format,
+    psDir: defaultPsDir(),
+    runDir,
+  });
+
+  assert.equal(result.coachNotes.p1, 'post-game plan');
+  assert.equal(result.coachNotes.p2, '');
+});
+
+test('adoption truncates a torn final context row before a subsequent append', async (t) => {
+  const { playRecordedSeries } = await import('../src/series.js');
+  const { loadPool } = await import('../src/teams.js');
+  const { defaultPsDir } = await import('../src/paths.js');
+  const pool = loadPool();
+  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-series-context-tail-'));
+  t.after(() => fs.rmSync(runDir, { recursive: true, force: true }));
+  const seriesDir = writeDecidedAdoption(runDir, 'contextattempt', 9);
+  const contextFile = path.join(seriesDir, 'p1-context.jsonl');
+  const rows = [
+    {
+      kind: 'agent_context',
+      pid: 'p1',
+      series_id: 'contextattempt',
+      context_id: 'ctx-00000001',
+      sequence: 1,
+      context_kind: 'episode',
+      payload: { event: 'game_begin' },
+    },
+    {
+      kind: 'agent_context',
+      pid: 'p1',
+      series_id: 'contextattempt',
+      context_id: 'ctx-00000002',
+      sequence: 2,
+      context_kind: 'observation',
+      payload: { lines: ['|turn|1'] },
+    },
+  ];
+  fs.writeFileSync(
+    contextFile,
+    `${rows.map((row) => JSON.stringify(row)).join('\n')}\n{"kind":"agent_context","context_id":"ctx-00000003"`,
+  );
+  const options = {
+    seriesIndex: 9,
+    players: { p1: 'openai:context-test', p2: 'random' },
+    teams: { p1: pool.teams[0]!, p2: pool.teams[1]! },
+    gameSeeds: [
+      [1, 2, 3, 4],
+      [5, 6, 7, 8],
+      [9, 10, 11, 12],
+    ] as Array<[number, number, number, number]>,
+    engineSeeds: { p1: 11, p2: 22 },
+    format: pool.format,
+    psDir: defaultPsDir(),
+    runDir,
+  };
+
+  await playRecordedSeries(options);
+  assert.equal(fs.readFileSync(contextFile, 'utf8'), `${rows.map((row) => JSON.stringify(row)).join('\n')}\n`);
+
+  const next = {
+    kind: 'agent_context',
+    pid: 'p1',
+    series_id: 'contextattempt',
+    context_id: 'ctx-00000003',
+    sequence: 3,
+    context_kind: 'reflection',
+    payload: { summary: 'appended after recovery' },
+  };
+  fs.appendFileSync(contextFile, `${JSON.stringify(next)}\n`);
+  await playRecordedSeries(options);
+  const recovered = fs
+    .readFileSync(contextFile, 'utf8')
+    .trim()
+    .split('\n')
+    .map((line) => JSON.parse(line));
+  assert.deepEqual(
+    recovered.map((row) => row.sequence),
+    [1, 2, 3],
+  );
+});
+
+test('adoption still rejects malformed interior context rows', async (t) => {
+  const { playRecordedSeries } = await import('../src/series.js');
+  const { loadPool } = await import('../src/teams.js');
+  const { defaultPsDir } = await import('../src/paths.js');
+  const pool = loadPool();
+  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-series-context-interior-'));
+  t.after(() => fs.rmSync(runDir, { recursive: true, force: true }));
+  const seriesDir = writeDecidedAdoption(runDir, 'badcontext', 10);
+  fs.writeFileSync(
+    path.join(seriesDir, 'p1-context.jsonl'),
+    [
+      JSON.stringify({
+        kind: 'agent_context',
+        pid: 'p1',
+        series_id: 'badcontext',
+        context_id: 'ctx-00000001',
+        sequence: 1,
+        context_kind: 'episode',
+        payload: {},
+      }),
+      '{"kind":',
+      JSON.stringify({
+        kind: 'agent_context',
+        pid: 'p1',
+        series_id: 'badcontext',
+        context_id: 'ctx-00000002',
+        sequence: 2,
+        context_kind: 'episode',
+        payload: {},
+      }),
+      '',
+    ].join('\n'),
+  );
+
+  await assert.rejects(
+    playRecordedSeries({
+      seriesIndex: 10,
+      players: { p1: 'openai:context-test', p2: 'random' },
+      teams: { p1: pool.teams[0]!, p2: pool.teams[1]! },
+      gameSeeds: [
+        [1, 2, 3, 4],
+        [5, 6, 7, 8],
+        [9, 10, 11, 12],
+      ],
+      engineSeeds: { p1: 11, p2: 22 },
+      format: pool.format,
+      psDir: defaultPsDir(),
+      runDir,
+    }),
+    /invalid p1 context row 2/,
+  );
+});
+
+test('adoption rejects context rows owned by another seat or series', async (t) => {
+  const { playRecordedSeries } = await import('../src/series.js');
+  const { loadPool } = await import('../src/teams.js');
+  const { defaultPsDir } = await import('../src/paths.js');
+  const pool = loadPool();
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-series-context-owner-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  for (const [name, pid, persistedSeries] of [
+    ['wrongpid', 'p2', 'wrongpid'],
+    ['wrongseries', 'p1', 'another-series'],
+  ] as const) {
+    const runDir = path.join(root, name);
+    const seriesDir = writeDecidedAdoption(runDir, name, name === 'wrongpid' ? 12 : 13);
+    fs.writeFileSync(
+      path.join(seriesDir, 'p1-context.jsonl'),
+      `${JSON.stringify({
+        kind: 'agent_context',
+        pid,
+        series_id: persistedSeries,
+        context_id: 'ctx-00000001',
+        sequence: 1,
+        context_kind: 'episode',
+        payload: {},
+      })}\n`,
+    );
+    await assert.rejects(
+      playRecordedSeries({
+        seriesIndex: name === 'wrongpid' ? 12 : 13,
+        players: { p1: 'openai:context-test', p2: 'random' },
+        teams: { p1: pool.teams[0]!, p2: pool.teams[1]! },
+        gameSeeds: [
+          [1, 2, 3, 4],
+          [5, 6, 7, 8],
+          [9, 10, 11, 12],
+        ],
+        engineSeeds: { p1: 11, p2: 22 },
+        format: pool.format,
+        psDir: defaultPsDir(),
+        runDir,
+      }),
+      /invalid p1 context row 1/,
+    );
+  }
 });
