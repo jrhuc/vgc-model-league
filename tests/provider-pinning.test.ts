@@ -12,9 +12,11 @@ test('a pinned seat names its stack and refuses to be served by another', () => 
   assert.deepEqual(routing, { order: ['deepinfra'], allow_fallbacks: false });
 });
 
-test('a pin may list its fallbacks, and they are still the only ones allowed', () => {
-  const routing = parseRoutingPreferences({ VGC_OPENROUTER_PIN: 'deepinfra, together ' } as NodeJS.ProcessEnv);
-  assert.deepEqual(routing, { order: ['deepinfra', 'together'], allow_fallbacks: false });
+test('a pin cannot disguise an allowed provider set as one controlled route', () => {
+  assert.throws(
+    () => parseRoutingPreferences({ VGC_OPENROUTER_PIN: 'deepinfra, together' } as NodeJS.ProcessEnv),
+    /exactly one upstream provider/,
+  );
 });
 
 test('a pin overrides the ordering of the preferences it is combined with', () => {
@@ -33,7 +35,7 @@ test('preferences without a pin are passed through as written', () => {
 });
 
 test('an empty pin is not a pin', () => {
-  assert.equal(parseRoutingPreferences({ VGC_OPENROUTER_PIN: ' , ' } as NodeJS.ProcessEnv), undefined);
+  assert.equal(parseRoutingPreferences({ VGC_OPENROUTER_PIN: '   ' } as NodeJS.ProcessEnv), undefined);
 });
 
 test('preferences that are not JSON are refused rather than ignored', () => {

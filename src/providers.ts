@@ -414,14 +414,10 @@ export function parseRoutingPreferences(env: NodeJS.ProcessEnv = process.env): J
     if (!isRecord(value)) throw new Error('VGC_OPENROUTER_PROVIDER must be a JSON object of routing preferences');
     parsed = value;
   }
-  const pinned = env.VGC_OPENROUTER_PIN;
+  const pinned = env.VGC_OPENROUTER_PIN?.trim();
   if (!pinned) return parsed;
-  const order = pinned
-    .split(',')
-    .map((name) => name.trim())
-    .filter(Boolean);
-  if (!order.length) return parsed;
-  return { ...parsed, order, allow_fallbacks: false };
+  if (pinned.includes(',')) throw new Error('VGC_OPENROUTER_PIN accepts exactly one upstream provider');
+  return { ...parsed, order: [pinned], allow_fallbacks: false };
 }
 
 function openRouterFetch(
