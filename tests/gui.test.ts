@@ -952,23 +952,21 @@ test('gui runs a random-vs-random series and streams live battle state', async (
 
     const overall = await apiJson(`${base}api/records`);
     assert.equal(overall.status, 200);
-    assert.equal(overall.data.count, 0, 'the test pool must stay out of overall standings');
-    assert.equal(overall.data.pool, null);
-    assert.deepEqual(overall.data.pools, ['test']);
+    assert.deepEqual(overall.data, {
+      count: 0,
+      pool: null,
+      pools: ['test'],
+      imported: 0,
+    });
 
     const records = await apiJson(`${base}api/records?pool=test`);
     assert.equal(records.status, 200);
-    assert.equal(records.data.count, 1);
-    assert.equal(records.data.pool, 'test');
-    const groups = records.data.groups as Array<Record<string, unknown>>;
-    assert.equal(groups.length, 1);
-    assert.equal(groups[0]!.scale, 'off', 'runs record the untimed default and rate in the untimed group');
-    const standings = groups[0]!.standings as Array<Record<string, unknown>>;
-    assert.equal(standings.length, 1);
-    assert.equal(standings[0]!.spec, 'random');
-    assert.equal(standings[0]!.series, 2);
-    const h2h = groups[0]!.h2h as Record<string, Record<string, [number, number, number]>>;
-    assert.ok(h2h.random!.random);
+    assert.deepEqual(records.data, {
+      count: 1,
+      pool: 'test',
+      pools: ['test'],
+      imported: 0,
+    });
 
     const evidence = await apiJson(`${base}api/evidence?pool=test`);
     assert.equal(evidence.status, 200);

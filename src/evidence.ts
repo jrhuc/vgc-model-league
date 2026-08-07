@@ -192,8 +192,6 @@ interface TournamentBucket {
   runnerUp: number;
   semis: number;
   earlier: number;
-  matchWins: number;
-  matchLosses: number;
 }
 
 function summarizeTournaments(rows: SeriesRecord[]): TournamentSummary {
@@ -213,8 +211,6 @@ function summarizeTournaments(rows: SeriesRecord[]): TournamentSummary {
       runnerUp: 0,
       semis: 0,
       earlier: 0,
-      matchWins: 0,
-      matchLosses: 0,
     };
     buckets.set(spec, entry);
     return entry;
@@ -231,11 +227,6 @@ function summarizeTournaments(rows: SeriesRecord[]): TournamentSummary {
         const spec = modelKey(row.players[pid]);
         lastRound.set(spec, Math.max(lastRound.get(spec) ?? 0, count(row.round)));
       }
-      const winner = row.winner === row.players.p1 ? 'p1' : row.winner === row.players.p2 ? 'p2' : null;
-      if (winner) {
-        bucketFor(modelKey(row.players[winner])).matchWins += 1;
-        bucketFor(modelKey(row.players[winner === 'p1' ? 'p2' : 'p1'])).matchLosses += 1;
-      }
     }
     for (const [spec, round] of lastRound) {
       const entry = bucketFor(spec);
@@ -249,12 +240,9 @@ function summarizeTournaments(rows: SeriesRecord[]): TournamentSummary {
   return {
     tournaments: runs.size,
     matches,
-    standings: [...buckets.entries()]
+    records: [...buckets.entries()]
       .map(([spec, entry]) => ({ spec, ...entry }))
-      .sort(
-        (a, b) =>
-          b.titles - a.titles || b.runnerUp - a.runnerUp || b.matchWins - a.matchWins || a.spec.localeCompare(b.spec),
-      ),
+      .sort((a, b) => a.spec.localeCompare(b.spec)),
   };
 }
 

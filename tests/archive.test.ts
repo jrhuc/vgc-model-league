@@ -558,8 +558,9 @@ test('buildModelProfile aggregates every mode with per-mode records and run link
   assert.equal(profile.cost, 0.5);
   assert.equal(profile.rates.switch, 2 / 10);
   const modes = Object.fromEntries(profile.modes.map((mode) => [mode.mode, mode]));
-  assert.deepEqual([modes.draft!.w, modes.draft!.l], [1, 1]);
-  assert.deepEqual([modes.rotation!.w, modes.rotation!.l], [1, 0]);
+  assert.equal(modes.draft!.series, 2);
+  assert.equal(modes.rotation!.series, 1);
+  assert.ok(!('w' in modes.draft!) && !('l' in modes.draft!));
   assert.equal(modes.draft!.runs[0]!.runId, RUN_ID);
   assert.equal(modes.rotation!.runs.length, 0, 'only draft and tournament runs link out');
   assert.equal(buildModelProfile([rotation], runsDir, 'nobody'), null);

@@ -6,19 +6,15 @@ import test from 'node:test';
 
 import { runExhibition } from '../src/exhibition.js';
 import type { SeriesRecord } from '../src/records.js';
-import { loadRows, scopeRows, standings } from '../src/records.js';
+import { loadRows, scopeRows } from '../src/records.js';
 import { SeatBridge } from '../src/seat.js';
 
-test('unscoped play data includes exhibitions while ratings remain rotation-only', () => {
+test('unscoped play data includes exhibitions without turning them into a ranking', () => {
   const rows = [
     { mode: 'rotation', pool: 'regmb', players: { p1: 'a', p2: 'b' }, winner: 'a' },
     { mode: 'exhibition', pool: 'regmb', players: { p1: 'cli-agent', p2: 'b' }, winner: 'b' },
   ] as SeriesRecord[];
   assert.equal(scopeRows(rows).length, 2);
-  assert.deepEqual(
-    standings(scopeRows(rows)).map((entry) => entry.spec),
-    ['a', 'b'],
-  );
   assert.equal(scopeRows(rows, 'regmb').length, 2);
 });
 

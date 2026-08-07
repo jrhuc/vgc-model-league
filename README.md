@@ -7,8 +7,8 @@ matches, and review the season. Pokémon Showdown is embedded in the process and
 remains the authority for rules, legality, randomness, and results.
 
 The project is a playground and data generator, not a public model ladder. It
-records standings, but small and uncontrolled sets of matches do not support a
-ranking claim.
+records per-series outcomes and standings within individual leagues or brackets;
+it does not aggregate the heterogeneous natural match corpus into a ranking.
 
 ## Research design
 
@@ -75,8 +75,7 @@ serve as a baseline or adapter.
 
 The intended contribution is the combined **draft-to-battle protocol** and its
 stage-linked evidence, plus a forkable battle diagnostic. The multi-agent API,
-the Pokémon battle client, ratings, and generic inference plumbing are not
-contributions.
+the Pokémon battle client, and generic inference plumbing are not contributions.
 
 ## Prime Intellect integration
 

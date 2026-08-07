@@ -1037,7 +1037,7 @@ export function buildModelProfile(allRows: SeriesRecord[], runsDir: string, id: 
   let tokens = 0;
   let reasoning = 0;
   let reasoningSeen = false;
-  const modes = new Map<string, { series: number; w: number; l: number; runs: Map<string, string> }>();
+  const modes = new Map<string, { series: number; runs: Map<string, string> }>();
 
   for (const row of rows) {
     const mode = String(row.mode ?? 'rotation');
@@ -1050,12 +1050,9 @@ export function buildModelProfile(allRows: SeriesRecord[], runsDir: string, id: 
       providers.add(row.players[pid]);
       series += 1;
       games += gameCount;
-      const bucket = modes.get(mode) ?? { series: 0, w: 0, l: 0, runs: new Map() };
+      const bucket = modes.get(mode) ?? { series: 0, runs: new Map() };
       modes.set(mode, bucket);
       bucket.series += 1;
-      const won = row.winner_side ? row.winner_side === pid : row.winner === row.players[pid];
-      if (won) bucket.w += 1;
-      else if (row.winner) bucket.l += 1;
       if (mode === 'draft' || mode === 'tournament') {
         const runId = String(row.run_id ?? '');
         if (runId && !bucket.runs.has(runId)) bucket.runs.set(runId, String(row.timestamp ?? ''));
@@ -1121,8 +1118,6 @@ export function buildModelProfile(allRows: SeriesRecord[], runsDir: string, id: 
         ([mode, bucket]): ModeRecordView => ({
           mode,
           series: bucket.series,
-          w: bucket.w,
-          l: bucket.l,
           runs: [...bucket.runs.entries()]
             .map(([runId, when]) => ({ runId, when }))
             .sort((a, b) => b.when.localeCompare(a.when)),

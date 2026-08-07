@@ -9,7 +9,7 @@ import { AUTH_DB_PATH, makeRunDirectory, prepareDataDirectories, RESULTS_PATH, R
 import type { ReasoningLevel } from './providers.js';
 import { nitroSpec, REASONING_LEVELS } from './providers.js';
 import type { SeriesRecord } from './records.js';
-import { loadRows, ratingGroups, scopeRows, TEST_POOL } from './records.js';
+import { loadRows, scopeRows, TEST_POOL } from './records.js';
 import { RecoveryGate } from './recovery.js';
 import { writeReport } from './report.js';
 import { restartGui, stopGui } from './restart.js';
@@ -69,7 +69,7 @@ Commands:
   exhibition --opponent <spec>        host one bo3 where a terminal agent plays a seat over a local bridge
       [--seat p1|p2] [--name <label>] [--pool <name>] [--seed <n>] [--port <n>] [--reasoning <level>]
       [--agent-dir <path>]
-  standings [--pool <name>]           print standings and head-to-head from recorded results
+  outcomes [--pool <name>]            print contextual per-series outcomes without an aggregate ranking
   report [--out <path>] [--pool <name>]  write an HTML report
   publish [--to <origin>] [--run <id>]... [--pool <name>] [--include-test] [--dry-run]
       send completed local series, their decision logs, and any missing team pool to a deployment
@@ -584,7 +584,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
     }
     return 0;
   }
-  if (command === 'standings' || command === 'report') {
+  if (command === 'outcomes' || command === 'report') {
     const { values } = parseArgs({
       args: rest,
       options: {
@@ -597,7 +597,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
       return 0;
     }
     if (values.pool === undefined) console.log(`All pools except ${JSON.stringify(TEST_POOL)}; use --pool for one.\n`);
-    printStandings(scopeRows(loadRows(RESULTS_PATH), values.pool));
+    printOutcomes(scopeRows(loadRows(RESULTS_PATH), values.pool));
     return 0;
   }
   console.error(HELP);
@@ -637,37 +637,31 @@ function renderTable(head: string[], rows: string[][]): string {
   return [line(head), rule, ...rows.map(line)].join('\n');
 }
 
-function printStandings(rows: SeriesRecord[]): void {
-  for (const [index, { label, count, standings: table, h2h: matrix }] of ratingGroups(rows).entries()) {
-    if (index) console.log('');
-    console.log(`${label} (${count} series)`);
-    console.log(
-      renderTable(
-        ['Model', 'Series', 'W', 'L', 'T', 'Win rate', 'Elo'],
-        table.map((item) => [
-          item.spec,
-          String(item.series),
-          String(item.w),
-          String(item.l),
-          String(item.t),
-          `${(100 * item.winrate).toFixed(1)}%`,
-          item.elo.toFixed(1),
-        ]),
-      ),
-    );
-    const specs = Object.keys(matrix);
-    if (specs.length < 2) continue;
-    console.log('');
-    console.log(
-      renderTable(
-        ['W-L-T', ...specs],
-        specs.map((model) => [
-          model,
-          ...specs.map((opponent) => (model === opponent ? '-' : matrix[model]![opponent]!.join('-'))),
-        ]),
-      ),
-    );
-  }
+function printOutcomes(rows: SeriesRecord[]): void {
+  console.log(
+    `${rows.length} contextual series records. Outcomes are not aggregated into a model ranking; compare only declared like-for-like protocols.`,
+  );
+  if (!rows.length) return;
+  console.log(
+    renderTable(
+      ['Mode', 'Pool', 'Clock', 'p1', 'p2', 'Score', 'Winner', 'Scaffold', 'Run / series'],
+      rows.map((row) => {
+        const score = row.score as Record<string, number> | undefined;
+        const clock = row.timer_scale === 'off' ? 'off' : `${row.timer_scale ?? 1}x`;
+        return [
+          row.mode ?? 'legacy',
+          row.pool ?? 'unrecorded',
+          clock,
+          row.players.p1,
+          row.players.p2,
+          score ? `${score.p1 ?? '?'}-${score.p2 ?? '?'}` : '?',
+          row.winner ?? 'tie',
+          String(row.scaffold ?? 'unrecorded'),
+          `${String(row.run_id ?? '?')} / ${String(row.series_id ?? '?')}`,
+        ];
+      }),
+    ),
+  );
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

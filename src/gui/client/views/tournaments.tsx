@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'preact/hooks';
 
-import type { TournamentArchiveView, TournamentSummary, TournamentsResponse } from '../../api';
+import type { TournamentArchiveView, TournamentsResponse } from '../../api';
 import { BracketGrid, roundName } from '../components/bracket';
-import { StatTile, Tooltip, useTip } from '../components/chartkit';
+import { StatTile } from '../components/chartkit';
 import { Mark } from '../components/mark';
 import { MatchGame, useMatchGame } from '../components/matchgame';
 import { MatchMenu, MatchMenuRow } from '../components/matchmenu';
@@ -12,93 +12,6 @@ import { entrantOrigin, formatTeamSlug, modelName, when } from '../lib/labels';
 function entrantName(archive: TournamentArchiveView, entrant: number | null | undefined, fallback = 'TBD'): string {
   if (entrant === null || entrant === undefined) return fallback;
   return archive.entrants[entrant]?.model.trim() || fallback;
-}
-
-const PLACEMENTS = [
-  { key: 'titles', label: 'Champion', color: 'var(--chart-navy)' },
-  { key: 'runnerUp', label: 'Lost the final', color: 'var(--chart-blue)' },
-  { key: 'semis', label: 'Lost a semi', color: 'var(--chart-blue-soft)' },
-  { key: 'earlier', label: 'Earlier exit', color: 'var(--chart-blue-faint)' },
-] as const;
-
-const LANES = { label: 220, plot: 470, tail: 110, row: 27, top: 8, bottom: 26 };
-
-function TournamentLanes({ summary }: { summary: TournamentSummary }) {
-  const [tip, showTip, hideTip] = useTip();
-  if (summary.tournaments === 0) {
-    return (
-      <div class="results-empty">
-        No finished brackets yet. Tournament runs land here as placement lanes: titles, finals, and how deep each model
-        survives.
-      </div>
-    );
-  }
-  const rows = summary.standings;
-  const maxEntered = Math.max(1, ...rows.map((row) => row.entered));
-  const unit = LANES.plot / maxEntered;
-  const height = LANES.top + rows.length * LANES.row + LANES.bottom;
-  const width = LANES.label + LANES.plot + LANES.tail;
-  return (
-    <div class="chart-host">
-      <div class="chart-legend">
-        {PLACEMENTS.map((placement) => (
-          <span key={placement.key}>
-            <i style={{ background: placement.color }} /> {placement.label}
-          </span>
-        ))}
-      </div>
-      <div class="table-scroll">
-        <svg width={width} height={height} role="img" aria-label="Tournament placements by model">
-          {rows.map((row, index) => {
-            const y = LANES.top + index * LANES.row;
-            let cursor = LANES.label;
-            const lines = [
-              row.spec,
-              `${row.entered} bracket${row.entered === 1 ? '' : 's'}: ${row.titles} title${row.titles === 1 ? '' : 's'}, ${row.runnerUp} final, ${row.semis} semi, ${row.earlier} earlier`,
-              `matches ${row.matchWins}-${row.matchLosses}`,
-            ];
-            return (
-              /* biome-ignore lint/a11y/noStaticElementInteractions: hover tooltip supplements the visible counts */
-              <g
-                key={row.spec}
-                onMouseMove={(event) => showTip(event as unknown as MouseEvent, lines)}
-                onMouseLeave={hideTip}
-              >
-                <rect x={0} y={y} width={width} height={LANES.row} fill="transparent" />
-                <text x={LANES.label - 12} y={y + LANES.row / 2 + 3.5} text-anchor="end" class="chart-label">
-                  {row.spec}
-                </text>
-                {PLACEMENTS.map((placement) => {
-                  const value = row[placement.key];
-                  if (!value) return null;
-                  const segment = (
-                    <rect
-                      key={placement.key}
-                      x={cursor}
-                      y={y + LANES.row / 2 - 7}
-                      width={Math.max(0, value * unit - 2)}
-                      height={14}
-                      fill={placement.color}
-                    />
-                  );
-                  cursor += value * unit;
-                  return segment;
-                })}
-                <text x={cursor + 8} y={y + LANES.row / 2 + 3.5} class="chart-value">
-                  {row.titles > 0 ? `${row.titles}×🏆 ` : ''}
-                  {row.matchWins}-{row.matchLosses}
-                </text>
-              </g>
-            );
-          })}
-          <text x={LANES.label} y={height - 7} class="chart-tick">
-            {summary.tournaments} bracket{summary.tournaments === 1 ? '' : 's'} · {summary.matches} matches
-          </text>
-        </svg>
-      </div>
-      <Tooltip tip={tip} />
-    </div>
-  );
 }
 
 function EventHeader({ archive }: { archive: TournamentArchiveView }) {
@@ -374,11 +287,11 @@ export function TournamentsView({
     return () => clearInterval(timer);
   }, [active, anyLive]);
 
-  const summary = data?.summary ?? { tournaments: 0, matches: 0, standings: [] };
+  const summary = data?.summary ?? { tournaments: 0, matches: 0, records: [] };
   const finished = archives.filter((archive) => archive.complete);
   const latest = finished[0];
-  const reigning = latest && latest.champion !== null ? latest.entrants[latest.champion] : null;
-  const titleLeader = summary.standings[0];
+  const latestWinner = latest && latest.champion !== null ? latest.entrants[latest.champion] : null;
+  const archiveCounts = [...summary.records].sort((a, b) => a.spec.localeCompare(b.spec));
 
   if (game) {
     const archive = archives.find((entry) => entry.runId === game.runId);
@@ -438,30 +351,21 @@ export function TournamentsView({
         </div>
         <p class="lede">
           Single-elimination brackets, live and archived. A pool taken from a real event keeps that event's seeding, so
-          the top cut meets in the pairings the field earned. Brackets never touch the rated Elo.
+          the top cut meets in the pairings the field earned. Each archive retains its own teams, schedule, and results.
         </p>
       </header>
       {error ? <div class="message error">Could not load the brackets: {error}</div> : null}
       <div class="stat-row">
         <StatTile
-          label="Brackets"
+          label="Brackets archived"
           value={String(summary.tournaments)}
           note={`${finished.length} finished, ${archives.length - finished.length} unresolved`}
         />
-        <StatTile label="Matches" value={String(summary.matches)} note="best-of-three series" />
+        <StatTile label="Series archived" value={String(summary.matches)} note="best-of-three series" />
         <StatTile
-          label="Reigning champion"
-          value={reigning ? reigning.model : '–'}
-          note={reigning ? formatTeamSlug(reigning.team) : 'no finished bracket yet'}
-        />
-        <StatTile
-          label="Most titles"
-          value={titleLeader && titleLeader.titles > 0 ? titleLeader.spec : '–'}
-          note={
-            titleLeader && titleLeader.titles > 0
-              ? `${titleLeader.titles} title${titleLeader.titles === 1 ? '' : 's'}`
-              : 'trophy case is open'
-          }
+          label="Latest bracket winner"
+          value={latestWinner ? latestWinner.model : '–'}
+          note={latestWinner ? formatTeamSlug(latestWinner.team) : 'no finished bracket yet'}
         />
       </div>
       {archives.length === 0 && !error ? (
@@ -485,42 +389,33 @@ export function TournamentsView({
           />
         ))
       )}
-      <section class="panel chart-panel">
-        <div class="section-head">
-          <div>
-            <h2>Tournament placements</h2>
-            <p>Placement per entry, normalized by distance from the final so bracket sizes aggregate.</p>
-          </div>
-        </div>
-        <div class="chart-body">
-          <TournamentLanes summary={summary} />
-        </div>
-      </section>
       <section class="panel">
         <div class="section-head">
           <div>
-            <h2>Tournament record</h2>
-            <p>Every entry, deepest run, and match record per model.</p>
+            <h2>Descriptive archive counts</h2>
+            <p>
+              Counts from differently seeded brackets are listed alphabetically for archive navigation. They are not
+              standings or comparable measures of model quality.
+            </p>
           </div>
         </div>
         <div class="table-scroll">
-          {summary.standings.length === 0 ? (
-            <div class="results-empty">The record book opens with the first completed bracket.</div>
+          {archiveCounts.length === 0 ? (
+            <div class="results-empty">Aggregate counts appear after the first completed bracket.</div>
           ) : (
             <table class="data-table">
               <thead>
                 <tr>
-                  <th>Model</th>
-                  <th class="num">Entered</th>
-                  <th class="num">Titles</th>
-                  <th class="num">Finals</th>
-                  <th class="num">Semis</th>
-                  <th class="num">Earlier</th>
-                  <th class="num">Matches</th>
+                  <th>Model (alphabetical)</th>
+                  <th class="num">Bracket entries</th>
+                  <th class="num">Won bracket</th>
+                  <th class="num">Lost final</th>
+                  <th class="num">Lost semifinal</th>
+                  <th class="num">Earlier exit</th>
                 </tr>
               </thead>
               <tbody>
-                {summary.standings.map((row) => (
+                {archiveCounts.map((row) => (
                   <tr key={row.spec}>
                     <td class="spec-cell" title={row.spec}>
                       <button type="button" class="model-link" onClick={() => onOpenModel(row.spec)}>
@@ -533,9 +428,6 @@ export function TournamentsView({
                     <td class="num">{row.runnerUp}</td>
                     <td class="num">{row.semis}</td>
                     <td class="num">{row.earlier}</td>
-                    <td class="num">
-                      {row.matchWins}-{row.matchLosses}
-                    </td>
                   </tr>
                 ))}
               </tbody>

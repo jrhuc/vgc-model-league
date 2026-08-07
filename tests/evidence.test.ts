@@ -113,7 +113,7 @@ test('overall play evidence includes every mode and excludes the test pool', () 
   );
 });
 
-test('buildTournaments counts placements by distance from the final', () => {
+test('buildTournaments returns descriptive placement counts in alphabetical model order', () => {
   const match = (round: number, p1: string, p2: string, winner: string): SeriesRecord =>
     ({
       mode: 'tournament',
@@ -132,12 +132,15 @@ test('buildTournaments counts placements by distance from the final', () => {
   const summary = buildTournaments(rows, '/nonexistent', null).summary;
   assert.equal(summary.tournaments, 1);
   assert.equal(summary.matches, 3);
-  const bySpec = Object.fromEntries(summary.standings.map((entry) => [entry.spec, entry]));
-  assert.deepEqual({ titles: bySpec.alpha!.titles, wins: bySpec.alpha!.matchWins }, { titles: 1, wins: 2 });
+  const bySpec = Object.fromEntries(summary.records.map((entry) => [entry.spec, entry]));
+  assert.equal(bySpec.alpha!.titles, 1);
   assert.equal(bySpec.delta!.runnerUp, 1);
   assert.equal(bySpec.beta!.semis, 1);
   assert.equal(bySpec.gamma!.semis, 1);
-  assert.equal(summary.standings[0]!.spec, 'alpha', 'titles lead the sort');
+  assert.deepEqual(
+    summary.records.map((entry) => entry.spec),
+    ['alpha', 'beta', 'delta', 'gamma'],
+  );
   const scoped = buildTournaments(rows, '/nonexistent', 'other-pool').summary;
   assert.equal(scoped.tournaments, 0, 'pool scoping applies to tournament rows');
 });

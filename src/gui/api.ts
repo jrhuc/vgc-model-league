@@ -280,38 +280,11 @@ export interface BattleMessage {
 
 export type ServerEvent = { type: 'run'; run: RunSnapshot | null } | ({ type: 'battle' } & BattleMessage);
 
-export interface StandingView {
-  spec: string;
-  series: number;
-  w: number;
-  l: number;
-  t: number;
-  winrate: number;
-  elo: number;
-}
-
-export interface TrajectoryPointView {
-  series: number;
-  spec: string;
-  elo: number;
-}
-
-interface SpeedGroupView {
-  scale: number | 'off';
-  label: string;
-  count: number;
-  standings: StandingView[];
-  h2h: Record<string, Record<string, [number, number, number]>>;
-  trajectory: TrajectoryPointView[];
-}
-
 export interface RecordsResponse {
   count: number;
   /** Applied pool filter; null is the overall view, which excludes the test pool. */
   pool: string | null;
   pools: string[];
-  /** Rated rotation rows split by battle speed; untimed first, then ascending clock scales. */
-  groups: SpeedGroupView[];
   imported: number;
 }
 
@@ -358,21 +331,19 @@ export interface SeriesLuckEntry {
   winnerLuckDelta: number | null;
 }
 
-export interface TournamentStanding {
+export interface TournamentRecord {
   spec: string;
   entered: number;
   titles: number;
   runnerUp: number;
   semis: number;
   earlier: number;
-  matchWins: number;
-  matchLosses: number;
 }
 
 export interface TournamentSummary {
   tournaments: number;
   matches: number;
-  standings: TournamentStanding[];
+  records: TournamentRecord[];
 }
 
 export interface EvidenceResponse {
@@ -702,8 +673,6 @@ export interface QuartileView {
 export interface ModeRecordView {
   mode: string;
   series: number;
-  w: number;
-  l: number;
   runs: Array<{ runId: string; when: string }>;
 }
 

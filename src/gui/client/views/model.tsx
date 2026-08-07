@@ -100,8 +100,6 @@ export function ModelProfileView({
   if (!profile || profile.id !== model) return <p class="muted">Loading the profile…</p>;
 
   const decisions = Math.max(1, profile.decisions);
-  const wins = profile.modes.reduce((total, mode) => total + mode.w, 0);
-  const losses = profile.modes.reduce((total, mode) => total + mode.l, 0);
   const playRows: RateRow[] = [
     { label: 'Switch share', title: 'Switch share of action selections', value: pct(profile.rates.switch) },
     { label: 'Protect share', title: 'Protect share of action selections', value: pct(profile.rates.protect) },
@@ -169,16 +167,21 @@ export function ModelProfileView({
           </h1>
         </div>
         <p class="lede">
-          Seen as {profile.providers.join(', ')} from {when(profile.firstSeen)} to {when(profile.lastSeen)}. Aggregated
-          across every mode outside the test pool.
+          Seen as {profile.providers.join(', ')} from {when(profile.firstSeen)} to {when(profile.lastSeen)}. Recorded
+          observations are pooled across every mode outside the test pool.
         </p>
       </header>
 
+      <div class="message">
+        <b>Context, not quality.</b> Opponents, teams, formats, schedules, and scaffolds differ across these runs. This
+        profile describes recorded activity; it does not rank this model or support model-quality comparisons.
+      </div>
+
       <div class="stat-row">
         <StatTile
-          label="Series"
-          value={`${wins}-${losses}`}
-          note={`${profile.series} series, ${profile.games} games`}
+          label="Recorded series"
+          value={profile.series.toLocaleString()}
+          note={`${profile.games} games across ${profile.modes.length} mode${profile.modes.length === 1 ? '' : 's'}`}
         />
         <StatTile
           label="Decisions"
@@ -206,8 +209,8 @@ export function ModelProfileView({
 
       <div class="results-grid">
         <RatesPanel
-          heading="Play profile"
-          blurb="How this model plays, counted across every logged decision."
+          heading="Observed action mix in recorded contexts"
+          blurb="Descriptive action-selection rates pooled from logged decisions."
           rows={playRows}
         />
         <RatesPanel
@@ -220,8 +223,8 @@ export function ModelProfileView({
       <section class="panel">
         <div class="section-head">
           <div>
-            <h2>Records by mode</h2>
-            <p>Series records per mode, with links to the stored events.</p>
+            <h2>Recorded contexts by mode</h2>
+            <p>Descriptive coverage counts by mode, with links to the stored events where available.</p>
           </div>
         </div>
         <div class="table-scroll">
@@ -229,8 +232,7 @@ export function ModelProfileView({
             <thead>
               <tr>
                 <th>Mode</th>
-                <th class="num">Series</th>
-                <th class="num">W-L</th>
+                <th class="num">Recorded series</th>
                 <th>Events</th>
               </tr>
             </thead>
@@ -239,9 +241,6 @@ export function ModelProfileView({
                 <tr key={mode.mode}>
                   <td>{MODE_LABELS[mode.mode] ?? mode.mode}</td>
                   <td class="num">{mode.series}</td>
-                  <td class="num">
-                    {mode.w}-{mode.l}
-                  </td>
                   <td>
                     {mode.runs.length === 0 ? (
                       <span class="muted">–</span>

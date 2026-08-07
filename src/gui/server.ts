@@ -33,7 +33,7 @@ import {
   reasoningLevels,
   validateReasoning,
 } from '../providers.js';
-import { loadRows, ratingGroups, scopeRows } from '../records.js';
+import { loadRows, scopeRows } from '../records.js';
 import type { RecoveryPause } from '../recovery.js';
 import { RecoveryGate } from '../recovery.js';
 import { ROTATION_PROTOCOL_VERSION, runRotation } from '../rotation.js';
@@ -873,10 +873,8 @@ export class GuiServer {
     const all = loadRows(this.options.recordsPath ?? RESULTS_PATH);
     const pool = poolParam?.trim() || null;
     const rows = scopeRows(all, pool ?? undefined);
-    const rated = rows.filter((row) => (row.mode ?? 'rotation') === 'rotation');
     const pools = [...new Set(all.map((row) => (typeof row.pool === 'string' ? row.pool : '')))].filter(Boolean).sort();
-    const groups = ratingGroups(rated);
-    return { count: rows.length, pool, pools, groups, imported: rows.filter(isImported).length };
+    return { count: rows.length, pool, pools, imported: rows.filter(isImported).length };
   }
 
   private authorizeImport(request: http.IncomingMessage): void {

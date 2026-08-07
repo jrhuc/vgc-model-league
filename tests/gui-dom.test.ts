@@ -109,15 +109,94 @@ test('the data room archives a bracket and expands it on demand', async () => {
     }
     window.eval(bundle);
     const rendered = () => window.document.body.textContent ?? '';
-    await waitFor(() => rendered().includes('Reigning champion'));
+    await waitFor(() => rendered().includes('Descriptive archive counts'));
     assert.match(rendered(), /openai:alpha/);
     assert.match(rendered(), /1 finished/);
+    assert.match(rendered(), /not standings or comparable measures of model quality/i);
+    assert.doesNotMatch(rendered(), /Most titles|Tournament placements|Tournament record/);
+    assert.deepEqual(
+      [...window.document.querySelectorAll('.data-table td.spec-cell')].map((entry) => entry.getAttribute('title')),
+      ['alpha', 'beta', 'gamma'],
+      'cross-bracket counts remain alphabetical rather than performance ordered',
+    );
     const head = asButton(window.document.querySelector('.tournament-card-head'));
     head.click();
     await waitFor(() => window.document.querySelectorAll('.bracket-match').length > 0);
     assert.equal(window.document.querySelectorAll('.bracket-match').length, 3, 'two semis (one a bye) and a final');
     assert.match(rendered(), /Bye/);
     assert.match(rendered(), /Final/);
+  } finally {
+    await window.happyDOM.close();
+    gui.close();
+    fs.rmSync(recordsDir, { recursive: true, force: true });
+  }
+});
+
+test('direct model profiles present contextual observations without pooled records', async () => {
+  const recordsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-gui-profile-'));
+  const recordsPath = path.join(recordsDir, 'results.jsonl');
+  const rows = [
+    {
+      mode: 'rotation',
+      run_id: 'profile-rotation',
+      series_id: 'series-a',
+      timestamp: '2026-07-25T01:00:00.000Z',
+      pool: 'majors',
+      players: { p1: 'openai:zeta', p2: 'random' },
+      winner: 'openai:zeta',
+      winner_side: 'p1',
+      score: { p1: 2, p2: 0 },
+      games: [{ number: 1 }, { number: 2 }],
+      decision_stats: {
+        p1: { decisions: 4, move_selections: 6, switch_selections: 2, protect_selections: 1 },
+      },
+    },
+    {
+      mode: 'exhibition',
+      run_id: 'profile-exhibition',
+      series_id: 'series-b',
+      timestamp: '2026-07-26T01:00:00.000Z',
+      pool: 'majors',
+      players: { p1: 'random', p2: 'openai:zeta' },
+      winner: 'random',
+      winner_side: 'p1',
+      score: { p1: 2, p2: 1 },
+      games: [{ number: 1 }, { number: 2 }, { number: 3 }],
+      decision_stats: {
+        p2: { decisions: 5, move_selections: 8, switch_selections: 2, protect_selections: 2 },
+      },
+    },
+  ];
+  fs.writeFileSync(recordsPath, `${rows.map((row) => JSON.stringify(row)).join('\n')}\n`, 'utf8');
+  const gui = new GuiServer({ runsDir: RUNS_SCRATCH, recordsPath });
+  const base = await gui.listen(0);
+  const window = new Window({ url: `${base}#data/zeta` });
+  try {
+    const shell = await (await fetch(base)).text();
+    const asset = /src="(\.\/assets\/[^"]+\.js)"/.exec(shell)?.[1];
+    assert.ok(asset);
+    const bundle = await (await fetch(new URL(asset, base))).text();
+    window.document.body.innerHTML = '<div id="app"></div>';
+    if (!('EventSource' in window)) {
+      (window as unknown as Record<string, unknown>).EventSource = class {
+        onmessage: unknown = null;
+        close(): void {}
+      };
+    }
+    window.eval(bundle);
+
+    const rendered = () => window.document.querySelector('.view.on')?.textContent ?? '';
+    await waitFor(() => rendered().includes('Observed action mix in recorded contexts'));
+    assert.match(rendered(), /Context, not quality/i);
+    assert.match(rendered(), /opponents, teams, formats, schedules, and scaffolds differ/i);
+    assert.match(rendered(), /does not rank this model or support model-quality comparisons/i);
+    assert.match(rendered(), /Recorded contexts by mode/);
+    assert.doesNotMatch(rendered(), /How this model plays|Records by mode|W-L/);
+    assert.equal(
+      [...window.document.querySelectorAll('.stat-value')].some((entry) => entry.textContent?.trim() === '1-1'),
+      false,
+      'the profile must not feature a pooled W-L tile',
+    );
   } finally {
     await window.happyDOM.close();
     gui.close();
