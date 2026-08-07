@@ -80,7 +80,7 @@ test('the same corpus and seed freeze the same set', () => {
     candidate({ gameNumber: index, positionIndex: index, turn: index % 14, value: (index % 7) / 10 }),
   );
   const first = selectPositions(rows, { size: 40, seed: 'fixed' });
-  const second = selectPositions(rows, { size: 40, seed: 'fixed' });
+  const second = selectPositions([...rows].reverse(), { size: 40, seed: 'fixed' });
   const third = selectPositions(rows, { size: 40, seed: 'other' });
   assert.deepEqual(first.positions.map(keyOf), second.positions.map(keyOf));
   assert.notDeepEqual(first.positions.map(keyOf), third.positions.map(keyOf));
