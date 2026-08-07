@@ -1,7 +1,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { REPO_ROOT, RESULTS_PATH, RUNS_DIR, TEAMS_DIR } from '../paths.js';
+import { type DraftBoard, loadBoard } from '../draft.js';
+import { defaultPsDir, REPO_ROOT, RESULTS_PATH, RUNS_DIR, TEAMS_DIR } from '../paths.js';
+import { loadShowdown } from '../showdown.js';
+import { type DexLike, packSet, type RawSet } from '../teambuild.js';
 import type { JsonObject, Pid } from '../types.js';
 import type { GameSource, Replay } from './fork.js';
 import { replayGame } from './fork.js';
@@ -29,8 +32,17 @@ export interface CorpusOptions {
   recordsPath?: string;
   runsDir?: string;
   teamsDir?: string;
+  boardsDir?: string;
   psDir?: string;
   modes?: readonly string[];
+}
+
+function readJson(file: string): JsonObject | null {
+  try {
+    return JSON.parse(fs.readFileSync(file, 'utf8')) as JsonObject;
+  } catch {
+    return null;
+  }
 }
 
 function readRows(file: string): JsonObject[] {
@@ -82,10 +94,45 @@ function poolTeam(teamsDir: string, pool: string, id: string): string[] {
   }
 }
 
-function builtTeams(runsDir: string, runId: string, model: string): string[] {
-  const rows = readRows(path.join(runsDir, runId, 'teambuild', 'teambuild.jsonl'));
-  const packed = rows.filter((row) => row.model === model && typeof row.packed === 'string');
-  return [...new Set(packed.map((row) => row.packed as string))];
+/** Draft runs before the teambuild log carried a packed team still recorded every set it chose, so
+ * the team is rebuilt from those sets and the board it drafted from. The rebuild is a guess about
+ * fields the sets never named — the replay is what decides whether the guess was right. */
+function rebuiltTeams(options: CorpusOptions, runId: string, rows: JsonObject[]): string[] {
+  const config = readJson(path.join(options.runsDir ?? RUNS_DIR, runId, 'config.json'));
+  const boardId = typeof config?.board === 'string' ? config.board : null;
+  if (!boardId) return [];
+  let board: DraftBoard;
+  let dex: DexLike;
+  try {
+    board = loadBoard(boardId, options.boardsDir, options.psDir);
+    const { Dex } = loadShowdown(options.psDir ?? defaultPsDir());
+    const format = Dex.formats.get(board.format);
+    dex = Dex.mod(format.mod || 'base') as unknown as DexLike;
+  } catch {
+    return [];
+  }
+  const byId = new Map(board.mons.map((mon) => [mon.id, mon]));
+  const teams: string[] = [];
+  for (const row of rows) {
+    const sets = Array.isArray(row.sets) ? (row.sets as JsonObject[]) : [];
+    if (!sets.length) continue;
+    const packed: string[] = [];
+    for (const set of sets) {
+      const mon = byId.get(String(set.spriteId ?? ''));
+      if (!mon) break;
+      packed.push(packSet(dex, mon, { ...set, id: mon.id, note: '' } as unknown as RawSet));
+    }
+    if (packed.length === sets.length) teams.push(packed.join(']'));
+  }
+  return teams;
+}
+
+function builtTeams(options: CorpusOptions, runId: string, model: string): string[] {
+  const rows = readRows(path.join(options.runsDir ?? RUNS_DIR, runId, 'teambuild', 'teambuild.jsonl')).filter(
+    (row) => row.model === model,
+  );
+  const packed = rows.filter((row) => typeof row.packed === 'string').map((row) => row.packed as string);
+  return [...new Set(packed.length ? packed : rebuiltTeams(options, runId, rows))];
 }
 
 function gameDecisions(seriesDir: string, gameNumber: number): Record<Pid, JsonObject[]> {
@@ -161,7 +208,7 @@ export function loadGameRecords(options: CorpusOptions = {}): GameRecord[] {
       const sheets = declaredSheets(recordedLog);
       const candidates: Record<Pid, string[]> = { p1: [], p2: [] };
       for (const pid of ['p1', 'p2'] as const) {
-        const all = pool ? poolTeam(teamsDir, pool, teams[pid]) : builtTeams(runsDir, runId, players[pid]);
+        const all = pool ? poolTeam(teamsDir, pool, teams[pid]) : builtTeams(options, runId, players[pid]);
         const sheet = sheets[pid];
         const declared = (packed: string) => sheet !== undefined && sheetKey(packed) === sheet;
         candidates[pid] = [...all].sort((a, b) => Number(declared(b)) - Number(declared(a)));

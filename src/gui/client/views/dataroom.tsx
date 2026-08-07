@@ -337,55 +337,53 @@ export function DataRoomView({
           note="across a best-of-three"
         />
       </div>
-      <>
-        <section class="panel chart-panel">
-          <div class="section-head">
-            <div>
-              <h2>Play profile</h2>
-              <p>
-                How each model plays, not how well: action mix and tool use, shaded against each column's maximum.
-                Ordered by name, because ordering it by results would imply the results separate these models.
-              </p>
-            </div>
+      <section class="panel chart-panel">
+        <div class="section-head">
+          <div>
+            <h2>Play profile</h2>
+            <p>
+              How each model plays, not how well: action mix and tool use, shaded against each column's maximum. Ordered
+              by name, because ordering it by results would imply the results separate these models.
+            </p>
           </div>
+        </div>
+        <RatesTable
+          models={models}
+          order={order}
+          columns={PROFILE_COLUMNS.filter(
+            (column) => column.label !== 'Tools' || models.some((model) => model.rates.toolLookups > 0),
+          )}
+          rgb="20, 88, 230"
+          onOpenModel={onOpenModel}
+        />
+      </section>
+      <section class="panel chart-panel">
+        <div class="section-head">
+          <div>
+            <h2>Luck ledger</h2>
+            <p>
+              Misses, crits taken, flinches, and full paralysis suffered by the winner minus the loser, per decided
+              series, sorted by that difference. Bars right of zero are series won despite worse luck. The right column
+              shows each side's raw counts, which separates an even series from one with few luck events.
+            </p>
+          </div>
+        </div>
+        <div class="chart-body">
+          <LuckLedger series={evidence?.series ?? []} />
+        </div>
+      </section>
+      <details class="audit-details">
+        <summary>Scaffold health: fallbacks, parse failures, retries (audit data, not play quality)</summary>
+        <section class="panel chart-panel">
           <RatesTable
             models={models}
             order={order}
-            columns={PROFILE_COLUMNS.filter(
-              (column) => column.label !== 'Tools' || models.some((model) => model.rates.toolLookups > 0),
-            )}
-            rgb="20, 88, 230"
+            columns={RELIABILITY_COLUMNS}
+            rgb="232, 75, 79"
             onOpenModel={onOpenModel}
           />
         </section>
-        <section class="panel chart-panel">
-          <div class="section-head">
-            <div>
-              <h2>Luck ledger</h2>
-              <p>
-                Misses, crits taken, flinches, and full paralysis suffered by the winner minus the loser, per decided
-                series, sorted by that difference. Bars right of zero are series won despite worse luck. The right
-                column shows each side's raw counts, which separates an even series from one with few luck events.
-              </p>
-            </div>
-          </div>
-          <div class="chart-body">
-            <LuckLedger series={evidence?.series ?? []} />
-          </div>
-        </section>
-        <details class="audit-details">
-          <summary>Scaffold health: fallbacks, parse failures, retries (audit data, not play quality)</summary>
-          <section class="panel chart-panel">
-            <RatesTable
-              models={models}
-              order={order}
-              columns={RELIABILITY_COLUMNS}
-              rgb="232, 75, 79"
-              onOpenModel={onOpenModel}
-            />
-          </section>
-        </details>
-      </>
+      </details>
     </>
   );
 }

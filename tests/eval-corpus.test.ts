@@ -117,6 +117,43 @@ test('a recorded game is found, replayed and verified against its own log', () =
   assert.equal(game.replay.positions[0]?.actual.p1, record.decisions.p1[0]?.action);
 });
 
+test('a draft game resolves its teams from the run that built them', () => {
+  const corpus = buildCorpus();
+  const records = loadGameRecords(corpus);
+  const built = records[0];
+  assert.ok(built);
+  const teambuild = path.join(corpus.runsDir as string, RUN_ID, 'teambuild');
+  fs.mkdirSync(teambuild, { recursive: true });
+  fs.writeFileSync(
+    path.join(teambuild, 'teambuild.jsonl'),
+    `${[
+      { model: 'model-a', seriesIndex: 0, entrant: 0, packed: built.candidates.p1[0] },
+      { model: 'model-b', seriesIndex: 0, entrant: 1, packed: built.candidates.p2[0] },
+      { model: 'model-b', seriesIndex: 1, entrant: 1, packed: built.candidates.p1[0] },
+    ]
+      .map((row) => JSON.stringify(row))
+      .join('\n')}\n`,
+    'utf8',
+  );
+  fs.writeFileSync(
+    corpus.recordsPath,
+    `${JSON.stringify({
+      ...(JSON.parse(fs.readFileSync(corpus.recordsPath, 'utf8')) as JsonObject),
+      mode: 'draft',
+      pool: undefined,
+    })}\n`,
+    'utf8',
+  );
+
+  const drafted = loadGameRecords(corpus)[0];
+  assert.ok(drafted);
+  assert.equal(drafted.skipped, null);
+  assert.equal(drafted.mode, 'draft');
+  assert.ok(drafted.candidates.p2.length > 1, 'every team that model built is a candidate');
+  const game = verifyGame(drafted);
+  assert.ok(game, 'the wrong candidate is discarded and the right one verifies');
+});
+
 test('a game the simulator answered for a player never reaches the position set', () => {
   const corpus = buildCorpus((row) => {
     (row.games as JsonObject[])[0]!.timer_autodefaults = { p1: 0, p2: 2 };
