@@ -136,7 +136,8 @@ function ensurePool(bundle: ImportRequest, options: ImportOptions): 'created' | 
   if (listPools(options.teamsDir).some((entry) => entry.name === pool.name)) return 'present';
   const teams = Array.isArray(pool.teams) ? pool.teams : [];
   if (pool.event !== undefined && !isRecord(pool.event)) throw new ImportError('pool.event must be a JSON object');
-  if (pool.spreads !== undefined && !isRecord(pool.spreads)) throw new ImportError('pool.spreads must be a JSON object');
+  if (pool.spreads !== undefined && !isRecord(pool.spreads))
+    throw new ImportError('pool.spreads must be a JSON object');
   try {
     createPool(
       String(pool.name),

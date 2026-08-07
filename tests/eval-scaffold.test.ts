@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { cohorts, poolable, readRunScaffold, type RunScaffold } from '../src/eval/scaffold.js';
+import { cohorts, poolable, type RunScaffold, readRunScaffold } from '../src/eval/scaffold.js';
 import { scaffoldComponents, scaffoldRevision } from '../src/llm-engine.js';
 
 function writeRun(runsDir: string, runId: string, config: Record<string, unknown>): string {
