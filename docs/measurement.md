@@ -137,3 +137,44 @@ as a verdict on the team rather than on its former pilot. Letting each model spe
 for this mode — it would measure teambuilding, which the draft league already
 measures, and would leave eight teams that no longer are the top cut the
 provenance disclosure describes.
+
+## Grading a decision instead of a result
+
+A series is two or three games and reports one bit. A game is a few hundred
+thousand tokens of reasoning compressed into a win or a loss that a critical
+hit can flip. Games are what the harness plays; decisions are what it measures.
+
+Every finished game is replayed from its recorded seed, teams and choices and
+held against its own log line for line. Only an exact match becomes a position.
+That check is what lets team resolution guess: a candidate that is not the team
+that played produces a different log and is thrown away. A game the timer or
+the simulator answered for a player has choices nobody wrote down, so it is
+recognised as unreplayable rather than half-replayed.
+
+A position reopens as a live battle. Every action the model was legally
+offered — the same menu it was shown — is played from that position against
+averaged luck, so a choice is judged on what it was worth rather than on the
+damage roll it happened to draw. Regret is what the best action found was worth
+minus what the chosen action was worth.
+
+The reference is declared, and it is a yardstick rather than a stronger player:
+the continuation is uniform random, the value is material differential, and the
+opponent is a uniform draw from the actions it could legally have taken.
+Nothing in it knows how to play Pokémon, which is the point — a reference that
+played well would be a strategy opinion, and models would be scored on their
+distance from that opinion. Two consequences follow and are reported, not
+hidden. The search is bounded, so a regret is a lower bound under this
+reference. And a value read one turn after the action cannot tell team-preview
+choices apart at all, so a position whose candidates all valued the same is
+marked as such rather than recorded as a decision with nothing wrong with it.
+
+Regret is reported twice. Against the action the opponent actually took, it
+reads with hindsight the player did not have. Against the uniform draw, it does
+not. The gap between them is the part of a decision that was a read rather than
+a plan — the class of error that exists only because there is an opponent, and
+the one a single-agent environment has no slot for.
+
+Intervals resample games, never decisions. Decisions inside a game share a
+seed, two teams and a running position; treating them as independent would
+report an interval several times too narrow. Two models are called apart only
+when their intervals miss each other.
