@@ -44,14 +44,15 @@ export function BracketGrid<M extends BracketMatchLike>({
   const firstRound = rounds[0]?.length ?? 1;
   return (
     <div class="bracket-scroll">
-      <div class="bracket" style={{ gridTemplateRows: `auto repeat(${firstRound}, auto)` }}>
+      <div class="bracket" style={{ gridTemplateRows: `auto repeat(${firstRound}, 1fr)` }}>
         {rounds.map((round, roundIndex) => (
           <div class="bracket-round" key={roundIndex}>
             <h3 style={{ gridColumn: roundIndex + 1 }}>{roundName(roundIndex, rounds.length)}</h3>
             {round.map((match, matchIndex) => {
               const span = Math.max(1, Math.round(firstRound / round.length));
+              const feeds = roundIndex < rounds.length - 1;
               const cell = `bracket-cell ${roundIndex > 0 ? 'has-source' : ''} ${
-                roundIndex < rounds.length - 1 ? 'has-target' : ''
+                feeds ? `has-target ${matchIndex % 2 === 0 ? 'pair-top' : 'pair-bottom'}` : ''
               }`;
               const place = {
                 gridColumn: roundIndex + 1,

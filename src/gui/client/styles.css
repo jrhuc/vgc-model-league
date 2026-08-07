@@ -462,9 +462,14 @@ textarea { min-height: 170px; resize: vertical; font: 12px/1.5 var(--mono); }
 .bracket-round h3 { grid-row: 1; margin: 0; color: var(--ink-soft); font: 800 10px/1 var(--mono); letter-spacing: .1em; text-transform: uppercase; }
 .bracket-cell { position: relative; display: flex; align-items: center; }
 .bracket-cell > .bracket-match { flex: 1; min-width: 0; }
-.bracket-cell.has-source::before { content: ''; position: absolute; left: -13px; top: 25%; height: 50%; border-left: 1px solid var(--line-strong); }
-.bracket-cell.has-source::after { content: ''; position: absolute; left: -13px; top: 50%; width: 13px; border-top: 1px solid var(--line-strong); }
-.bracket-cell.has-target > .bracket-match::after { content: ''; position: absolute; right: -13px; top: 50%; width: 13px; border-top: 1px solid var(--line-strong); }
+.bracket-cell.has-source::before { content: ''; position: absolute; right: 100%; top: 50%; width: 13px; border-top: 1px solid var(--line-strong); }
+.bracket-cell.has-target > .bracket-match::after { content: ''; position: absolute; left: 100%; top: 50%; width: 13px; border-top: 1px solid var(--line-strong); }
+/** Each feeder draws its own half of the join, from its centre to the line it shares with its
+ * sibling. Anchoring the pair to a fraction of the combined span instead misses both centres by a
+ * quarter of the row gap, because that span carries a gap the cards themselves do not. */
+.bracket-cell.has-target::after { content: ''; position: absolute; left: calc(100% + 13px); border-left: 1px solid var(--line-strong); }
+.bracket-cell.has-target.pair-top::after { top: 50%; bottom: -8px; }
+.bracket-cell.has-target.pair-bottom::after { top: -8px; bottom: 50%; }
 .bracket-match { position: relative; display: flex; flex-direction: column; gap: 0; padding: 0; border: 1px solid var(--line-strong); background: white; text-align: left; cursor: pointer; }
 .bracket-match.bye { cursor: default; background: var(--paper); border-style: dashed; }
 .bracket-match:not(.bye):hover { border-color: #7f8fa8; }
@@ -554,11 +559,10 @@ textarea { min-height: 170px; resize: vertical; font: 12px/1.5 var(--mono); }
 .matchup-side { min-width: 0; display: flex; align-items: center; }
 .matchup-side.right { justify-content: flex-end; text-align: right; }
 .matchup-side.right .matchup-copy { align-items: flex-end; }
-.matchup-side.right .matchup-name { justify-content: flex-end; }
 .matchup-copy { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
-.matchup-copy b { font: inherit; display: block; overflow-wrap: anywhere; }
-.matchup-name { display: flex; align-items: center; gap: 10px; min-width: 0; }
-.matchup-name .mark { vertical-align: 0; }
+.matchup-copy b { font: inherit; display: flex; align-items: center; gap: 12px; min-width: 0; }
+.matchup-copy b span { min-width: 0; overflow-wrap: anywhere; }
+.matchup-side.right .matchup-copy b { justify-content: flex-end; }
 .matchup-copy small { color: var(--ink-soft); font: 700 10px/1.35 var(--mono); letter-spacing: .04em; text-transform: uppercase; }
 .matchup-versus {
   display: grid;

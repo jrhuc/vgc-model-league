@@ -89,7 +89,7 @@ export function MatchGame({
         <h1 class="matchup-heading">
           <span class="matchup-side">
             <span class="matchup-copy">
-              <b class="matchup-name">
+              <b>
                 <Mark spec={players[0]} size={22} />
                 <span>{titles[0]}</span>
               </b>
@@ -101,7 +101,7 @@ export function MatchGame({
           </span>
           <span class="matchup-side right">
             <span class="matchup-copy">
-              <b class="matchup-name">
+              <b>
                 <span>{titles[1]}</span>
                 <Mark spec={players[1]} size={22} />
               </b>
