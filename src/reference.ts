@@ -84,7 +84,7 @@ export const DEX_TOOLS: ToolDefinition[] = [
   ),
   tool(
     'estimate_damage',
-    "Damage estimate computed by this format's real battle engine at level 50 in doubles, as a percentage range across legal investment. Abilities, any items (including berries), stat stages, status, screens, weather, terrain, Helping Hand, spread reduction, and variable-power moves are all applied exactly when supplied; anything you leave out is neutral (no ability, no item, no field effect). Supply your own Pokémon's exact battle stats on whichever side is yours to narrow the range; opposing stats use format-legal investment ranges from the open team sheet nature only. Only the stats this move actually uses are read; an implausible value falls back to the legal range with a note instead of failing the call.",
+    "Damage estimate computed by this format's real battle engine at level 50 in doubles, as a percentage range across legal investment. Abilities, any items (including berries), stat stages, status, screens, weather, terrain, Helping Hand, spread reduction, and variable-power moves are all applied exactly when supplied; anything you leave out is neutral. During a battle the harness supplies all of them from the live board and open sheets, along with both active allies and their abilities (Friend Guard, Power Spot, Ruin auras) and the fainted count that scales Last Respects, and what it reads there overrides anything you pass. The result names every factor it applied. It assumes no critical hit unless you ask for one, and it never models hazard chip or pre-existing activation state such as a Flash Fire charge, a Metronome count, or Rage Fist's hit tally. Supply your own Pokémon's exact battle stats on whichever side is yours to narrow the range; opposing stats use format-legal investment ranges from the open team sheet nature only. Only the stats this move actually uses are read; an implausible value falls back to the legal range with a note instead of failing the call.",
     {
       attacker: { type: 'string' },
       defender: { type: 'string' },
@@ -477,6 +477,12 @@ const SPEED_HALVING_ITEMS = new Set([
   'powerlens',
   'powerweight',
 ]);
+
+interface ScratchAlly {
+  name: string;
+  ability?: string | undefined;
+  item?: string | undefined;
+}
 
 interface ScratchDamage {
   outcome: 'immune' | 'none' | 'damage';
@@ -1291,6 +1297,21 @@ export class ShowdownReference {
     const crit = args.is_critical_hit === true;
     const helpingHand = args.helping_hand === true;
     const faintedAllies = Math.max(0, Math.trunc(asFinite(args.attacker_fainted_allies) ?? 0));
+    const allies: Partial<Record<'attacker' | 'defender', ScratchAlly>> = {};
+    for (const side of ['attacker', 'defender'] as const) {
+      const raw = args[`${side}_ally`];
+      if (typeof raw !== 'string' || !raw.trim()) continue;
+      const species = this.dex.species.get(raw);
+      if (!species.exists) return `No species data for ${JSON.stringify(raw)}.`;
+      const abilityRaw = args[`${side}_ally_ability`];
+      const itemRaw = args[`${side}_ally_item`];
+      allies[side] = {
+        name: species.name,
+        ability:
+          typeof abilityRaw === 'string' && abilityRaw.trim() ? this.dex.abilities.get(abilityRaw).name : undefined,
+        item: typeof itemRaw === 'string' && itemRaw.trim() ? this.dex.items.get(itemRaw).name : undefined,
+      };
+    }
 
     const run = (offValue: number, defValue: number, rollPercent: 85 | 100) =>
       this.scratchDamage({
@@ -1312,6 +1333,8 @@ export class ShowdownReference {
         terrain: terrainId,
         helpingHand,
         faintedAllies,
+        attackerAlly: allies.attacker,
+        defenderAlly: allies.defender,
         crit,
         spread: isSpread,
         attackerHpPercent,
@@ -1393,6 +1416,10 @@ export class ShowdownReference {
     if (helpingHand) applied.push('Helping Hand');
     if (crit) applied.push('critical hit');
     if (isSpread) applied.push('spread (0.75x)');
+    for (const side of ['attacker', 'defender'] as const) {
+      const ally = allies[side];
+      if (ally) applied.push(`${side} ally ${ally.name}${ally.ability ? ` (${ally.ability})` : ''}`);
+    }
     const appliedText = applied.length
       ? `applied ${applied.join(', ')}`
       : 'no abilities, items, status, or field effects applied';
@@ -1401,8 +1428,7 @@ export class ShowdownReference {
     const hitsText = hits[1] > 1 ? ` x${hits[0] === hits[1] ? hits[0] : `${hits[0]}-${hits[1]}`} hits` : '';
     const bpText = high.basePower > 0 ? `BP ${high.basePower}` : 'fixed damage';
     const notesText = notes.length ? ` Notes: ${notes.join('; ')}.` : '';
-    const critText = crit ? '' : ' Assumes no critical hit.';
-    return `${attacker.name} ${move.name} (${moveType} ${move.category} ${bpText}${hitsText}) into ${defender.name}: ${minimumPercent}-${maximumPercent}% of maximum HP.${shownHp} ${outcome} ${effectivenessDetail(this.dex, moveType, defender.types)}; ${appliedText}; ${attackBasis}, ${defenseBasis}.${notesText}${critText} Computed by the format's battle engine. Omits allies' effects (Friend Guard, Power Spot, Ruin auras from other slots), hazard chip, and pre-existing activation state such as a Flash Fire charge or Metronome count.`;
+    return `${attacker.name} ${move.name} (${moveType} ${move.category} ${bpText}${hitsText}) into ${defender.name}: ${minimumPercent}-${maximumPercent}% of maximum HP.${shownHp} ${outcome} ${effectivenessDetail(this.dex, moveType, defender.types)}; ${appliedText}; ${attackBasis}, ${defenseBasis}.${notesText}`;
   }
 
   private scratchDamage(cfg: {
@@ -1430,6 +1456,8 @@ export class ShowdownReference {
     terrain?: string | undefined;
     helpingHand: boolean;
     faintedAllies: number;
+    attackerAlly?: ScratchAlly | undefined;
+    defenderAlly?: ScratchAlly | undefined;
     crit: boolean;
     spread: boolean;
     attackerHpPercent?: number | undefined;
@@ -1449,6 +1477,8 @@ export class ShowdownReference {
       level: 50,
     });
     const filler = () => scratchSet('Magikarp', 'Honey Gather', '', ['Splash']);
+    const allySlot = (ally: ScratchAlly | undefined) =>
+      ally ? scratchSet(ally.name, ally.ability ?? 'Honey Gather', ally.item ?? '', ['Splash']) : filler();
     const battle = new this.showdown.Battle({
       formatid: this.resolvedFormat.id,
       format: this.resolvedFormat,
@@ -1456,14 +1486,14 @@ export class ShowdownReference {
         name: 'Attacker',
         team: [
           scratchSet(cfg.attacker.name, cfg.attackerAbility ?? 'Honey Gather', cfg.attackerItem ?? '', [cfg.moveId]),
-          filler(),
+          allySlot(cfg.attackerAlly),
         ],
       },
       p2: {
         name: 'Defender',
         team: [
           scratchSet(cfg.defender.name, cfg.defenderAbility ?? 'Honey Gather', cfg.defenderItem ?? '', ['Splash']),
-          filler(),
+          allySlot(cfg.defenderAlly),
         ],
       },
     });
@@ -1475,8 +1505,16 @@ export class ShowdownReference {
       const offHolder = cfg.pins.offFromDefender ? def : att;
       offHolder.storedStats[cfg.pins.offStat] = cfg.pins.offValue;
       def.storedStats[cfg.pins.defStat] = cfg.pins.defValue;
+      /** An ally fielded for its Friend Guard also brings its Drought, which the caller never asked
+       * for; weather the attacker or defender itself creates still stands, as it does on a real field. */
+      const fromAlly = (state: unknown): boolean => {
+        const source = (state as { source?: unknown } | null | undefined)?.source;
+        return Boolean(source) && source !== att && source !== def;
+      };
       if (cfg.weather) battle.field.setWeather(cfg.weather, 'debug');
+      else if (fromAlly(battle.field.weatherState)) battle.field.clearWeather();
       if (cfg.terrain) battle.field.setTerrain(cfg.terrain, 'debug');
+      else if (fromAlly(battle.field.terrainState)) battle.field.clearTerrain();
       for (const stat of Object.keys(att.boosts) as Array<keyof typeof att.boosts>) att.boosts[stat] = 0;
       for (const stat of Object.keys(def.boosts) as Array<keyof typeof def.boosts>) def.boosts[stat] = 0;
       Object.assign(att.boosts, cfg.attackerBoosts);

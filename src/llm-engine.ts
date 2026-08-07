@@ -184,7 +184,7 @@ const DECISION_TOOLS = [
     return {
       ...tool,
       description:
-        'Estimate damage using the current battle request and open team sheets. Supply only the two visible Pokémon and move; the harness applies known abilities, items, exact own stats, opposing nature ranges, boosts, status, HP, screens, weather, and terrain. Helping Hand and critical-hit flags are optional hypothetical modifiers.',
+        'Estimate damage using the current battle request and open team sheets. Supply only the two visible Pokémon and move; the harness applies known abilities, items, exact own stats, opposing nature ranges, boosts, status, HP, screens, weather, terrain, both active allies with their abilities, and the fainted count that scales Last Respects. Helping Hand and critical-hit flags are optional hypothetical modifiers.',
       parameters: {
         ...tool.parameters,
         properties: Object.fromEntries(
