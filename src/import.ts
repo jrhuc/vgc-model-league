@@ -99,6 +99,7 @@ const LEAGUE_FILES: Array<{ key: keyof LeagueAssets; file: string }> = [
   { key: 'draft', file: 'draft/draft.jsonl' },
   { key: 'teambuild', file: 'teambuild/teambuild.jsonl' },
   { key: 'window', file: 'window.json' },
+  { key: 'season', file: 'season.jsonl' },
 ];
 
 function writeLeagueAssets(league: ImportRequest['league'], runDir: string): string[] {
@@ -134,8 +135,15 @@ function ensurePool(bundle: ImportRequest, options: ImportOptions): 'created' | 
   if (!pool) return null;
   if (listPools(options.teamsDir).some((entry) => entry.name === pool.name)) return 'present';
   const teams = Array.isArray(pool.teams) ? pool.teams : [];
+  if (pool.event !== undefined && !isRecord(pool.event)) throw new ImportError('pool.event must be a JSON object');
+  if (pool.spreads !== undefined && !isRecord(pool.spreads)) throw new ImportError('pool.spreads must be a JSON object');
   try {
-    createPool(String(pool.name), String(pool.format), teams, options.teamsDir);
+    createPool(
+      String(pool.name),
+      String(pool.format),
+      { teams, ...(pool.event ? { event: pool.event } : {}), ...(pool.spreads ? { spreads: pool.spreads } : {}) },
+      options.teamsDir,
+    );
   } catch (error) {
     throw new ImportError(error instanceof Error ? error.message : String(error));
   }

@@ -150,6 +150,7 @@ test('importSeries stores league assets, even for rows it already holds', () => 
       draft: '{"pick":1,"mon":"pikachu","rationale":"volt tackle"}',
       teambuild: '{"seriesIndex":1,"brought":["pikachu"]}',
       window: { after_week: 1, decisions: [], rosters: [] },
+      season: '{"entrant":0,"review":"drafted for speed control and never used it"}',
     };
     const backfill = importSeries({ row: bundleRow({ mode: 'draft', pool: undefined }), league }, store.paths);
     assert.equal(backfill.duplicate, true);
@@ -158,6 +159,7 @@ test('importSeries stores league assets, even for rows it already holds', () => 
       'draft/draft.jsonl',
       'teambuild/teambuild.jsonl',
       'window.json',
+      'season.jsonl',
     ]);
 
     const runDir = path.join(store.paths.runsDir, '20260725T000000.000000Z-abcd1234');
@@ -165,6 +167,7 @@ test('importSeries stores league assets, even for rows it already holds', () => 
     assert.equal((rosters[0] as { team_name: string }).team_name, 'Testers');
     assert.match(fs.readFileSync(path.join(runDir, 'draft', 'draft.jsonl'), 'utf8'), /volt tackle/);
     assert.equal(JSON.parse(fs.readFileSync(path.join(runDir, 'window.json'), 'utf8')).after_week, 1);
+    assert.match(fs.readFileSync(path.join(runDir, 'season.jsonl'), 'utf8'), /speed control/);
 
     const repeat = importSeries({ row: bundleRow({ mode: 'draft', pool: undefined }), league }, store.paths);
     assert.deepEqual(repeat.league, [], 'assets already on disk are left untouched');

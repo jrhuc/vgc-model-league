@@ -16,6 +16,7 @@ export interface PublishOptions {
   recordsPath: string;
   runsDir: string;
   teamsDir: string;
+  runs?: string[];
   pool?: string;
   includeTest?: boolean;
   dryRun?: boolean;
@@ -29,11 +30,15 @@ export interface PublishSummary {
 }
 
 function selectable(rows: SeriesRecord[], options: PublishOptions): SeriesRecord[] {
-  return rows.filter((row) => {
-    if (isImported(row)) return false;
-    if (options.pool !== undefined) return row.pool === options.pool;
-    return options.includeTest === true || row.pool !== TEST_POOL;
-  });
+  const local = rows.filter((row) => !isImported(row));
+  if (options.runs !== undefined) {
+    const wanted = new Set(options.runs);
+    const missing = options.runs.filter((id) => !local.some((row) => String(row.run_id ?? '') === id));
+    if (missing.length > 0) throw new Error(`no local series recorded for ${missing.join(', ')}`);
+    return local.filter((row) => wanted.has(String(row.run_id ?? '')));
+  }
+  if (options.pool !== undefined) return local.filter((row) => row.pool === options.pool);
+  return local.filter((row) => options.includeTest === true || row.pool !== TEST_POOL);
 }
 
 function readLog(runsDir: string, row: SeriesRecord, pid: Pid): string | undefined {
@@ -96,6 +101,8 @@ function readLeagueAssets(runsDir: string, runId: string): ImportRequest['league
   if (draft !== undefined) league.draft = draft;
   const teambuild = read(path.join('teambuild', 'teambuild.jsonl'));
   if (teambuild !== undefined) league.teambuild = teambuild;
+  const season = read('season.jsonl');
+  if (season !== undefined) league.season = season;
   const window = read('window.json');
   if (window !== undefined) {
     const parsed: unknown = JSON.parse(window);
@@ -113,10 +120,16 @@ async function exportPool(name: string, teamsDir: string): Promise<NonNullable<I
   return {
     name: pool.id,
     format: pool.format,
+    ...pool.metadata,
     teams: pool.teams.map((team) => {
       const unpacked = Teams.unpack(team.packed);
       if (!unpacked) throw new Error(`team ${JSON.stringify(team.id)} in pool ${JSON.stringify(name)} is invalid`);
-      return { id: team.id, paste: Teams.export(unpacked) };
+      return {
+        id: team.id,
+        paste: Teams.export(unpacked),
+        ...(team.seed === undefined ? {} : { seed: team.seed }),
+        ...(team.source ? { source: team.source } : {}),
+      };
     }),
   };
 }

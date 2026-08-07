@@ -4,7 +4,16 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { loadPool, packTeam, validatePool, validateTeam } from '../src/teams.js';
+import { TEAMS_DIR } from '../src/paths.js';
+import { loadShowdown } from '../src/showdown.js';
+import { createPool, loadPool, packTeam, validatePool, validateTeam } from '../src/teams.js';
+
+function pasteFromPool(file: string): string {
+  const { Teams } = loadShowdown();
+  const team = Teams.unpack(fs.readFileSync(path.join(TEAMS_DIR, 'test', file), 'utf8').trim());
+  assert.ok(team, `test pool team ${file} should unpack`);
+  return Teams.export(team);
+}
 
 test('default pool loads in manifest order and validates', () => {
   const pool = loadPool();
@@ -74,6 +83,41 @@ test('pool loader uses custom directories and rejects invalid manifests', (t) =>
   );
   assert.throws(() => loadPool('snapshot', root), /escapes its pool directory/);
   assert.throws(() => loadPool('../snapshot', root), /pool name/);
+});
+
+test('a created pool keeps the event and the placements a bracket reads seeds from', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-model-league-createpool-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  createPool(
+    'vr-import',
+    'gen9championsvgc2026regmbbo3',
+    {
+      event: { name: 'Victory Road August Challenge #1', players: 194, cut: 8 },
+      spreads: { published: false, reconstructed: true, reason: 'open lists publish no EVs' },
+      teams: [
+        {
+          id: 'first',
+          paste: pasteFromPool('jpnats-mega-swampert.team'),
+          seed: 1,
+          source: { placement: 1, player: 'Kazuki Ogushi', swiss: '8-2' },
+        },
+        { id: 'second', paste: pasteFromPool('wolfe-mega-raichu-y.team'), seed: 2 },
+      ],
+    },
+    root,
+  );
+  const pool = loadPool('vr-import', root);
+  assert.equal(pool.event?.name, 'Victory Road August Challenge #1');
+  assert.equal(pool.event?.players, 194);
+  assert.equal(pool.event?.reconstructedSpreads, true);
+  assert.equal(pool.metadata.spreads?.reason, 'open lists publish no EVs');
+  assert.deepEqual(
+    pool.teams.map((team) => team.seed),
+    [1, 2],
+  );
+  assert.equal(pool.teams[0]?.provenance?.player, 'Kazuki Ogushi');
+  assert.equal(pool.teams[0]?.source?.swiss, '8-2', 'keys no shared type models survive republication');
+  assert.equal(pool.teams[1]?.provenance, undefined);
 });
 
 test('team exports are packed by the direct Showdown API', () => {

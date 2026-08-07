@@ -1843,7 +1843,7 @@ export class GuiServer {
       candidateDir.startsWith(path.resolve(teamsDir) + path.sep) && !fs.existsSync(candidateDir);
     let dir: string;
     try {
-      dir = createPool(name, format, drafts, teamsDir);
+      dir = createPool(name, format, { teams: drafts }, teamsDir);
     } catch (error) {
       if (isRecord(error) && typeof error.code === 'string') {
         if (canCleanCandidate) fs.rmSync(candidateDir, { recursive: true, force: true });
