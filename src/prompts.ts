@@ -109,7 +109,8 @@ export function renderDecision(input: DecisionPrompt): string {
   }
   lines.push(
     '',
-    `Return exactly {"choices":[${input.menus.map((_, index) => `N${index + 1}`).join(',')}],"rationale":"final reason","notebook":"durable cross-game facts and future plans only; no current HP, active board, or turn recap"}.`,
+    `Return one JSON object with {"choices":[${input.menus.map((_, index) => `N${index + 1}`).join(',')}]}.`,
+    'You may add "rationale":"final reason" and, only when durable plans changed, "notebook":"complete replacement with durable cross-game facts and future plans; no current HP, active board, or turn recap".',
     `Each choice is the zero-based index for its displayed slot${sharedTeamMenu ? ' or ordered team position' : ''}. Include no prose outside JSON.`,
   );
   return lines.join('\n');

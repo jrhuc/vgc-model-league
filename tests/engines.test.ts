@@ -151,7 +151,7 @@ test('LLM choices parse prose, retry, and record fallbacks', async () => {
     [[`I choose this: ${decision([1], 'reason', 'x')}.`], 'move 2', false, 1, 0],
     [[`${decision([0])} then ${decision([1])}`], 'move 2', false, 1, 0],
     [[`${decision([1])} earlier draft was {"choices":[9]}`], 'move 2', false, 1, 0],
-    [['{"choices":[1],"notes":"legacy"}', decision([1])], 'move 2', false, 2, 1],
+    [['{"choices":[1],"notes":"legacy"}'], 'move 2', false, 1, 0],
     [['invalid', decision([1])], 'move 2', false, 2, 1],
     [['invalid', decision([9]), 'invalid', decision([9])], 'move 1', true, 4, 4],
   ];

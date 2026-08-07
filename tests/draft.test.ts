@@ -284,7 +284,11 @@ test('coach trades validate both rosters and apply an accepted exchange atomical
     reasoning: 'Worth it.',
     notebook: 'Plan around Charizard.',
   });
-  assert.match(String(parseTradeResponse('{"accept":true,"reasoning":"Worth it."}')), /notebook/);
+  assert.deepEqual(parseTradeResponse('{"accept":true}', 'Keep the old plan.'), {
+    accept: true,
+    reasoning: '',
+    notebook: 'Keep the old plan.',
+  });
   if (typeof parsed === 'string' || !parsed.offer) return;
   applyTradeOffer(state, {
     from: 0,
@@ -677,6 +681,20 @@ test('picks do not request a franchise name and franchise names normalize separa
     teamName: 'Prankster Paradise',
   });
   assert.match(String(parseFranchiseName('{"team_name":""}')), /non-empty/);
+});
+
+test('a legal pick is not rejected when optional evidence is omitted', () => {
+  const state = freshState();
+  const legal = legalPicks(state, 0);
+  const id = legal[0]?.id;
+  assert.ok(id);
+  const parsed = parsePick(JSON.stringify({ pick: id }), legal, state, 0);
+  assert.notEqual(typeof parsed, 'string');
+  if (typeof parsed !== 'string') {
+    assert.equal(parsed.mon.id, id);
+    assert.equal(parsed.reasoning, '');
+    assert.equal(parsed.notebook, undefined);
+  }
 });
 
 test('a pick may be written as the board id or the name shown beside it', () => {

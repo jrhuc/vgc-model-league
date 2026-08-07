@@ -46,8 +46,8 @@ import { clip, isRecord, text } from './value.js';
 
 interface ParsedDecision {
   choices: number[];
-  rationale: string;
-  notebook: string;
+  rationale?: string;
+  notebook?: string;
 }
 
 interface ToolTrace extends JsonObject {
@@ -444,6 +444,7 @@ export class LLMEngine extends BaseEngine {
   private replayQueue: JsonObject[] = [];
   private generation = 0;
   private decisionController: AbortController | undefined;
+  private activeToolRequest: BattleRequest | undefined;
   private consecutiveDecisionFailures = 0;
 
   constructor(
@@ -547,12 +548,26 @@ export class LLMEngine extends BaseEngine {
     return row.action;
   }
 
+  decisionToolDefinitions(): ToolDefinition[] {
+    return structuredClone(DECISION_TOOLS) as ToolDefinition[];
+  }
+
+  lookupDecisionTool(name: string, args: JsonObject): string {
+    const request = this.activeToolRequest;
+    if (!request) throw new Error('battle tools are available only during an active decision');
+    if (!DECISION_TOOLS.some((tool) => tool.name === name)) throw new Error(`unknown battle tool ${name}`);
+    if (name === ACTION_ORDER_TOOL.name) return this.state.compareActionOrder(args, this.reference);
+    if (name === 'estimate_damage') return this.state.estimateDamage(args, request, this.reference);
+    return this.reference.lookup(name, args);
+  }
+
   override async act(request: BattleRequest, context: AgentContext): Promise<string> {
     const events = context.povLines;
     this.state.feed(events);
     this.rememberEvents(events);
     const replayed = this.replayAction(request);
     if (replayed !== undefined) return replayed;
+    this.activeToolRequest = request;
     const generation = this.generation;
     const controller = new AbortController();
     this.decisionController?.abort(new Error('new decision started'));
@@ -571,6 +586,7 @@ export class LLMEngine extends BaseEngine {
       throw caught;
     } finally {
       if (this.decisionController === controller) this.decisionController = undefined;
+      if (this.activeToolRequest === request) this.activeToolRequest = undefined;
     }
   }
 
@@ -808,11 +824,7 @@ export class LLMEngine extends BaseEngine {
             const result =
               cached !== undefined
                 ? `[identical to an earlier call this decision] ${cached}`
-                : call.name === ACTION_ORDER_TOOL.name
-                  ? this.state.compareActionOrder(call.arguments, this.reference)
-                  : call.name === 'estimate_damage'
-                    ? this.state.estimateDamage(call.arguments, request, this.reference)
-                    : this.reference.lookup(call.name, call.arguments);
+                : this.lookupDecisionTool(call.name, call.arguments);
             if (cached === undefined) seenToolResults.set(seenKey, result);
             toolCalls.push({ name: call.name, arguments: call.arguments, result });
             messages.push(toolResultMessage(call.id, result));
@@ -1035,6 +1047,10 @@ export class LLMEngine extends BaseEngine {
       selection,
       action,
       rationale,
+      evidence_supplied: {
+        rationale: pending.rationale !== undefined,
+        notebook_update: pending.notebook !== undefined,
+      },
       ...this.notebookUpdate(),
       automatic,
       fallback: pending.fallback ?? false,
@@ -1223,14 +1239,13 @@ export class LLMEngine extends BaseEngine {
         throw new Error(`choice for slot ${slot + 1} must be between 0 and ${menus[slot]!.length - 1}`);
       return index;
     });
-    const rationale = typeof object.rationale === 'string' ? object.rationale : undefined;
-    const notebook = typeof object.notebook === 'string' ? object.notebook : undefined;
-    if (rationale === undefined || notebook === undefined)
-      throw new Error('response must contain string rationale and notebook fields');
+    const rationale =
+      typeof object.rationale === 'string' ? clip(object.rationale, DECISION_RATIONALE_LIMIT) : undefined;
+    const notebook = typeof object.notebook === 'string' ? clip(object.notebook, DECISION_NOTE_LIMIT) : undefined;
     return {
       choices,
-      rationale: clip(rationale, DECISION_RATIONALE_LIMIT),
-      notebook: clip(notebook, DECISION_NOTE_LIMIT),
+      ...(rationale === undefined ? {} : { rationale }),
+      ...(notebook === undefined ? {} : { notebook }),
     };
   }
 

@@ -26,10 +26,7 @@ test('decision prompt leads with merged state and keeps mechanics compact', () =
     prompt.indexOf('Authoritative battle state and roster reference:') < prompt.indexOf('Active matchup reference'),
   );
   assert.ok(prompt.indexOf('Active matchup reference') < prompt.indexOf('Choose for Swampert'));
-  assert.match(
-    prompt,
-    /notebook":"durable cross-game facts and future plans only; no current HP, active board, or turn recap"/,
-  );
+  assert.match(prompt, /only when durable plans changed.*notebook.*complete replacement/);
   assert.doesNotMatch(prompt, /at most \d+ characters/);
   assert.equal(prompt.match(/"choices"/g)?.length, 1);
 });

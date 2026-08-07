@@ -51,8 +51,7 @@ const DRAFT_PROMPT_POLICY = {
     '{{board}}',
   ],
   turnInstruction:
-    'Reply with a single JSON object {"pick": "<board-id>", "reasoning": "<2-4 sentences>", ' +
-    '"notebook": "<updated notes to carry to your next pick>"} and nothing else.',
+    'Reply with one JSON object containing {"pick":"<board-id>"}. Optional evidence fields are "reasoning":"<concise reason>" and, only when your durable plan changed, "notebook":"<complete replacement notes for later picks>".',
   turnTemplate:
     'Overall pick {{pick}} of {{total}}. You have {{budget}} points and {{remaining}} left, and every remaining ' +
     'slot has to be filled from what is still on the board.',
@@ -509,7 +508,7 @@ export function draftUserPrompt(
 interface ParsedPick {
   mon: DraftBoardMon;
   reasoning: string;
-  notebook: string;
+  notebook?: string;
 }
 
 function rejection(
@@ -556,12 +555,11 @@ export function parsePick(
   const mon = legal.find((candidate) => candidate.id === pickId || slug(candidate.name) === pickId);
   if (!mon) return rejection(pickId, legal, state, drafter, models);
   const notebook =
-    typeof record.notebook === 'string' ? clip(record.notebook.trim(), DRAFT_PROMPT_POLICY.notebookLimit) : '';
-  if (!notebook) return '"notebook" must be a note to carry to your next pick';
+    typeof record.notebook === 'string' ? clip(record.notebook.trim(), DRAFT_PROMPT_POLICY.notebookLimit) : undefined;
   return {
     mon,
     reasoning: String(record.reasoning ?? '').trim(),
-    notebook,
+    ...(notebook === undefined ? {} : { notebook }),
   };
 }
 
@@ -831,7 +829,7 @@ export async function runDraft(models: string[], board: DraftBoard, options: Run
           } else {
             chosen = parsed.mon;
             reasoning = parsed.reasoning;
-            notebooks[drafter] = parsed.notebook;
+            if (parsed.notebook !== undefined) notebooks[drafter] = parsed.notebook;
           }
         } catch (cause) {
           const failure = classifyProviderFailure(cause, models[drafter]);
