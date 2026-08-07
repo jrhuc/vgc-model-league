@@ -12,6 +12,7 @@ function decision(overrides: Partial<GradedDecision> = {}): GradedDecision {
     phase: 'decision',
     exPost: 0.2,
     exAnte: 0.1,
+    spread: 0.5,
     discriminating: true,
     ...overrides,
   };
@@ -26,13 +27,14 @@ test('graded rows are read from the shape the grader writes', () => {
       model: 'model-a',
       phase: 'team_preview',
       ex_post: { regret: 0.4, discriminating: true },
-      ex_ante: { regret: 0.1, discriminating: true },
+      ex_ante: { regret: 0.1, spread: 0.8, discriminating: true },
     },
     { run_id: 'r', model: 'model-b' },
   ]);
   assert.equal(row?.gameNumber, 2);
   assert.equal(row?.exPost, 0.4);
   assert.equal(row?.discriminating, true);
+  assert.equal(row?.spread, 0.8);
   assert.equal(readGraded([{ run_id: 'r' }]).length, 0);
 });
 
@@ -65,6 +67,25 @@ test('the interval widens when the same decisions come from fewer games', () => 
   assert.equal(many?.decisions, few?.decisions);
   assert.ok(many && few);
   assert.ok(few.exAnte.high - few.exAnte.low > many.exAnte.high - many.exAnte.low);
+});
+
+test('the same regret counts for more in a position that had little on offer', () => {
+  const contested = summarize(
+    Array.from({ length: 10 }, (_, index) => decision({ gameNumber: index, exAnte: 0.1, spread: 1 })),
+    { resamples: 200, seed: 'fixed' },
+  );
+  const decided = summarize(
+    Array.from({ length: 10 }, (_, index) => decision({ gameNumber: index, exAnte: 0.1, spread: 0.2 })),
+    { resamples: 200, seed: 'fixed' },
+  );
+  assert.equal(contested[0]?.exAnte.mean, decided[0]?.exAnte.mean);
+  assert.ok(Math.abs((contested[0]?.share.mean ?? 0) - 0.1) < 1e-9);
+  assert.ok(Math.abs((decided[0]?.share.mean ?? 0) - 0.5) < 1e-9);
+});
+
+test('a position with nothing on offer contributes no share rather than dividing by zero', () => {
+  const summary = summarize([decision({ exAnte: 0, spread: 0 })], { resamples: 50, seed: 'fixed' });
+  assert.equal(summary[0]?.share.mean, 0);
 });
 
 test('the read gap is what hindsight adds, and is reported with the same uncertainty', () => {

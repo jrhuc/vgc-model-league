@@ -9,6 +9,7 @@ export interface GradedDecision {
   phase: string | null;
   exPost: number;
   exAnte: number;
+  spread: number;
   discriminating: boolean;
 }
 
@@ -24,6 +25,9 @@ export interface ModelRegret {
   games: number;
   exAnte: Interval;
   exPost: Interval;
+  /** Regret as a share of what the position had on offer, which stops a model that spent its games
+   * in decided positions from reading as a careful one. */
+  share: Interval;
   /** What the choice cost once the opponent's action is known, minus what it cost before. A model
    * that plans well and reads badly earns most of its regret here. */
   readGap: Interval;
@@ -49,6 +53,7 @@ export function readGraded(rows: JsonObject[]): GradedDecision[] {
       phase: typeof row.phase === 'string' ? row.phase : null,
       exPost: Number(exPost.regret),
       exAnte: Number(exAnte.regret),
+      spread: Number(exAnte.spread ?? 0),
       discriminating: Boolean(exPost.discriminating) && Boolean(exAnte.discriminating),
     });
   }
@@ -111,6 +116,11 @@ export function summarize(graded: GradedDecision[], options: SummaryOptions = {}
         pick((row) => row.exPost),
         resamples,
         `${options.seed ?? ''}post:${model}`,
+      ),
+      share: clusteredInterval(
+        pick((row) => (row.spread > 0 ? row.exAnte / row.spread : 0)),
+        resamples,
+        `${options.seed ?? ''}share:${model}`,
       ),
       readGap: clusteredInterval(
         pick((row) => row.exPost - row.exAnte),

@@ -55,6 +55,10 @@ export interface RegretView {
   best: number;
   bestAction: string;
   regret: number;
+  /** How much was on the table at all: the screen's best legal action minus its worst. A position
+   * where every action is worth the same cannot be got wrong, and a model that spends its games in
+   * such positions would otherwise look careful rather than uncontested. */
+  spread: number;
   discriminating: boolean;
 }
 
@@ -195,6 +199,7 @@ function search(
     best: bestValue.value,
     bestAction: leader.action,
     regret: Math.max(0, bestValue.value - chosenValue.value),
+    spread: Math.max(0, (screened[0]?.value ?? 0) - (screened.at(-1)?.value ?? 0)),
     /** False when no candidate could be told from any other, which is what horizon zero has to say
      * about team preview and forced switches: nothing has resolved yet. */
     discriminating: screened.length > 1 && screened[0]!.value !== screened.at(-1)!.value,
