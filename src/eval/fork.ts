@@ -21,6 +21,7 @@ export interface Position {
   requests: Record<Pid, BattleRequest>;
   actual: Record<Pid, string>;
   choiceIndex: Record<Pid, number>;
+  seen: Record<Pid, number>;
   snapshot: string;
 }
 
@@ -28,6 +29,7 @@ export interface Replay {
   verified: boolean;
   positions: Position[];
   log: string[];
+  pov: Record<Pid, string[]>;
   turns: number;
   winner: string | null;
   ranOutOfChoices: boolean;
@@ -35,8 +37,8 @@ export interface Replay {
 
 const CHOICE_LIMIT = 500;
 
-export function omniscientLog(lines: string[]): string[] {
-  const state = {
+function routeState() {
+  return {
     pov: { p1: [] as string[], p2: [] as string[] },
     log: [] as string[],
     publicLog: [] as string[],
@@ -44,6 +46,10 @@ export function omniscientLog(lines: string[]): string[] {
     winner: null as string | null,
     turns: 0,
   };
+}
+
+export function omniscientLog(lines: string[]): string[] {
+  const state = routeState();
   routeUpdateLines(
     lines.filter((line) => line),
     state,
@@ -93,8 +99,16 @@ export function replayGame(source: GameSource, recordedLog?: string[]): Replay {
   const battle = newBattle(source);
   const cursor: Record<Pid, number> = { p1: 0, p2: 0 };
   const positions: Position[] = [];
+  const state = routeState();
+  let consumed = 0;
   let ranOutOfChoices = false;
   let steps = 0;
+
+  const drain = () => {
+    const fresh = battle.log.slice(consumed).filter((line) => line);
+    consumed = battle.log.length;
+    if (fresh.length) routeUpdateLines(fresh, state);
+  };
 
   while (!battle.ended && steps++ < CHOICE_LIMIT) {
     const pending = pendingSides(battle);
@@ -111,6 +125,7 @@ export function replayGame(source: GameSource, recordedLog?: string[]): Replay {
     }
     if (ranOutOfChoices) break;
     if (pending.length === 2) {
+      drain();
       positions.push({
         index: positions.length,
         turn: battle.turn,
@@ -120,22 +135,31 @@ export function replayGame(source: GameSource, recordedLog?: string[]): Replay {
         },
         actual: { p1: taken.p1 as string, p2: taken.p2 as string },
         choiceIndex: { p1: cursor.p1 - 1, p2: cursor.p2 - 1 },
+        seen: { p1: state.pov.p1.length, p2: state.pov.p2.length },
         snapshot: JSON.stringify(battle.toJSON()),
       });
     }
     for (const pid of pending) battle.choose(pid, taken[pid] as string);
   }
 
-  const log = omniscientLog(battle.log);
+  drain();
   const expected = recordedLog === undefined ? undefined : comparable(recordedLog);
-  const produced = comparable(log);
+  const produced = comparable(state.log);
   const verified =
     expected !== undefined &&
     !ranOutOfChoices &&
     produced.length === expected.length &&
     produced.every((line, index) => line === expected[index]);
 
-  return { verified, positions, log, turns: battle.turn, winner: battle.winner || null, ranOutOfChoices };
+  return {
+    verified,
+    positions,
+    log: state.log,
+    pov: state.pov,
+    turns: battle.turn,
+    winner: battle.winner || null,
+    ranOutOfChoices,
+  };
 }
 
 export function openPosition(position: Position, psDir = defaultPsDir()): Battle {

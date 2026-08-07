@@ -151,3 +151,25 @@ test('an illegal action is rejected instead of silently doing something else', (
   const battle = openPosition(position);
   assert.equal(playJoint(battle, { p1: 'move 9', p2: position.actual.p2 }), false);
 });
+
+test('a position records what each side had actually been shown by then', () => {
+  const base = source();
+  const { choices, log } = scripted(base);
+  const replay = replayGame({ ...base, choices }, log);
+  assert.equal(replay.verified, true);
+
+  const position = replay.positions.at(-1);
+  assert.ok(position);
+  for (const pid of ['p1', 'p2'] as const) {
+    assert.ok(position.seen[pid] > 0);
+    assert.ok(position.seen[pid] <= replay.pov[pid].length);
+  }
+  assert.ok(
+    replay.positions.every((entry, index) => index === 0 || entry.seen.p1 >= replay.positions[index - 1]!.seen.p1),
+  );
+
+  const hidden = replay.pov.p2.slice(0, position.seen.p2);
+  const omniscient = replay.log.slice(0, position.seen.p2);
+  assert.notDeepEqual(hidden, omniscient);
+  assert.ok(hidden.length < replay.log.length);
+});

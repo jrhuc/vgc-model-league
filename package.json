@@ -28,7 +28,8 @@
     "build-board": "node dist/tools/build-draft-board.js",
     "fetch-sprites": "node dist/tools/fetch-sprites.js",
     "capture-requests": "node dist/tools/capture-requests.js",
-    "grade-positions": "node dist/tools/grade-positions.js"
+    "grade-positions": "node dist/tools/grade-positions.js",
+    "freeze-positions": "node dist/tools/freeze-positions.js"
   },
   "engines": {
     "node": ">=24.18.1 <25"

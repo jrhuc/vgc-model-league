@@ -195,6 +195,24 @@ Without `--pool`, standings and reports exclude the disposable `test` pool.
 They use only rotation results. Different providers for the same model ID
 count as one player within a timer group.
 
+## Grade decisions instead of results
+
+Replays every finished game from its recorded seed, teams and choices, and
+grades each decision by what the choice cost against a declared reference. See
+[Measurement principles](measurement.md) for what a regret number may mean.
+
+```sh
+pnpm run grade-positions --workers 4
+pnpm run freeze-positions --size 500 --seed set-1
+```
+
+Grading is CPU-bound and resumable: it appends whole games and skips ones
+already finished, so an interrupted run continues where it stopped. It defaults
+to a third of the machine's cores; `--restart` discards prior output. Freezing
+draws a stratified position set from the graded records into a self-contained
+artifact that later models can be evaluated on without the runs that produced
+it. Both write under `records/`.
+
 ## Archive a run
 
 Run directories hold every trace, thought log, and game log. They are the full

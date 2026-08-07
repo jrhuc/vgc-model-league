@@ -219,4 +219,36 @@ that opponent, and a cluster of models that mostly played each other has a
 well-identified internal order and a poorly-identified level against everyone
 else. The corpus this measures was accumulated, not designed: it connects 8% of
 possible pairings, which supports a modest set of direct comparisons and does
-not support a full ranking. A position set every model is evaluated on would.
+not support a full ranking. A position set every model is evaluated on does.
+
+## A frozen position set is what a serious comparison runs on
+
+Leagues, brackets and drafts stay open. Running a favourite model, a pool
+somebody assembled for fun, or six of one evolutionary family against stronger
+reasoners is the point of a playground, and none of it needs a control. Those
+games are recorded and readable like any other. What they are not is a
+benchmark, because who a model met and what it was handed decides too much of
+the result.
+
+A comparison that claims one model chooses better than another runs on a frozen
+set instead. Positions are drawn from verified games, every one of them
+discriminating, with more than one legal action and enough on offer to tell
+actions apart. They are stratified by phase, by how far into the game they sit,
+and by who was ahead, and allocated by the square root of how many exist, so a
+rare kind of position is neither crowded out by a common one nor promoted to
+parity with it. No single game may contribute more than a few, so a long game
+cannot become the benchmark. The selection is a function of the corpus and a
+seed, so the same inputs freeze the same set.
+
+Each frozen position carries what its side could actually see — that side's own
+log up to the moment of the decision, its request, and the menu it was offered
+— along with the battle state needed to reopen it. It does not carry the
+opponent's private view. A set is therefore self-contained and rerunnable
+without the run that produced it, and the model that played the position
+originally is recorded as provenance, never as an answer.
+
+Every model answers the same positions, so there is no cohort left to
+difference out and no graph to be sparse. Reaching that state also requires
+each seat to be one thing: a provider must be pinned and the provider that
+actually served the request recorded, because the same model reached two ways
+was as far apart as the field itself.
