@@ -213,11 +213,11 @@ a protocol boundary does not already buy. The decision is to expose the graded
 surface over JSON instead: positions and grading as an HTTP endpoint, battle
 reference tools as an MCP toolset.
 
-Both upstream ecosystems already assume the graded thing is an external program
+Every upstream ecosystem already assumes the graded thing is an external program
 behind a protocol — verifiers routes all model traffic through an interception
-server and runs harnesses in containers; Nous's Atropos models environments as
-microservices against a trajectory API. One service therefore serves both, and no
-adapter locks the repository in.
+server and runs harnesses in containers; NeMo Gym defines an environment as a
+dataset, a harness, a verifier and per-task state behind a service. One service
+therefore serves all of them, and no adapter locks the repository in.
 
 ## Building next
 
@@ -377,10 +377,8 @@ lead with, for reasons that all point the same way:
 - The action space is a budget-constrained combinatorial choice over a board,
   with a denial dimension: taking something because another agent needs it. That
   is adversarial reasoning about other agents' plans with a verifiable substrate.
-- Boards are regenerable, so the taskset is effectively infinite and resists
-  memorisation. Position ordering on the board is itself a measurable attention
-  effect — name-sorting once buried a mega at row 164 and it went undrafted for
-  the first time in nine drafts.
+- The taskset is effectively infinite even with the board held fixed, because the
+  other agents generate it. See below.
 - It is cheap. A draft is roughly ten decisions per agent with no battle
   simulation, against 28.9k input tokens per battle decision. Draft-only runs cost
   a small fraction of a league, which matters more here than anywhere.
@@ -390,6 +388,58 @@ lead with, for reasons that all point the same way:
   teams. Sequential multi-agent resource allocation with private valuations is
   absent from the LLM benchmark landscape, and it is a mechanism rather than a
   game, so the result generalises past Pokémon.
+
+#### The population is the taskset generator, and that is not the same as board regeneration
+
+A fixed board does not make a fixed task. What an agent is actually asked at pick
+seven is *the board minus whatever five other models took*, and that residue is
+combinatorial in the number of agents and picks. No agent can cache "at pick seven
+take X", because whether X is still there is decided by other models' private
+reasoning. The environment resamples its own task distribution as a consequence of
+being multi-agent, at zero cost, and it does so more aggressively than a shuffled
+board would — a regenerated board changes what exists, while a live population
+changes what is *available and contested*, which is the part the decision turns on.
+The same property is why a self-play draft is a usable training signal without any
+task authoring at all.
+
+That covers one threat and not the other. Opponent variance defends against
+memorising trajectories; it does not defend against memorising *valuations*. What
+each entry is worth is a property of the board, not of the position, so a
+published fixed board eventually becomes a known artifact with a learnable tier
+list, and every draft over it degrades from judgement to recall. Board
+regeneration is the only defence against that one, and it is the reason to keep
+it — not anti-memorisation in general.
+
+Regeneration is not free either. A fixed board is what makes cross-run picks
+comparable at all: the mega-slot census and the row-164 ordering effect, where
+name-sorting buried an entry and it went undrafted for the first time in nine
+drafts, are only legible because the board was the same each time. Regenerate
+every board and that entire class of finding disappears. The split is the same one
+this repository already makes everywhere else: **a frozen canonical board carries
+the census and any comparison claim; regenerated boards carry the published
+environment**, where memorisation is the threat and comparability across boards is
+not wanted.
+
+There is a sharper consequence for measurement. Population-generated variance is
+*uncontrolled* variance — a seat's draft is scored against whoever else happened
+to be in it, which is precisely the cross-play confound VGC-Bench answers with
+population evaluation. For training that variance is the point; for a benchmark
+number it is contamination. Measuring the draft therefore needs the opposite of
+the live environment: **frozen draft positions** — replay a recorded draft up to
+pick *k*, insert the model under test, grade the pick. Same board, same history,
+same question for every model. It is the draft analogue of the frozen position
+set, it reuses recorded drafts already on disk, and it costs one call per position.
+
+One honest limit, because it changes what can be claimed. Unlike a battle
+position, a draft position has no cheap oracle: valuing a pick means playing the
+season, so there is no fork-and-search regret number here and it should not be
+implied that there is. What a frozen draft position does grade, at zero
+additional cost, is the *scarcity read*. When a rationale says an entry will
+survive to the next turn, the recorded continuation settles whether it did. That
+is a verifiable claim about other agents' behaviour, checkable against ground
+truth, with no simulator and no oracle — and it is the first commitment edge in
+the chain. Draft is the better environment shape; positions remain the better
+regret vehicle. Publishing both is not hedging, it is the two halves.
 
 **`vgc-positions-v1` is the flagship single-agent eval.** Frozen set, reward
 `1 − regret_share`, mechanics-legality as a separate metric. Verifiable, dense,
@@ -417,12 +467,19 @@ offering compute and a stipend, and a multi-agent release that shipped recently
 enough to still need showcase environments. A hidden-information multi-agent
 environment with a dense simulator-verified reward is not a generic submission.
 
-Nous's Atropos is architecturally the closer fit in one respect — environments
-are microservices against a trajectory API, which suits a TypeScript simulator
-better than a Python package does — but the ecosystem, distribution and funding
-are smaller. Since the service boundary is the same shape for both, an Atropos
-adapter is a thin second client rather than a second port. Build the boundary
-generically and choose later.
+Nous's Atropos was the other candidate and is no longer one: the repository was
+archived on 2026-07-04 with an explicit unmaintained notice, and Nous now tracks
+a fork of NVIDIA's NeMo Gym instead of shipping its own environment framework.
+Checked 2026-08-07 — verifiers had been pushed to the same day.
+
+The consolidation points somewhere useful. NeMo Gym ships bridges to both
+verifiers and Harbor; verifiers ships a `HarborTaskset` that loads Harbor tasks
+directly. Harbor is the format the surviving frameworks agree on, which makes it
+the portable artifact rather than any one framework's environment class. The
+service boundary is the real asset either way: a Harbor task and a verifiers
+`Taskset` are then both thin clients of the same HTTP endpoint, and a framework
+being archived costs a client, not a port. That is the argument for building the
+boundary before picking a target, and it just paid out once.
 
 ### Recursive language models
 
