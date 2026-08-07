@@ -7,7 +7,6 @@ export interface MoveEvent {
   slot: string;
   move: string;
   turn: number;
-  /** True when the move changed nothing for anybody: every target was immune, or it plainly failed. */
   wasted: boolean;
   immune: boolean;
   failed: boolean;
@@ -59,8 +58,6 @@ const EFFECTIVE = [
   '|-mustrecharge|',
 ];
 
-/** A move that whiffed on a coin flip is not a reasoning error, so accuracy outcomes never
- * reach the classifier — they land in EFFECTIVE purely to stop the move reading as wasted. */
 const LUCK = ['|-miss|', '|-notarget|'];
 
 const PROTECT_FAMILY = new Set([
@@ -79,8 +76,6 @@ const PROTECT_FAMILY = new Set([
   'Mat Block',
 ]);
 
-/** Fails that only a wrong guess about the opponent's action produces. The move was legal,
- * informed, and lost a bet — the class that only exists because there is an opponent. */
 const READ_DEPENDENT = new Set([
   'Sucker Punch',
   'Thunderclap',
@@ -93,7 +88,6 @@ const READ_DEPENDENT = new Set([
   'Imprison',
 ]);
 
-/** Fails the visible field, side and status state fully determine before the move is chosen. */
 const STATE_DETERMINED = new Set([
   'Tailwind',
   'Light Screen',
@@ -167,9 +161,6 @@ function classify(
   return { cause: 'unknown-fail', classification: 'unclassified' };
 }
 
-/** Reads the simulator's own verdict rather than re-deriving it. Every `|-immune|` is provable
- * from information the format publishes: species types are public and open team sheets carry
- * abilities, so a move that hit nothing but an immunity was refuted by the prompt the model held. */
 export function parseGameLog(lines: string[]): MoveEvent[] {
   const events: MoveEvent[] = [];
   let turn = 0;

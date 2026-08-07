@@ -25,11 +25,7 @@ export interface ModelRegret {
   games: number;
   exAnte: Interval;
   exPost: Interval;
-  /** Regret as a share of what the position had on offer, which stops a model that spent its games
-   * in decided positions from reading as a careful one. */
   share: Interval;
-  /** What the choice cost once the opponent's action is known, minus what it cost before. A model
-   * that plans well and reads badly earns most of its regret here. */
   readGap: Interval;
 }
 
@@ -64,8 +60,6 @@ function mean(values: number[]): number {
   return values.length ? values.reduce((total, value) => total + value, 0) / values.length : 0;
 }
 
-/** Decisions inside one game share a seed, two teams and a running position, so they are nowhere
- * near independent. Resampling games rather than decisions keeps the interval honest about that. */
 function clusteredInterval(clusters: number[][], resamples: number, seed: string): Interval {
   const flat = clusters.flat();
   if (!flat.length) return { mean: 0, low: 0, high: 0 };
@@ -132,8 +126,6 @@ export function summarize(graded: GradedDecision[], options: SummaryOptions = {}
   return summaries.sort((a, b) => a.exAnte.mean - b.exAnte.mean || a.model.localeCompare(b.model));
 }
 
-/** True when two models' intervals do not overlap, which is the only claim this data supports about
- * one being better than the other. */
 export function separated(a: ModelRegret, b: ModelRegret): boolean {
   return a.exAnte.high < b.exAnte.low || b.exAnte.high < a.exAnte.low;
 }

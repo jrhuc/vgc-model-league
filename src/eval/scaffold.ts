@@ -8,10 +8,6 @@ export interface RunScaffold {
   components: Partial<Record<ScaffoldComponent, string>> | null;
 }
 
-/** A metric may pool two runs only when every component it reads is unchanged between them.
- * Play metrics all read the battle prompt, the tool set and the decision policy, so the
- * decomposition does not make them freely poolable — it makes reflection and draft revisions
- * stop invalidating them, and it names which component moved when pooling is refused. */
 export const METRIC_SCAFFOLD_DEPS = {
   'calc-fidelity': ['system', 'stateRender', 'toolRender', 'tools', 'policy'],
   'mechanics-errors': ['system', 'stateRender', 'tools', 'policy'],
@@ -43,13 +39,10 @@ export function readRunScaffold(runDir: string): RunScaffold {
 
 export interface PoolVerdict {
   poolable: boolean;
-  /** Components that differ and are read by the metric; empty when the refusal is a missing decomposition. */
   changed: ScaffoldComponent[];
   reason: 'match' | 'component-changed' | 'revision-changed' | 'unknown-scaffold';
 }
 
-/** Runs recorded before the decomposition carry only the combined revision, so they pool
- * on exact revision equality — the conservative answer, never a guess at what changed. */
 export function poolable(metric: EvalMetric, a: RunScaffold, b: RunScaffold): PoolVerdict {
   const deps = METRIC_SCAFFOLD_DEPS[metric] as readonly ScaffoldComponent[];
   if (a.components && b.components) {
@@ -67,7 +60,6 @@ export interface ScaffoldCohort {
   runs: string[];
 }
 
-/** Groups runs into maximal sets that share every component the metric reads. */
 export function cohorts(metric: EvalMetric, runs: Map<string, RunScaffold>): ScaffoldCohort[] {
   const deps = METRIC_SCAFFOLD_DEPS[metric] as readonly ScaffoldComponent[];
   const grouped = new Map<string, string[]>();

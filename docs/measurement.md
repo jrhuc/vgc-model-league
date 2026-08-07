@@ -168,6 +168,13 @@ reference. And a value read one turn after the action cannot tell team-preview
 choices apart at all, so a position whose candidates all valued the same is
 marked as such rather than recorded as a decision with nothing wrong with it.
 
+Selection and measurement run on separate draws. Quoting the best of many
+noisy estimates overstates it, by an amount that grows with the number of
+candidates — and candidates run from 94 in a mid-game turn to 360 at team
+preview, so the overstatement would not have cancelled between position types.
+A cheap screen and a refining pass pick the action; the value that enters the
+regret comes from draws neither pass has seen.
+
 Regret is reported twice. Against the action the opponent actually took, it
 reads with hindsight the player did not have. Against the uniform draw, it does
 not. The gap between them is the part of a decision that was a read rather than

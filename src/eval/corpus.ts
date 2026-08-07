@@ -23,8 +23,6 @@ export interface GameRecord {
   candidates: Record<Pid, string[]>;
   recordedLog: string[];
   decisions: Record<Pid, JsonObject[]>;
-  /** Why a game never reached the replay, when it did not. Kept so a shrinking position set can be
-   * explained rather than silently attributed to the games that happened to survive. */
   skipped: string | null;
 }
 
@@ -62,8 +60,6 @@ function readRows(file: string): JsonObject[] {
   return rows;
 }
 
-/** Open team sheets publish everything about a set except its EVs and IVs, so a `|showteam|` line
- * identifies which of a run's built teams played this game without being able to reconstruct it. */
 function sheetKey(packed: string): string {
   return packed
     .split(']')
@@ -94,9 +90,6 @@ function poolTeam(teamsDir: string, pool: string, id: string): string[] {
   }
 }
 
-/** Draft runs before the teambuild log carried a packed team still recorded every set it chose, so
- * the team is rebuilt from those sets and the board it drafted from. The rebuild is a guess about
- * fields the sets never named — the replay is what decides whether the guess was right. */
 function rebuiltTeams(options: CorpusOptions, runId: string, rows: JsonObject[]): string[] {
   const config = readJson(path.join(options.runsDir ?? RUNS_DIR, runId, 'config.json'));
   const boardId = typeof config?.board === 'string' ? config.board : null;
@@ -194,8 +187,6 @@ export function loadGameRecords(options: CorpusOptions = {}): GameRecord[] {
         records.push(incomplete('no-log'));
         continue;
       }
-      /** A game the timer or the simulator answered for a player has choices that were never
-       * written down, so it can be recognised as unreplayable before any work is spent on it. */
       const answeredForPlayer = [game.simulator_substitutions, game.timer_autodefaults].some((counts) =>
         Object.values((counts ?? {}) as Record<string, number>).some((value) => Number(value) > 0),
       );
@@ -234,8 +225,6 @@ export interface VerifiedGame {
   replay: Replay;
 }
 
-/** Team resolution is allowed to guess because it cannot lie: a candidate that is not the team that
- * played produces a different log, and only a line-for-line match is returned. */
 export function verifyGame(record: GameRecord, psDir?: string): VerifiedGame | null {
   if (record.skipped) return null;
   const choices = Object.fromEntries(

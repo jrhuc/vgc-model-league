@@ -16,21 +16,15 @@ export interface GameSource {
 }
 
 export interface Position {
-  /** Ordinal among the game's joint decisions, where both sides answered the same request. */
   index: number;
   turn: number;
   requests: Record<Pid, BattleRequest>;
   actual: Record<Pid, string>;
-  /** Which of that side's recorded decisions this position consumed, so a graded position can be
-   * joined back to the rationale the model wrote for it. Turn alone does not identify one: a turn
-   * can hold a move choice and a replacement after a faint. */
   choiceIndex: Record<Pid, number>;
   snapshot: string;
 }
 
 export interface Replay {
-  /** True only when the replay reproduced the recorded log line for line. Every downstream number
-   * rests on this: an unverified replay is a different battle wearing the same identifiers. */
   verified: boolean;
   positions: Position[];
   log: string[];
@@ -41,8 +35,6 @@ export interface Replay {
 
 const CHOICE_LIMIT = 500;
 
-/** Collapses `|split|` triples the way the simulator's own router does, so a replayed log is
- * compared against the recorded one under the definition that wrote it. */
 export function omniscientLog(lines: string[]): string[] {
   const state = {
     pov: { p1: [] as string[], p2: [] as string[] },
@@ -63,9 +55,6 @@ function comparable(lines: string[]): string[] {
   return lines.filter((line) => line && !line.startsWith('|t:|') && !line.startsWith('|timer|'));
 }
 
-/** The forfeit entry is dropped: it is always available, always loses, and never competes for the
- * best action, so carrying it through a regret matrix only multiplies simulations. Two slots cannot
- * claim the same benched Pokémon, which the per-slot menus have no way to express. */
 export function legalActions(request: BattleRequest): string[] {
   const menus = buildMenus(request);
   if (!menus.length) return [];
@@ -86,8 +75,6 @@ export function legalActions(request: BattleRequest): string[] {
 
 export function newBattle(source: GameSource): Battle {
   const { Battle: BattleClass } = loadShowdown(source.psDir ?? defaultPsDir());
-  /** Runs record the seed as the four-word array the simulator was started with; joining it is the
-   * same conversion the PRNG performs on an array, and the string form is the one the types admit. */
   const battle = new BattleClass({ formatid: source.format, seed: source.seed.join(',') as `${number},${string}` });
   for (const pid of ['p1', 'p2'] as const) {
     battle.setPlayer(pid, { name: source.names[pid], team: source.packed[pid] });
@@ -151,8 +138,6 @@ export function replayGame(source: GameSource, recordedLog?: string[]): Replay {
   return { verified, positions, log, turns: battle.turn, winner: battle.winner || null, ranOutOfChoices };
 }
 
-/** The restored battle needs its own sink: a deserialized battle has no `send`, and the simulator
- * reports a rejected choice through it rather than by returning. */
 export function openPosition(position: Position, psDir = defaultPsDir()): Battle {
   const { Battle: BattleClass } = loadShowdown(psDir);
   const battle = BattleClass.fromJSON(position.snapshot);

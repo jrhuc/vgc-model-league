@@ -5,14 +5,6 @@ import { type Rng, seededRng } from '../random.js';
 import type { BattleRequest, Pid } from '../types.js';
 import { legalActions, openPosition, type Position, pendingSides, playJoint } from './fork.js';
 
-/** Every number in this module is a value under a declared reference, never an optimum. The
- * continuation is uniform random play, the opponent model is a uniform draw from the actions the
- * opponent could legally have taken, and luck is averaged rather than replayed. Nothing here knows
- * how to play Pokémon, which is the point: it is a common yardstick, not a stronger player.
- *
- * The search is bounded, so a reported regret is a lower bound on regret under this reference: the
- * best action found is the best of those looked at, and an action the screen ranked badly on few
- * samples is never revisited. */
 export const REFERENCE = {
   continuation: 'uniform-random',
   opponent: 'uniform-legal',
@@ -21,15 +13,9 @@ export const REFERENCE = {
 
 export interface RegretOptions {
   psDir?: string;
-  /** Turns of reference continuation played after the joint action before the value is read.
-   * Zero measures only what the turn itself did; `Infinity` plays the game out. */
   horizon?: number;
-  /** Luck draws averaged per evaluated pair. A single draw would grade the decision on the crit it
-   * happened to get. */
   luckSamples?: number;
-  /** Opponent actions drawn for the hindsight-free value. */
   opponentSamples?: number;
-  /** Actions kept from the cheap screen for a full-precision second pass. */
   shortlist?: number;
   screenSamples?: number;
   seed?: string | number;
@@ -55,9 +41,6 @@ export interface RegretView {
   best: number;
   bestAction: string;
   regret: number;
-  /** How much was on the table at all: the screen's best legal action minus its worst. A position
-   * where every action is worth the same cannot be got wrong, and a model that spends its games in
-   * such positions would otherwise look careful rather than uncontested. */
   spread: number;
   discriminating: boolean;
 }
@@ -68,11 +51,7 @@ export interface PositionRegret {
   chosen: string;
   legal: number;
   horizon: number;
-  /** Against the action the opponent actually took. Reads the decision with hindsight the player
-   * did not have, so it answers "what did this cost against what happened", not "was it wrong". */
   exPost: RegretView;
-  /** Against a uniform draw from the opponent's legal actions. Hindsight-free, and the number a
-   * model can be held to. */
   exAnte: RegretView;
 }
 
@@ -87,8 +66,6 @@ function material(battle: Battle, pid: Pid): number {
   return side.pokemon.length ? total / side.pokemon.length : 0;
 }
 
-/** A finished game is worth its result; an unfinished one is worth the material it left standing.
- * Both land in [-1, 1] so a horizon that sometimes ends the game stays on one scale. */
 function value(battle: Battle, pid: Pid, name: string): number {
   if (battle.ended) {
     if (!battle.winner) return 0;
@@ -129,8 +106,6 @@ interface Trial {
   psDir: string;
 }
 
-/** Luck is keyed to the draw rather than to the action, so two candidate actions are compared in the
- * same worlds: the same damage rolls, the same crits, the same reference continuation. */
 function play(trial: Trial, action: string, opponentAction: string, draw: number): number | null {
   const battle = openPosition(trial.position, trial.psDir);
   const word = (offset: number) => 1 + ((draw * 7919 + offset * 104_729) % 0xffff);
@@ -161,10 +136,6 @@ function average(
   return samples ? { action, value: total / samples, samples } : null;
 }
 
-/** Picking the best of many noisy estimates and then quoting that estimate overstates it, and the
- * overstatement grows with the number of candidates — which varies by position type, so it would not
- * even cancel. Selection and measurement are therefore split: a cheap screen and a refining pass
- * choose the action, and the value that enters the regret comes from draws neither pass has seen. */
 function search(
   trial: Trial,
   actions: string[],
@@ -200,8 +171,6 @@ function search(
     bestAction: leader.action,
     regret: Math.max(0, bestValue.value - chosenValue.value),
     spread: Math.max(0, (screened[0]?.value ?? 0) - (screened.at(-1)?.value ?? 0)),
-    /** False when no candidate could be told from any other, which is what horizon zero has to say
-     * about team preview and forced switches: nothing has resolved yet. */
     discriminating: screened.length > 1 && screened[0]!.value !== screened.at(-1)!.value,
   };
 }
@@ -222,8 +191,6 @@ export function evaluatePosition(position: Position, pid: Pid, options: RegretOp
   const trial: Trial = { position, pid, name: openPosition(position, psDir).getSide(pid).name, horizon, psDir };
 
   const opponentLegal = legalActions(position.requests[foe(pid)]);
-  /** One draw of opponent actions serves every candidate, so the hindsight-free comparison is made
-   * against the same field rather than against a fresh sample per action. */
   const field = Array.from(
     { length: Math.min(opponentSamples, opponentLegal.length) },
     () => opponentLegal[Math.floor(random() * opponentLegal.length)] as string,
