@@ -4,7 +4,7 @@ import path from 'node:path';
 import type { DraftBoard, DraftBoardMon } from './draft.js';
 import { draftScaffoldRevision, loadBoard, runDraft, snakeOrder } from './draft.js';
 import type { BracketView, DraftPickView, DraftTableRow, DraftView, TeambuildView } from './gui/api.js';
-import { scaffoldRevision } from './llm-engine.js';
+import { scaffoldComponents, scaffoldRevision } from './llm-engine.js';
 import { BOARDS_DIR, defaultPsDir, RESULTS_PATH } from './paths.js';
 import { validateModelExecution } from './providers.js';
 import { resolveSeed, seededRng, seriesEntropy, shuffle } from './random.js';
@@ -141,6 +141,7 @@ export async function runDraftLeague(
   const timerScale = options.timerScale ?? DEFAULT_TIMER_SCALE;
   const random = seededRng(seed);
   const scaffold = scaffoldRevision();
+  const scaffoldParts = scaffoldComponents();
   const draftScaffold = draftScaffoldRevision();
   const teambuildScaffold = teambuildScaffoldRevision();
   const windowScaffold = tradeWindowScaffoldRevision();
@@ -278,6 +279,7 @@ export async function runDraftLeague(
           mode: 'draft',
           protocol_version: DRAFT_PROTOCOL_VERSION,
           scaffold,
+          scaffold_components: scaffoldParts,
           draft_scaffold: draftScaffold,
           teambuild_scaffold: teambuildScaffold,
           window_scaffold: windowScaffold,

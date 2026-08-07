@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import type { RandomEngine } from './battle-agent.js';
-import { LLMEngine, scaffoldRevision } from './llm-engine.js';
+import { LLMEngine, scaffoldComponents, scaffoldRevision } from './llm-engine.js';
 import { defaultPsDir, RESULTS_PATH } from './paths.js';
 import type { ReasoningLevel } from './providers.js';
 import { parseSpec, validateReasoning } from './providers.js';
@@ -62,6 +62,7 @@ export async function runExhibition(runDir: string, options: ExhibitionOptions):
   const seriesDir = path.join(runDir, 'series', seriesId);
   fs.mkdirSync(seriesDir, { recursive: true });
   const scaffold = scaffoldRevision();
+  const scaffoldParts = scaffoldComponents();
   const players: Record<Pid, string> = { p1: '', p2: '' };
   players[seatSide] = seatName;
   players[oppSide] = options.opponent;
@@ -72,6 +73,7 @@ export async function runExhibition(runDir: string, options: ExhibitionOptions):
         mode: 'exhibition',
         protocol_version: EXHIBITION_PROTOCOL_VERSION,
         scaffold,
+        scaffold_components: scaffoldParts,
         seat: seatSide,
         players,
         seed,

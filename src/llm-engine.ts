@@ -319,49 +319,74 @@ function goldenDecisionRender(): string {
   });
 }
 
+function decisionPolicy(): Record<string, unknown> {
+  return {
+    minTokens: DECISION_MIN_TOKENS,
+    maxTokensDeep: DECISION_MAX_TOKENS_DEEP,
+    maxTokensCeiling: DECISION_MAX_TOKENS_CEILING,
+    assumedTokensPerSecond: ASSUMED_TOKENS_PER_SECOND,
+    paceSafety: PACE_SAFETY,
+    untimedCallTimeoutSeconds: UNTIMED_CALL_TIMEOUT_S,
+    forceCommitTurnFraction: FORCE_COMMIT_TURN_FRACTION,
+    bankHealthySeconds: BANK_HEALTHY_SECONDS,
+    bankLowSeconds: BANK_LOW_SECONDS,
+    maxToolRounds: DECISION_MAX_TOOL_ROUNDS,
+    maxStandardToolCalls: DECISION_MAX_STANDARD_TOOL_CALLS,
+    maxOrderToolCalls: DECISION_MAX_ORDER_TOOL_CALLS,
+    untimedMaxToolRounds: UNTIMED_MAX_TOOL_ROUNDS,
+    untimedMaxStandardToolCalls: UNTIMED_MAX_STANDARD_TOOL_CALLS,
+    untimedMaxOrderToolCalls: UNTIMED_MAX_ORDER_TOOL_CALLS,
+    parseAttempts: DECISION_PARSE_ATTEMPTS,
+    noteLimit: DECISION_NOTE_LIMIT,
+    rationaleLimit: DECISION_RATIONALE_LIMIT,
+    temperature: DECISION_TEMPERATURE,
+    forceCommitMs: FORCE_COMMIT_MS,
+    retries: RETRY_ATTEMPTS,
+    retryBaseMs: RETRY_BASE_MS,
+    retryMinRemainingMs: RETRY_MIN_REMAINING_MS,
+    consecutiveDecisionFailureLimit: CONSECUTIVE_DECISION_FAILURE_LIMIT,
+  };
+}
+
+function digest(value: unknown): string {
+  return createHash('sha256').update(JSON.stringify(value)).digest('hex').slice(0, 12);
+}
+
+/** Key order here is load-bearing: it reproduces the pre-decomposition hash so revisions
+ * recorded by earlier runs keep the meaning they had when those runs were played. */
 export function scaffoldRevision(): string {
-  return createHash('sha256')
-    .update(
-      JSON.stringify({
-        system: SYSTEM,
-        timedSystem: TIMED_SYSTEM,
-        reflection: REFLECTION_SYSTEM,
-        seriesReflection: SERIES_REFLECTION_SYSTEM,
-        draftSeriesReflection: DRAFT_SERIES_REFLECTION_SYSTEM,
-        tools: DECISION_TOOLS,
-        decisionPolicy: {
-          minTokens: DECISION_MIN_TOKENS,
-          maxTokensDeep: DECISION_MAX_TOKENS_DEEP,
-          maxTokensCeiling: DECISION_MAX_TOKENS_CEILING,
-          assumedTokensPerSecond: ASSUMED_TOKENS_PER_SECOND,
-          paceSafety: PACE_SAFETY,
-          untimedCallTimeoutSeconds: UNTIMED_CALL_TIMEOUT_S,
-          forceCommitTurnFraction: FORCE_COMMIT_TURN_FRACTION,
-          bankHealthySeconds: BANK_HEALTHY_SECONDS,
-          bankLowSeconds: BANK_LOW_SECONDS,
-          maxToolRounds: DECISION_MAX_TOOL_ROUNDS,
-          maxStandardToolCalls: DECISION_MAX_STANDARD_TOOL_CALLS,
-          maxOrderToolCalls: DECISION_MAX_ORDER_TOOL_CALLS,
-          untimedMaxToolRounds: UNTIMED_MAX_TOOL_ROUNDS,
-          untimedMaxStandardToolCalls: UNTIMED_MAX_STANDARD_TOOL_CALLS,
-          untimedMaxOrderToolCalls: UNTIMED_MAX_ORDER_TOOL_CALLS,
-          parseAttempts: DECISION_PARSE_ATTEMPTS,
-          noteLimit: DECISION_NOTE_LIMIT,
-          rationaleLimit: DECISION_RATIONALE_LIMIT,
-          temperature: DECISION_TEMPERATURE,
-          forceCommitMs: FORCE_COMMIT_MS,
-          retries: RETRY_ATTEMPTS,
-          retryBaseMs: RETRY_BASE_MS,
-          retryMinRemainingMs: RETRY_MIN_REMAINING_MS,
-          consecutiveDecisionFailureLimit: CONSECUTIVE_DECISION_FAILURE_LIMIT,
-        },
-        reflectionMaxTokens: REFLECTION_MAX_TOKENS,
-        goldenDecision: goldenDecisionRender(),
-        referenceRender: ShowdownReference.renderRevision(),
-      }),
-    )
-    .digest('hex')
-    .slice(0, 12);
+  return digest({
+    system: SYSTEM,
+    timedSystem: TIMED_SYSTEM,
+    reflection: REFLECTION_SYSTEM,
+    seriesReflection: SERIES_REFLECTION_SYSTEM,
+    draftSeriesReflection: DRAFT_SERIES_REFLECTION_SYSTEM,
+    tools: DECISION_TOOLS,
+    decisionPolicy: decisionPolicy(),
+    reflectionMaxTokens: REFLECTION_MAX_TOKENS,
+    goldenDecision: goldenDecisionRender(),
+    referenceRender: ShowdownReference.renderRevision(),
+  });
+}
+
+export const SCAFFOLD_COMPONENTS = ['system', 'stateRender', 'toolRender', 'tools', 'policy', 'reflection'] as const;
+
+export type ScaffoldComponent = (typeof SCAFFOLD_COMPONENTS)[number];
+
+export function scaffoldComponents(): Record<ScaffoldComponent, string> {
+  return {
+    system: digest({ system: SYSTEM, timedSystem: TIMED_SYSTEM }),
+    stateRender: digest(goldenDecisionRender()),
+    toolRender: digest(ShowdownReference.renderRevision()),
+    tools: digest(DECISION_TOOLS),
+    policy: digest(decisionPolicy()),
+    reflection: digest({
+      reflection: REFLECTION_SYSTEM,
+      seriesReflection: SERIES_REFLECTION_SYSTEM,
+      draftSeriesReflection: DRAFT_SERIES_REFLECTION_SYSTEM,
+      reflectionMaxTokens: REFLECTION_MAX_TOKENS,
+    }),
+  };
 }
 
 function isRetryableError(error: unknown): boolean {

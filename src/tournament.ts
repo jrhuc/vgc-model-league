@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type { BracketView } from './gui/api.js';
-import { scaffoldRevision } from './llm-engine.js';
+import { scaffoldComponents, scaffoldRevision } from './llm-engine.js';
 import { defaultPsDir, RESULTS_PATH } from './paths.js';
 import type { ModelReasoningConfig } from './providers.js';
 import { validateModelExecution } from './providers.js';
@@ -146,6 +146,7 @@ export async function runTournament(
   const timerScale = options.timerScale ?? DEFAULT_TIMER_SCALE;
   const random = seededRng(seed);
   const scaffold = scaffoldRevision();
+  const scaffoldParts = scaffoldComponents();
 
   let format: string;
   let poolId: string | null;
@@ -226,6 +227,7 @@ export async function runTournament(
           mode: 'tournament',
           protocol_version: TOURNAMENT_PROTOCOL_VERSION,
           scaffold,
+          scaffold_components: scaffoldParts,
           models,
           seed,
           concurrency: options.concurrency ?? 2,
