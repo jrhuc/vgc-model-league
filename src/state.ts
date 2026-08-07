@@ -620,6 +620,21 @@ export class BattleState {
     };
     setMon('attacker', attacker);
     setMon('defender', defender);
+    authoritative.attacker_fainted_allies = [...this.sides[attacker.pid].mons.values()].filter(
+      (mon) => mon.fainted,
+    ).length;
+    const active = this.activeEntries();
+    for (const [side, entry] of [
+      ['attacker', attacker],
+      ['defender', defender],
+    ] as const) {
+      const ally = active.find((other) => other.pid === entry.pid && other.mon !== entry.mon);
+      if (!ally) continue;
+      authoritative[`${side}_ally`] = ally.mon.species;
+      const allyAbility = ability(ally.mon);
+      if (allyAbility) authoritative[`${side}_ally_ability`] = allyAbility;
+      if (ally.mon.item && !ally.mon.itemConsumed) authoritative[`${side}_ally_item`] = ally.mon.item;
+    }
     const screens = [...this.sides[defender.pid].conditions.keys()].filter((condition) => SCREEN_MOVES.has(condition));
     if (screens.length) authoritative.defender_screens = screens;
     if (this.weather) authoritative.weather = this.weather.name;
@@ -634,7 +649,7 @@ export class BattleState {
         monAbility ? ` (${monAbility})` : entry.mon.abilitySuppressed ? ' (ability suppressed)' : ' (ability unknown)'
       }`;
     };
-    const context = `Live battle and open-sheet state applied: ${known(attacker, 'attacker')}; ${known(defender, 'defender')}. Caller-supplied abilities, items, stats, stages, status, HP, screens, weather, and terrain are ignored.`;
+    const context = `Live battle and open-sheet state applied: ${known(attacker, 'attacker')}; ${known(defender, 'defender')}.`;
     return `${context}\n${reference.lookup('estimate_damage', authoritative)}`;
   }
 

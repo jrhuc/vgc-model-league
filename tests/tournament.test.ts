@@ -228,7 +228,7 @@ test('a stopped bracket resumes on its records and replays the interrupted serie
   assert.ok(played.includes(interrupted[0]!), 'and keeps the one it already opened');
   const first = resumed.find((row) => row.series_index === 0)!;
   assert.equal(
-    ((first.games as Array<Record<string, unknown>>)[0] ?? {}).resumed,
+    (first.games as Array<Record<string, unknown>>)[0]?.resumed,
     true,
     'the game that already finished is replayed from its log, not bought again',
   );

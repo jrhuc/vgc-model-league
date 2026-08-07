@@ -1,6 +1,6 @@
 import type { BattleLogEntryView, LeagueGameDecisionView, LeagueGameReflectionView } from '../../api';
 
-export function secondsLabel(ms: number | null): string {
+function secondsLabel(ms: number | null): string {
   return ms === null ? '' : `${Math.round(ms / 1000)}s`;
 }
 
@@ -21,6 +21,7 @@ export function GameTimeline({
       {turns.length === 0 ? <p class="empty-note">Waiting for the first battle event.</p> : null}
       {turns.map((turn) => (
         <div class="game-turn" key={turn}>
+          <div class="log-turn">{turn === 0 ? 'Team preview' : `Turn ${turn}`}</div>
           {decisions
             .filter((decision) => decision.turn === turn)
             .map((decision, index) => (

@@ -25,7 +25,11 @@ export function Mark({ spec, size = 14 }: { spec: string; size?: number }) {
   if (!slug) {
     const letter = (spec.replace(/^[^:]*:/, '').match(/[a-z0-9]/i)?.[0] ?? '?').toUpperCase();
     return (
-      <span class="mark mark-monogram" style={{ width: `${size}px`, height: `${size}px` }} aria-hidden="true">
+      <span
+        class="mark mark-monogram"
+        style={{ width: `${size}px`, height: `${size}px`, fontSize: `${Math.max(8, Math.round(size * 0.58))}px` }}
+        aria-hidden="true"
+      >
         {letter}
       </span>
     );

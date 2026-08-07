@@ -3,10 +3,11 @@ import { useEffect, useState } from 'preact/hooks';
 
 import type { LeagueGameResponse, TeambuildSetView } from '../../api';
 import { api, apiFresh } from '../http';
+import { latestFallback } from '../lib/labels';
 import { Battlefield } from './battlefield';
 import { GameReflections, GameTimeline } from './gamelog';
+import { TeamLineup } from './lineup';
 import { Mark } from './mark';
-import { SetCard } from './setcard';
 
 export type StoredGameView = LeagueGameResponse & { receivedAt: number };
 
@@ -44,15 +45,6 @@ export function useMatchGame(path: string, pollingMs: number): { view: StoredGam
   return { view, error };
 }
 
-function sideWarning(view: LeagueGameResponse, side: 0 | 1): string {
-  for (let index = view.decisions.length - 1; index >= 0; index -= 1) {
-    const decision = view.decisions[index]!;
-    if (decision.side !== side || decision.automatic) continue;
-    return decision.fallback ? 'Latest model decision used a fallback.' : '';
-  }
-  return '';
-}
-
 export function MatchGame({
   view,
   eyebrow,
@@ -88,9 +80,11 @@ export function MatchGame({
         <p class="eyebrow">{eyebrow}</p>
         <h1 class="matchup-heading">
           <span class="matchup-side">
-            <Mark spec={players[0]} size={22} />
             <span class="matchup-copy">
-              <b>{titles[0]}</b>
+              <b>
+                <Mark spec={players[0]} size={22} />
+                <span>{titles[0]}</span>
+              </b>
               {details?.[0] ? <small>{details[0]}</small> : null}
             </span>
           </span>
@@ -99,10 +93,12 @@ export function MatchGame({
           </span>
           <span class="matchup-side right">
             <span class="matchup-copy">
-              <b>{titles[1]}</b>
+              <b>
+                <span>{titles[1]}</span>
+                <Mark spec={players[1]} size={22} />
+              </b>
               {details?.[1] ? <small>{details[1]}</small> : null}
             </span>
-            <Mark spec={players[1]} size={22} />
           </span>
         </h1>
         <div class="match-game-meta">
@@ -134,7 +130,10 @@ export function MatchGame({
             receivedAt={view.receivedAt}
             players={{ p1: players[0], p2: players[1] }}
             labels={{ p1: titles[0], p2: titles[1] }}
-            warnings={{ p1: sideWarning(view, 0), p2: sideWarning(view, 1) }}
+            warnings={{
+              p1: latestFallback(view.decisions, (d) => d.side === 0),
+              p2: latestFallback(view.decisions, (d) => d.side === 1),
+            }}
             teams={{ p1: teams[0], p2: teams[1] }}
             meta={<span class="turn-badge">{view.snapshot.turn ? `Turn ${view.snapshot.turn}` : 'Team preview'}</span>}
           />
@@ -156,25 +155,12 @@ export function MatchGame({
               <p>The six each side brought for this series, with the sets from the open team sheet.</p>
             </div>
           </div>
-          <div class="lineup-grid">
-            {([0, 1] as const).map((side) => (
-              <div class="lineup-side" key={side}>
-                <h3>
-                  <Mark spec={players[side]} size={16} />
-                  {titles[side]}
-                </h3>
-                {teams[side] ? (
-                  <div class="teambuild-sets">
-                    {teams[side].map((set) => (
-                      <SetCard set={set} key={set.species} />
-                    ))}
-                  </div>
-                ) : (
-                  <p class="muted">No stored team sheet.</p>
-                )}
-              </div>
-            ))}
-          </div>
+          <TeamLineup
+            sides={[
+              { key: 'p1', model: players[0], label: titles[0], team: teams[0] },
+              { key: 'p2', model: players[1], label: titles[1], team: teams[1] },
+            ]}
+          />
         </section>
       ) : null}
 

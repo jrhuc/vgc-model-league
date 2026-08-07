@@ -11,6 +11,7 @@ import { Battlefield } from '../components/battlefield';
 import { BracketGrid } from '../components/bracket';
 import { Mark } from '../components/mark';
 import { api } from '../http';
+import { latestFallback } from '../lib/labels';
 
 export type StoredBattle = BattleMessage & { receivedAt: number };
 
@@ -112,15 +113,6 @@ function decisionLabel(decision: DecisionView): string {
   if (decision.phase === 'team_preview') return `G${decision.game} · Preview`;
   if (decision.phase === 'forced_switch') return `T${decision.turn} · Switch`;
   return `T${decision.turn}`;
-}
-
-function latestFallback(decisions: DecisionView[], pid: string): string {
-  for (let index = decisions.length - 1; index >= 0; index -= 1) {
-    const decision = decisions[index]!;
-    if (decision.pid !== pid || decision.automatic) continue;
-    return decision.fallback ? decision.error || 'The latest model decision used a fallback.' : '';
-  }
-  return '';
 }
 
 function DecisionFeed({
@@ -503,8 +495,15 @@ export function ArenaView({
                   <span class="board-index">{String(index + 1).padStart(2, '0')}</span>
                   <span class="board-match">
                     <span class="board-names">
-                      <Mark spec={item.players.p1} size={13} /> {item.players.p1} <span class="muted">vs</span>{' '}
-                      <Mark spec={item.players.p2} size={13} /> {item.players.p2}
+                      <span class="board-name">
+                        <Mark spec={item.players.p1} size={13} />
+                        <span>{item.players.p1}</span>
+                      </span>
+                      <span class="muted">vs</span>
+                      <span class="board-name">
+                        <Mark spec={item.players.p2} size={13} />
+                        <span>{item.players.p2}</span>
+                      </span>
                     </span>
                     <span class="board-detail">{rowState(item)}</span>
                   </span>
@@ -553,8 +552,16 @@ export function ArenaView({
                 snapshot={shown.snapshot}
                 receivedAt={shown.receivedAt}
                 warnings={{
-                  p1: latestFallback(shown.snapshot.decisions, 'p1'),
-                  p2: latestFallback(shown.snapshot.decisions, 'p2'),
+                  p1: latestFallback(
+                    shown.snapshot.decisions,
+                    (d) => d.pid === 'p1',
+                    (d) => d.error,
+                  ),
+                  p2: latestFallback(
+                    shown.snapshot.decisions,
+                    (d) => d.pid === 'p2',
+                    (d) => d.error,
+                  ),
                 }}
                 meta={
                   <>

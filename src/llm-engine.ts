@@ -25,6 +25,7 @@ import {
   parseSpec,
   resolveSpecOverride,
   toolResultMessage,
+  uniqueToolCalls,
 } from './providers.js';
 import type { RecoveryGate } from './recovery.js';
 import { DEX_TOOLS, ShowdownReference } from './reference.js';
@@ -183,7 +184,7 @@ const DECISION_TOOLS = [
     return {
       ...tool,
       description:
-        'Estimate damage using the current battle request and open team sheets. Supply only the two visible Pokémon and move; the harness applies known abilities, items, exact own stats, opposing nature ranges, boosts, status, HP, screens, weather, and terrain. Helping Hand and critical-hit flags are optional hypothetical modifiers.',
+        'Estimate damage using the current battle request and open team sheets. Supply only the two visible Pokémon and move; the harness applies known abilities, items, exact own stats, opposing nature ranges, boosts, status, HP, screens, weather, terrain, both active allies with their abilities, and the fainted count that scales Last Respects. Helping Hand and critical-hit flags are optional hypothetical modifiers.',
       parameters: {
         ...tool.parameters,
         properties: Object.fromEntries(
@@ -758,7 +759,11 @@ export class LLMEngine extends BaseEngine {
           const standardMax =
             deadline === undefined ? UNTIMED_MAX_STANDARD_TOOL_CALLS : DECISION_MAX_STANDARD_TOOL_CALLS;
           const orderMax = deadline === undefined ? UNTIMED_MAX_ORDER_TOOL_CALLS : DECISION_MAX_ORDER_TOOL_CALLS;
-          const { kept: calls, dropped } = boundedToolCalls(completion.toolCalls, standardMax, orderMax);
+          const { kept: calls, dropped } = boundedToolCalls(
+            uniqueToolCalls(completion.toolCalls),
+            standardMax,
+            orderMax,
+          );
           messages.push(assistantToolMessage(completion));
           for (const call of dropped) {
             const result = `Not executed: this round exceeded its budget of ${standardMax} standard and ${orderMax} order calls. Re-issue the call next round if you still need it.`;

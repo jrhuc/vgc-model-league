@@ -42,14 +42,14 @@ legal-action baseline. CLI runs read provider keys from environment variables.
 GUI runs use the keys that you enter in the browser.
 
 ```sh
-pnpm run vgcleague -- gui
-pnpm run vgcleague -- selfcheck
+pnpm run vgcleague gui
+pnpm run vgcleague selfcheck
 
-pnpm run vgcleague -- rotation   --models <spec> <spec> --pool regmb-202607 --series-per-pair 4
-pnpm run vgcleague -- tournament --models <spec> <spec> <spec> <spec> --pool regmb-202607
-pnpm run vgcleague -- tournament --models <8 specs> --pool vr-aug26-top8
-pnpm run vgcleague -- draft      --models <spec> <spec> <spec> <spec> --board regmb-202607
-pnpm run vgcleague -- exhibition --opponent <spec>
+pnpm run vgcleague rotation   --models <spec> <spec> --pool regmb-202607 --series-per-pair 4
+pnpm run vgcleague tournament --models <spec> <spec> <spec> <spec> --pool regmb-202607
+pnpm run vgcleague tournament --models <8 specs> --pool vr-aug26-top8
+pnpm run vgcleague draft      --models <spec> <spec> <spec> <spec> --board regmb-202607
+pnpm run vgcleague exhibition --opponent <spec>
 ```
 
 The GUI provides the default flow for one match. `selfcheck` runs one
@@ -164,7 +164,7 @@ results.
 Build a pool from Poképaste sources:
 
 ```sh
-pnpm run build-pool -- teams/<pool>/sources.json
+pnpm run build-pool teams/<pool>/sources.json
 ```
 
 You can also paste Showdown teambuilder exports into the GUI pool manager. The
@@ -174,14 +174,14 @@ Draft boards are immutable snapshots in `boards/<board>.json`. Build a board
 from a team pool:
 
 ```sh
-pnpm run build-board -- <pool>
+pnpm run build-board <pool>
 ```
 
 ## Inspect evidence
 
 ```sh
-pnpm run vgcleague -- standings --pool regmb-202607
-pnpm run vgcleague -- report    --pool regmb-202607
+pnpm run vgcleague standings --pool regmb-202607
+pnpm run vgcleague report    --pool regmb-202607
 ```
 
 The GUI archives finished runs: draft leagues under **Draft leagues** (rosters,
@@ -202,7 +202,7 @@ record of a season but only the published subset is ever queried, so cold runs
 do not belong on the production volume.
 
 ```sh
-pnpm run archive-run -- <run-id> [<run-id>...]
+pnpm run archive-run <run-id> [<run-id>...]
 ```
 
 Each run packs into `$VGC_RUN_ARCHIVE_DIR` (default `~/vgc-run-archive`) as a
@@ -222,9 +222,9 @@ already holds backfills any game logs it is missing.
 export VGC_LEAGUE_PUBLISH_ORIGIN=https://<deployment>
 export VGC_LEAGUE_IMPORT_TOKEN=<operator-secret>
 
-pnpm run vgcleague -- publish --dry-run
-pnpm run vgcleague -- publish
-pnpm run vgcleague -- publish --pool regmb-202607
+pnpm run vgcleague publish --dry-run
+pnpm run vgcleague publish
+pnpm run vgcleague publish --pool regmb-202607
 ```
 
 The command does not add a series that the deployment already has. Without

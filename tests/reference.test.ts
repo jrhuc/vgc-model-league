@@ -585,3 +585,72 @@ test('Unaware ignores attacker boosts in the damage estimate', () => {
   });
   assert.notEqual(range(noAbility), range(unboosted));
 });
+
+test('Last Respects scales with the attacker side fainted count', () => {
+  const reference = new ShowdownReference('gen9championsvgc2026regmb');
+  const base = { attacker: 'Basculegion', defender: 'Kingambit', move: 'Last Respects' };
+  const power = (fainted: number): number => {
+    const text = reference.lookup('estimate_damage', { ...base, attacker_fainted_allies: fainted });
+    return Number(/BP (\d+)/.exec(text)?.[1]);
+  };
+  assert.equal(power(0), 50);
+  assert.equal(power(3), 200);
+  const floor = reference.lookup('estimate_damage', { ...base, attacker_fainted_allies: 0 });
+  const nuke = reference.lookup('estimate_damage', { ...base, attacker_fainted_allies: 3 });
+  const high = (text: string): number => Number(/-(\d+(?:\.\d+)?)% of maximum HP/.exec(text)?.[1]);
+  assert.ok(high(nuke) > high(floor) * 3, `${nuke} should far outdamage ${floor}`);
+});
+
+test('active allies apply their abilities without leaking their field effects', () => {
+  const reference = new ShowdownReference('gen9championsvgc2026regmb');
+  const range = (text: string): string => /: ([\d.]+-[\d.]+)%/.exec(text)?.[1] ?? '';
+  const quake = { attacker: 'Garchomp', defender: 'Incineroar', move: 'Earthquake' };
+  const alone = range(reference.lookup('estimate_damage', quake));
+  const guarded = range(
+    reference.lookup('estimate_damage', { ...quake, defender_ally: 'Clefairy', defender_ally_ability: 'Friend Guard' }),
+  );
+  const neutral = range(
+    reference.lookup('estimate_damage', { ...quake, defender_ally: 'Clefairy', defender_ally_ability: 'Magic Guard' }),
+  );
+  assert.notEqual(guarded, alone, 'Friend Guard must reduce the estimate');
+  assert.equal(neutral, alone, 'an ally without a damage-relevant ability must change nothing');
+  const sword = range(
+    reference.lookup('estimate_damage', {
+      ...quake,
+      attacker_ally: 'Chien-Pao',
+      attacker_ally_ability: 'Sword of Ruin',
+    }),
+  );
+  assert.notEqual(sword, alone, 'a Ruin aura on the ally must reach the calculation');
+
+  const ball = { attacker: 'Politoed', defender: 'Incineroar', move: 'Weather Ball' };
+  assert.equal(
+    range(reference.lookup('estimate_damage', { ...ball, attacker_ally: 'Torkoal', attacker_ally_ability: 'Drought' })),
+    range(reference.lookup('estimate_damage', ball)),
+    "an ally's weather ability must not invent weather the caller never reported",
+  );
+  const sun = { attacker: 'Charizard-Mega-Y', defender: 'Incineroar', move: 'Heat Wave', attacker_ability: 'Drought' };
+  assert.equal(
+    range(
+      reference.lookup('estimate_damage', { ...sun, attacker_ally: 'Clefairy', attacker_ally_ability: 'Friend Guard' }),
+    ),
+    range(reference.lookup('estimate_damage', sun)),
+    'the attacker’s own weather must survive an ally being fielded',
+  );
+});
+
+test('damage estimates carry no repeated standing caveats', () => {
+  const reference = new ShowdownReference('gen9championsvgc2026regmb');
+  const text = reference.lookup('estimate_damage', {
+    attacker: 'Garchomp',
+    defender: 'Incineroar',
+    move: 'Earthquake',
+  });
+  for (const boilerplate of [
+    "Computed by the format's battle engine",
+    'Omits allies',
+    'Assumes no critical hit',
+    'are ignored',
+  ])
+    assert.ok(!text.includes(boilerplate), `standing caveat "${boilerplate}" belongs in the tool description`);
+});

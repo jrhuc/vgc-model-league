@@ -17,10 +17,7 @@ import { MatchMenu, MatchMenuRow } from '../components/matchmenu';
 import { SetCard } from '../components/setcard';
 import { Sprite } from '../components/sprite';
 import { api, apiFresh } from '../http';
-
-function displaySpec(spec: string): string {
-  return spec.replace(/:(?:nitro|floor|free)$/, '');
-}
+import { displaySpec, when } from '../lib/labels';
 
 function modelKeyOf(spec: string): string {
   const model = spec.slice(spec.indexOf(':') + 1);
@@ -28,11 +25,6 @@ function modelKeyOf(spec: string): string {
     .slice(model.lastIndexOf('/') + 1)
     .toLowerCase()
     .replace(/:(?:nitro|floor|free)$/, '');
-}
-
-function when(iso: string): string {
-  const date = new Date(iso);
-  return Number.isNaN(date.getTime()) ? iso : date.toLocaleDateString(undefined, { dateStyle: 'medium' });
 }
 
 export function teamSlug(name: string): string {
