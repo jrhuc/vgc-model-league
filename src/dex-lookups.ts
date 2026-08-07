@@ -1,5 +1,5 @@
 import type { BoardSearch } from './board-search.js';
-import { assistantToolMessage, classifyProviderFailure, toolResultMessage } from './providers.js';
+import { assistantToolMessage, classifyProviderFailure, toolResultMessage, uniqueToolCalls } from './providers.js';
 import type { RecoveryGate } from './recovery.js';
 import type { ShowdownReference } from './reference.js';
 import { DEX_TOOLS } from './reference.js';
@@ -129,8 +129,9 @@ export async function completeWithDexTools(request: DexToolRequest): Promise<Com
       };
     }
 
-    const calls = completion.toolCalls.slice(0, request.policy.maxCallsPerRound);
-    const dropped = completion.toolCalls.slice(request.policy.maxCallsPerRound);
+    const requested = uniqueToolCalls(completion.toolCalls);
+    const calls = requested.slice(0, request.policy.maxCallsPerRound);
+    const dropped = requested.slice(request.policy.maxCallsPerRound);
     request.messages.push(assistantToolMessage(completion));
     for (const call of dropped) {
       const result = `Not executed: this round exceeded its budget of ${request.policy.maxCallsPerRound} calls. Re-issue the call next round if you still need it.`;

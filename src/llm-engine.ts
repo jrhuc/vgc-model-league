@@ -25,6 +25,7 @@ import {
   parseSpec,
   resolveSpecOverride,
   toolResultMessage,
+  uniqueToolCalls,
 } from './providers.js';
 import type { RecoveryGate } from './recovery.js';
 import { DEX_TOOLS, ShowdownReference } from './reference.js';
@@ -758,7 +759,11 @@ export class LLMEngine extends BaseEngine {
           const standardMax =
             deadline === undefined ? UNTIMED_MAX_STANDARD_TOOL_CALLS : DECISION_MAX_STANDARD_TOOL_CALLS;
           const orderMax = deadline === undefined ? UNTIMED_MAX_ORDER_TOOL_CALLS : DECISION_MAX_ORDER_TOOL_CALLS;
-          const { kept: calls, dropped } = boundedToolCalls(completion.toolCalls, standardMax, orderMax);
+          const { kept: calls, dropped } = boundedToolCalls(
+            uniqueToolCalls(completion.toolCalls),
+            standardMax,
+            orderMax,
+          );
           messages.push(assistantToolMessage(completion));
           for (const call of dropped) {
             const result = `Not executed: this round exceeded its budget of ${standardMax} standard and ${orderMax} order calls. Re-issue the call next round if you still need it.`;

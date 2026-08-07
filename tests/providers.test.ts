@@ -11,6 +11,7 @@ import {
   reasoningLevels,
   SdkProvider,
   toolResultMessage,
+  uniqueToolCalls,
   validateReasoning,
 } from '../src/providers.js';
 import type { JsonObject, ProviderMessage } from '../src/types.js';
@@ -212,6 +213,25 @@ test('shared tool messages preserve typed calls', () => {
     toolCallId: 'call_1',
     content: 'Protect is a status move',
   });
+});
+
+test('a repeated call id is answered once and a missing one gets a stable name', () => {
+  const calls = [
+    { id: 'call_a', name: 'lookup_move', arguments: { name: 'Protect' } },
+    { id: 'call_a', name: 'lookup_move', arguments: { name: 'Protect' } },
+    { id: '', name: 'lookup_item', arguments: { name: 'Leftovers' } },
+  ];
+  const unique = uniqueToolCalls(calls);
+  assert.deepEqual(
+    unique.map((call) => call.id),
+    ['call_a', 'call_2'],
+    'one output per call id, and an id the model omitted is named by its position',
+  );
+  assert.deepEqual(
+    assistantToolMessage({ text: '', usage: {}, toolCalls: calls }).toolCalls,
+    unique,
+    'the assistant turn announces exactly the calls the engine will answer',
+  );
 });
 
 function jsonResponse(body: unknown, status = 200): Response {

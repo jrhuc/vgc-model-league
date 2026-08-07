@@ -20,7 +20,15 @@ import {
 import { CliProvider } from './cli-provider.js';
 import { PROVIDER_OPTIONS, providerOption } from './provider-registry.js';
 import { redactSecrets } from './sanitize.js';
-import type { CompleteOptions, Completion, JsonObject, Provider, ProviderFailure, ProviderMessage } from './types.js';
+import type {
+  CompleteOptions,
+  Completion,
+  JsonObject,
+  Provider,
+  ProviderFailure,
+  ProviderMessage,
+  ToolCall,
+} from './types.js';
 
 import { isRecord } from './value.js';
 
@@ -182,11 +190,23 @@ function parseToolArguments(value: unknown): JsonObject {
   }
 }
 
+/** Providers reject a round that answers one call id twice, and some models do repeat an id across
+ * the tool calls in a single response. Collapsing to the first occurrence is the only reply that
+ * stays valid: an invented id for the duplicate is rejected just as hard as the duplicate itself. */
+export function uniqueToolCalls(calls: ToolCall[]): ToolCall[] {
+  const byId = new Map<string, ToolCall>();
+  calls.forEach((call, index) => {
+    const id = call.id || `call_${index}`;
+    if (!byId.has(id)) byId.set(id, { ...call, id });
+  });
+  return [...byId.values()];
+}
+
 export function assistantToolMessage(completion: Completion): ProviderMessage {
   return {
     role: 'assistant',
     content: completion.text || null,
-    toolCalls: completion.toolCalls.map((call, index) => ({ ...call, id: call.id || `call_${index}` })),
+    toolCalls: uniqueToolCalls(completion.toolCalls),
     ...(completion.responseMessages?.length ? { raw: completion.responseMessages } : {}),
   };
 }
