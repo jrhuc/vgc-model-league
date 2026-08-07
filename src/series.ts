@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { DecisionLog, GameEnd, GameStart } from './battle-agent.js';
@@ -300,6 +300,7 @@ interface RecordedSeriesFields extends JsonObject {
   format: string;
   players: Record<Pid, string>;
   teams: Record<Pid, string>;
+  packed_team_digests: Record<Pid, string>;
   winner: string | null;
   winner_side: Pid | null;
   score: Record<Pid, number>;
@@ -472,6 +473,7 @@ export async function playRecordedSeries(context: RecordedSeriesContext): Promis
     path.join(seriesDir, 'series.json'),
     `${JSON.stringify({
       players: context.players,
+      packed_teams: { p1: context.teams.p1.packed, p2: context.teams.p2.packed },
       started: adopted?.started ?? new Date().toISOString(),
       ...(context.seriesIndex === undefined ? {} : { series_index: context.seriesIndex }),
     })}\n`,
@@ -558,6 +560,10 @@ export async function playRecordedSeries(context: RecordedSeriesContext): Promis
       format: context.format,
       players: context.players,
       teams: { p1: context.teams.p1.id, p2: context.teams.p2.id },
+      packed_team_digests: {
+        p1: createHash('sha256').update(context.teams.p1.packed).digest('hex'),
+        p2: createHash('sha256').update(context.teams.p2.packed).digest('hex'),
+      },
       winner: winnerSide ? context.players[winnerSide] : null,
       winner_side: winnerSide ?? null,
       score,

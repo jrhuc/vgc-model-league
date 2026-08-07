@@ -173,6 +173,34 @@ runaway model calls in every mode.
 
 Each result records the actual Showdown revision.
 
+## Evaluation boundary
+
+The live league and an external evaluation framework share the rules layer, not
+the inference client.
+
+`src/eval/corpus.ts` reconstructs historical games. New series store their exact
+packed teams in the private `series.json`; legacy games are accepted only when a
+single candidate team pair reproduces the log. `src/eval/fork.ts` owns replay,
+snapshots, and action enumeration. Counterfactual settings and the Showdown SHA
+are part of an immutable grading manifest.
+
+Frozen positions have two schemas. The public task contains only the tested
+seat's point-of-view history, own request, and action menu. The private grader
+record contains the simulator snapshot, opponent request, and provenance. Code
+that loads model tasks must not accept the private type.
+
+The first verifiers integration is a static v1 `Taskset`: TypeScript exports a
+frozen value table and Python performs strict response parsing and lookup. It
+needs no service. A later dynamic draft-to-battle `Env` will drive the same
+TypeScript referee through a versioned JSON-lines child process. HTTP is an
+optional transport if a hosted runtime requires it. MCP is used only for
+model-facing reference tools.
+
+verifiers owns external task loading, harnesses, model traffic, traces, rollout
+retries, evaluation outputs, and training integration. `LLMEngine` remains the
+local interactive client and is bypassed by the adapter; verifiers resume is not
+a replacement for replaying an interrupted battle.
+
 ## Dependency boundary
 
 The root install uses the exact pnpm version declared in `package.json`, exact

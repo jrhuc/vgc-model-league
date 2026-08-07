@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -6,6 +7,8 @@ import test from 'node:test';
 
 import { type CorpusOptions, loadGameRecords, verifyGame } from '../src/eval/corpus.js';
 import { type GameSource, legalActions, newBattle, omniscientLog, pendingSides } from '../src/eval/fork.js';
+import { defaultPsDir } from '../src/paths.js';
+import { showdownCommit } from '../src/showdown.js';
 import { loadPool } from '../src/teams.js';
 import type { JsonObject, Pid } from '../src/types.js';
 
@@ -63,6 +66,7 @@ function buildCorpus(mutate: (row: JsonObject) => void = () => {}): Corpus {
   fs.mkdirSync(seriesDir, { recursive: true });
   const logPath = path.join(seriesDir, 'game-1.log');
   fs.writeFileSync(logPath, `${log.join('\n')}\n`, 'utf8');
+  fs.writeFileSync(path.join(seriesDir, 'series.json'), JSON.stringify({ packed_teams: source.packed }), 'utf8');
   for (const pid of ['p1', 'p2'] as const) {
     const rows = choices[pid].map((action, index) =>
       JSON.stringify({ kind: 'decision', game_number: 1, turn: index, pid, action, rationale: `because ${index}` }),
@@ -83,6 +87,11 @@ function buildCorpus(mutate: (row: JsonObject) => void = () => {}): Corpus {
     pool: 'fixture',
     players,
     teams: { p1: first.id, p2: second.id },
+    ps_commit: showdownCommit(defaultPsDir()),
+    packed_team_digests: {
+      p1: createHash('sha256').update(source.packed.p1).digest('hex'),
+      p2: createHash('sha256').update(source.packed.p2).digest('hex'),
+    },
     games: [
       {
         number: 1,
@@ -90,6 +99,7 @@ function buildCorpus(mutate: (row: JsonObject) => void = () => {}): Corpus {
         log: logPath,
         simulator_substitutions: { p1: 0, p2: 0 },
         timer_autodefaults: { p1: 0, p2: 0 },
+        model_choice_fallbacks: { p1: 0, p2: 0 },
       },
     ],
   };
@@ -98,7 +108,7 @@ function buildCorpus(mutate: (row: JsonObject) => void = () => {}): Corpus {
   fs.mkdirSync(path.dirname(recordsPath), { recursive: true });
   fs.writeFileSync(recordsPath, `${JSON.stringify(row)}\n`, 'utf8');
 
-  return { root, seriesDir, recordsPath, runsDir: path.join(root, 'runs'), teamsDir: path.join(root, 'teams') };
+  return { root, seriesDir, recordsPath, runsDir: path.join(root, 'runs') };
 }
 
 test('a recorded game is found, replayed and verified against its own log', () => {
@@ -117,41 +127,17 @@ test('a recorded game is found, replayed and verified against its own log', () =
   assert.equal(game.replay.positions[0]?.actual.p1, record.decisions.p1[0]?.action);
 });
 
-test('a draft game resolves its teams from the run that built them', () => {
+test('exact packed teams are bound to the result provenance', () => {
   const corpus = buildCorpus();
-  const records = loadGameRecords(corpus);
-  const built = records[0];
-  assert.ok(built);
-  const teambuild = path.join(corpus.runsDir as string, RUN_ID, 'teambuild');
-  fs.mkdirSync(teambuild, { recursive: true });
-  fs.writeFileSync(
-    path.join(teambuild, 'teambuild.jsonl'),
-    `${[
-      { model: 'model-a', seriesIndex: 0, entrant: 0, packed: built.candidates.p1[0] },
-      { model: 'model-b', seriesIndex: 0, entrant: 1, packed: built.candidates.p2[0] },
-      { model: 'model-b', seriesIndex: 1, entrant: 1, packed: built.candidates.p1[0] },
-    ]
-      .map((row) => JSON.stringify(row))
-      .join('\n')}\n`,
-    'utf8',
-  );
-  fs.writeFileSync(
-    corpus.recordsPath,
-    `${JSON.stringify({
-      ...(JSON.parse(fs.readFileSync(corpus.recordsPath, 'utf8')) as JsonObject),
-      mode: 'draft',
-      pool: undefined,
-    })}\n`,
-    'utf8',
-  );
+  const record = loadGameRecords(corpus)[0];
+  assert.ok(record);
+  assert.equal(record.skipped, null);
 
-  const drafted = loadGameRecords(corpus)[0];
-  assert.ok(drafted);
-  assert.equal(drafted.skipped, null);
-  assert.equal(drafted.mode, 'draft');
-  assert.ok(drafted.candidates.p2.length > 1, 'every team that model built is a candidate');
-  const game = verifyGame(drafted);
-  assert.ok(game, 'the wrong candidate is discarded and the right one verifies');
+  const series = JSON.parse(fs.readFileSync(path.join(corpus.seriesDir, 'series.json'), 'utf8')) as JsonObject;
+  const packed = series.packed_teams as Record<Pid, string>;
+  packed.p1 = `${packed.p1}x`;
+  fs.writeFileSync(path.join(corpus.seriesDir, 'series.json'), JSON.stringify(series), 'utf8');
+  assert.equal(loadGameRecords(corpus)[0]?.skipped, 'unbound-team-provenance');
 });
 
 test('a game the simulator answered for a player never reaches the position set', () => {
@@ -183,8 +169,8 @@ test('missing pieces are named rather than dropped', () => {
   assert.equal(loadGameRecords(logless)[0]?.skipped, 'no-log');
 
   const teamless = buildCorpus();
-  fs.rmSync(path.join(teamless.teamsDir as string, 'fixture'), { recursive: true });
-  assert.equal(loadGameRecords(teamless)[0]?.skipped, 'no-team');
+  fs.rmSync(path.join(teamless.seriesDir, 'series.json'));
+  assert.equal(loadGameRecords(teamless)[0]?.skipped, 'unbound-team-provenance');
 
   const decisionless = buildCorpus();
   fs.rmSync(path.join(decisionless.seriesDir, 'p2-decisions.jsonl'));

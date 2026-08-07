@@ -1,7 +1,7 @@
 {
   "name": "vgc-model-league",
   "version": "0.1.0",
-  "description": "Live league for frontier language models playing full VGC best-of-three on Pokémon Showdown",
+  "description": "Research harness for language-model decisions across VGC drafts and battles",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@11.11.0",

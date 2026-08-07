@@ -1,10 +1,9 @@
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { type DraftBoard, loadBoard } from '../draft.js';
-import { defaultPsDir, REPO_ROOT, RESULTS_PATH, RUNS_DIR, TEAMS_DIR } from '../paths.js';
-import { loadShowdown } from '../showdown.js';
-import { type DexLike, packSet, type RawSet } from '../teambuild.js';
+import { defaultPsDir, REPO_ROOT, RESULTS_PATH, RUNS_DIR } from '../paths.js';
+import { showdownCommit } from '../showdown.js';
 import type { JsonObject, Pid } from '../types.js';
 import type { GameSource, Replay } from './fork.js';
 import { replayGame } from './fork.js';
@@ -16,6 +15,7 @@ export interface GameRecord {
   gameNumber: number;
   mode: string;
   format: string;
+  psCommit: string | null;
   players: Record<Pid, string>;
   scaffold: RunScaffold;
   seed: [number, number, number, number];
@@ -29,8 +29,6 @@ export interface GameRecord {
 export interface CorpusOptions {
   recordsPath?: string;
   runsDir?: string;
-  teamsDir?: string;
-  boardsDir?: string;
   psDir?: string;
   modes?: readonly string[];
 }
@@ -51,81 +49,26 @@ function readRows(file: string): JsonObject[] {
     return [];
   }
   const rows: JsonObject[] = [];
-  for (const line of raw.split('\n')) {
+  for (const [index, line] of raw.split('\n').entries()) {
     if (!line.trim()) continue;
     try {
       rows.push(JSON.parse(line) as JsonObject);
-    } catch {}
+    } catch (error) {
+      throw new Error(`malformed JSONL at ${file}:${index + 1}`, { cause: error });
+    }
   }
   return rows;
 }
 
-function sheetKey(packed: string): string {
-  return packed
-    .split(']')
-    .map((set) => {
-      const fields = set.split('|');
-      fields[6] = '';
-      fields[8] = '';
-      return fields.slice(0, 11).join('|');
-    })
-    .join(']');
+function packedDigest(packed: string): string {
+  return crypto.createHash('sha256').update(packed).digest('hex');
 }
 
-function declaredSheets(log: string[]): Partial<Record<Pid, string>> {
-  const sheets: Partial<Record<Pid, string>> = {};
-  for (const line of log) {
-    if (!line.startsWith('|showteam|')) continue;
-    const [, , pid = '', ...rest] = line.split('|');
-    if (pid === 'p1' || pid === 'p2') sheets[pid] = sheetKey(rest.join('|'));
-  }
-  return sheets;
-}
-
-function poolTeam(teamsDir: string, pool: string, id: string): string[] {
-  try {
-    return [fs.readFileSync(path.join(teamsDir, pool, `${id}.team`), 'utf8').trim()];
-  } catch {
-    return [];
-  }
-}
-
-function rebuiltTeams(options: CorpusOptions, runId: string, rows: JsonObject[]): string[] {
-  const config = readJson(path.join(options.runsDir ?? RUNS_DIR, runId, 'config.json'));
-  const boardId = typeof config?.board === 'string' ? config.board : null;
-  if (!boardId) return [];
-  let board: DraftBoard;
-  let dex: DexLike;
-  try {
-    board = loadBoard(boardId, options.boardsDir, options.psDir);
-    const { Dex } = loadShowdown(options.psDir ?? defaultPsDir());
-    const format = Dex.formats.get(board.format);
-    dex = Dex.mod(format.mod || 'base') as unknown as DexLike;
-  } catch {
-    return [];
-  }
-  const byId = new Map(board.mons.map((mon) => [mon.id, mon]));
-  const teams: string[] = [];
-  for (const row of rows) {
-    const sets = Array.isArray(row.sets) ? (row.sets as JsonObject[]) : [];
-    if (!sets.length) continue;
-    const packed: string[] = [];
-    for (const set of sets) {
-      const mon = byId.get(String(set.spriteId ?? ''));
-      if (!mon) break;
-      packed.push(packSet(dex, mon, { ...set, id: mon.id, note: '' } as unknown as RawSet));
-    }
-    if (packed.length === sets.length) teams.push(packed.join(']'));
-  }
-  return teams;
-}
-
-function builtTeams(options: CorpusOptions, runId: string, model: string): string[] {
-  const rows = readRows(path.join(options.runsDir ?? RUNS_DIR, runId, 'teambuild', 'teambuild.jsonl')).filter(
-    (row) => row.model === model,
-  );
-  const packed = rows.filter((row) => typeof row.packed === 'string').map((row) => row.packed as string);
-  return [...new Set(packed.length ? packed : rebuiltTeams(options, runId, rows))];
+function exactTeams(seriesDir: string): Record<Pid, string> | null {
+  const series = readJson(path.join(seriesDir, 'series.json'));
+  const packed = series?.packed_teams as Partial<Record<Pid, unknown>> | undefined;
+  if (typeof packed?.p1 !== 'string' || typeof packed.p2 !== 'string') return null;
+  return { p1: packed.p1, p2: packed.p2 };
 }
 
 function gameDecisions(seriesDir: string, gameNumber: number): Record<Pid, JsonObject[]> {
@@ -140,29 +83,34 @@ function gameDecisions(seriesDir: string, gameNumber: number): Record<Pid, JsonO
 
 export function loadGameRecords(options: CorpusOptions = {}): GameRecord[] {
   const runsDir = options.runsDir ?? RUNS_DIR;
-  const teamsDir = options.teamsDir ?? TEAMS_DIR;
   const scaffolds = new Map<string, RunScaffold>();
   const records: GameRecord[] = [];
+  const gameKeys = new Set<string>();
 
   for (const row of readRows(options.recordsPath ?? RESULTS_PATH)) {
     const mode = String(row.mode ?? 'unknown');
     if (options.modes && !options.modes.includes(mode)) continue;
     const runId = String(row.run_id ?? '');
     const players = row.players as Record<Pid, string>;
-    const teams = row.teams as Record<Pid, string>;
-    if (!runId || !players || !teams) continue;
+    if (!runId || !players) continue;
     if (!scaffolds.has(runId)) scaffolds.set(runId, readRunScaffold(path.join(runsDir, runId)));
 
     for (const game of (row.games ?? []) as JsonObject[]) {
       const gameNumber = Number(game.number);
+      const seriesId = String(row.series_id ?? '');
+      const gameKey = `${runId}:${seriesId}:${gameNumber}`;
+      if (gameKeys.has(gameKey)) throw new Error(`duplicate source game ${gameKey}`);
+      gameKeys.add(gameKey);
       const seed = game.seed as [number, number, number, number] | undefined;
       const logPath = typeof game.log === 'string' ? path.resolve(REPO_ROOT, game.log) : '';
+      const expectedLogPath = path.resolve(runsDir, runId, 'series', seriesId, `game-${gameNumber}.log`);
       const base: Omit<GameRecord, 'candidates' | 'recordedLog' | 'decisions' | 'seed' | 'skipped'> = {
         runId,
-        seriesId: String(row.series_id ?? ''),
+        seriesId,
         gameNumber,
         mode,
         format: String(row.format ?? ''),
+        psCommit: typeof row.ps_commit === 'string' ? row.ps_commit : null,
         players,
         scaffold: scaffolds.get(runId) as RunScaffold,
         names: { p1: `p1-${players.p1}`, p2: `p2-${players.p2}` },
@@ -180,6 +128,14 @@ export function loadGameRecords(options: CorpusOptions = {}): GameRecord[] {
         records.push(incomplete('no-seed'));
         continue;
       }
+      if (!base.psCommit) {
+        records.push(incomplete('no-showdown-revision'));
+        continue;
+      }
+      if (logPath !== expectedLogPath) {
+        records.push(incomplete('invalid-log-path'));
+        continue;
+      }
       let recordedLog: string[];
       try {
         recordedLog = fs.readFileSync(logPath, 'utf8').split('\n');
@@ -187,27 +143,33 @@ export function loadGameRecords(options: CorpusOptions = {}): GameRecord[] {
         records.push(incomplete('no-log'));
         continue;
       }
-      const answeredForPlayer = [game.simulator_substitutions, game.timer_autodefaults].some((counts) =>
-        Object.values((counts ?? {}) as Record<string, number>).some((value) => Number(value) > 0),
+      const provenance = [game.simulator_substitutions, game.timer_autodefaults, game.model_choice_fallbacks];
+      if (provenance.some((counts) => !counts || typeof counts !== 'object' || Array.isArray(counts))) {
+        records.push(incomplete('unknown-action-provenance'));
+        continue;
+      }
+      const answeredForPlayer = provenance.some((counts) =>
+        Object.values(counts as Record<string, number>).some((value) => Number(value) > 0),
       );
       if (answeredForPlayer) {
         records.push(incomplete('answered-for-player'));
         continue;
       }
 
-      const pool = typeof row.pool === 'string' ? row.pool : null;
-      const sheets = declaredSheets(recordedLog);
       const candidates: Record<Pid, string[]> = { p1: [], p2: [] };
-      for (const pid of ['p1', 'p2'] as const) {
-        const all = pool ? poolTeam(teamsDir, pool, teams[pid]) : builtTeams(options, runId, players[pid]);
-        const sheet = sheets[pid];
-        const declared = (packed: string) => sheet !== undefined && sheetKey(packed) === sheet;
-        candidates[pid] = [...all].sort((a, b) => Number(declared(b)) - Number(declared(a)));
-      }
-      if (!candidates.p1.length || !candidates.p2.length) {
-        records.push(incomplete('no-team'));
+      const storedTeams = exactTeams(path.dirname(logPath));
+      const storedDigests = row.packed_team_digests as Partial<Record<Pid, unknown>> | undefined;
+      if (
+        !storedTeams ||
+        typeof storedDigests?.p1 !== 'string' ||
+        typeof storedDigests.p2 !== 'string' ||
+        packedDigest(storedTeams.p1) !== storedDigests.p1 ||
+        packedDigest(storedTeams.p2) !== storedDigests.p2
+      ) {
+        records.push(incomplete('unbound-team-provenance'));
         continue;
       }
+      for (const pid of ['p1', 'p2'] as const) candidates[pid] = [storedTeams[pid]];
       const decisions = gameDecisions(path.dirname(logPath), gameNumber);
       if (!decisions.p1.length || !decisions.p2.length) {
         records.push(incomplete('no-decisions'));
@@ -227,10 +189,12 @@ export interface VerifiedGame {
 
 export function verifyGame(record: GameRecord, psDir?: string): VerifiedGame | null {
   if (record.skipped) return null;
+  if (record.psCommit && record.psCommit !== showdownCommit(psDir ?? defaultPsDir())) return null;
   const choices = Object.fromEntries(
     (['p1', 'p2'] as const).map((pid) => [pid, record.decisions[pid].map((row) => String(row.action))]),
   ) as Record<Pid, string[]>;
 
+  let match: VerifiedGame | null = null;
   for (const p1 of record.candidates.p1) {
     for (const p2 of record.candidates.p2) {
       const source: GameSource = {
@@ -247,8 +211,10 @@ export function verifyGame(record: GameRecord, psDir?: string): VerifiedGame | n
       } catch {
         continue;
       }
-      if (replay.verified) return { record, source, replay };
+      if (!replay.verified) continue;
+      if (match) return null;
+      match = { record, source, replay };
     }
   }
-  return null;
+  return match;
 }

@@ -77,7 +77,7 @@ test('a truncated choice list is reported rather than passed off as a finished g
   assert.equal(replay.verified, false);
 });
 
-test('every recorded position carries both sides own request and the action each took', () => {
+test('every recorded position carries each requested side action and choice index', () => {
   const base = source();
   const { choices, log } = scripted(base);
   const { positions } = replayGame({ ...base, choices }, log);
@@ -90,31 +90,60 @@ test('every recorded position carries both sides own request and the action each
   for (const [index, position] of positions.entries()) assert.equal(position.index, index);
 
   for (const position of positions) {
-    for (const pid of ['p1', 'p2'] as const) {
-      assert.equal(choices[pid][position.choiceIndex[pid]], position.actual[pid]);
+    for (const pid of position.pending) {
+      const choiceIndex = position.choiceIndex[pid];
+      assert.notEqual(choiceIndex, undefined);
+      assert.equal(choices[pid][choiceIndex as number], position.actual[pid]);
     }
   }
 });
 
-test('the action set offered to a regret matrix is the one the model was shown', () => {
+test('one-sided replacement requests remain decision positions', () => {
   const base = source();
   const { choices, log } = scripted(base);
   const { positions } = replayGame({ ...base, choices }, log);
-  const turn = positions.find((position) => position.turn > 0);
+  const replacement = positions.find((position) => position.pending.length === 1);
+  assert.ok(replacement, 'the scripted game reached a one-sided replacement');
+  const pid = replacement.pending[0] as Pid;
+  assert.equal(replacement.actual[pid], choices[pid][replacement.choiceIndex[pid] as number]);
+  assert.ok(legalActions(replacement.requests[pid]).includes(replacement.actual[pid] as string));
+});
+
+test('the counterfactual action set contains each offered legal command once', () => {
+  const base = source();
+  const { choices, log } = scripted(base);
+  const { positions } = replayGame({ ...base, choices }, log);
+  const turn = positions.find((position) => position.turn > 0 && position.pending.length === 2);
   assert.ok(turn, 'the scripted game reached a battle turn');
 
   const actions = legalActions(turn.requests.p1);
   assert.ok(actions.length > 1);
-  assert.ok(actions.includes(turn.actual.p1));
+  assert.ok(actions.includes(turn.actual.p1 as string));
   assert.equal(new Set(actions).size, actions.length);
-  assert.ok(!actions.some((action) => action.includes('forfeit')));
+  assert.ok(!actions.includes('forfeit'));
+  assert.ok(actions.every((action) => (action.match(/ mega/g) ?? []).length <= 1));
+});
+
+test('every enumerated command is accepted by Showdown at its source position', () => {
+  const base = source();
+  const { choices, log } = scripted(base);
+  const { positions } = replayGame({ ...base, choices }, log);
+  const position = positions.find((entry) => entry.turn > 0 && entry.pending.length === 2);
+  assert.ok(position);
+
+  for (const pid of ['p1', 'p2'] as const) {
+    for (const action of legalActions(position.requests[pid])) {
+      const battle = openPosition(position);
+      assert.equal(battle.choose(pid, action), true, `${pid} rejected ${action}`);
+    }
+  }
 });
 
 test('a position reopens as a live battle that alternative actions can be played from', () => {
   const base = source();
   const { choices, log } = scripted(base);
   const { positions } = replayGame({ ...base, choices }, log);
-  const position = positions.find((entry) => entry.turn > 0);
+  const position = positions.find((entry) => entry.turn > 0 && entry.pending.length === 2);
   assert.ok(position);
 
   const hp = (pid: Pid, battle: ReturnType<typeof openPosition>) =>
@@ -130,7 +159,7 @@ test('a position reopens as a live battle that alternative actions can be played
   const outcomes = new Set<string>();
   for (const action of alternatives.slice(0, 12)) {
     const forked = openPosition(position);
-    if (!playJoint(forked, { p1: action, p2: position.actual.p2 })) continue;
+    if (!playJoint(forked, { p1: action, p2: position.actual.p2 as string })) continue;
     outcomes.add(`${hp('p1', forked)}/${hp('p2', forked)}`);
   }
   assert.ok(outcomes.size > 1, 'alternative actions lead somewhere other than the same state');
@@ -145,11 +174,11 @@ test('an illegal action is rejected instead of silently doing something else', (
   const base = source();
   const { choices, log } = scripted(base);
   const { positions } = replayGame({ ...base, choices }, log);
-  const position = positions.find((entry) => entry.turn > 0);
+  const position = positions.find((entry) => entry.turn > 0 && entry.pending.length === 2);
   assert.ok(position);
 
   const battle = openPosition(position);
-  assert.equal(playJoint(battle, { p1: 'move 9', p2: position.actual.p2 }), false);
+  assert.equal(playJoint(battle, { p1: 'move 9', p2: position.actual.p2 as string }), false);
 });
 
 test('a position records what each side had actually been shown by then', () => {

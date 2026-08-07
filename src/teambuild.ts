@@ -78,7 +78,7 @@ export function teambuildScaffoldRevision(): string {
   return createHash('sha256').update(JSON.stringify(TEAMBUILD_PROMPT_POLICY)).digest('hex').slice(0, 12);
 }
 
-export interface RawSet {
+interface RawSet {
   id: string;
   item: string;
   ability: string;
@@ -131,7 +131,7 @@ function slug(value: string): string {
   );
 }
 
-export type DexLike = ReturnType<ShowdownApi['Dex']['mod']>;
+type DexLike = ReturnType<ShowdownApi['Dex']['mod']>;
 
 function legalMoves(dex: DexLike, mon: DraftBoardMon): string[] {
   const species = dex.species.get(mon.species);
@@ -362,7 +362,7 @@ function repairSet(
   };
 }
 
-export function packSet(dex: DexLike, mon: DraftBoardMon, set: RawSet): string {
+function packSet(dex: DexLike, mon: DraftBoardMon, set: RawSet): string {
   const base = dex.species.get(mon.species);
   const evs = STATS.map((stat) => (set.evs[stat] ? String(set.evs[stat]) : '')).join(',');
   return [

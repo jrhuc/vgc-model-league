@@ -18,6 +18,7 @@ function candidate(overrides: Partial<CandidatePosition> = {}): CandidatePositio
     seriesId: 'series',
     gameNumber: 1,
     positionIndex: 0,
+    positionDigest: 'digest',
     pid: 'p1',
     format: 'gen9vgc',
     scaffold: 'rev',
@@ -34,8 +35,8 @@ function candidate(overrides: Partial<CandidatePosition> = {}): CandidatePositio
 
 test('a position is placed by phase, how far in, and who was ahead', () => {
   assert.equal(stratumOf(candidate({ phase: 'team_preview', turn: 0 })), 'team_preview/preview/level');
-  assert.equal(stratumOf(candidate({ turn: 2, value: 0.5 })), 'turn/early/decided');
-  assert.equal(stratumOf(candidate({ turn: 12, value: -0.2 })), 'turn/late/tilted');
+  assert.equal(stratumOf(candidate({ turn: 2, value: 0.5 })), 'turn/early/far-ahead');
+  assert.equal(stratumOf(candidate({ turn: 12, value: -0.2 })), 'turn/late/behind');
 });
 
 test('a position nothing could be learned from is not a candidate', () => {
@@ -98,6 +99,7 @@ test('the graded rows carry everything a candidate needs', () => {
       series_id: 's',
       game_number: 2,
       position_index: 4,
+      position_digest: 'digest-4',
       pid: 'p2',
       format: 'gen9vgc',
       scaffold: 'rev',
@@ -105,8 +107,8 @@ test('the graded rows carry everything a candidate needs', () => {
       turn: 6,
       legal_actions: 88,
       chosen: 'move 1, move 2',
-      ex_ante: { regret: 0.1, spread: 0.6, chosen: -0.2, discriminating: true },
-      ex_post: { regret: 0.2, discriminating: true },
+      state_value: -0.2,
+      vs_sampled_opponent: { opportunityLoss: 0.1, span: 0.6, discriminating: true },
     },
     { run_id: 'r', pid: 'p1' },
   ]);

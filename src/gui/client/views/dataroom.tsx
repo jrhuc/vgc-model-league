@@ -175,8 +175,8 @@ function LuckLedger({ series }: { series: SeriesLuckEntry[] }) {
     })
     .sort((a, b) => b.delta - a.delta || a.entry.timestamp.localeCompare(b.entry.timestamp));
   if (decided.length === 0) return <div class="results-empty">The ledger fills in as series resolve.</div>;
-  const earned = decided.filter((row) => row.delta > 0).length;
-  const favored = decided.filter((row) => row.delta < 0).length;
+  const winnerHadMore = decided.filter((row) => row.delta > 0).length;
+  const winnerHadFewer = decided.filter((row) => row.delta < 0).length;
   const quiet = decided.filter((row) => row.winnerLuck === 0 && row.loserLuck === 0).length;
   const span = Math.max(2, ...decided.map((row) => Math.abs(row.delta)));
   const center = LUCK.label + LUCK.plot / 2;
@@ -189,10 +189,10 @@ function LuckLedger({ series }: { series: SeriesLuckEntry[] }) {
     <div class="chart-host">
       <div class="chart-legend">
         <span>
-          <i style={{ background: BLUE }} /> won despite worse luck
+          <i style={{ background: BLUE }} /> winner had more counted events
         </span>
         <span>
-          <i style={{ background: RED }} /> luck-favored win
+          <i style={{ background: RED }} /> winner had fewer counted events
         </span>
         <span>
           <i style={{ background: GRAY }} /> even
@@ -219,8 +219,8 @@ function LuckLedger({ series }: { series: SeriesLuckEntry[] }) {
             events W–L
           </text>
           <text x={0} y={height - 6} class="chart-tick">
-            {earned} earned against the luck · {favored} luck-favored · {decided.length - earned - favored} even, of
-            which {quiet} saw no adverse event at all
+            {winnerHadMore} winners had more counted events · {winnerHadFewer} had fewer ·{' '}
+            {decided.length - winnerHadMore - winnerHadFewer} equal, of which {quiet} had no counted event
           </text>
           {decided.map(({ entry, delta, loser, winnerLuck, loserLuck }, index) => {
             const y = LUCK.top + index * LUCK.row;
@@ -310,12 +310,11 @@ export function DataRoomView({
       <div class="page-heading">
         <div>
           <p class="eyebrow">Data room / {pool || 'overall'}</p>
-          <h1>Records.</h1>
+          <h1>Recorded play</h1>
         </div>
         <p class="lede">
-          How each model plays, and how the luck fell while it played. Behavior is merged across providers, formats and
-          modes; test runs stay excluded. Series counts are too small to rate models against each other, so nothing here
-          ranks them.
+          Descriptive action, tool, reliability, and chance-event records. The overall view merges providers, formats,
+          and modes, so it is not a controlled model comparison. Test runs are excluded.
         </p>
       </div>
       <div class="filter-row">
@@ -360,11 +359,11 @@ export function DataRoomView({
       <section class="panel chart-panel">
         <div class="section-head">
           <div>
-            <h2>Luck ledger</h2>
+            <h2>Recorded chance events</h2>
             <p>
-              Misses, crits taken, flinches, and full paralysis suffered by the winner minus the loser, per decided
-              series, sorted by that difference. Bars right of zero are series won despite worse luck. The right column
-              shows each side's raw counts, which separates an even series from one with few luck events.
+              Misses, critical hits taken, flinches, and full paralysis counted for the winner minus the loser, per
+              decided series. The ledger does not include damage rolls or the impact of an event and makes no causal
+              claim about the result. The right column shows the raw winner–loser counts.
             </p>
           </div>
         </div>

@@ -17,15 +17,6 @@ export interface DiscoveredModel {
 
 export const PROVIDER_OPTIONS: readonly ProviderOption[] = [
   {
-    id: 'openrouter',
-    label: 'OpenRouter',
-    description: 'One key and one bill across most models; pin a stack for benchmark runs',
-    envKey: 'OPENROUTER_API_KEY',
-    baseUrl: 'https://openrouter.ai/api/v1',
-    discovery: 'list',
-    requiresKey: true,
-  },
-  {
     id: 'anthropic',
     label: 'Anthropic',
     description: 'Claude models from Anthropic',
@@ -105,6 +96,15 @@ export const PROVIDER_OPTIONS: readonly ProviderOption[] = [
     envKey: 'ZAI_API_KEY',
     baseUrl: 'https://api.z.ai/api/paas/v4',
     discovery: 'manual',
+    requiresKey: true,
+  },
+  {
+    id: 'openrouter',
+    label: 'OpenRouter',
+    description: 'Text-generation models available through OpenRouter',
+    envKey: 'OPENROUTER_API_KEY',
+    baseUrl: 'https://openrouter.ai/api/v1',
+    discovery: 'list',
     requiresKey: true,
   },
   {

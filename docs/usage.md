@@ -151,14 +151,13 @@ the OpenRouter routing select in the GUI) applies that variant to every
 OpenRouter spec that does not already carry one — faster and usually pricier,
 so skip it when slower seats set the pace anyway.
 
-Set `VGC_OPENROUTER_PIN` to a comma-separated stack list
-(`VGC_OPENROUTER_PIN=deepinfra`) to hold a seat to those upstream providers and
-refuse any fallback. Benchmark runs should set it: one seat in this repository's
-corpus was served by nineteen different stacks, which leaves "one model" meaning
-several things. `VGC_OPENROUTER_PROVIDER` still takes a full JSON routing object
-(`{"order":["deepinfra"],"ignore":["novita"]}`) for finer control, and a pin
-overrides its ordering. Every OpenRouter response records the stack that served
-it and the reported cost on both the decision and its trace.
+Set `VGC_OPENROUTER_PIN=deepinfra` to restrict every OpenRouter request in
+the process to that upstream provider and disable fallback. Controlled runs
+should use exactly one provider. A comma-separated list defines an allowed set,
+not a single pinned route. `VGC_OPENROUTER_PROVIDER` accepts a full JSON routing
+object such as `{"order":["deepinfra"],"ignore":["novita"]}`; the pin overrides
+its `order` and `allow_fallbacks` fields. Decision and trace rows record the
+upstream provider and reported cost when OpenRouter returns them.
 
 ## Manage teams and draft boards
 
@@ -200,23 +199,30 @@ Without `--pool`, standings and reports exclude the disposable `test` pool.
 They use only rotation results. Different providers for the same model ID
 count as one player within a timer group.
 
-## Grade decisions instead of results
+## Grade recorded battle positions
 
-Replays every finished game from its recorded seed, teams and choices, and
-grades each decision by what the choice cost against a declared reference. See
-[Measurement principles](measurement.md) for what a regret number may mean.
+`grade-positions` is an experimental offline diagnostic. It attempts to replay
+candidate games exactly, grades eligible non-fallback choices at simultaneous
+requests under the reference recorded in its manifest, and writes a completion
+row for every attempted game. It is not a model-comparison runner.
 
 ```sh
-pnpm run grade-positions --workers 4
+pnpm run grade-positions --workers 4 --restart
 pnpm run freeze-positions --size 500 --seed set-1
 ```
 
-Grading is CPU-bound and resumable: it appends whole games and skips ones
-already finished, so an interrupted run continues where it stopped. It defaults
-to a third of the machine's cores; `--restart` discards prior output. Freezing
-draws a stratified position set from the graded records into a self-contained
-artifact that later models can be evaluated on without the runs that produced
-it. Both write under `records/`.
+Grading is CPU-bound and defaults to a third of the machine's cores. Resume is
+allowed only when the Showdown revision and complete counterfactual protocol
+match `<output>.manifest.json`; use `--restart` or another `--out` after changing
+settings. Scores use the realized hidden state and remain exploratory. See
+[Measurement principles](measurement.md) for their limits.
+
+Freezing writes two files. `position-set.json` contains the standardized
+point-of-view tasks. `position-set.private.json` contains simulator snapshots,
+opponent requests, source identities, and source actions for the grader. Never
+pass the private file to a model. The freezer aborts rather than silently writing
+a smaller or unreplayable set. No command on this branch yet asks a new model to
+answer the public tasks.
 
 ## Archive a run
 

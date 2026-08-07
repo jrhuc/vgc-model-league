@@ -1,5 +1,8 @@
+import crypto from 'node:crypto';
+
 import type { Battle } from 'pokemon-showdown';
 
+import { BaseEngine } from '../battle-agent.js';
 import { buildMenus } from '../choices.js';
 import { defaultPsDir } from '../paths.js';
 import { loadShowdown } from '../showdown.js';
@@ -18,11 +21,19 @@ export interface GameSource {
 export interface Position {
   index: number;
   turn: number;
+  pending: Pid[];
   requests: Record<Pid, BattleRequest>;
-  actual: Record<Pid, string>;
-  choiceIndex: Record<Pid, number>;
+  actual: Partial<Record<Pid, string>>;
+  choiceIndex: Partial<Record<Pid, number>>;
   seen: Record<Pid, number>;
   snapshot: string;
+}
+
+export function positionDigest(position: Position, pid: Pid): string {
+  return crypto
+    .createHash('sha256')
+    .update(JSON.stringify([position.snapshot, position.pending, position.actual, pid]))
+    .digest('hex');
 }
 
 export interface Replay {
@@ -34,6 +45,13 @@ export interface Replay {
   winner: string | null;
   ranOutOfChoices: boolean;
 }
+
+export const ACTION_PROTOCOL = {
+  version: 1,
+  canonicalization: 'showdown-choice-v1',
+  concession: 'excluded-stream-command',
+  jointOrder: 'active-slot',
+} as const;
 
 const CHOICE_LIMIT = 500;
 
@@ -64,19 +82,23 @@ function comparable(lines: string[]): string[] {
 export function legalActions(request: BattleRequest): string[] {
   const menus = buildMenus(request);
   if (!menus.length) return [];
-  let combinations: Array<{ parts: string[]; claimed: Set<string> }> = [{ parts: [], claimed: new Set() }];
+  let combinations: number[][] = [[]];
   for (const menu of menus) {
     combinations = combinations.flatMap((prefix) =>
-      menu.flatMap((item) => {
-        const exclusive = item.kind === 'switch' || item.kind === 'team';
-        if (item.kind === 'forfeit' || (exclusive && prefix.claimed.has(item.part))) return [];
-        const claimed = exclusive ? new Set(prefix.claimed).add(item.part) : prefix.claimed;
-        return [{ parts: [...prefix.parts, item.part], claimed }];
-      }),
+      menu.flatMap((item, index) => (item.kind === 'forfeit' ? [] : [[...prefix, index]])),
     );
   }
-  const join = (parts: string[]) => (request.teamPreview ? `team ${parts.join('')}` : parts.join(', '));
-  return [...new Set(combinations.map((combination) => join(combination.parts)))];
+  const actions: string[] = [];
+  for (const choices of combinations) {
+    let parts: string[];
+    try {
+      parts = BaseEngine.parts(menus, choices);
+    } catch {
+      continue;
+    }
+    actions.push(request.teamPreview ? `team ${parts.join('')}` : parts.join(', '));
+  }
+  return [...new Set(actions)];
 }
 
 export function newBattle(source: GameSource): Battle {
@@ -102,6 +124,7 @@ export function replayGame(source: GameSource, recordedLog?: string[]): Replay {
   const state = routeState();
   let consumed = 0;
   let ranOutOfChoices = false;
+  let rejectedChoice = false;
   let steps = 0;
 
   const drain = () => {
@@ -124,30 +147,44 @@ export function replayGame(source: GameSource, recordedLog?: string[]): Replay {
       taken[pid] = choice;
     }
     if (ranOutOfChoices) break;
-    if (pending.length === 2) {
-      drain();
-      positions.push({
-        index: positions.length,
-        turn: battle.turn,
-        requests: {
-          p1: battle.getSide('p1').activeRequest as unknown as BattleRequest,
-          p2: battle.getSide('p2').activeRequest as unknown as BattleRequest,
-        },
-        actual: { p1: taken.p1 as string, p2: taken.p2 as string },
-        choiceIndex: { p1: cursor.p1 - 1, p2: cursor.p2 - 1 },
-        seen: { p1: state.pov.p1.length, p2: state.pov.p2.length },
-        snapshot: JSON.stringify(battle.toJSON()),
-      });
+    drain();
+    positions.push({
+      index: positions.length,
+      turn: battle.turn,
+      pending,
+      requests: {
+        p1: battle.getSide('p1').activeRequest as unknown as BattleRequest,
+        p2: battle.getSide('p2').activeRequest as unknown as BattleRequest,
+      },
+      actual: taken,
+      choiceIndex: Object.fromEntries(pending.map((pid) => [pid, cursor[pid] - 1])),
+      seen: { p1: state.pov.p1.length, p2: state.pov.p2.length },
+      snapshot: JSON.stringify(battle.toJSON()),
+    });
+    for (const pid of pending) {
+      if ((taken[pid] as string).split(', ').includes('forfeit')) {
+        battle.lose(pid);
+        break;
+      }
+      if (!battle.choose(pid, taken[pid] as string)) {
+        rejectedChoice = true;
+        break;
+      }
     }
-    for (const pid of pending) battle.choose(pid, taken[pid] as string);
+    if (rejectedChoice) break;
   }
 
   drain();
   const expected = recordedLog === undefined ? undefined : comparable(recordedLog);
   const produced = comparable(state.log);
+  const consumedEveryChoice = (['p1', 'p2'] as const).every((pid) => cursor[pid] === source.choices[pid].length);
   const verified =
     expected !== undefined &&
+    battle.ended &&
+    steps <= CHOICE_LIMIT &&
     !ranOutOfChoices &&
+    !rejectedChoice &&
+    consumedEveryChoice &&
     produced.length === expected.length &&
     produced.every((line, index) => line === expected[index]);
 
@@ -169,9 +206,11 @@ export function openPosition(position: Position, psDir = defaultPsDir()): Battle
   return battle;
 }
 
-export function playJoint(battle: Battle, choices: Record<Pid, string>): boolean {
-  for (const pid of ['p1', 'p2'] as const) {
-    if (!battle.choose(pid, choices[pid])) return false;
+export function playJoint(battle: Battle, choices: Partial<Record<Pid, string>>): boolean {
+  for (const pid of pendingSides(battle)) {
+    const choice = choices[pid];
+    if (!choice || !battle.choose(pid, choice)) return false;
+    if (battle.ended) return true;
   }
   return true;
 }

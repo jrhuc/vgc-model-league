@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { evaluatePosition, REFERENCE } from '../src/eval/counterfactual.js';
 import {
   type GameSource,
   legalActions,
@@ -9,7 +10,6 @@ import {
   pendingSides,
   replayGame,
 } from '../src/eval/fork.js';
-import { evaluatePosition, REFERENCE } from '../src/eval/regret.js';
 import { loadPool } from '../src/teams.js';
 import type { Pid } from '../src/types.js';
 
@@ -60,16 +60,17 @@ function battleTurn(): Position {
 }
 
 test('the reference every number is measured against is named, not implied', () => {
-  assert.deepEqual(Object.keys(REFERENCE).toSorted(), ['continuation', 'opponent', 'value']);
+  assert.deepEqual(Object.keys(REFERENCE).toSorted(), ['continuation', 'hiddenState', 'opponent', 'value']);
 });
 
-test('regret is non-negative and the chosen action never beats the best found', () => {
+test('the held-out estimate reports rather than hides selection reversals', () => {
   const result = evaluatePosition(battleTurn(), 'p1', { ...BUDGET, horizon: 0 });
   assert.ok(result);
-  for (const view of [result.exPost, result.exAnte]) {
-    assert.ok(view.regret >= 0);
-    assert.ok(view.best >= view.chosen - 1e-9);
-    assert.ok(Math.abs(view.regret - Math.max(0, view.best - view.chosen)) < 1e-9);
+  for (const view of [result.vsActualOpponent, result.vsSampledOpponent]) {
+    assert.ok(view.opportunityLoss >= 0);
+    assert.ok(Math.abs(view.signedGap - (view.selected - view.chosen)) < 1e-9);
+    assert.ok(Math.abs(view.opportunityLoss - Math.max(0, view.signedGap)) < 1e-9);
+    assert.equal(view.selectionReversed, view.signedGap < 0);
   }
   assert.ok(result.legal > 1);
   assert.equal(result.horizon, 0);
@@ -82,18 +83,18 @@ test('the same position and budget grade the same way twice', () => {
   assert.deepEqual(first, second);
 });
 
-test('taking the action the search preferred does not score worse than the one taken', () => {
+test('submitting the action selected on the search panel removes its measured positive gap', () => {
   const position = battleTurn();
   const graded = evaluatePosition(position, 'p1', { ...BUDGET, horizon: 0, seed: 'fixed' });
   assert.ok(graded);
-  if (graded.exPost.bestAction === graded.chosen) {
-    assert.equal(graded.exPost.regret, 0);
+  if (graded.vsActualOpponent.selectedAction === graded.chosen) {
+    assert.equal(graded.vsActualOpponent.opportunityLoss, 0);
     return;
   }
-  const swapped: Position = { ...position, actual: { ...position.actual, p1: graded.exPost.bestAction } };
+  const swapped: Position = { ...position, actual: { ...position.actual, p1: graded.vsActualOpponent.selectedAction } };
   const rerun = evaluatePosition(swapped, 'p1', { ...BUDGET, horizon: 0, seed: 'fixed' });
   assert.ok(rerun);
-  assert.ok(rerun.exPost.regret <= graded.exPost.regret + 1e-9);
+  assert.ok(rerun.vsActualOpponent.opportunityLoss <= graded.vsActualOpponent.opportunityLoss + 1e-9);
 });
 
 test('a horizon of zero admits that it cannot grade team preview', () => {
@@ -103,18 +104,55 @@ test('a horizon of zero admits that it cannot grade team preview', () => {
 
   const myopic = evaluatePosition(preview, 'p1', { ...BUDGET, horizon: 0 });
   assert.ok(myopic);
-  assert.equal(myopic.exAnte.discriminating, false);
-  assert.equal(myopic.exAnte.regret, 0);
+  assert.equal(myopic.vsSampledOpponent.discriminating, false);
+  assert.equal(myopic.vsSampledOpponent.opportunityLoss, 0);
 
   const played = evaluatePosition(preview, 'p1', { ...BUDGET, horizon: 2 });
   assert.ok(played);
-  assert.equal(played.exAnte.discriminating, true);
+  assert.equal(played.vsSampledOpponent.discriminating, true);
 });
 
 test('a position the recorded action is not legal in is refused rather than graded', () => {
   const position = battleTurn();
   const invented: Position = { ...position, actual: { ...position.actual, p1: 'move 9 9' } };
   assert.equal(evaluatePosition(invented, 'p1', { ...BUDGET, horizon: 0 }), null);
+});
+
+function oneSidedReplacement(): Position {
+  const pool = loadPool();
+  const [first, second] = pool.teams;
+  if (!first || !second) throw new Error('the test pool needs two teams');
+  const base: GameSource = {
+    format: pool.format,
+    seed: [11, 22, 33, 44],
+    names: { p1: 'p1-a', p2: 'p2-b' },
+    packed: { p1: first.packed, p2: second.packed },
+    choices: { p1: [], p2: [] },
+  };
+  const battle = newBattle(base);
+  let steps = 0;
+  while (!battle.ended && steps++ < 400) {
+    const pending = pendingSides(battle);
+    for (const pid of pending) {
+      const action = legalActions(battle.getSide(pid).activeRequest as never)[0];
+      if (!action) throw new Error(`no legal action for ${pid}`);
+      base.choices[pid].push(action);
+    }
+    for (const pid of pending) battle.choose(pid, base.choices[pid].at(-1) as string);
+  }
+  const replay = replayGame(base, omniscientLog(battle.log));
+  const position = replay.positions.find((entry) => entry.pending.length === 1);
+  assert.ok(position, 'the deterministic game reached a one-sided replacement');
+  return position;
+}
+
+test('a one-sided replacement is graded without inventing an opponent action', () => {
+  const position = oneSidedReplacement();
+  const pid = position.pending[0] as Pid;
+  const result = evaluatePosition(position, pid, { ...BUDGET, horizon: 0 });
+  assert.ok(result);
+  assert.equal(result.chosen, position.actual[pid]);
+  assert.deepEqual(result.vsSampledOpponent, result.vsActualOpponent);
 });
 
 test('both sides of the same position are gradeable', () => {
