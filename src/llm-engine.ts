@@ -607,6 +607,7 @@ export class LLMEngine extends BaseEngine {
       action: row.action,
       rationale: typeof row.rationale === 'string' ? row.rationale : '',
       notebook: this.notebook,
+      menus: this.contextMenus(buildMenus(request, this.menuHints(request))),
       replayed: true,
     });
     return row.action;
@@ -634,6 +635,7 @@ export class LLMEngine extends BaseEngine {
     this.state.feed(events);
     this.rememberEvents(events);
     this.appendObservation(events);
+    this.appendRequestObservation(request);
     const replayed = this.replayAction(request);
     if (replayed !== undefined) return replayed;
     this.activeToolRequest = request;
@@ -1114,6 +1116,7 @@ export class LLMEngine extends BaseEngine {
       action,
       rationale,
       notebook: this.notebook,
+      menus: this.contextMenus(menus),
       evidence_supplied: {
         rationale: pending.rationale !== undefined,
         notebook_update: pending.notebook !== undefined,
@@ -1542,10 +1545,27 @@ export class LLMEngine extends BaseEngine {
     });
   }
 
+  private appendRequestObservation(request: BattleRequest): void {
+    this.appendContext('observation', {
+      game_id: this.gameId,
+      series_id: this.seriesId ?? null,
+      game_number: this.gameNumber,
+      turn: this.state.turn,
+      event: 'battle_request',
+      request,
+    });
+  }
+
+  private contextMenus(menus: SlotMenu[]) {
+    return menus.map((menu) => menu.map(({ label, part, kind }) => ({ label, part, kind })));
+  }
+
   private appendContext(kind: AgentContextKind, payload: JsonObject): void {
     const event = this.fullContext.append(kind, { ...payload, attempt_id: this.contextAttempt });
     this.writeLog(this.options.contextLog, {
       kind: 'agent_context',
+      pid: this.pid,
+      series_id: this.seriesId ?? null,
       context_id: event.id,
       sequence: event.sequence,
       context_kind: event.kind,

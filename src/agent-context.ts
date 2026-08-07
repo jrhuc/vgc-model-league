@@ -54,7 +54,12 @@ export class AgentContextStream {
     return this.events.at(-1)?.id ?? null;
   }
 
-  read(query: AgentContextQuery = {}): { events: AgentContextEvent[]; cursor: string | null; more: boolean } {
+  read(query: AgentContextQuery = {}): {
+    events: AgentContextEvent[];
+    nextCursor: string | null;
+    headCursor: string | null;
+    more: boolean;
+  } {
     const after = sequenceOf(query.after, 0);
     const before = sequenceOf(query.before, Number.POSITIVE_INFINITY);
     if (query.kind !== undefined && !['episode', 'observation', 'decision', 'reflection'].includes(query.kind))
@@ -65,9 +70,11 @@ export class AgentContextStream {
     const eligible = this.events.filter(
       (event) => event.sequence > after && event.sequence < before && (!query.kind || event.kind === query.kind),
     );
+    const events = eligible.slice(0, limit);
     return {
-      events: structuredClone(eligible.slice(0, limit)),
-      cursor: this.cursor(),
+      events: structuredClone(events),
+      nextCursor: events.at(-1)?.id ?? null,
+      headCursor: this.cursor(),
       more: eligible.length > limit,
     };
   }

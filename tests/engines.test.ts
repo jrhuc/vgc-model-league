@@ -171,22 +171,45 @@ test('LLM choices parse prose, retry, and record fallbacks', async () => {
   }
 });
 
-test('full seat context remains cursor-addressable when compact prompts move on', async () => {
+test('full seat context retains request snapshots and complete accepted decision menus', async () => {
   const provider = new ScriptedProvider(['{"choices":[1]}']);
   const contextRows: Record<string, unknown>[] = [];
   const engine = new LLMEngine('p1', 'scripted', { provider, contextLog: contextRows });
+  const battleRequest = request();
   engine.beginGame({ gameId: 'game-1', gameNumber: 1, seriesId: 'series-1' });
-  assert.equal(await engine.act(request(), { povLines: ['|turn|1'] }), 'move 2');
+  assert.equal(await engine.act(battleRequest, { povLines: ['|turn|1'] }), 'move 2');
+  battleRequest.active![0]!.moves = [];
+
   const context = engine.readContext();
   assert.deepEqual(
     context.events.map((event) => event.kind),
-    ['episode', 'observation', 'decision'],
+    ['episode', 'observation', 'observation', 'decision'],
   );
-  assert.equal(context.cursor, 'ctx-00000003');
-  assert.deepEqual(engine.readContext({ after: 'ctx-00000001', limit: 1 }).events[0]?.payload.lines, ['|turn|1']);
+  assert.equal(context.nextCursor, 'ctx-00000004');
+  assert.equal(context.headCursor, 'ctx-00000004');
+  assert.deepEqual(context.events[1]!.payload.lines, ['|turn|1']);
+  assert.equal(context.events[2]!.payload.event, 'battle_request');
+  assert.deepEqual(context.events[2]!.payload.request, request());
+  assert.equal('opponent' in (context.events[2]!.payload.request as BattleRequest), false);
+  assert.deepEqual(context.events[3]!.payload.menus, [
+    [
+      { label: 'First', part: 'move 1', kind: 'move' },
+      { label: 'Second', part: 'move 2', kind: 'move' },
+      { label: 'Forfeit the game (concede the loss)', part: 'forfeit', kind: 'forfeit' },
+    ],
+  ]);
+  const page = engine.readContext({ after: 'ctx-00000001', limit: 1 });
+  assert.deepEqual(page.events[0]?.payload.lines, ['|turn|1']);
+  assert.equal(page.nextCursor, 'ctx-00000002');
+  assert.equal(page.headCursor, 'ctx-00000004');
   assert.deepEqual(
-    contextRows.map((row) => row.context_id),
-    ['ctx-00000001', 'ctx-00000002', 'ctx-00000003'],
+    contextRows.map((row) => ({ context_id: row.context_id, pid: row.pid, series_id: row.series_id })),
+    [
+      { context_id: 'ctx-00000001', pid: 'p1', series_id: 'series-1' },
+      { context_id: 'ctx-00000002', pid: 'p1', series_id: 'series-1' },
+      { context_id: 'ctx-00000003', pid: 'p1', series_id: 'series-1' },
+      { context_id: 'ctx-00000004', pid: 'p1', series_id: 'series-1' },
+    ],
   );
 });
 
