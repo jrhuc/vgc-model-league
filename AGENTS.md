@@ -2,10 +2,18 @@
 
 ## North star
 
-This repository exists to answer one open-ended question: how well can a
-language model play a VGC game? It is a playground for models, not a product.
-Every line of code serves that question — enable models to play at their full
-ability rather than engineering them into compliance with a constraint.
+This repository exists to answer one open-ended question: how well does a
+language model *decide*, when the substrate is a VGC game? It is a playground
+for models, not a product. Every line of code serves that question — enable
+models to play at their full ability rather than engineering them into
+compliance with a constraint.
+
+The unit is the decision, not the match. Who won is one bit that a critical hit
+can flip, and it is the part of this any other repository could reproduce.
+What cannot be reproduced elsewhere is a forkable simulator grading a choice
+against its alternatives, and a season that makes a model commit to a plan in
+the draft and then shows whether it ever cashed it out. Standings are
+description; they are never the result.
 
 Drift check before building anything: is this solving the play-quality
 question, or has it become an engineering problem in its own right (timers,
