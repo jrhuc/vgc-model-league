@@ -17,13 +17,15 @@ export const REFERENCE = {
 } as const;
 
 export const EXHAUSTIVE_PANEL_PROTOCOL = {
-  version: 1,
+  version: 2,
   panels: ['stability-a', 'stability-b', 'measurement'],
-  opponent: 'sampled-uniform-legal-when-simultaneous-or-null-when-unilateral',
+  opponent: 'srswor-uniform-legal-when-simultaneous-or-null-census-when-unilateral',
   commonRandomNumbers: ['opponent-action', 'battle-rng', 'continuation-rng'],
   completeness: 'rectangular-or-ineligible',
   normalization: '(measurement-mean-min)/(max-min)',
-  uncertainty: 'sample-standard-error-and-paired-normal-95-lower-bound',
+  uncertaintyEstimator: 'two-stage-srswor-opponent-cluster-v1',
+  uncertaintyRequirements: 'at-least-two-luck-replications-and-two-opponent-slots-unless-opponent-census-size-one',
+  normalApproximation: 'diagnostic-mean-minus-1.96-standard-errors-not-claimed-calibrated',
 } as const;
 
 export interface CounterfactualOptions {
@@ -101,7 +103,7 @@ export interface PositionScore {
 export interface ExhaustiveActionValue {
   action: string;
   value: number;
-  standardError: number;
+  standardError: number | null;
   samples: number;
   reward: number | null;
 }
@@ -110,8 +112,8 @@ export interface HeldOutGap {
   selectedAction: string;
   alternativeAction: string;
   value: number;
-  standardError: number;
-  lower95: number;
+  standardError: number | null;
+  normalApproxLower95: number | null;
 }
 
 export interface ExhaustiveDraw {
@@ -124,6 +126,9 @@ export interface ExhaustiveDraw {
 export interface ExhaustivePanel {
   id: 'stability-a' | 'stability-b' | 'measurement';
   seedNamespace: string;
+  opponentPopulation: number;
+  opponentSlots: number;
+  luckReplications: number;
   draws: ExhaustiveDraw[];
   actions: ExhaustiveActionValue[];
   matrix: number[][];
@@ -247,11 +252,46 @@ function mean(values: readonly number[]): number {
   return values.reduce((sum, entry) => sum + entry, 0) / values.length;
 }
 
-function standardError(values: readonly number[]): number {
-  if (values.length < 2) return 0;
+function sampleVariance(values: readonly number[]): number {
   const center = mean(values);
-  const variance = values.reduce((sum, entry) => sum + (entry - center) ** 2, 0) / (values.length - 1);
-  return Math.sqrt(variance / values.length);
+  return values.reduce((sum, entry) => sum + (entry - center) ** 2, 0) / (values.length - 1);
+}
+
+export interface TwoStageClusterEstimate {
+  value: number;
+  standardError: number | null;
+}
+
+/** Estimates a mean from opponent actions sampled without replacement, with repeated luck draws
+ * inside each opponent-action block. For n sampled opponents from population N, block means b_i,
+ * m luck replications, sampling fraction f=n/N, between-block sample variance s_b^2, and within-block
+ * sample variances s_i^2, V-hat=(1-f)s_b^2/n + f mean(s_i^2/m)/n. The finite-population correction
+ * removes opponent-action uncertainty at a census while retaining simulation uncertainty. A null
+ * standard error means the luck stage, or a non-census opponent stage, is not replicated enough to
+ * identify its variance. Normal approximations made from this diagnostic standard error are not
+ * claimed to be calibrated confidence bounds. */
+export function twoStageClusterEstimate(
+  blocks: readonly (readonly number[])[],
+  opponentPopulation: number,
+): TwoStageClusterEstimate {
+  const opponentSlots = blocks.length;
+  if (!Number.isInteger(opponentPopulation) || opponentPopulation < 1)
+    throw new Error('opponentPopulation must be a positive integer');
+  if (!opponentSlots || opponentSlots > opponentPopulation)
+    throw new Error('blocks must contain between one and opponentPopulation opponent slots');
+  const luckReplications = blocks[0]?.length ?? 0;
+  if (!luckReplications || blocks.some((block) => block.length !== luckReplications))
+    throw new Error('opponent blocks must be non-empty and have equal luck replications');
+  const blockMeans = blocks.map(mean);
+  const value = mean(blockMeans);
+  if (luckReplications < 2 || (opponentSlots < 2 && opponentSlots < opponentPopulation)) {
+    return { value, standardError: null };
+  }
+  const samplingFraction = opponentSlots / opponentPopulation;
+  const betweenVariance = opponentSlots > 1 ? sampleVariance(blockMeans) : 0;
+  const withinMeanVariance = mean(blocks.map((block) => sampleVariance(block) / luckReplications));
+  const variance = ((1 - samplingFraction) * betweenVariance + samplingFraction * withinMeanVariance) / opponentSlots;
+  return { value, standardError: Math.sqrt(Math.max(0, variance)) };
 }
 
 function playDraw(trial: Trial, action: string, draw: ExhaustiveDraw): number | null {
@@ -423,22 +463,38 @@ function exhaustivePanel(
     }
     matrix.push(row);
   }
-  const columns = actions.map((_, actionIndex) => matrix.map((row) => row[actionIndex] as number));
-  const values = columns.map(mean);
+  const opponentPopulation = opponentLegal.length || 1;
+  const opponentSlots = opponents.length;
+  const luckReplications = draws.length / opponentSlots;
+  const estimates: ExhaustiveActionValue[] = actions.map((action, actionIndex) => {
+    const blocks = opponents.map((_, opponentIndex) =>
+      matrix
+        .slice(opponentIndex * luckReplications, (opponentIndex + 1) * luckReplications)
+        .map((row) => row[actionIndex] as number),
+    );
+    const estimate = twoStageClusterEstimate(blocks, opponentPopulation);
+    return { action, ...estimate, samples: draws.length, reward: null };
+  });
+  const values = estimates.map((entry) => entry.value);
   const maximum = Math.max(...values);
   const minimum = Math.min(...values);
   const span = maximum - minimum;
-  const estimates = actions.map((action, index) => ({
-    action,
-    value: values[index] as number,
-    standardError: standardError(columns[index] as number[]),
-    samples: draws.length,
-    reward: span > 0 ? ((values[index] as number) - minimum) / span : null,
-  }));
+  for (const estimate of estimates) estimate.reward = span > 0 ? (estimate.value - minimum) / span : null;
   const matrixDigest = createHash('sha256')
     .update(JSON.stringify([id, seedNamespace, draws, actions, matrix]))
     .digest('hex');
-  return { id, seedNamespace, draws, actions: estimates, matrix, matrixDigest, span };
+  return {
+    id,
+    seedNamespace,
+    opponentPopulation,
+    opponentSlots,
+    luckReplications,
+    draws,
+    actions: estimates,
+    matrix,
+    matrixDigest,
+    span,
+  };
 }
 
 function rankedActions(panel: ExhaustivePanel): ExhaustiveActionValue[] {
@@ -504,14 +560,14 @@ export function evaluateActionTable(
   const selectedIndex = actions.indexOf(selectionBest.action);
   const worstIndex = actions.indexOf(selectionWorst.action);
   const alternativeIndex = actions.indexOf(stabilityAlternative.action);
-  const differences = stabilityB.matrix.map(
-    (row) => (row[selectedIndex] as number) - (row[alternativeIndex] as number),
-  );
-  const spanDifferences = stabilityB.matrix.map((row) => (row[selectedIndex] as number) - (row[worstIndex] as number));
-  const gapValue = mean(differences);
-  const gapStandardError = standardError(differences);
-  const spanValue = mean(spanDifferences);
-  const spanStandardError = standardError(spanDifferences);
+  const differenceBlocks = (comparisonIndex: number) =>
+    Array.from({ length: stabilityB.opponentSlots }, (_, opponentIndex) =>
+      stabilityB.matrix
+        .slice(opponentIndex * stabilityB.luckReplications, (opponentIndex + 1) * stabilityB.luckReplications)
+        .map((row) => (row[selectedIndex] as number) - (row[comparisonIndex] as number)),
+    );
+  const gapEstimate = twoStageClusterEstimate(differenceBlocks(alternativeIndex), stabilityB.opponentPopulation);
+  const spanEstimate = twoStageClusterEstimate(differenceBlocks(worstIndex), stabilityB.opponentPopulation);
   const firstAnchors = anchors(stabilityA);
   const secondAnchors = anchors(stabilityB);
   const anchorAgreement =
@@ -538,16 +594,18 @@ export function evaluateActionTable(
     heldOutGap: {
       selectedAction: selectionBest.action,
       alternativeAction: stabilityAlternative.action,
-      value: gapValue,
-      standardError: gapStandardError,
-      lower95: gapValue - 1.96 * gapStandardError,
+      value: gapEstimate.value,
+      standardError: gapEstimate.standardError,
+      normalApproxLower95:
+        gapEstimate.standardError === null ? null : gapEstimate.value - 1.96 * gapEstimate.standardError,
     },
     heldOutSpan: {
       selectedAction: selectionBest.action,
       alternativeAction: selectionWorst.action,
-      value: spanValue,
-      standardError: spanStandardError,
-      lower95: spanValue - 1.96 * spanStandardError,
+      value: spanEstimate.value,
+      standardError: spanEstimate.standardError,
+      normalApproxLower95:
+        spanEstimate.standardError === null ? null : spanEstimate.value - 1.96 * spanEstimate.standardError,
     },
     stability: [stabilityA, stabilityB],
     measurement,

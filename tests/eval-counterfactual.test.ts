@@ -1,6 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { evaluateActionTable, evaluatePosition, REFERENCE } from '../src/eval/counterfactual.js';
+import {
+  EXHAUSTIVE_PANEL_PROTOCOL,
+  evaluateActionTable,
+  evaluatePosition,
+  REFERENCE,
+  twoStageClusterEstimate,
+} from '../src/eval/counterfactual.js';
 import {
   type GameSource,
   legalActions,
@@ -61,6 +67,53 @@ function battleTurn(): Position {
 
 test('the reference every number is measured against is named, not implied', () => {
   assert.deepEqual(Object.keys(REFERENCE).toSorted(), ['continuation', 'hiddenState', 'opponent', 'value']);
+  assert.equal(EXHAUSTIVE_PANEL_PROTOCOL.uncertaintyEstimator, 'two-stage-srswor-opponent-cluster-v1');
+  assert.match(EXHAUSTIVE_PANEL_PROTOCOL.normalApproximation, /not-claimed-calibrated/);
+});
+
+test('the clustered estimator retains only within-opponent uncertainty at an opponent census', () => {
+  const estimate = twoStageClusterEstimate(
+    [
+      [1, 3],
+      [5, 7],
+    ],
+    2,
+  );
+  assert.equal(estimate.value, 4);
+  assert.ok(Math.abs((estimate.standardError as number) - Math.sqrt(0.5)) < 1e-12);
+});
+
+test('the clustered estimator applies the opponent finite population correction to a sampled subset', () => {
+  const estimate = twoStageClusterEstimate(
+    [
+      [1, 3],
+      [5, 7],
+    ],
+    4,
+  );
+  assert.equal(estimate.value, 4);
+  assert.equal(estimate.standardError, 1.5);
+});
+
+test('paired action differences use opponent blocks before estimating uncertainty', () => {
+  const selected = [
+    [4, 8],
+    [3, 7],
+  ];
+  const alternative = [
+    [1, 2],
+    [2, 4],
+  ];
+  const pairedBlocks = selected.map((block, opponentIndex) =>
+    block.map((entry, luckIndex) => entry - (alternative[opponentIndex]?.[luckIndex] as number)),
+  );
+  const estimate = twoStageClusterEstimate(pairedBlocks, 4);
+  assert.equal(estimate.value, 3.25);
+  assert.ok(Math.abs((estimate.standardError as number) - Math.sqrt(1.1875)) < 1e-12);
+});
+
+test('an unreplicated luck stage reports unidentified uncertainty instead of zero', () => {
+  assert.deepEqual(twoStageClusterEstimate([[1], [3]], 4), { value: 2, standardError: null });
 });
 
 test('the held-out estimate reports rather than hides selection reversals', () => {
@@ -145,10 +198,29 @@ test('the exhaustive table uses complete, normalized, common-draw action panels'
   } else {
     assert.ok(table.measurement.actions.every((entry) => entry.reward === null));
   }
+  assert.equal(table.measurement.opponentSlots, BUDGET.opponentSamples);
+  assert.ok(table.measurement.opponentPopulation >= table.measurement.opponentSlots);
+  assert.equal(table.measurement.luckReplications, BUDGET.luckSamples);
   assert.equal(table.measurement.matrix.length, BUDGET.luckSamples * BUDGET.opponentSamples);
   assert.ok(table.measurement.matrix.every((row) => row.length === legal.length));
+  assert.ok(table.measurement.actions.every((entry) => entry.standardError !== null));
   assert.equal(new Set(table.stability.map((panel) => panel.matrixDigest)).size, 2);
   assert.equal(table.heldOutGap.selectedAction, table.selectionBest);
+  assert.notEqual(table.heldOutGap.normalApproxLower95, null);
+});
+
+test('an exhaustive panel exposes and refuses uncertainty from one luck replication', () => {
+  const table = evaluateActionTable(battleTurn(), 'p1', {
+    ...BUDGET,
+    horizon: 0,
+    luckSamples: 1,
+    seed: 'unreplicated-table',
+  });
+  assert.ok(table);
+  assert.equal(table.measurement.luckReplications, 1);
+  assert.ok(table.measurement.actions.every((entry) => entry.standardError === null));
+  assert.equal(table.heldOutGap.standardError, null);
+  assert.equal(table.heldOutGap.normalApproxLower95, null);
 });
 
 test('the exhaustive table is deterministic for a fixed sampling namespace', () => {
