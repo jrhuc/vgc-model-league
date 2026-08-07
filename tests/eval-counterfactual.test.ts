@@ -83,6 +83,18 @@ test('the same position and budget grade the same way twice', () => {
   assert.deepEqual(first, second);
 });
 
+test('the sampling namespace changes luck and continuation panels, not only opponent order', () => {
+  const position = battleTurn();
+  const first = evaluatePosition(position, 'p1', { ...BUDGET, horizon: 2, seed: 'panel-a' });
+  const second = evaluatePosition(position, 'p1', { ...BUDGET, horizon: 2, seed: 'panel-b' });
+  assert.ok(first);
+  assert.ok(second);
+  assert.notDeepEqual(
+    [first.vsActualOpponent, first.vsSampledOpponent],
+    [second.vsActualOpponent, second.vsSampledOpponent],
+  );
+});
+
 test('submitting the action selected on the search panel removes its measured positive gap', () => {
   const position = battleTurn();
   const graded = evaluatePosition(position, 'p1', { ...BUDGET, horizon: 0, seed: 'fixed' });

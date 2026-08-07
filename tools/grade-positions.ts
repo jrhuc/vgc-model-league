@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { isMainThread, parentPort, Worker, workerData } from 'node:worker_threads';
 import { type GameRecord, loadGameRecords, verifyGame } from '../src/eval/corpus.js';
 import { type CounterfactualOptions, counterfactualProtocol, evaluatePosition } from '../src/eval/counterfactual.js';
-import { ACTION_PROTOCOL, positionDigest } from '../src/eval/fork.js';
+import { ACTION_PROTOCOL, positionDigest, requestPhase } from '../src/eval/fork.js';
 import { DATA_DIR, defaultPsDir } from '../src/paths.js';
 import { showdownCommit } from '../src/showdown.js';
 import type { JsonObject } from '../src/types.js';
@@ -284,7 +284,7 @@ function gradeShard(shard: Shard, emit: (graded: GradedGame) => void): void {
           );
           continue;
         }
-        const seed = `${settings.seed ?? 'source'}:${key}:${position.index}:${pid}`;
+        const seed = `${settings.seed ?? 'source-game-position'}:${key}:${position.index}:${pid}`;
         const graded = evaluatePosition(position, pid, { ...settings, seed });
         if (!graded) {
           stats.failed += 1;
@@ -309,7 +309,7 @@ function gradeShard(shard: Shard, emit: (graded: GradedGame) => void): void {
           position_digest: positionDigest(position, pid),
           choice_index: choiceIndex,
           turn: graded.turn,
-          phase: decision.phase ?? null,
+          phase: requestPhase(position.requests[pid]),
           legal_actions: graded.legal,
           chosen: graded.chosen,
           state_value: graded.stateValue,

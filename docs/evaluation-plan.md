@@ -252,9 +252,13 @@ configs/
   train/vgc-positions-v1.toml
 ```
 
-Pin the initial verifiers version. The position package should use the tool-less
-`null` harness unless parity tests justify a task-scoped MCP toolset. A shell or
-coding harness increases both scaffold differences and score-table leakage.
+Pin the first package to `verifiers==0.3.0`. Scaffold it with
+`uvx --from verifiers==0.3.0 init vgc-positions-v1 --path environments`; the
+released `prime` CLI does not initialize native-v1 packages. Local configuration
+must set `[env.agent.harness] id = "null"` explicitly because a plain taskset may
+otherwise receive the bash harness. With no task toolsets, `null` is one tool-less
+chat completion. A shell, coding, or MCP-enabled harness increases both scaffold
+differences and score-table leakage.
 
 ### Product compatibility is a test matrix
 

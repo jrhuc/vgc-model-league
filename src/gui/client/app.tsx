@@ -47,7 +47,10 @@ function routeFromHash(): Route {
     };
   }
   if (head === 'tournaments') return { view: 'tournaments', ...(second ? { run: second } : {}) };
-  if (head === 'data') return { view: 'data', ...(second ? { model: second } : {}) };
+  if (head === 'data') {
+    const retiredSections = new Set(['play', 'ladder', 'deliberation', 'reliability', 'chance']);
+    return { view: 'data', ...(second && !retiredSections.has(second) ? { model: second } : {}) };
+  }
   if (head === 'arena' || head === 'league') return { view: 'arena' };
   if (head === 'results') {
     if (second === 'brackets') return { view: 'tournaments' };

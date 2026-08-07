@@ -8,8 +8,13 @@ import { api } from '../http';
 
 const BLUE = 'var(--chart-blue)';
 const RED = 'var(--chart-red)';
+const INK = 'var(--chart-ink)';
 const LINE = 'var(--chart-line)';
 const GRAY = 'var(--chart-gray)';
+
+function seconds(ms: number): string {
+  return ms >= 100_000 ? `${Math.round(ms / 1000)}s` : `${(ms / 1000).toFixed(1)}s`;
+}
 
 function pct(value: number | null): string {
   return value === null ? '–' : `${(100 * value).toFixed(value >= 0.995 ? 0 : 1)}%`;
@@ -17,6 +22,106 @@ function pct(value: number | null): string {
 
 function perDecision(value: number | null): string {
   return value === null ? '–' : value.toFixed(2);
+}
+
+const STRIP = { label: 220, plot: 520, median: 74, tokens: 90, row: 27, top: 26, bottom: 8 };
+
+function LatencyStrip({ models }: { models: ModelEvidence[] }) {
+  const [tip, showTip, hideTip] = useTip();
+  const ranked = models
+    .filter((model) => model.latency && model.points.length > 0)
+    .sort((a, b) => a.spec.localeCompare(b.spec));
+  if (ranked.length === 0) return <div class="results-empty">Decision logs appear after the first recorded run.</div>;
+  const tokensSeen = ranked.some((model) => model.tokens);
+  const values = ranked.flatMap((model) => model.points.map((point) => point.ms));
+  const low = Math.max(1000, Math.min(...values) * 0.85);
+  const high = Math.max(...values) * 1.1;
+  const x = (ms: number) =>
+    STRIP.label + ((Math.log(ms) - Math.log(low)) / (Math.log(high) - Math.log(low))) * STRIP.plot;
+  const ticks = [5_000, 10_000, 30_000, 60_000, 120_000, 300_000, 600_000].filter(
+    (tick) => tick >= low && tick <= high,
+  );
+  const width = STRIP.label + STRIP.plot + STRIP.median + (tokensSeen ? STRIP.tokens : 0);
+  const medianX = STRIP.label + STRIP.plot + STRIP.median - 6;
+  const height = STRIP.top + ranked.length * STRIP.row + STRIP.bottom;
+  return (
+    <div class="chart-host">
+      <div class="table-scroll">
+        <svg width={width} height={height} role="img" aria-label="Decision latency by model">
+          {ticks.map((tick) => (
+            <g key={tick}>
+              <line x1={x(tick)} x2={x(tick)} y1={STRIP.top - 8} y2={height - STRIP.bottom} stroke={LINE} />
+              <text x={x(tick)} y={STRIP.top - 13} text-anchor="middle" class="chart-tick">
+                {tick >= 60_000 ? `${tick / 60_000}m` : `${tick / 1000}s`}
+              </text>
+            </g>
+          ))}
+          {ranked.map((model, index) => {
+            const y = STRIP.top + index * STRIP.row + STRIP.row / 2;
+            const stat = model.latency!;
+            return (
+              <g key={model.spec}>
+                <text x={STRIP.label - 12} y={y + 3.5} text-anchor="end" class="chart-label">
+                  <title>
+                    {model.spec} · {model.points.length} logged decisions
+                  </title>
+                  {model.spec}
+                </text>
+                <rect
+                  x={x(stat.p25)}
+                  y={y - 7}
+                  width={Math.max(1, x(stat.p75) - x(stat.p25))}
+                  height={14}
+                  fill={BLUE}
+                  opacity={0.1}
+                />
+                {model.points.map((point, pointIndex) => (
+                  /* biome-ignore lint/a11y/noStaticElementInteractions: hover tooltip supplements the visible median labels */
+                  <circle
+                    key={pointIndex}
+                    aria-label={`${model.spec} game ${point.game} turn ${point.turn}: ${seconds(point.ms)}`}
+                    cx={x(point.ms)}
+                    cy={y}
+                    r={4}
+                    fill={BLUE}
+                    fill-opacity={0.3}
+                    stroke="#ffffff"
+                    stroke-width={1}
+                    onMouseMove={(event) =>
+                      showTip(event as unknown as MouseEvent, [
+                        `${model.spec}`,
+                        `game ${point.game}, turn ${point.turn} (${point.phase.replaceAll('_', ' ')})`,
+                        `${seconds(point.ms)} to decide${point.tokens ? ` · ${point.tokens} tokens` : ''}`,
+                      ])
+                    }
+                    onMouseLeave={hideTip}
+                  />
+                ))}
+                <line x1={x(stat.median)} x2={x(stat.median)} y1={y - 9} y2={y + 9} stroke={INK} stroke-width={2} />
+                <text x={medianX} y={y + 3.5} text-anchor="end" class="chart-value">
+                  {seconds(stat.median)}
+                </text>
+                {tokensSeen && (
+                  <text x={width - 6} y={y + 3.5} text-anchor="end" class="chart-value">
+                    {model.tokens ? Math.round(model.tokens.median).toLocaleString() : '–'}
+                  </text>
+                )}
+              </g>
+            );
+          })}
+          <text x={medianX} y={STRIP.top - 13} text-anchor="end" class="chart-tick">
+            median
+          </text>
+          {tokensSeen && (
+            <text x={width - 6} y={STRIP.top - 13} text-anchor="end" class="chart-tick">
+              med tokens
+            </text>
+          )}
+        </svg>
+      </div>
+      <Tooltip tip={tip} />
+    </div>
+  );
 }
 
 interface RateColumn {
@@ -199,7 +304,7 @@ function LuckLedger({ series }: { series: SeriesLuckEntry[] }) {
         </span>
       </div>
       <div class="table-scroll">
-        <svg width={width} height={height} role="img" aria-label="Adverse luck differential per series">
+        <svg width={width} height={height} role="img" aria-label="Recorded adverse-event count differential per series">
           {ticks.map((tick) => (
             <line
               key={tick}
@@ -341,8 +446,8 @@ export function DataRoomView({
           <div>
             <h2>Play profile</h2>
             <p>
-              How each model plays, not how well: action mix and tool use, shaded against each column's maximum. Ordered
-              by name, because ordering it by results would imply the results separate these models.
+              Observed action mix and tool use under the teams, formats, positions, providers, and scaffolds in scope.
+              These are not stable model traits or measures of quality. Rows are ordered by name.
             </p>
           </div>
         </div>
@@ -355,6 +460,20 @@ export function DataRoomView({
           rgb="20, 88, 230"
           onOpenModel={onOpenModel}
         />
+      </section>
+      <section class="panel chart-panel">
+        <div class="section-head">
+          <div>
+            <h2>Decision latency</h2>
+            <p>
+              Raw per-decision provider latency with interquartile bands and medians. It is execution telemetry, not a
+              measure of intelligence: routing, load, token use, tools, and scaffold all affect it.
+            </p>
+          </div>
+        </div>
+        <div class="chart-body">
+          <LatencyStrip models={models} />
+        </div>
       </section>
       <section class="panel chart-panel">
         <div class="section-head">

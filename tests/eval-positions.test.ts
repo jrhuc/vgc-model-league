@@ -27,7 +27,7 @@ function candidate(overrides: Partial<CandidatePosition> = {}): CandidatePositio
     turn: 5,
     legal: 40,
     value: 0,
-    spread: 0.5,
+    contrast: 0.5,
     played: 'move 1, move 1',
     discriminating: true,
     ...overrides,
@@ -43,7 +43,7 @@ test('a position is placed by phase, how far in, and who was ahead', () => {
 test('a position nothing could be learned from is not a candidate', () => {
   const rows = [
     candidate({ positionIndex: 0, discriminating: false }),
-    candidate({ positionIndex: 1, spread: 0.001 }),
+    candidate({ positionIndex: 1, contrast: 0.001 }),
     candidate({ positionIndex: 2, legal: 1 }),
     candidate({ positionIndex: 3 }),
   ];
@@ -109,7 +109,7 @@ test('the graded rows carry everything a candidate needs', () => {
       legal_actions: 88,
       chosen: 'move 1, move 2',
       state_value: -0.2,
-      vs_sampled_opponent: { opportunityLoss: 0.1, span: 0.6, discriminating: true },
+      vs_sampled_opponent: { opportunityLoss: 0.1, measuredContrast: 0.6, discriminating: true },
     },
     { run_id: 'r', pid: 'p1' },
   ]);

@@ -70,7 +70,7 @@ export interface ReferenceView {
   selectedAction: string;
   signedGap: number;
   opportunityLoss: number;
-  span: number;
+  measuredContrast: number;
   discriminating: boolean;
   selectionReversed: boolean;
 }
@@ -202,7 +202,6 @@ function search(
   if (!screened.length) return null;
   screened.sort((a, b) => b.value - a.value || a.action.localeCompare(b.action));
   const shortlist = new Set(screened.slice(0, budget.shortlist).map((entry) => entry.action));
-  shortlist.add(chosen);
 
   const refined: ActionValue[] = [];
   for (const action of actions) {
@@ -223,17 +222,17 @@ function search(
   }
   const chosenValue = measured.get(chosen) as ActionValue;
   const selectedValue = measured.get(selectedAction) as ActionValue;
-  const values = [...measured.values()].map((entry) => entry.value);
+  const worstValue = measured.get(selectedWorst) as ActionValue;
   const signedGap = selectedValue.value - chosenValue.value;
-  const span = Math.max(...values) - Math.min(...values);
+  const measuredContrast = Math.abs(selectedValue.value - worstValue.value);
   return {
     chosen: chosenValue.value,
     selected: selectedValue.value,
     selectedAction,
     signedGap,
     opportunityLoss: Math.max(0, signedGap),
-    span,
-    discriminating: span > 0,
+    measuredContrast,
+    discriminating: measuredContrast > 0,
     selectionReversed: signedGap < 0,
   };
 }

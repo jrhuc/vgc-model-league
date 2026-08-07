@@ -1,7 +1,7 @@
 import { seededRng, shuffle } from '../random.js';
 import type { BattleRequest, JsonObject, Pid } from '../types.js';
 
-export const MIN_OPPORTUNITY_SPAN = 0.05;
+export const MIN_MEASURED_CONTRAST = 0.05;
 
 export interface CandidatePosition {
   runId: string;
@@ -16,7 +16,7 @@ export interface CandidatePosition {
   turn: number;
   legal: number;
   value: number;
-  spread: number;
+  contrast: number;
   played: string;
   discriminating: boolean;
 }
@@ -71,7 +71,7 @@ export function readCandidates(rows: JsonObject[]): CandidatePosition[] {
       turn: Number(row.turn ?? 0),
       legal: Number(row.legal_actions ?? 0),
       value: row.state_value,
-      spread: Number(vsSampledOpponent.span ?? 0),
+      contrast: Number(vsSampledOpponent.measuredContrast ?? 0),
       played: String(row.chosen ?? ''),
       discriminating: Boolean(vsSampledOpponent.discriminating),
     });
@@ -158,7 +158,7 @@ export function selectPositions(candidates: CandidatePosition[], options: Select
   const usable = [...unique.values()].filter(
     (position) =>
       position.discriminating &&
-      position.spread >= MIN_OPPORTUNITY_SPAN &&
+      position.contrast >= MIN_MEASURED_CONTRAST &&
       position.legal > 1 &&
       (!options.formats || options.formats.includes(position.format)),
   );

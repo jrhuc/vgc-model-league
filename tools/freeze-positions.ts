@@ -3,6 +3,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
+import { canonicalScoreDigest, completedPositionScores } from '../src/eval/artifact.js';
 import { loadGameRecords, verifyGame } from '../src/eval/corpus.js';
 import { legalActions, positionDigest } from '../src/eval/fork.js';
 import {
@@ -10,7 +11,7 @@ import {
   anonymiseRequest,
   type CandidatePosition,
   gameOf,
-  MIN_OPPORTUNITY_SPAN,
+  MIN_MEASURED_CONTRAST,
   readCandidates,
   type SelectionOptions,
   selectPositions,
@@ -69,52 +70,6 @@ function readJson(file: string): JsonObject {
   return JSON.parse(fs.readFileSync(file, 'utf8')) as JsonObject;
 }
 
-function rowGame(row: JsonObject): string {
-  return `${row.run_id}:${row.series_id}:${row.game_number}`;
-}
-
-function completedScores(rows: JsonObject[], manifest: JsonObject): JsonObject[] {
-  const expectedGames = Number(manifest.source_games);
-  if (!Number.isInteger(expectedGames) || expectedGames < 0)
-    throw new Error('graded manifest has no valid source_games');
-  const markers = new Map<string, JsonObject>();
-  const scores = new Map<string, JsonObject>();
-  const perGame = new Map<string, Set<string>>();
-  for (const row of rows) {
-    if (row.kind === 'game_complete' && row.complete === true) {
-      const game = rowGame(row);
-      if (markers.has(game)) throw new Error(`graded input has duplicate completion marker for ${game}`);
-      markers.set(game, row);
-      continue;
-    }
-    if (row.kind !== 'position_score') continue;
-    if (JSON.stringify(row.counterfactual) !== JSON.stringify(manifest.counterfactual)) {
-      throw new Error(`position score ${rowGame(row)} mixes a different counterfactual protocol`);
-    }
-    const game = rowGame(row);
-    const key = `${game}#${row.position_index}#${row.pid}`;
-    const prior = scores.get(key);
-    if (prior && JSON.stringify(prior) !== JSON.stringify(row)) throw new Error(`conflicting duplicate score ${key}`);
-    scores.set(key, row);
-    const keys = perGame.get(game) ?? new Set<string>();
-    keys.add(key);
-    perGame.set(game, keys);
-  }
-  if (markers.size !== expectedGames) {
-    throw new Error(
-      `graded input is incomplete: ${markers.size} of ${expectedGames} source games have completion markers`,
-    );
-  }
-  for (const [game, keys] of perGame) {
-    const marker = markers.get(game);
-    if (!marker) throw new Error(`graded input has scores for incomplete game ${game}`);
-    if (Number(marker.decisions) !== keys.size) {
-      throw new Error(`completion marker for ${game} reports ${marker.decisions} scores but ${keys.size} are present`);
-    }
-  }
-  return [...scores.values()];
-}
-
 async function main(): Promise<void> {
   const settings = parse(process.argv.slice(2));
   const gradedManifestPath = `${settings.graded}.manifest.json`;
@@ -128,7 +83,8 @@ async function main(): Promise<void> {
     .split('\n')
     .filter((line) => line.trim())
     .map((line) => JSON.parse(line) as JsonObject);
-  const selection = selectPositions(readCandidates(completedScores(rows, gradedManifest)), settings);
+  const scoreRows = completedPositionScores(rows, gradedManifest);
+  const selection = selectPositions(readCandidates(scoreRows), settings);
   const requested = settings.size ?? 500;
   if (selection.positions.length !== requested) {
     throw new Error(
@@ -194,13 +150,13 @@ async function main(): Promise<void> {
         snapshot: live.snapshot,
         opponent_request: live.requests[position.pid === 'p1' ? 'p2' : 'p1'] ?? null,
         selection_stratum: stratumOf(position),
-        opportunity_span: position.spread,
+        measured_contrast: position.contrast,
         state_value: position.value,
       });
     }
   }
 
-  const gradedChecksum = crypto.createHash('sha256').update(fs.readFileSync(settings.graded)).digest('hex');
+  const gradedChecksum = canonicalScoreDigest(scoreRows);
   const criteria = {
     size: requested,
     seed: settings.seed ?? 'position-set',
@@ -211,7 +167,7 @@ async function main(): Promise<void> {
     schema_version: 3,
     grader_manifest: gradedManifest,
     graded_checksum: gradedChecksum,
-    selection_protocol: { version: 1, minimum_opportunity_span: MIN_OPPORTUNITY_SPAN },
+    selection_protocol: { version: 1, minimum_measured_contrast: MIN_MEASURED_CONTRAST },
     criteria,
     positions: publicPositions,
   };

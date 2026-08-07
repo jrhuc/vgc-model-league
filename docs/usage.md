@@ -198,7 +198,9 @@ reports them.
 
 Without `--pool`, standings and reports exclude the disposable `test` pool.
 They use only rotation results. Different providers for the same model ID
-count as one player within a timer group.
+count as one player within a timer group. These standings describe the recorded
+rotation schedule; they are not a controlled model ranking and should not be
+used as the result of the decision evaluation.
 
 ## Grade recorded battle positions
 

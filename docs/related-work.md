@@ -72,7 +72,7 @@ consumer cannot use the native verifiers package.
 ## Claim boundary
 
 The intended contribution, once the package and circuit are implemented and
-validated, is an open protocol connecting a public, budgeted multi-agent Pokémon
+validated, is a public protocol connecting a shared, budgeted multi-agent Pokémon
 draft and trade season to exact restorable VGC doubles positions. It would test
 the same endpoint and weights, without task-specific training or added search,
 under both a declared simulator reference and explicit plan-to-execution links.

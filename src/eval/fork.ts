@@ -101,6 +101,12 @@ export function legalActions(request: BattleRequest): string[] {
   return [...new Set(actions)];
 }
 
+export function requestPhase(request: BattleRequest): 'team_preview' | 'forced_switch' | 'turn' {
+  if (request.teamPreview) return 'team_preview';
+  if (request.forceSwitch) return 'forced_switch';
+  return 'turn';
+}
+
 export function newBattle(source: GameSource): Battle {
   const { Battle: BattleClass } = loadShowdown(source.psDir ?? defaultPsDir());
   const battle = new BattleClass({ formatid: source.format, seed: source.seed.join(',') as `${number},${string}` });
