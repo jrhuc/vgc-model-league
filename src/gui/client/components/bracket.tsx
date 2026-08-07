@@ -41,13 +41,22 @@ export function BracketGrid<M extends BracketMatchLike>({
   onSelect?: (index: number) => void;
   live?: ReadonlySet<number>;
 }) {
+  const firstRound = rounds[0]?.length ?? 1;
   return (
     <div class="bracket-scroll">
-      <div class="bracket">
+      <div class="bracket" style={{ gridTemplateRows: `auto repeat(${firstRound}, auto)` }}>
         {rounds.map((round, roundIndex) => (
           <div class="bracket-round" key={roundIndex}>
-            <h3>{roundName(roundIndex, rounds.length)}</h3>
+            <h3 style={{ gridColumn: roundIndex + 1 }}>{roundName(roundIndex, rounds.length)}</h3>
             {round.map((match, matchIndex) => {
+              const span = Math.max(1, Math.round(firstRound / round.length));
+              const cell = `bracket-cell ${roundIndex > 0 ? 'has-source' : ''} ${
+                roundIndex < rounds.length - 1 ? 'has-target' : ''
+              }`;
+              const place = {
+                gridColumn: roundIndex + 1,
+                gridRow: `${2 + matchIndex * span} / span ${span}`,
+              };
               const bye = match.seriesIndex === null;
               const running = match.seriesIndex !== null && live?.has(match.seriesIndex) === true;
               const clickable = !bye && onSelect !== undefined;
@@ -73,23 +82,24 @@ export function BracketGrid<M extends BracketMatchLike>({
               const className = `bracket-match ${bye ? 'bye' : ''} ${running ? 'live' : ''} ${
                 clickable && selected === match.seriesIndex ? 'selected' : ''
               }`;
-              return clickable ? (
-                <button type="button" key={matchIndex} class={className} onClick={() => onSelect?.(match.seriesIndex!)}>
-                  {running && (
-                    <span class="bracket-live">
-                      <span class="live-dot" aria-hidden="true" /> Live
-                    </span>
+              const banner = running && (
+                <span class="bracket-live">
+                  <span class="live-dot" aria-hidden="true" /> Live
+                </span>
+              );
+              return (
+                <div key={matchIndex} class={cell} style={place}>
+                  {clickable ? (
+                    <button type="button" class={className} onClick={() => onSelect?.(match.seriesIndex!)}>
+                      {banner}
+                      {slots}
+                    </button>
+                  ) : (
+                    <div class={`${className} archived`}>
+                      {banner}
+                      {slots}
+                    </div>
                   )}
-                  {slots}
-                </button>
-              ) : (
-                <div key={matchIndex} class={`${className} archived`}>
-                  {running && (
-                    <span class="bracket-live">
-                      <span class="live-dot" aria-hidden="true" /> Live
-                    </span>
-                  )}
-                  {slots}
                 </div>
               );
             })}

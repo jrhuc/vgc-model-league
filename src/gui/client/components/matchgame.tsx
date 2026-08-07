@@ -88,9 +88,11 @@ export function MatchGame({
         <p class="eyebrow">{eyebrow}</p>
         <h1 class="matchup-heading">
           <span class="matchup-side">
-            <Mark spec={players[0]} size={22} />
             <span class="matchup-copy">
-              <b>{titles[0]}</b>
+              <b class="matchup-name">
+                <Mark spec={players[0]} size={22} />
+                <span>{titles[0]}</span>
+              </b>
               {details?.[0] ? <small>{details[0]}</small> : null}
             </span>
           </span>
@@ -99,10 +101,12 @@ export function MatchGame({
           </span>
           <span class="matchup-side right">
             <span class="matchup-copy">
-              <b>{titles[1]}</b>
+              <b class="matchup-name">
+                <span>{titles[1]}</span>
+                <Mark spec={players[1]} size={22} />
+              </b>
               {details?.[1] ? <small>{details[1]}</small> : null}
             </span>
-            <Mark spec={players[1]} size={22} />
           </span>
         </h1>
         <div class="match-game-meta">
