@@ -71,13 +71,12 @@ consumer cannot use the native verifiers package.
 
 ## Claim boundary
 
-A defensible current claim is:
-
-> To our knowledge, this is the first open protocol to connect a public,
-> budgeted multi-agent Pokémon draft and trade season to exact restorable VGC
-> doubles positions, and to evaluate the same unmodified model with both a
-> declared simulator action-value reference and explicit plan-to-execution
-> links.
+The intended contribution, once the package and circuit are implemented and
+validated, is an open protocol connecting a public, budgeted multi-agent Pokémon
+draft and trade season to exact restorable VGC doubles positions. It would test
+the same endpoint and weights, without task-specific training or added search,
+under both a declared simulator reference and explicit plan-to-execution links.
+This is a target claim, not a claim about the current branch.
 
 The narrower pieces are not claimed as novel: Pokémon agents, doubles
 multi-agent play, teambuilding, team preview, simulator search, draft mechanisms,

@@ -8,8 +8,8 @@ VGC. It has three roles:
 1. the league records trajectories across drafting, team construction, trades,
    team preview, battles, and review;
 2. the simulator replays and forks battle states for controlled diagnostics;
-3. published environment adapters let other people run the same protocols on
-   their own models and infrastructure.
+3. planned environment adapters will let other people run the same protocols
+   on their own models and infrastructure.
 
 A match result is evidence, but a small collection of wins is not a model
 ranking. Comparisons between models require the same tasks and scaffold.
@@ -18,9 +18,9 @@ horizon, opponent policy, and sampling budget; do not present them as optimal
 VGC play.
 
 Before adding machinery, ask whether it improves the research protocol or only
-constrains how a model can participate. The untimed, unmodified model is the
-baseline. Timers, recursive harnesses, search policies, and other scaffolds are
-separate, labelled conditions.
+constrains how a model can participate. The baseline keeps the same endpoint and weights, adds no task-specific
+training or search, and removes the battle timer. Timers, recursive harnesses,
+search policies, and other scaffolds are separate, labelled conditions.
 
 ## Code
 

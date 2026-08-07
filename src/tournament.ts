@@ -4,7 +4,7 @@ import type { BracketView } from './gui/api.js';
 import { scaffoldComponents, scaffoldRevision } from './llm-engine.js';
 import { defaultPsDir, RESULTS_PATH } from './paths.js';
 import type { ModelReasoningConfig } from './providers.js';
-import { validateModelExecution } from './providers.js';
+import { parseRoutingPreferences, validateModelExecution } from './providers.js';
 import { resolveSeed, seededRng, seriesEntropy, shuffle } from './random.js';
 import type { SeriesRecord } from './records.js';
 import { appendRow, loadRows } from './records.js';
@@ -147,6 +147,7 @@ export async function runTournament(
   const random = seededRng(seed);
   const scaffold = scaffoldRevision();
   const scaffoldParts = scaffoldComponents();
+  const openRouterRouting = parseRoutingPreferences();
 
   let format: string;
   let poolId: string | null;
@@ -228,6 +229,7 @@ export async function runTournament(
           protocol_version: TOURNAMENT_PROTOCOL_VERSION,
           scaffold,
           scaffold_components: scaffoldParts,
+          ...(openRouterRouting ? { openrouter_routing: openRouterRouting } : {}),
           models,
           seed,
           concurrency: options.concurrency ?? 2,

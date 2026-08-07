@@ -4,6 +4,7 @@ import test from 'node:test';
 import {
   ANONYMOUS,
   anonymiseLog,
+  anonymiseRequest,
   type CandidatePosition,
   gameOf,
   keyOf,
@@ -137,6 +138,30 @@ test('a position does not tell a model who played it or who it faced', () => {
   assert.equal(seen[0], '|player|p1|Player 1||');
   assert.equal(seen[3], `|win|${ANONYMOUS.p2}`);
   assert.equal(seen[2], '|switch|p1a: Whimsicott|Whimsicott, L50, F|137/137');
+});
+
+test('the complete public request removes the source battle name', () => {
+  const request = {
+    side: {
+      name: 'p1-openrouter:model-a',
+      pokemon: [{ ident: 'p1: Lead', details: 'Lead', condition: '100/100', active: true }],
+    },
+    active: [{ moves: [] }],
+  } as never;
+  const cleaned = anonymiseRequest(request, {
+    p1: 'p1-openrouter:model-a',
+    p2: 'p2-anthropic:model-b',
+  });
+  const serialized = JSON.stringify(cleaned);
+  assert.ok(!serialized.includes('openrouter:model-a'));
+  assert.ok(serialized.includes(ANONYMOUS.p1));
+});
+
+test('duplicate source decisions cannot fill a position set', () => {
+  const repeated = Array.from({ length: 10 }, () => candidate());
+  const selected = selectPositions(repeated, { size: 10, perGame: 10 });
+  assert.equal(selected.positions.length, 1);
+  assert.equal(new Set(selected.positions.map(keyOf)).size, selected.positions.length);
 });
 
 test('a seat whose name contains the other seat name is still replaced whole', () => {

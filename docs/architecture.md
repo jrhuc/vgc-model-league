@@ -178,11 +178,14 @@ Each result records the actual Showdown revision.
 The live league and an external evaluation framework share the rules layer, not
 the inference client.
 
-`src/eval/corpus.ts` reconstructs historical games. New series store their exact
-packed teams in the private `series.json`; legacy games are accepted only when a
-single candidate team pair reproduces the log. `src/eval/fork.ts` owns replay,
-snapshots, and action enumeration. Counterfactual settings and the Showdown SHA
-are part of an immutable grading manifest.
+`src/eval/corpus.ts` reconstructs games recorded with the current provenance
+contract. A private `series.json` stores exact packed teams, while the result row
+binds them by SHA-256; unbound legacy games are reported but are not grading
+sources. `src/eval/fork.ts` owns replay,
+snapshots, and action enumeration. Counterfactual settings, action encoding, executed evaluator digest, source
+corpus digest, and Showdown SHA are resume-validated in the grading manifest. A
+released set becomes immutable only when its content-addressed artifacts are
+frozen.
 
 Frozen positions have two schemas. The public task contains only the tested
 seat's point-of-view history, own request, and action menu. The private grader

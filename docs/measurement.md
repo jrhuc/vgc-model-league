@@ -155,7 +155,9 @@ longer-horizon sensitivity, policy baselines, and expert review.
 A model-comparison set gives every model the same position, prompt renderer,
 legal-action encoding, tools, sampling policy, and grading reference. Positions
 are stratified by phase and game state, capped per source game, and frozen with a
-selection seed.
+selection seed. The first planned set samples VGCML-generated play; it does not
+represent the distribution of expert, human, or tournament VGC without a
+separate coverage argument and external holdout.
 
 A position task contains the tested seat's public history, own request, and
 legal actions. It does not contain the original model's identity, action,
@@ -168,15 +170,15 @@ it uses one explicit, neutral position scaffold instead.
 
 ## Cross-stage measurements
 
-The draft-to-battle protocol records a causal sequence, but not every adjacent
-field is automatically a valid metric.
+The draft-to-battle protocol records a linked temporal trajectory. Temporal
+order alone does not make adjacent fields causal labels.
 
 Deterministic examples include:
 
 - whether a drafted Pokémon was selected into the matchup team;
 - whether a built Pokémon was brought;
 - whether a declared bring was the submitted bring;
-- whether a named move or field interaction occurred in the log;
+- whether a move or interaction named by canonical ID in a structured commitment occurred in the log;
 - whether an action was legal or required repair.
 
 Semantic examples include whether a build implements a draft thesis or whether

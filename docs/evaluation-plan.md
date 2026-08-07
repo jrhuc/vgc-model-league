@@ -6,8 +6,9 @@ reported.
 
 ## One research program, two artifacts
 
-The research question is whether a model makes good local choices and carries a
-plan from a shared draft into actual play. No single environment evaluates both
+The research question is how a model's local choices score under declared
+references and whether its commitments remain visible from a shared draft into
+actual play. No single environment evaluates both
 cleanly, so the public work is split deliberately.
 
 | Artifact | Unit | Purpose | Status |
@@ -66,16 +67,22 @@ rollout time. A TypeScript exporter will use the embedded simulator to score
 - the full Showdown SHA, format, scaffold version, reference configuration,
   sampling seeds, and content checksum.
 
-The Python task then parses one choice and performs a deterministic lookup. The
-main reward is a normalized reference value over the task's action set. Parsing,
-legality, raw reference value, opportunity span, and phase remain separate
-metrics. Invalid output receives zero reward and is never replaced by a random
-simulator action.
+The Python task then parses one choice and performs a deterministic lookup. For
+a legal action `a`, the proposed primary reward is
+`(mean_value(a) - min_value) / (max_value - min_value)` over the frozen common-draw
+panel. Zero-span and unstable items are ineligible rather than assigned a score.
+Invalid output receives `-1`, is never replaced by a simulator action, and is
+reported separately from the worst legal action, whose normalized reward is
+zero. Parsing, legality, raw value, panel uncertainty, span, and phase remain
+separate metrics.
 
 A static table is reproducible and fits hosted execution, but it is inspectable.
 Use separate train and evaluation splits, keep comparison items out of training,
 and do not claim resistance to contamination merely because the score came from
-a simulator.
+a simulator. The first source distribution is explicitly
+“VGCML-generated positions,” not representative human or tournament VGC. Publish
+coverage, near-duplicate removal, and an external or human holdout before making
+a broader skill claim.
 
 ### Reference and reward limits
 
@@ -136,8 +143,8 @@ The multi-agent environment therefore covers the delayed decision problem:
 2. each agent converts its roster into matchup teams and legal sets;
 3. agents choose the bring and lead at team preview;
 4. the teams play recorded games;
-5. terminal game or season outcomes are assigned to the decisions that produced
-   them.
+5. terminal game or season return is attached to the complete episode, without
+   treating it as a causal label for each earlier decision.
 
 Trades and reviews are valuable evidence, but they are optional protocol stages,
 not prerequisites for the first vertical slice. A draft-only mode may exist for

@@ -67,7 +67,7 @@ serve as a baseline or adapter.
 - [PokéLLMon](https://arxiv.org/abs/2402.01118) and
   [PokéChamp](https://arxiv.org/abs/2503.04094) build stronger language-model
   battle agents with retrieval, learning, or search. This project instead
-  records an unmodified model under a declared scaffold.
+  records the same endpoint and weights without added search or task-specific training, under a declared scaffold.
 - [Prime Intellect verifiers](https://github.com/PrimeIntellect-ai/verifiers)
   supplies tasksets, harnesses, runtimes, traces, multi-agent control flow,
   hosted evaluation, and training integration. The planned adapter will use
@@ -98,11 +98,12 @@ package boundary.
 
 ## Run locally
 
-Prerequisites: Node.js 24.18, pnpm 11.11, and provider credentials for the models
-you select.
+Prerequisites: Node.js 24.18.1, pnpm 11.11.0, and provider credentials for the
+models you select.
 
 ```sh
 pnpm install --frozen-lockfile
+pnpm run setup:showdown
 pnpm test
 pnpm run vgcleague -- --help
 ```

@@ -70,9 +70,10 @@ tournament, and draft also accept `--concurrency` and
 `vr-aug26-top8` holds the eight teams from the top cut of Victory Road's
 August 2026 Challenge #1, each seeded by where it finished, so eight models
 play that bracket in its real pairings with one team apiece. Tournaments on
-such a pool take `--provenance disclosed` (the default), which tells each seat
-the event and both teams' finishes, or `--provenance blind`, which tells it
-nothing — run the pair to measure what knowing is worth. Build a pool like it
+such a pool take `--provenance disclosed` (the default), which identifies the
+event and field without revealing finishing order, or `--provenance blind`,
+which omits that context. Treat replicated runs as separate provenance
+conditions, not as a causal estimate from one pair. Build a pool like it
 with `node dist/tools/build-event-pool.js teams/<pool>/sources.json`.
 
 A bracket that stopped continues with `tournament --resume <run-dir>`. Resume
@@ -203,8 +204,8 @@ count as one player within a timer group.
 
 `grade-positions` is an experimental offline diagnostic. It attempts to replay
 candidate games exactly, grades eligible non-fallback choices at simultaneous
-requests under the reference recorded in its manifest, and writes a completion
-row for every attempted game. It is not a model-comparison runner.
+turns and one-sided replacement requests under the reference recorded in its
+manifest, and writes explicit completion, exclusion, and failure rows. It is not a model-comparison runner.
 
 ```sh
 pnpm run grade-positions --workers 4 --restart
@@ -218,8 +219,9 @@ settings. Scores use the realized hidden state and remain exploratory. See
 [Measurement principles](measurement.md) for their limits.
 
 Freezing writes two files. `position-set.json` contains the standardized
-point-of-view tasks. `position-set.private.json` contains simulator snapshots,
-opponent requests, source identities, and source actions for the grader. Never
+point-of-view tasks. By default `private/position-set.json` contains simulator
+snapshots, opponent requests, source identities, and source actions for the
+grader. Never
 pass the private file to a model. The freezer aborts rather than silently writing
 a smaller or unreplayable set. No command on this branch yet asks a new model to
 answer the public tasks.

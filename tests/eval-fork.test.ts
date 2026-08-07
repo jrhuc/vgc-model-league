@@ -69,6 +69,16 @@ test('a replay that is fed a different battle refuses to verify', () => {
   assert.equal(replay.verified, false);
 });
 
+test('extra or rejected recorded choices cannot verify against an unchanged log', () => {
+  const base = source();
+  const { choices, log } = scripted(base);
+  const trailing = { p1: [...choices.p1, 'move 1'], p2: choices.p2 };
+  assert.equal(replayGame({ ...base, choices: trailing }, log).verified, false);
+
+  const rejected = { p1: ['move 999', ...choices.p1], p2: choices.p2 };
+  assert.equal(replayGame({ ...base, choices: rejected }, log).verified, false);
+});
+
 test('a truncated choice list is reported rather than passed off as a finished game', () => {
   const base = source();
   const { choices, log } = scripted(base);
@@ -122,6 +132,21 @@ test('the counterfactual action set contains each offered legal command once', (
   assert.equal(new Set(actions).size, actions.length);
   assert.ok(!actions.includes('forfeit'));
   assert.ok(actions.every((action) => (action.match(/ mega/g) ?? []).length <= 1));
+});
+
+test('a forced replacement cannot pass every fainted slot while a reserve remains', () => {
+  const request = {
+    forceSwitch: [true, true],
+    side: {
+      name: 'Player 1',
+      pokemon: [
+        { active: true, condition: '0 fnt', details: 'One' },
+        { active: true, condition: '0 fnt', details: 'Two' },
+        { active: false, condition: '100/100', details: 'Reserve' },
+      ],
+    },
+  } as unknown as BattleRequest;
+  assert.deepEqual(legalActions(request).toSorted(), ['pass, switch 3', 'switch 3, pass']);
 });
 
 test('every enumerated command is accepted by Showdown at its source position', () => {

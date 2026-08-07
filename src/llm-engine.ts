@@ -319,6 +319,13 @@ function goldenDecisionRender(): string {
   });
 }
 
+function decisionRenderIdentity(): Record<string, string> {
+  return {
+    implementation: renderDecision.toString(),
+    golden: goldenDecisionRender(),
+  };
+}
+
 function decisionPolicy(): Record<string, unknown> {
   return {
     minTokens: DECISION_MIN_TOKENS,
@@ -364,7 +371,7 @@ export function scaffoldRevision(): string {
     tools: DECISION_TOOLS,
     decisionPolicy: decisionPolicy(),
     reflectionMaxTokens: REFLECTION_MAX_TOKENS,
-    goldenDecision: goldenDecisionRender(),
+    decisionRender: decisionRenderIdentity(),
     referenceRender: ShowdownReference.renderRevision(),
   });
 }
@@ -376,7 +383,7 @@ export type ScaffoldComponent = (typeof SCAFFOLD_COMPONENTS)[number];
 export function scaffoldComponents(): Record<ScaffoldComponent, string> {
   return {
     system: digest({ system: SYSTEM, timedSystem: TIMED_SYSTEM }),
-    stateRender: digest(goldenDecisionRender()),
+    stateRender: digest(decisionRenderIdentity()),
     toolRender: digest(ShowdownReference.renderRevision()),
     tools: digest(DECISION_TOOLS),
     policy: digest(decisionPolicy()),
