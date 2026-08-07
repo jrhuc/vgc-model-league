@@ -10,6 +10,7 @@ import {
   EXHAUSTIVE_PANEL_PROTOCOL,
   evaluateActionTable,
 } from '../src/eval/counterfactual.js';
+import { POSITION_ELIGIBILITY_METRICS_VERSION, positionEligibilityMetrics } from '../src/eval/eligibility.js';
 import { ACTION_PROTOCOL, type Position } from '../src/eval/fork.js';
 import { POSITION_TASK_PROTOCOL, renderPositionTask, validateTaskScoreJoin } from '../src/eval/task.js';
 import { DATA_DIR, defaultPsDir } from '../src/paths.js';
@@ -87,6 +88,7 @@ function evaluatorDigest(): string {
   const files = [
     tool,
     path.resolve(path.dirname(tool), '../src/eval/counterfactual.js'),
+    path.resolve(path.dirname(tool), '../src/eval/eligibility.js'),
     path.resolve(path.dirname(tool), '../src/eval/fork.js'),
     path.resolve(path.dirname(tool), '../src/eval/task.js'),
     path.resolve(path.dirname(tool), '../src/choices.js'),
@@ -211,11 +213,14 @@ async function main(): Promise<void> {
     validateTaskScoreJoin(rendered.actions, scoredActions);
     const structuralReasons = [
       ...(table.stability.some((panel) => panel.span <= 0) ? ['zero_stability_span'] : []),
+      ...(table.valueSpan <= 0 ? ['zero_measurement_span'] : []),
+    ];
+    const diagnosticFlags = [
       ...(table.heldOutSpan.lower95 <= 0 ? ['span_uncertain'] : []),
       ...(!table.rankingStable ? ['best_anchor_unstable'] : []),
       ...(!table.anchorAgreement ? ['extrema_sets_unstable'] : []),
-      ...(table.valueSpan <= 0 ? ['zero_measurement_span'] : []),
     ];
+    const eligibilityMetrics = positionEligibilityMetrics(table);
     taskRows.push({
       schema_version: 1,
       task_id: taskId,
@@ -241,7 +246,9 @@ async function main(): Promise<void> {
       task_id: taskId,
       structural_pass: structuralReasons.length === 0,
       structural_reasons: structuralReasons,
+      diagnostic_flags: diagnosticFlags,
       eligibility_status: 'pilot-thresholds-not-frozen',
+      eligibility_metrics: eligibilityMetrics,
       measurement_panel: {
         id: table.measurement.id,
         n: table.measurement.draws.length,
@@ -302,6 +309,7 @@ async function main(): Promise<void> {
     schema_version: 1,
     release_ready: false,
     eligibility_status: 'pilot-thresholds-not-frozen',
+    eligibility_metrics_version: POSITION_ELIGIBILITY_METRICS_VERSION,
     split_status: 'pilot-only-source-groups-and-exact-fingerprints-recorded',
     source_set_id: publicSet.id,
     evaluator_digest: evaluatorDigest(),

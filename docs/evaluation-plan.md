@@ -72,14 +72,20 @@ All action values within a panel share opponent draws, battle seeds, and
 continuation seeds. The matrix must be rectangular: a failed cell excludes the
 whole panel rather than giving different actions different sample counts. The
 pilot exporter keeps task prompts, private score rows, and sealed matrices in
-separate roots and marks its manifest non-release-ready. Eligibility thresholds,
-near-duplicate clustering, and immutable train/eval splits are still gates, not
-postponed metadata.
+separate roots and marks its manifest non-release-ready. It now records a
+versioned diagnostic vector: held-out span and standard error, full-ranking
+Spearman agreement, extrema agreement, maximum cross-panel normalized-reward
+drift, and measurement standard error relative to span. The advisory
+`summarize-position-pilot` command reports their empirical distributions without
+choosing thresholds. A separately reviewed, provenance-bound frozen policy must
+set the gates; the implementation does not promote pilot quantiles into criteria.
+Near-duplicate clustering and immutable train/eval splits remain release gates.
 
 The Python task then parses one choice and performs a deterministic lookup. For
 a legal action `a`, the proposed primary reward is
 `(mean_value(a) - min_value) / (max_value - min_value)` over the frozen common-draw
-panel. Zero-span and unstable items are ineligible rather than assigned a score.
+panel. Zero-span items cannot be normalized. Statistically unstable items become
+ineligible only under the frozen policy rather than an exporter-invented cutoff.
 Invalid output receives `-1`, is never replaced by a simulator action, and is
 reported separately from the worst legal action, whose normalized reward is
 zero. Parsing, legality, raw value, panel uncertainty, span, and phase remain
