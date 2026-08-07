@@ -25,6 +25,8 @@ interface Settings extends SelectionOptions {
   graded: string;
   out: string;
   privateOut?: string;
+  recordsPath?: string;
+  runsDir?: string;
 }
 
 function parse(argv: string[]): Settings {
@@ -42,6 +44,8 @@ function parse(argv: string[]): Settings {
     else if (flag === '--graded' && value) settings.graded = path.resolve(value);
     else if (flag === '--out' && value) settings.out = path.resolve(value);
     else if (flag === '--private-out' && value) settings.privateOut = path.resolve(value);
+    else if (flag === '--records' && value) settings.recordsPath = path.resolve(value);
+    else if (flag === '--runs-dir' && value) settings.runsDir = path.resolve(value);
     else throw new Error(`unknown option or missing value: ${flag}`);
     index += 1;
   }
@@ -105,7 +109,10 @@ async function main(): Promise<void> {
     wanted.set(gameOf(position), [...(wanted.get(gameOf(position)) ?? []), position]);
   }
   const records = new Map(
-    loadGameRecords().map((record) => [`${record.runId}:${record.seriesId}:${record.gameNumber}`, record]),
+    loadGameRecords({
+      ...(settings.recordsPath ? { recordsPath: settings.recordsPath } : {}),
+      ...(settings.runsDir ? { runsDir: settings.runsDir } : {}),
+    }).map((record) => [`${record.runId}:${record.seriesId}:${record.gameNumber}`, record]),
   );
   const publicPositions: JsonObject[] = [];
   const privatePositions: JsonObject[] = [];

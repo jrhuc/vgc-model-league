@@ -17,6 +17,8 @@ interface Settings extends CounterfactualOptions {
   limit?: number;
   workers: number;
   out: string;
+  recordsPath?: string;
+  runsDir?: string;
   restart?: boolean;
 }
 
@@ -73,6 +75,8 @@ function parse(argv: string[]): Settings {
     else if (flag === '--screen' && value) settings.screenSamples = Number(value);
     else if (flag === '--seed' && value) settings.seed = value;
     else if (flag === '--out' && value) settings.out = path.resolve(value);
+    else if (flag === '--records' && value) settings.recordsPath = path.resolve(value);
+    else if (flag === '--runs-dir' && value) settings.runsDir = path.resolve(value);
     else if (flag === '--ps-dir' && value) settings.psDir = path.resolve(value);
     else throw new Error(`unknown option or missing value: ${flag}`);
     index += 1;
@@ -162,6 +166,8 @@ function manifestFor(settings: Settings, records: GameRecord[]): GradeManifest {
     scope: {
       modes: settings.modes ?? null,
       limit: settings.limit ?? null,
+      records_path: settings.recordsPath ?? null,
+      runs_dir: settings.runsDir ?? null,
     },
     action_protocol: ACTION_PROTOCOL as unknown as JsonObject,
     counterfactual: counterfactualProtocol(settings) as unknown as JsonObject,
@@ -200,6 +206,8 @@ function prepareOutput(settings: Settings, records: GameRecord[]): GradeManifest
 function scopedRecords(settings: Settings): GameRecord[] {
   const records = loadGameRecords({
     ...(settings.modes ? { modes: settings.modes } : {}),
+    ...(settings.recordsPath ? { recordsPath: settings.recordsPath } : {}),
+    ...(settings.runsDir ? { runsDir: settings.runsDir } : {}),
     ...(settings.psDir ? { psDir: settings.psDir } : {}),
   });
   return records.slice(0, settings.limit ?? Number.POSITIVE_INFINITY);

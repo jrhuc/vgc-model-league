@@ -143,7 +143,10 @@ test('the counterfactual action set contains each offered legal command once', (
     entries.map((_, index) => index),
   );
   assert.ok(entries.every((entry) => entry.label));
-  assert.deepEqual(actions, [...actions].sort((a, b) => Buffer.from(a).compare(Buffer.from(b))));
+  assert.deepEqual(
+    actions,
+    [...actions].sort((a, b) => Buffer.from(a).compare(Buffer.from(b))),
+  );
 });
 
 test('a forced replacement cannot pass every fainted slot while a reserve remains', () => {

@@ -267,10 +267,21 @@ async function main(): Promise<void> {
         held_out_span: table.heldOutSpan,
       },
     });
+    const source = privateRow.source as JsonObject;
+    const sourceGroup = `${String(source.run_id)}:${String(source.series_id)}:${String(source.game_number)}`;
+    const exactPublicFingerprint = digest([
+      'exact-public-task-v1',
+      rendered.format,
+      rendered.phase,
+      rendered.prompt,
+      rendered.actions,
+    ]);
     sealedRows.push({
       schema_version: 1,
       task_id: taskId,
       source_id: sourceId,
+      source_group: sourceGroup,
+      exact_public_fingerprint: exactPublicFingerprint,
       source: privateRow.source,
       snapshot: privateRow.snapshot,
       opponent_request: privateRow.opponent_request,
@@ -291,6 +302,7 @@ async function main(): Promise<void> {
     schema_version: 1,
     release_ready: false,
     eligibility_status: 'pilot-thresholds-not-frozen',
+    split_status: 'pilot-only-source-groups-and-exact-fingerprints-recorded',
     source_set_id: publicSet.id,
     evaluator_digest: evaluatorDigest(),
     showdown_commit: showdownCommit(settings.psDir ?? defaultPsDir()),
