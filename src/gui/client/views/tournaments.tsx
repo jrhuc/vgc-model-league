@@ -162,11 +162,14 @@ function EntrantTable({ archive }: { archive: TournamentArchiveView }) {
             .map(({ entrant, index }) => (
               <tr key={index}>
                 <td class="spec-cell">
-                  <Mark spec={entrant.model} size={14} /> {entrant.model}
+                  <span class="seat-cell">
+                    <Mark spec={entrant.model} size={14} />
+                    <span>{entrant.model}</span>
+                  </span>
                 </td>
                 <td>
                   {entrant.paste ? (
-                    <a href={entrant.paste} target="_blank" rel="noreferrer">
+                    <a class="team-link" href={entrant.paste} target="_blank" rel="noreferrer">
                       {formatTeamSlug(entrant.team)}
                     </a>
                   ) : (
@@ -267,8 +270,9 @@ function TournamentCard({
           ) : champion ? (
             <>
               <span class="eyebrow">Champion</span>
-              <b>
-                <Mark spec={champion.model} size={16} /> {champion.model}
+              <b class="seat-cell">
+                <Mark spec={champion.model} size={16} />
+                <span>{champion.model}</span>
               </b>
               <small>{formatTeamSlug(champion.team)}</small>
             </>

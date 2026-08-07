@@ -90,6 +90,8 @@ export function BracketGrid<M extends BracketMatchLike>({
               );
               return (
                 <div key={matchIndex} class={cell} style={place}>
+                  {roundIndex > 0 ? <span class="bracket-in" aria-hidden="true" /> : null}
+                  {feeds ? <span class="bracket-out" aria-hidden="true" /> : null}
                   {clickable ? (
                     <button type="button" class={className} onClick={() => onSelect?.(match.seriesIndex!)}>
                       {banner}

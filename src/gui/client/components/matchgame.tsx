@@ -5,8 +5,8 @@ import type { LeagueGameResponse, TeambuildSetView } from '../../api';
 import { api, apiFresh } from '../http';
 import { Battlefield } from './battlefield';
 import { GameReflections, GameTimeline } from './gamelog';
+import { TeamLineup } from './lineup';
 import { Mark } from './mark';
-import { SetCard } from './setcard';
 
 export type StoredGameView = LeagueGameResponse & { receivedAt: number };
 
@@ -160,25 +160,12 @@ export function MatchGame({
               <p>The six each side brought for this series, with the sets from the open team sheet.</p>
             </div>
           </div>
-          <div class="lineup-grid">
-            {([0, 1] as const).map((side) => (
-              <div class="lineup-side" key={side}>
-                <h3>
-                  <Mark spec={players[side]} size={16} />
-                  {titles[side]}
-                </h3>
-                {teams[side] ? (
-                  <div class="teambuild-sets">
-                    {teams[side].map((set) => (
-                      <SetCard set={set} key={set.species} />
-                    ))}
-                  </div>
-                ) : (
-                  <p class="muted">No stored team sheet.</p>
-                )}
-              </div>
-            ))}
-          </div>
+          <TeamLineup
+            sides={[
+              { key: 'p1', model: players[0], label: titles[0], team: teams[0] },
+              { key: 'p2', model: players[1], label: titles[1], team: teams[1] },
+            ]}
+          />
         </section>
       ) : null}
 

@@ -503,8 +503,15 @@ export function ArenaView({
                   <span class="board-index">{String(index + 1).padStart(2, '0')}</span>
                   <span class="board-match">
                     <span class="board-names">
-                      <Mark spec={item.players.p1} size={13} /> {item.players.p1} <span class="muted">vs</span>{' '}
-                      <Mark spec={item.players.p2} size={13} /> {item.players.p2}
+                      <span class="board-name">
+                        <Mark spec={item.players.p1} size={13} />
+                        <span>{item.players.p1}</span>
+                      </span>
+                      <span class="muted">vs</span>
+                      <span class="board-name">
+                        <Mark spec={item.players.p2} size={13} />
+                        <span>{item.players.p2}</span>
+                      </span>
                     </span>
                     <span class="board-detail">{rowState(item)}</span>
                   </span>

@@ -1,8 +1,8 @@
 import type { ComponentChildren } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import type { BattleSnapshot, MonView, SideTimerView, SideView, SpendView, TeambuildSetView } from '../../api';
+import { TeamLineup } from './lineup';
 import { Mark } from './mark';
-import { SetCard } from './setcard';
 import { ItemIcon, Sprite } from './sprite';
 
 function speciesSlug(value: string): string {
@@ -19,36 +19,24 @@ function setMatchesMon(set: TeambuildSetView, mon: MonView): boolean {
   return setId === monId || setId.startsWith(`${monId}-`) || monId.startsWith(`${setId}-`);
 }
 
-function TeamStrip({
-  team,
-  mons,
-  open,
-  onToggle,
-}: {
-  team: TeambuildSetView[];
-  mons: MonView[];
-  open: number | null;
-  onToggle: (index: number) => void;
-}) {
+function TeamStrip({ team, mons }: { team: TeambuildSetView[]; mons: MonView[] }) {
   return (
-    <div class="team-strip">
-      {team.map((set, index) => {
+    <ul class="team-strip" aria-label="Brought team">
+      {team.map((set) => {
         const mon = mons.find((candidate) => setMatchesMon(set, candidate));
         const state = mon?.fainted ? 'fainted' : mon?.slot ? 'active' : '';
         return (
-          <button
+          <li
             key={set.species}
-            type="button"
-            class={`team-strip-mon ${state} ${open === index ? 'on' : ''}`}
+            class={`team-strip-mon ${state}`}
             title={`${set.species}${set.item ? ` @ ${set.item}` : ''}`}
-            onClick={() => onToggle(index)}
           >
             <Sprite id={set.spriteId} size={36} />
             {set.item ? <ItemIcon item={set.item} size={16} /> : null}
-          </button>
+          </li>
         );
       })}
-    </div>
+    </ul>
   );
 }
 
@@ -132,7 +120,7 @@ function monRank(mon: MonView): number {
   return mon.fainted ? 9 : 5;
 }
 
-export function Side({
+function Side({
   pid,
   side,
   right,
@@ -144,7 +132,7 @@ export function Side({
   label,
   team,
 }: {
-  pid: string;
+  pid: 'p1' | 'p2';
   side: SideView;
   right: boolean;
   timer: SideTimerView | null | undefined;
@@ -155,7 +143,6 @@ export function Side({
   label?: string | undefined;
   team?: TeambuildSetView[] | undefined;
 }) {
-  const [openSet, setOpenSet] = useState<number | null>(null);
   const [, setTick] = useState(0);
   useEffect(() => {
     if (!timer?.running) return;
@@ -192,14 +179,7 @@ export function Side({
         )}
       </div>
       <div class="side-body">
-        {team && team.length > 0 ? (
-          <TeamStrip
-            team={team}
-            mons={side.mons}
-            open={openSet}
-            onToggle={(index) => setOpenSet(openSet === index ? null : index)}
-          />
-        ) : null}
+        {team && team.length > 0 ? <TeamStrip team={team} mons={side.mons} /> : null}
         <div class="side-mons">
           {mons.length ? (
             mons.map((mon, index) => <Mon key={`${mon.slot || 'x'}-${mon.species}-${index}`} mon={mon} />)
@@ -210,7 +190,6 @@ export function Side({
           )}
         </div>
       </div>
-      {openSet !== null && team?.[openSet] ? <SetCard set={team[openSet]!} /> : null}
     </div>
   );
 }
@@ -232,6 +211,9 @@ export function Battlefield({
   teams?: Partial<Record<'p1' | 'p2', TeambuildSetView[] | undefined>>;
   meta?: ComponentChildren;
 }) {
+  const [sheetsOpen, setSheetsOpen] = useState(false);
+  const hasTeams = Boolean(teams?.p1?.length || teams?.p2?.length);
+
   return (
     <>
       <div class="field-meta">
@@ -244,32 +226,68 @@ export function Battlefield({
         </span>
       </div>
       <div class="field-surface">
-        <Side
-          pid="p1"
-          side={snapshot.sides.p1}
-          right={false}
-          timer={snapshot.timers?.p1}
-          spend={snapshot.spend?.p1}
-          receivedAt={receivedAt}
-          warning={warnings?.p1 ?? ''}
-          model={players?.p1}
-          label={labels?.p1}
-          team={teams?.p1}
-        />
-        <div class="center-mark">VS</div>
-        <Side
-          pid="p2"
-          side={snapshot.sides.p2}
-          right={true}
-          timer={snapshot.timers?.p2}
-          spend={snapshot.spend?.p2}
-          receivedAt={receivedAt}
-          warning={warnings?.p2 ?? ''}
-          model={players?.p2}
-          label={labels?.p2}
-          team={teams?.p2}
-        />
+        <div class="center-mark" aria-hidden="true">
+          VS
+        </div>
+        <div class="field-sides">
+          <Side
+            pid="p1"
+            side={snapshot.sides.p1}
+            right={false}
+            timer={snapshot.timers?.p1}
+            spend={snapshot.spend?.p1}
+            receivedAt={receivedAt}
+            warning={warnings?.p1 ?? ''}
+            model={players?.p1}
+            label={labels?.p1}
+            team={teams?.p1}
+          />
+          <div class="field-gutter" aria-hidden="true" />
+          <Side
+            pid="p2"
+            side={snapshot.sides.p2}
+            right={true}
+            timer={snapshot.timers?.p2}
+            spend={snapshot.spend?.p2}
+            receivedAt={receivedAt}
+            warning={warnings?.p2 ?? ''}
+            model={players?.p2}
+            label={labels?.p2}
+            team={teams?.p2}
+          />
+        </div>
       </div>
+      {hasTeams ? (
+        <div class="sheet-tray">
+          <button
+            type="button"
+            class="sheet-tray-toggle"
+            aria-expanded={sheetsOpen}
+            onClick={() => setSheetsOpen((open) => !open)}
+          >
+            <span>{sheetsOpen ? 'Hide team sheets' : 'Team sheets'}</span>
+            <span class={`sheet-tray-chevron ${sheetsOpen ? 'open' : ''}`} aria-hidden="true" />
+          </button>
+          {sheetsOpen ? (
+            <TeamLineup
+              sides={[
+                {
+                  key: 'p1',
+                  model: players?.p1 ?? labels?.p1 ?? 'p1',
+                  label: labels?.p1 ?? players?.p1 ?? 'Player 1',
+                  team: teams?.p1,
+                },
+                {
+                  key: 'p2',
+                  model: players?.p2 ?? labels?.p2 ?? 'p2',
+                  label: labels?.p2 ?? players?.p2 ?? 'Player 2',
+                  team: teams?.p2,
+                },
+              ]}
+            />
+          ) : null}
+        </div>
+      ) : null}
     </>
   );
 }
