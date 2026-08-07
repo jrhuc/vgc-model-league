@@ -248,7 +248,16 @@ without the run that produced it, and the model that played the position
 originally is recorded as provenance, never as an answer.
 
 Every model answers the same positions, so there is no cohort left to
-difference out and no graph to be sparse. Reaching that state also requires
-each seat to be one thing: a provider must be pinned and the provider that
-actually served the request recorded, because the same model reached two ways
-was as far apart as the field itself.
+difference out and no graph to be sparse.
+
+Reaching that state also requires each seat to be one thing. A gateway spreads
+one model across many upstream stacks: in this corpus a single seat named
+`z-ai/glm-5.2` was served by nineteen of them, and seventeen of thirty-seven
+seats were served by more than one. Joining the served stack to the graded
+decisions puts the widest within-model gap between two stacks at 0.05 against a
+between-model spread of 0.18, and every one of those intervals contains zero —
+so a stack is not shown to change how well a model plays, and is not shown not
+to either. A benchmark seat pins to one stack and forbids fallback rather than
+leaving it unresolved, and the stack that answered is recorded on the decision
+itself, so a later reader can group by it instead of trusting that a seat was
+one thing.

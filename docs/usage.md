@@ -149,11 +149,16 @@ OpenRouter model specs pass variant suffixes through unchanged, so
 `openrouter:<model>:nitro` requests throughput-sorted routing. `--nitro` (or
 the OpenRouter routing select in the GUI) applies that variant to every
 OpenRouter spec that does not already carry one — faster and usually pricier,
-so skip it when slower seats set the pace anyway. Set
-`VGC_OPENROUTER_PROVIDER` to a JSON routing object (for example
-`{"order":["deepinfra"],"ignore":["novita"]}`) to pin or exclude upstream
-providers. Every OpenRouter response also records its upstream provider and
-reported cost in the run's decision traces.
+so skip it when slower seats set the pace anyway.
+
+Set `VGC_OPENROUTER_PIN` to a comma-separated stack list
+(`VGC_OPENROUTER_PIN=deepinfra`) to hold a seat to those upstream providers and
+refuse any fallback. Benchmark runs should set it: one seat in this repository's
+corpus was served by nineteen different stacks, which leaves "one model" meaning
+several things. `VGC_OPENROUTER_PROVIDER` still takes a full JSON routing object
+(`{"order":["deepinfra"],"ignore":["novita"]}`) for finer control, and a pin
+overrides its ordering. Every OpenRouter response records the stack that served
+it and the reported cost on both the decision and its trace.
 
 ## Manage teams and draft boards
 

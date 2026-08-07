@@ -399,17 +399,29 @@ interface GatewayResponseMeta {
   provider?: string | undefined;
 }
 
-function parseRoutingPreferences(): JsonObject | undefined {
-  const raw = process.env.VGC_OPENROUTER_PROVIDER;
-  if (!raw) return undefined;
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    throw new Error('VGC_OPENROUTER_PROVIDER must be JSON, e.g. {"order":["deepinfra"],"ignore":["novita"]}');
+/** OpenRouter spreads one model across many upstream stacks — a single seat here was served by
+ * nineteen — so a benchmark seat pins to one and refuses to silently fall back to another. */
+export function parseRoutingPreferences(env: NodeJS.ProcessEnv = process.env): JsonObject | undefined {
+  const raw = env.VGC_OPENROUTER_PROVIDER;
+  let parsed: JsonObject | undefined;
+  if (raw) {
+    let value: unknown;
+    try {
+      value = JSON.parse(raw);
+    } catch {
+      throw new Error('VGC_OPENROUTER_PROVIDER must be JSON, e.g. {"order":["deepinfra"],"ignore":["novita"]}');
+    }
+    if (!isRecord(value)) throw new Error('VGC_OPENROUTER_PROVIDER must be a JSON object of routing preferences');
+    parsed = value;
   }
-  if (!isRecord(parsed)) throw new Error('VGC_OPENROUTER_PROVIDER must be a JSON object of routing preferences');
-  return parsed;
+  const pinned = env.VGC_OPENROUTER_PIN;
+  if (!pinned) return parsed;
+  const order = pinned
+    .split(',')
+    .map((name) => name.trim())
+    .filter(Boolean);
+  if (!order.length) return parsed;
+  return { ...parsed, order, allow_fallbacks: false };
 }
 
 function openRouterFetch(

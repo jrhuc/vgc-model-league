@@ -1039,6 +1039,7 @@ export class LLMEngine extends BaseEngine {
       total_tokens: totalTokens(pending.usage),
       ...reasoningField(pending.usage),
       ...(pending.usage?.cost !== undefined ? { cost: pending.usage.cost } : {}),
+      ...(pending.upstreamProviders?.length ? { upstream_providers: pending.upstreamProviders } : {}),
       timer,
       tool_lookups: (pending.toolCalls ?? []).map((call) => call.name),
     });

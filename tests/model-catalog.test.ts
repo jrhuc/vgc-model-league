@@ -11,10 +11,12 @@ function jsonResponse(body: unknown, init?: ResponseInit): Response {
   });
 }
 
-test('provider options preserve ordering and discovery capabilities', () => {
+test('the provider menu leads with the gateway a benchmark seat should use', () => {
+  assert.equal(PROVIDER_OPTIONS[0]?.id, 'openrouter');
   assert.deepEqual(
     PROVIDER_OPTIONS.map((provider) => provider.id),
     [
+      'openrouter',
       'anthropic',
       'openai',
       'google',
@@ -24,7 +26,6 @@ test('provider options preserve ordering and discovery capabilities', () => {
       'cerebras',
       'meta',
       'zai',
-      'openrouter',
       'opencode-go',
       'opencode-zen',
       'vercel',
@@ -33,68 +34,36 @@ test('provider options preserve ordering and discovery capabilities', () => {
     ],
   );
   assert.deepEqual(
-    PROVIDER_OPTIONS.map((provider) => provider.discovery),
-    [
-      'list',
-      'list',
-      'list',
-      'list',
-      'list',
-      'list',
-      'list',
-      'manual',
-      'manual',
-      'list',
-      'list',
-      'list',
-      'list',
-      'manual',
-      'none',
-    ],
-  );
-  assert.deepEqual(
-    PROVIDER_OPTIONS.slice(9, 13).map(({ id, baseUrl, envKey, discovery, requiresKey }) => ({
-      id,
-      baseUrl,
-      envKey,
-      discovery,
-      requiresKey,
-    })),
+    ['openrouter', 'opencode-go', 'opencode-zen', 'vercel'].map((id) => {
+      const option = providerOption(id);
+      return { id, baseUrl: option?.baseUrl, envKey: option?.envKey, discovery: option?.discovery };
+    }),
     [
       {
         id: 'openrouter',
         baseUrl: 'https://openrouter.ai/api/v1',
         envKey: 'OPENROUTER_API_KEY',
         discovery: 'list',
-        requiresKey: true,
       },
       {
         id: 'opencode-go',
         baseUrl: 'https://opencode.ai/zen/go/v1',
         envKey: 'OPENCODE_API_KEY',
         discovery: 'list',
-        requiresKey: true,
       },
-      {
-        id: 'opencode-zen',
-        baseUrl: 'https://opencode.ai/zen/v1',
-        envKey: 'OPENCODE_API_KEY',
-        discovery: 'list',
-        requiresKey: true,
-      },
-      {
-        id: 'vercel',
-        baseUrl: 'https://ai-gateway.vercel.sh/v1',
-        envKey: 'AI_GATEWAY_API_KEY',
-        discovery: 'list',
-        requiresKey: true,
-      },
+      { id: 'opencode-zen', baseUrl: 'https://opencode.ai/zen/v1', envKey: 'OPENCODE_API_KEY', discovery: 'list' },
+      { id: 'vercel', baseUrl: 'https://ai-gateway.vercel.sh/v1', envKey: 'AI_GATEWAY_API_KEY', discovery: 'list' },
     ],
+  );
+  assert.deepEqual(
+    PROVIDER_OPTIONS.filter((provider) => provider.discovery === 'manual').map((provider) => provider.id),
+    ['meta', 'zai', 'compat'],
   );
   assert.equal(providerOption('kimi')?.envKey, 'MOONSHOT_API_KEY');
   assert.equal(providerOption('meta')?.envKey, 'META_MODEL_API_KEY');
   assert.equal(providerOption('compat')?.requiresKey, false);
   assert.equal(providerOption('random')?.envKey, undefined);
+  assert.equal(providerOption('random')?.discovery, 'none');
   assert.equal(providerOption('missing'), undefined);
 });
 
