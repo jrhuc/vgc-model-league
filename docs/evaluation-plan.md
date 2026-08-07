@@ -160,6 +160,21 @@ not prerequisites for the first vertical slice. A draft-only mode may exist for
 smoke testing and trace collection; it must not advertise a roster-quality
 reward.
 
+The [Social Arena methodology](https://olamlabs.ai/research/social-arena) is a
+useful cross-domain implementation reference. The circuit should likewise use
+anonymous opponents, one continuous seat-private session, the same authorized
+state/action surface for human and agent clients, append-only accepted-action
+records, and explicit sandbox and harness descriptors. Its large-sample outcome
+ratings do not transfer to a small pilot season, and its LLM-judged behavioral
+indices are not a substitute for the controlled decision result here.
+
+The circuit also needs a canonical append-only transition ledger: accepted
+message/action, actor and visibility, input and resulting state hashes, RNG and
+protocol identity, plus separate rejection or substitution events. Operational
+resume files may be rebuilt, but accepted evidence may not be pruned or
+rewritten. A fork is a new episode with parent run/sequence, intervention, and
+changed scaffold components rather than a mutation of the source trace.
+
 ### Signals
 
 Battle win/loss is the terminal objective. Reference-relative battle values may

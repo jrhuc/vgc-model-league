@@ -87,7 +87,7 @@ stored seats refuses to resume rather than record a different bracket.
 
 Battles are untimed by default. `--timer-scale 1` uses the standard VGC clock.
 Values from 0.5 through 4 scale every Showdown clock. Each run records the
-selected scale. Ratings do not mix results from different scales.
+selected scale. Outcomes from different clock or scaffold conditions remain separate contexts and are not pooled into a rating.
 
 Draft-league round-robin series run concurrently under `--concurrency`, with
 every matchup built blind to the other round-robin results. `--sequential-weeks`
@@ -185,8 +185,8 @@ pnpm run build-board <pool>
 ## Inspect evidence
 
 ```sh
-pnpm run vgcleague standings --pool regmb-202607
-pnpm run vgcleague report    --pool regmb-202607
+pnpm run vgcleague outcomes --pool regmb-202607
+pnpm run vgcleague report   --pool regmb-202607
 ```
 
 The GUI archives finished runs: draft leagues under **Draft leagues** (rosters,
@@ -196,11 +196,11 @@ pick rationales, per-series builds, schedule, and the board), brackets under
 Decision logs record `reasoning_tokens` and metered cost when the provider
 reports them.
 
-Without `--pool`, standings and reports exclude the disposable `test` pool.
-They use only rotation results. Different providers for the same model ID
-count as one player within a timer group. These standings describe the recorded
-rotation schedule; they are not a controlled model ranking and should not be
-used as the result of the decision evaluation.
+Without `--pool`, outcomes and reports exclude the disposable `test` pool. They
+show contextual per-series rows across experiment modes, including the pool,
+clock, scaffold, opponents, and sample size. They do not merge model aliases or
+compute an aggregate order. Within-run league tables and tournament brackets
+remain descriptions of those individual runs.
 
 ## Grade recorded battle positions
 
@@ -215,8 +215,10 @@ pnpm run freeze-positions --size 500 --seed set-1
 pnpm run export-position-panels --horizon 2 --luck 8 --opponents 4 --seed panels-1
 ```
 
-Grading is CPU-bound and defaults to a third of the machine's cores. Resume is
-allowed only when the Showdown revision and complete counterfactual protocol
+Grading is CPU-bound and defaults to a third of the machine's cores. Use
+`--records <results.jsonl> --runs-dir <runs-root>` on both grading and freezing
+to pilot an isolated corpus without modifying the repository-wide record set.
+Resume is allowed only when the Showdown revision and complete counterfactual protocol
 match `<output>.manifest.json`; use `--restart` or another `--out` after changing
 settings. Scores use the realized hidden state and remain exploratory. See
 [Measurement principles](measurement.md) for their limits.

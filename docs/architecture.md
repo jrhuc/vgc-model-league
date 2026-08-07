@@ -10,8 +10,8 @@ There is no terminal UI.
 server, JSON API, static assets, and server-sent events. The Preact client is in
 `src/gui/client/`.
 
-The server is authoritative. It owns game rules, validation, file access,
-standings, and rating calculations. The client only renders API data.
+The server is authoritative. It owns game rules, validation, file access, and
+contextual run evidence. The client only renders API data.
 
 Declare all client and server data shapes in `src/gui/api.ts`. Both sides
 import these types. Keep one file for each top-level view. Extract a shared
@@ -34,7 +34,8 @@ an experiment mode.
 ### Rotation
 
 `src/rotation.ts` owns the schedule, mirrored assignments, run configuration,
-events, and result persistence. Only rotation results enter the rating.
+events, and result persistence. Rotation rows remain contextual outcomes; they
+are not combined into a public rating.
 
 ### Tournament
 
@@ -110,7 +111,7 @@ not sandboxed from the host filesystem or network. Exhibition is therefore a
 trusted manual integration mode, not a controlled agent comparison. Its result
 records distinct execution-harness descriptors for the bridge and opponent.
 
-Exhibition results do not enter the rating. A research comparison must instead
+Exhibition results are not controlled evidence. A research comparison must instead
 launch the external harness in a least-privilege sandbox that mounts only its
 workspace and reaches only the authorized seat endpoint.
 
@@ -241,8 +242,8 @@ queued and active work. Completed series remain on disk before the scheduler
 reports the failure.
 
 `records/results.jsonl` is append-only. Readers accept unknown fields and
-missing optional fields. They derive ratings and summaries from qualifying
-rows. They do not store Elo values.
+missing optional fields. Public readers expose contextual per-series outcomes
+and observational summaries without deriving an Elo or total order.
 
 Local evidence uses files:
 
@@ -289,9 +290,10 @@ not terminate the web server.
 Public spectators receive the public split-log branch from Showdown. Only the
 run owner and operators can receive private battle data.
 
-Only two evidence sources can enter public ratings: runs from the deployment
-and imports authorized by the operator token. Client submissions cannot enter
-ratings because replay cannot prove which model made the choices.
+Public evidence may come from deployment runs or imports authorized by the
+operator token. Provenance remains attached; client submissions are not treated
+as verified model evidence because replay cannot prove which model made the
+choices.
 
 See [Deployment](deployment.md) for service configuration, limits, and backup
 procedures. See [Use the league](usage.md) for local commands and evidence

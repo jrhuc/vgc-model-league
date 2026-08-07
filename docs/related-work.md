@@ -61,6 +61,27 @@ These are protocol and baseline references for draft/trade behaviour. The
 Pokémon contribution must come from connecting those choices to later teams and
 simulator outcomes, not from calling drafting or negotiation itself new.
 
+## Multi-agent arena methodology
+
+[Olam Labs' Social Arena methodology](https://olamlabs.ai/research/social-arena)
+is a close systems reference for the eventual circuit in a different game
+domain. It gives each anonymized seat one continuous sandboxed session, routes
+human and agent actions through the same environment primitives, records accepted
+actions and resulting states append-only, and treats replayability, forkability,
+and programmatic legibility as design requirements. It also distinguishes a
+generic shared harness from model-native harnesses rather than silently treating
+them as one scaffold.
+
+Those are useful requirements here: generic opponent names, an authorized seat
+API shared by human and agent clients, continuous seat-private context, explicit
+harness descriptors, sandbox isolation, and forkable state should be properties
+of `vgc-draft-circuit-v1`. Olam's outcome rating depends on large randomized
+populations and substantial sample sizes; it does not justify turning a small VGC
+season into a ranking. Its transcript-based behavioral scores are also separate
+methodology: any analogous trade or plan-fidelity measure here would need a
+preregistered rubric, identity-stripped traces, multiple audited graders, and
+reported grader variance.
+
 ## Infrastructure
 
 [Prime Intellect verifiers](https://github.com/PrimeIntellect-ai/verifiers)

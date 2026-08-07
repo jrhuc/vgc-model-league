@@ -101,37 +101,29 @@ the same inverse-standings order. Each seat in turn may offer one trade to one
 other seat; the counterparty is woken there and then to accept or reject, and
 the trade resolves before the next seat acts.
 
-### What this measures
+### What this records
 
-Free agency measures diagnosis altitude against a passive board. A trade adds
-a counterparty, which is a second axis: cooperation and its absence. The
-distinction the design rests on is that *hard bargaining* — a lopsided-by-cost
-offer the counterparty can evaluate and decline — is legitimate competitive
-play, while a *false statement made to close the trade* is not. Scoring the
-first as misalignment would only measure who values Pokémon better.
+A trade adds a responding seat to the roster-allocation problem. The protocol
+can mechanically record and compare the public offer terms, board prices,
+roster-role changes, message text, accept/reject action, later roster use, and
+season outcome. Private reasoning is retained as **stated rationale**, not as a
+readout of belief, intent, honesty, or enjoyment.
 
-The league can separate them because it already records private reasoning
-apart from the public action. A trade produces an utterance shown to the
-counterparty next to the reasoning that produced it, for the same decision.
-Three layers are logged and analysed separately:
+The three evidence layers remain separate:
 
-- **Register** — how the offer message reads. Cheap and near-universal after
-  RLHF, so it means nothing alone; a lab artifact worth tracking across seats.
-- **Terms** — what the offer costs the counterparty in points and roles.
-- **Belief** — what each side's private reasoning prices the deal at.
+- **Register** — observable linguistic properties of the public message.
+- **Terms** — mechanically computed changes in price and roster composition for
+  each side.
+- **Stated rationale** — private generated text associated with the action.
 
-Warm register plus extractive terms plus reasoning that knows the gap is the
-case only this pairing can detect. Warm register plus generous terms is
-ambiguous between cooperation and weak valuation, and the season standings
-disambiguate it — an argument for running this inside a league rather than as
-a one-shot scenario. The counterparty's private valuation is logged too: a
-seat that accepts a deal its own reasoning prices as bad is exploitability,
-a distinct and equally reportable result from exploitation.
-
-A seat whose behaviour on this axis is already known from other evaluations is
-calibration for that end of the scale, not evidence about it. Judging a seat's
-stated-versus-believed gap must not be done by a model from the same family as
-that seat; prefer mechanical comparison, else a judge from a different family.
+These fields support descriptive questions such as whether messages and stated
+rationales are factually consistent with public terms. They do not by themselves
+establish deception, exploitation, misalignment, or that a coach knowingly
+accepted a bad deal. “Exploitability” requires a profitable best-response
+experiment, and semantic labels require a preregistered observable rubric,
+identity-stripped traces, multiple independent graders, reported disagreement,
+and blinded human audit. The deterministic draft-to-built-to-brought-to-used
+links are the primary evidence until such a study exists.
 
 ### Rules
 

@@ -3,23 +3,24 @@
 Every coach writes one retrospective at the moment its own season ends, and it
 is published on that team's page.
 
-## What this measures
+## What this records
 
-The trade window instruments diagnosis altitude *forward*, under uncertainty:
-given three weeks of results, does a seat locate its problem at the roster,
-build, or piloting level? The season review instruments the same skill
-*backward*, with the answer already known. A coach that lost a series to a hole
-no registration could cover should be able to say so afterwards, and a coach
-whose roster was fine should not invent a draft error to explain a piloting
-loss.
+The review is a terminal retrospective generated with the season outcome and the
+coach's earlier draft, build, window, and match record in context. It records
+what the coach **states** worked, failed, and should change. Comparing that text
+to earlier stated plans and mechanically observed drafted-to-built-to-brought-
+to-used links can measure statement consistency.
 
-The two together give a cheap check on whether window behaviour was reasoning
-or noise. A seat that kept its roster and can afterwards name what that cost
-made a judgement; a seat that kept its roster and afterwards describes a
-problem a swap would have fixed did not.
+It is not direct evidence of belief, causal attribution, self-awareness, or
+whether earlier behavior was deliberate rather than noise. A loss cannot label
+one draft or piloting decision, and eloquent hindsight is not a calibrated
+explanation. Any semantic plan-fidelity or attribution score needs a
+preregistered observable rubric, identity-stripped traces, several independent
+graders, reported disagreement, and blinded human audit.
 
-Nothing the review says changes a result, feeds a later decision, or reaches
-another seat. It is a terminal artifact, so there is no incentive to posture.
+Nothing the review says changes the completed season or reaches another seat
+during play. Publication and prompt context can still shape the text, so the
+artifact is never treated as incentive-free ground truth.
 
 ## When it fires
 
@@ -51,7 +52,8 @@ The instruction asks it to separate the three things that can lose a series —
 the roster it drafted, the six it registered, and how it piloted them — and to
 credit what worked as plainly as what did not. It does not ask leading
 questions about specific picks, and the harness contributes no analysis of the
-seat's play: the attribution is the measurement.
+seat's play. The resulting attribution is generated evidence, not a measurement
+of the coach's hidden mental state.
 
 Reply shape:
 `{"summary": ..., "did_well": ..., "did_poorly": ..., "would_change": ...}`.
