@@ -153,9 +153,9 @@ OpenRouter spec that does not already carry one — faster and usually pricier,
 so skip it when slower seats set the pace anyway.
 
 Set `VGC_OPENROUTER_PIN=deepinfra` to restrict every OpenRouter request in
-the process to that upstream provider and disable fallback. Controlled runs
-should use exactly one provider. A comma-separated list defines an allowed set,
-not a single pinned route. `VGC_OPENROUTER_PROVIDER` accepts a full JSON routing
+the process to that upstream provider and disable fallback. The pin accepts one
+provider only; a comma-separated allowed set is rejected because it is not a
+controlled route. `VGC_OPENROUTER_PROVIDER` accepts a full JSON routing
 object such as `{"order":["deepinfra"],"ignore":["novita"]}`; the pin overrides
 its `order` and `allow_fallbacks` fields. Decision and trace rows record the
 upstream provider and reported cost when OpenRouter returns them.
@@ -274,3 +274,9 @@ send several. The deployment must use the same import token. See
 The host creates an agent workspace in `runs/<run>/agent/` by default. The
 workspace contains `seat.mjs`, `SEAT.md`, and a connection token. Start the
 terminal agent in that directory.
+
+This is a trusted, unrated manual-integration mode. The tokenized bridge exposes
+only the seat's authorized view, but the launched process is not isolated from
+the host filesystem or network. Do not use exhibition results as a controlled
+Prime Agent or scaffold comparison; that requires a least-privilege sandbox
+mounting only this workspace.

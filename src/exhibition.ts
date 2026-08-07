@@ -19,7 +19,7 @@ import { loadPool, validatePool } from './teams.js';
 import { DEFAULT_TIMER_SCALE } from './timer.js';
 import type { Pid } from './types.js';
 
-const EXHIBITION_PROTOCOL_VERSION = 1;
+const EXHIBITION_PROTOCOL_VERSION = 2;
 
 export interface ExhibitionOptions {
   opponent: string;
@@ -36,7 +36,7 @@ export interface ExhibitionOptions {
   onReady?: (info: { url: string; agentDir: string }) => void;
 }
 
-/** External seat bridge; only that seat's view crosses the process boundary, and the result is unrated. */
+/** Trusted manual bridge. Its HTTP API is seat-private, but the external process is not sandboxed; results are unrated. */
 export async function runExhibition(runDir: string, options: ExhibitionOptions): Promise<SeriesRecord> {
   const seatSide: Pid = options.seat ?? 'p1';
   const oppSide: Pid = seatSide === 'p1' ? 'p2' : 'p1';
@@ -67,6 +67,20 @@ export async function runExhibition(runDir: string, options: ExhibitionOptions):
   const players: Record<Pid, string> = { p1: '', p2: '' };
   players[seatSide] = seatName;
   players[oppSide] = options.opponent;
+  const executionHarnesses = {
+    [seatSide]: {
+      adapter: 'trusted-external-bridge',
+      version: 1,
+      filesystem_isolation: false,
+      delegation: 'unrestricted-unobserved',
+    },
+    [oppSide]: {
+      adapter: options.opponent === 'random' ? 'random-engine' : 'llm-engine',
+      version: 1,
+      filesystem_isolation: true,
+      delegation: 'none',
+    },
+  };
   fs.writeFileSync(
     path.join(runDir, 'config.json'),
     `${JSON.stringify(
@@ -78,6 +92,7 @@ export async function runExhibition(runDir: string, options: ExhibitionOptions):
         ...(openRouterRouting ? { openrouter_routing: openRouterRouting } : {}),
         seat: seatSide,
         players,
+        execution_harnesses: executionHarnesses,
         seed,
         reasoning: options.reasoning ?? null,
         pool: pool.id,
@@ -91,8 +106,13 @@ export async function runExhibition(runDir: string, options: ExhibitionOptions):
 
   const reference = new ShowdownReference(pool.format, psDir);
   const toolLog = path.join(seriesDir, `${seatSide}-bridge-tools.jsonl`);
+  let seatEngine: LLMEngine | undefined;
   const bridge = new SeatBridge({
-    lookup: (name, args) => reference.lookup(name, args),
+    tools: () => seatEngine?.decisionToolDefinitions() ?? [],
+    lookup: (name, args) => {
+      if (!seatEngine) throw new Error('seat engine is not ready');
+      return seatEngine.lookupDecisionTool(name, args);
+    },
     onExchange: (view) =>
       notice(`seat ${view.phase} exchange ${view.id} pending; the agent should run: node seat.mjs wait`),
     onTool: (name, args, result) =>
@@ -111,6 +131,7 @@ export async function runExhibition(runDir: string, options: ExhibitionOptions):
       state: 'running',
       seat: seatSide,
       players,
+      execution_harnesses: executionHarnesses,
       pool: pool.id,
       format: pool.format,
       game: 0,
@@ -119,15 +140,16 @@ export async function runExhibition(runDir: string, options: ExhibitionOptions):
     options.onReady?.({ url, agentDir });
 
     const names: Record<Pid, string> = { p1: `p1-${players.p1}`, p2: `p2-${players.p2}` };
+    seatEngine = new LLMEngine(seatSide, seatName, {
+      provider: bridge.provider(),
+      decisionLog: path.join(seriesDir, `${seatSide}-decisions.jsonl`),
+      traceLog: path.join(seriesDir, `${seatSide}-trace.jsonl`),
+      format: pool.format,
+      psDir,
+      reference,
+    });
     const engines = {
-      [seatSide]: new LLMEngine(seatSide, seatName, {
-        provider: bridge.provider(),
-        decisionLog: path.join(seriesDir, `${seatSide}-decisions.jsonl`),
-        traceLog: path.join(seriesDir, `${seatSide}-trace.jsonl`),
-        format: pool.format,
-        psDir,
-        reference,
-      }),
+      [seatSide]: seatEngine,
       [oppSide]: makeEngine({
         pid: oppSide,
         spec: options.opponent,
@@ -176,6 +198,7 @@ export async function runExhibition(runDir: string, options: ExhibitionOptions):
       pool: pool.id,
       seat: seatSide,
       players,
+      execution_harnesses: executionHarnesses,
       teams: { p1: teams.p1.id, p2: teams.p2.id },
       winner: winnerSide ? players[winnerSide] : null,
       winner_side: winnerSide ?? null,

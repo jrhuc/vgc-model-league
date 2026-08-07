@@ -105,10 +105,14 @@ reach the playoffs. Later playoff rounds also receive earlier playoff context.
 ### Exhibition
 
 `src/seat.ts` exposes one `LLMEngine` seat through a token-authenticated local
-bridge. The host keeps both private battle-log views, the opponent engine, and
-the opponent credentials. The external agent receives only its own view.
+bridge. The bridge API returns only that seat's view, but the external process is
+not sandboxed from the host filesystem or network. Exhibition is therefore a
+trusted manual integration mode, not a controlled agent comparison. Its result
+records distinct execution-harness descriptors for the bridge and opponent.
 
-Exhibition results do not enter the rating.
+Exhibition results do not enter the rating. A research comparison must instead
+launch the external harness in a least-privilege sandbox that mounts only its
+workspace and reaches only the authorized seat endpoint.
 
 ## Model decision path
 

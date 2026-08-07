@@ -5,7 +5,7 @@ import type { AddressInfo } from 'node:net';
 
 import { DRAFT_SERIES_REFLECTION_SYSTEM, REFLECTION_SYSTEM, SERIES_REFLECTION_SYSTEM } from './prompts.js';
 import { DEX_TOOLS } from './reference.js';
-import type { Completion, JsonObject, Provider, ProviderMessage } from './types.js';
+import type { Completion, JsonObject, Provider, ProviderMessage, ToolDefinition } from './types.js';
 import { isRecord, text } from './value.js';
 
 type SeatPhase = 'decision' | 'reflection';
@@ -29,6 +29,7 @@ interface PendingExchange {
 
 export interface SeatBridgeOptions {
   lookup: (name: string, args: JsonObject) => string;
+  tools?: () => readonly ToolDefinition[];
   onExchange?: (view: SeatExchangeView) => void;
   onTool?: (name: string, args: JsonObject, result: string) => void;
 }
@@ -133,6 +134,10 @@ export class SeatBridge {
     return supplied.length === expected.length && timingSafeEqual(supplied, expected);
   }
 
+  private availableTools(): readonly ToolDefinition[] {
+    return this.exchange?.phase === 'decision' ? (this.options.tools?.() ?? DEX_TOOLS) : [];
+  }
+
   private async handle(request: IncomingMessage, response: ServerResponse): Promise<void> {
     const send = (statusCode: number, body: JsonObject) => {
       response.writeHead(statusCode, { 'content-type': 'application/json; charset=utf-8' });
@@ -148,7 +153,7 @@ export class SeatBridge {
     }
 
     if (route === '/status') return send(200, { status: this.status, exchange: this.exchange?.id ?? null });
-    if (route === '/tools') return send(200, { tools: DEX_TOOLS });
+    if (route === '/tools') return send(200, { tools: this.availableTools() });
     if (route === '/poll') {
       const waitMs = Math.max(0, Math.min(Number(body.waitMs) || 0, POLL_LIMIT_MS));
       if (!this.exchange && waitMs && !this.closed) await this.waitForExchange(waitMs);
@@ -160,7 +165,8 @@ export class SeatBridge {
     }
     if (route === '/tool') {
       const name = text(body.name);
-      if (!DEX_TOOLS.some((tool) => tool.name === name)) return send(400, { error: `unknown tool ${name}` });
+      if (!this.availableTools().some((tool) => tool.name === name))
+        return send(400, { error: `unknown tool ${name}` });
       const args = isRecord(body.arguments) ? body.arguments : {};
       const result = this.options.lookup(name, args);
       this.options.onTool?.(name, args, result);

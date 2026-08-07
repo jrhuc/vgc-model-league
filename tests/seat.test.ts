@@ -112,6 +112,7 @@ test('an exhibition series against random plays to completion through the bridge
   const headers = { 'content-type': 'application/json', authorization: `Bearer ${config.token}` };
 
   const prompts: string[] = [];
+  let battleTools: Array<{ name: string; parameters: Record<string, unknown> }> = [];
   let driving = true;
   const driver = (async () => {
     while (driving) {
@@ -128,6 +129,10 @@ test('an exhibition series against random plays to completion through the bridge
       }
       if (!data.exchange) continue;
       prompts.push(data.exchange.prompt);
+      if (data.exchange.phase === 'decision' && battleTools.length === 0) {
+        const response = await fetch(`${url}/tools`, { method: 'POST', headers, body: '{}' });
+        battleTools = ((await response.json()) as { tools: typeof battleTools }).tools;
+      }
       const text =
         data.exchange.phase === 'reflection'
           ? '{"summary":"s","adjustment":"a","notebook":"n"}'
@@ -157,6 +162,20 @@ test('an exhibition series against random plays to completion through the bridge
   assert.equal(row.seat, 'p1');
   assert.deepEqual(row.players, { p1: 'cli-agent', p2: 'random' });
   assert.match(String(row.scaffold), /^[0-9a-f]{12}$/);
+  assert.deepEqual(row.execution_harnesses, {
+    p1: {
+      adapter: 'trusted-external-bridge',
+      version: 1,
+      filesystem_isolation: false,
+      delegation: 'unrestricted-unobserved',
+    },
+    p2: { adapter: 'random-engine', version: 1, filesystem_isolation: true, delegation: 'none' },
+  });
+  assert.ok(battleTools.some((tool) => tool.name === 'compare_action_order'));
+  const damage = battleTools.find((tool) => tool.name === 'estimate_damage');
+  assert.ok(damage);
+  const damageParameters = damage.parameters.properties as Record<string, unknown>;
+  assert.deepEqual(Object.keys(damageParameters), ['attacker', 'defender', 'move', 'helping_hand', 'is_critical_hit']);
   const score = row.score as Record<string, number>;
   assert.equal(Math.max(score.p1!, score.p2!), 2);
   assert.ok(prompts.some((prompt) => prompt.includes('Ordered team menu')));
