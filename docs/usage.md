@@ -214,6 +214,7 @@ pnpm run grade-positions --workers 4 --restart
 pnpm run freeze-positions --size 500 --seed set-1
 pnpm run export-position-panels --horizon 2 --luck 8 --opponents 4 --seed panels-1
 pnpm run summarize-position-pilot records/private/position-panels/scores.pilot.jsonl
+pnpm run freeze-position-splits --policy path/to/reviewed-frozen-policy.json
 ```
 
 Grading is CPU-bound and defaults to a third of the machine's cores. Use
@@ -238,12 +239,19 @@ prompts to `position-panels/tasks.pilot.jsonl`, while scores and full draw
 matrices go to the separate `private/position-panels` root. The manifest binds
 all files and deliberately says `release_ready: false`. Each private score row
 contains versioned span uncertainty, rank stability, reward-drift, and normalized
-measurement-uncertainty diagnostics. `summarize-position-pilot` prints their
-empirical distributions but explicitly does not choose eligibility thresholds.
-A reviewed frozen policy, duplicate clustering, and immutable train/eval splits
-still require a pilot. The exporter validates exact public/private/sealed schemas
-and writes sorted-key canonical JSON/JSONL bytes; non-finite or unjoined artifacts
-fail before publication. No command on this branch yet runs a model over these tasks.
+measurement-uncertainty diagnostics. The exporter validates exact
+public/private/sealed schemas and writes sorted-key canonical JSON/JSONL bytes;
+non-finite or unjoined artifacts fail before publication.
+`summarize-position-pilot` prints the empirical distributions but explicitly does
+not choose eligibility thresholds. After reviewing a sufficient pilot, `freeze-position-splits` requires a named
+schema-v1 policy with explicit eligibility limits, eval fraction, seed, and
+near-duplicate similarity threshold. It applies the eligibility gates, clusters
+numeric-normalized visible-position trigrams, unions duplicate and source-game
+components, and writes checksummed train/eval tasks plus private scores, sealed
+panels, exclusions, pair evidence, and assignments. The resulting manifest still
+says `release_ready: false`; freezing a candidate split does not waive horizon,
+hidden-information, criterion, or package-smoke gates. No command on this branch
+yet runs a model over these tasks.
 
 ## Archive a run
 

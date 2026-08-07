@@ -79,7 +79,12 @@ drift, and measurement standard error relative to span. The advisory
 `summarize-position-pilot` command reports their empirical distributions without
 choosing thresholds. A separately reviewed, provenance-bound frozen policy must
 set the gates; the implementation does not promote pilot quantiles into criteria.
-Near-duplicate clustering and immutable train/eval splits remain release gates.
+The split freezer can apply an explicitly frozen policy, cluster normalized
+visible-position token trigrams at that policy's declared similarity threshold,
+and union those clusters with source-game groups before deterministic assignment.
+It emits pair evidence, exclusions, component assignments, checksums, and immutable
+candidate train/eval files. Choosing and reviewing the policy on a sufficient
+pilot remains a release gate; running the command does not approve the package.
 Public tasks, private score tables, sealed panels, and their manifest use the
 versioned canonical JSON byte protocol; strict boundary validators reject extra
 keys, malformed action maps, non-finite values, and incomplete task/score/sealed

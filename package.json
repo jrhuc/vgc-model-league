@@ -31,7 +31,8 @@
     "grade-positions": "node dist/tools/grade-positions.js",
     "freeze-positions": "node dist/tools/freeze-positions.js",
     "export-position-panels": "node dist/tools/export-position-panels.js",
-    "summarize-position-pilot": "node dist/tools/summarize-position-pilot.js"
+    "summarize-position-pilot": "node dist/tools/summarize-position-pilot.js",
+    "freeze-position-splits": "node dist/tools/freeze-position-splits.js"
   },
   "engines": {
     "node": ">=24.18.1 <25"

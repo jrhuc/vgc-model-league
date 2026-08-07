@@ -93,6 +93,20 @@ export function positionEligibilityMetrics(table: ExhaustiveActionTable): Positi
 }
 
 export function validatePositionEligibilityPolicy(policy: PositionEligibilityPolicy): void {
+  const keys = Object.keys(policy).sort();
+  const expected = [
+    'max_measurement_normalized_standard_error',
+    'max_normalized_reward_drift',
+    'min_held_out_span_lower95',
+    'min_panel_draws',
+    'min_stability_rank_correlation',
+    'require_best_anchor_agreement',
+    'require_extrema_set_agreement',
+    'schema_version',
+    'status',
+  ].sort();
+  if (JSON.stringify(keys) !== JSON.stringify(expected))
+    throw new Error('eligibility policy has unexpected or missing keys');
   if (policy.schema_version !== 1 || policy.status !== 'frozen')
     throw new Error('eligibility policy must be frozen schema version 1');
   if (
@@ -116,6 +130,11 @@ export function validatePositionEligibilityPolicy(policy: PositionEligibilityPol
     throw new Error('eligibility min_panel_draws must be a positive integer');
   if (!Number.isFinite(policy.min_held_out_span_lower95) || policy.min_held_out_span_lower95 < 0)
     throw new Error('eligibility min_held_out_span_lower95 must be non-negative');
+  if (
+    typeof policy.require_best_anchor_agreement !== 'boolean' ||
+    typeof policy.require_extrema_set_agreement !== 'boolean'
+  )
+    throw new Error('eligibility anchor requirements must be booleans');
 }
 
 export function assessPositionEligibility(

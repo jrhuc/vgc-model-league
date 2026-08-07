@@ -1,5 +1,7 @@
 import { createHash } from 'node:crypto';
 
+import { canonicalJson } from './serialization.js';
+
 export type PositionSplit = 'train' | 'eval';
 
 export interface SplitCandidate {
@@ -86,6 +88,6 @@ export function assignPositionSplits(
 export function positionSplitDigest(assignments: readonly SplitAssignment[]): string {
   const canonical = [...assignments]
     .sort((a, b) => Buffer.from(a.taskId).compare(Buffer.from(b.taskId)))
-    .map((entry) => JSON.stringify(entry));
+    .map((entry) => canonicalJson(entry));
   return digest(['position-split-v1', ...canonical]);
 }
