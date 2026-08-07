@@ -12,6 +12,13 @@ import {
 } from '../src/eval/counterfactual.js';
 import { POSITION_ELIGIBILITY_METRICS_VERSION, positionEligibilityMetrics } from '../src/eval/eligibility.js';
 import { ACTION_PROTOCOL, type Position } from '../src/eval/fork.js';
+import { validatePositionPanelArtifacts } from '../src/eval/panel-artifact.js';
+import {
+  CANONICAL_JSON_PROTOCOL,
+  canonicalJson,
+  canonicalJsonDigest,
+  canonicalJsonl,
+} from '../src/eval/serialization.js';
 import { POSITION_TASK_PROTOCOL, renderPositionTask, validateTaskScoreJoin } from '../src/eval/task.js';
 import { DATA_DIR, defaultPsDir } from '../src/paths.js';
 import { showdownCommit } from '../src/showdown.js';
@@ -90,6 +97,8 @@ function evaluatorDigest(): string {
     path.resolve(path.dirname(tool), '../src/eval/counterfactual.js'),
     path.resolve(path.dirname(tool), '../src/eval/eligibility.js'),
     path.resolve(path.dirname(tool), '../src/eval/fork.js'),
+    path.resolve(path.dirname(tool), '../src/eval/panel-artifact.js'),
+    path.resolve(path.dirname(tool), '../src/eval/serialization.js'),
     path.resolve(path.dirname(tool), '../src/eval/task.js'),
     path.resolve(path.dirname(tool), '../src/choices.js'),
     path.resolve(path.dirname(tool), '../src/state.js'),
@@ -125,10 +134,6 @@ function writeAtomic(file: string, content: string): void {
   const temporary = `${file}.${process.pid}.tmp`;
   fs.writeFileSync(temporary, content, 'utf8');
   fs.renameSync(temporary, file);
-}
-
-function jsonl(values: JsonObject[]): string {
-  return values.map((value) => JSON.stringify(value)).join('\n') + (values.length ? '\n' : '');
 }
 
 function taskPosition(publicRow: JsonObject, privateRow: JsonObject): { position: Position; pid: Pid } {
@@ -197,7 +202,13 @@ async function main(): Promise<void> {
     ) {
       throw new Error(`position ${sourceId} prompt action map does not match its exhaustive panel`);
     }
-    const taskId = digest([publicSet.id, sourceId, POSITION_TASK_PROTOCOL, rendered.prompt, rendered.actions]);
+    const taskId = canonicalJsonDigest([
+      publicSet.id,
+      sourceId,
+      POSITION_TASK_PROTOCOL,
+      rendered.prompt,
+      rendered.actions,
+    ]);
     const scoredActions = rendered.actions.map((entry) => {
       const measured = measuredByAction.get(entry.canonicalAction);
       if (!measured) throw new Error(`position ${sourceId} is missing ${entry.canonicalAction}`);
@@ -276,7 +287,7 @@ async function main(): Promise<void> {
     });
     const source = privateRow.source as JsonObject;
     const sourceGroup = `${String(source.run_id)}:${String(source.series_id)}:${String(source.game_number)}`;
-    const exactPublicFingerprint = digest([
+    const exactPublicFingerprint = canonicalJsonDigest([
       'exact-public-task-v1',
       rendered.format,
       rendered.phase,
@@ -293,7 +304,7 @@ async function main(): Promise<void> {
       snapshot: privateRow.snapshot,
       opponent_request: privateRow.opponent_request,
       panel_seed: seed,
-      table,
+      table: { ...table, horizon: Number.isFinite(table.horizon) ? table.horizon : 'end' },
     });
     process.stdout.write(`exported ${index + 1}/${publicRows.length} ${taskId}\n`);
   }
@@ -302,9 +313,10 @@ async function main(): Promise<void> {
   const taskFile = path.join(settings.out, 'tasks.pilot.jsonl');
   const scoreFile = path.join(settings.privateOut, 'scores.pilot.jsonl');
   const sealedFile = path.join(settings.privateOut, 'sealed-panels.pilot.jsonl');
-  writeAtomic(taskFile, jsonl(taskRows));
-  writeAtomic(scoreFile, jsonl(scoreRows));
-  writeAtomic(sealedFile, jsonl(sealedRows));
+  validatePositionPanelArtifacts(taskRows, scoreRows, sealedRows);
+  writeAtomic(taskFile, canonicalJsonl(taskRows));
+  writeAtomic(scoreFile, canonicalJsonl(scoreRows));
+  writeAtomic(sealedFile, canonicalJsonl(sealedRows));
   const manifest = {
     schema_version: 1,
     release_ready: false,
@@ -316,6 +328,7 @@ async function main(): Promise<void> {
     showdown_commit: showdownCommit(settings.psDir ?? defaultPsDir()),
     action_protocol: ACTION_PROTOCOL,
     task_protocol: POSITION_TASK_PROTOCOL,
+    canonical_json: CANONICAL_JSON_PROTOCOL,
     counterfactual: counterfactualProtocol(settings),
     exhaustive_panels: EXHAUSTIVE_PANEL_PROTOCOL,
     seed_namespace: String(settings.seed ?? 'position-panels'),
@@ -330,7 +343,7 @@ async function main(): Promise<void> {
     },
     ordered_task_ids: taskRows.map((row) => row.task_id),
   };
-  writeAtomic(path.join(settings.out, 'manifest.pilot.json'), `${JSON.stringify(manifest, null, 2)}\n`);
+  writeAtomic(path.join(settings.out, 'manifest.pilot.json'), `${canonicalJson(manifest)}\n`);
 }
 
 await main();

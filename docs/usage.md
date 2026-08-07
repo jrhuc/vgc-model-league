@@ -241,7 +241,9 @@ contains versioned span uncertainty, rank stability, reward-drift, and normalize
 measurement-uncertainty diagnostics. `summarize-position-pilot` prints their
 empirical distributions but explicitly does not choose eligibility thresholds.
 A reviewed frozen policy, duplicate clustering, and immutable train/eval splits
-still require a pilot. No command on this branch yet runs a model over these tasks.
+still require a pilot. The exporter validates exact public/private/sealed schemas
+and writes sorted-key canonical JSON/JSONL bytes; non-finite or unjoined artifacts
+fail before publication. No command on this branch yet runs a model over these tasks.
 
 ## Archive a run
 

@@ -80,6 +80,10 @@ drift, and measurement standard error relative to span. The advisory
 choosing thresholds. A separately reviewed, provenance-bound frozen policy must
 set the gates; the implementation does not promote pilot quantiles into criteria.
 Near-duplicate clustering and immutable train/eval splits remain release gates.
+Public tasks, private score tables, sealed panels, and their manifest use the
+versioned canonical JSON byte protocol; strict boundary validators reject extra
+keys, malformed action maps, non-finite values, and incomplete task/score/sealed
+joins before any file is written.
 
 The Python task then parses one choice and performs a deterministic lookup. For
 a legal action `a`, the proposed primary reward is
