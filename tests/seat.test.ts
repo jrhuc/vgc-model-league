@@ -25,6 +25,7 @@ test('seat bridge serves exchanges, enforces its token, and answers tool lookups
       lookups.push(name);
       return `result for ${String(args.name)}`;
     },
+    context: (query) => ({ query }),
   });
   const url = await bridge.listen(0);
   const headers = { 'content-type': 'application/json', authorization: `Bearer ${bridge.token}` };
@@ -59,6 +60,10 @@ test('seat bridge serves exchanges, enforces its token, and answers tool lookups
     };
     assert.equal(tool.result, 'result for Protect');
     assert.deepEqual(lookups, ['lookup_move']);
+    const context = (await (await post('/context', { after: 'ctx-00000001' })).json()) as {
+      query: { after: string };
+    };
+    assert.equal(context.query.after, 'ctx-00000001');
 
     const submitted = await post('/submit', { id: poll.exchange.id, text: '{"choices":[0]}' });
     assert.equal(submitted.status, 200);
@@ -185,4 +190,11 @@ test('an exhibition series against random plays to completion through the bridge
   const seriesDir = path.join(runDir, 'series', String(row.series_id));
   assert.ok(fs.existsSync(path.join(seriesDir, 'p1-decisions.jsonl')));
   assert.ok(fs.existsSync(path.join(seriesDir, 'p1-trace.jsonl')));
+  const contextRows = fs
+    .readFileSync(path.join(seriesDir, 'p1-context.jsonl'), 'utf8')
+    .trim()
+    .split('\n')
+    .map((line) => JSON.parse(line) as { context_id: string; kind: string });
+  assert.equal(contextRows[0]?.context_id, 'ctx-00000001');
+  assert.ok(contextRows.some((row) => row.kind === 'agent_context'));
 });

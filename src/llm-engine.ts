@@ -1,8 +1,13 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
-
+import {
+  type AgentContextEvent,
+  type AgentContextKind,
+  type AgentContextQuery,
+  AgentContextStream,
+} from './agent-context.js';
 import type { ChoiceSubstitution, DecisionLog, GameEnd, GameStart } from './battle-agent.js';
 import { BaseEngine } from './battle-agent.js';
 import { summarizeBattleEvents } from './battle-transcript.js';
@@ -91,6 +96,8 @@ export interface LLMEngineOptions {
   apiKey?: string;
   decisionLog?: DecisionLog;
   traceLog?: DecisionLog;
+  contextLog?: DecisionLog;
+  initialContext?: readonly AgentContextEvent[];
   format?: string;
   psDir?: string;
   reference?: ShowdownReference;
@@ -326,6 +333,23 @@ function decisionRenderIdentity(): Record<string, string> {
   };
 }
 
+function contextPolicy(): Record<string, unknown> {
+  return {
+    version: 1,
+    logicalScope: 'series',
+    promptTimelineScope: 'game',
+    promptTimelineCharacterLimit: TRANSCRIPT_CHARACTER_LIMIT,
+    promptClipMarker: TRANSCRIPT_CLIP_MARKER,
+    notebookScope: 'series',
+    fullStream: {
+      appendOnly: true,
+      cursor: 'ctx-########',
+      events: ['episode', 'observation', 'decision', 'reflection'],
+      externalSeatRetrieval: true,
+    },
+  };
+}
+
 function decisionPolicy(): Record<string, unknown> {
   return {
     minTokens: DECISION_MIN_TOKENS,
@@ -373,10 +397,19 @@ export function scaffoldRevision(): string {
     reflectionMaxTokens: REFLECTION_MAX_TOKENS,
     decisionRender: decisionRenderIdentity(),
     referenceRender: ShowdownReference.renderRevision(),
+    contextPolicy: contextPolicy(),
   });
 }
 
-export const SCAFFOLD_COMPONENTS = ['system', 'stateRender', 'toolRender', 'tools', 'policy', 'reflection'] as const;
+export const SCAFFOLD_COMPONENTS = [
+  'system',
+  'stateRender',
+  'toolRender',
+  'tools',
+  'policy',
+  'context',
+  'reflection',
+] as const;
 
 export type ScaffoldComponent = (typeof SCAFFOLD_COMPONENTS)[number];
 
@@ -387,6 +420,7 @@ export function scaffoldComponents(): Record<ScaffoldComponent, string> {
     toolRender: digest(ShowdownReference.renderRevision()),
     tools: digest(DECISION_TOOLS),
     policy: digest(decisionPolicy()),
+    context: digest(contextPolicy()),
     reflection: digest({
       reflection: REFLECTION_SYSTEM,
       seriesReflection: SERIES_REFLECTION_SYSTEM,
@@ -406,6 +440,8 @@ export class LLMEngine extends BaseEngine {
   private resolvedSpec: string;
   readonly reference: ShowdownReference;
   private state: BattleState;
+  private readonly fullContext: AgentContextStream;
+  private readonly contextAttempt = randomUUID();
   private transcript: string[] = [];
   private notebook: string;
   private gameId: string;
@@ -458,6 +494,7 @@ export class LLMEngine extends BaseEngine {
     this.reference =
       options.reference ?? new ShowdownReference(options.format ?? 'gen9championsvgc2026regmbbo3', options.psDir);
     this.state = new BattleState(pid);
+    this.fullContext = new AgentContextStream(options.initialContext);
     this.notebook = clip(options.initialNotebook?.trim() ?? '', DECISION_NOTE_LIMIT);
     this.gameId = spec;
   }
@@ -490,6 +527,13 @@ export class LLMEngine extends BaseEngine {
     this.pending = undefined;
     this.transcript = [];
     this.remember(`[Game ${context.gameNumber} begins; series score ${this.scoreText()}]`);
+    this.appendContext('episode', {
+      event: 'game_begin',
+      game_id: this.gameId,
+      series_id: this.seriesId ?? null,
+      game_number: this.gameNumber,
+      series_score: this.seriesScore,
+    });
   }
 
   override coachingNote(): string {
@@ -502,6 +546,14 @@ export class LLMEngine extends BaseEngine {
     const won = context.outcome.won === true;
     const result = winner === 'tie' ? 'tied' : won ? 'won' : 'lost';
     this.remember(`[Game ${context.gameNumber} ended; you ${result}; series score ${this.scoreText()}]`);
+    this.appendContext('episode', {
+      event: 'game_end',
+      game_id: this.gameId,
+      series_id: this.seriesId ?? null,
+      game_number: context.gameNumber,
+      result,
+      series_score: this.seriesScore,
+    });
     await this.reflect(context, result);
   }
 
@@ -509,6 +561,7 @@ export class LLMEngine extends BaseEngine {
     if (!lines.length) return;
     this.state.feed(lines);
     this.rememberEvents(lines);
+    this.appendObservation(lines);
   }
 
   override abandonDecision(): void {
@@ -545,7 +598,22 @@ export class LLMEngine extends BaseEngine {
       this.loggedNotebook = row.notebook;
     }
     this.rememberTurnDetail(`Decision: ${row.action}`);
+    this.appendContext('decision', {
+      game_id: this.gameId,
+      series_id: this.seriesId ?? null,
+      game_number: this.gameNumber,
+      turn: this.state.turn,
+      phase,
+      action: row.action,
+      rationale: typeof row.rationale === 'string' ? row.rationale : '',
+      notebook: this.notebook,
+      replayed: true,
+    });
     return row.action;
+  }
+
+  readContext(query: AgentContextQuery = {}) {
+    return this.fullContext.read(query);
   }
 
   decisionToolDefinitions(): ToolDefinition[] {
@@ -565,6 +633,7 @@ export class LLMEngine extends BaseEngine {
     const events = context.povLines;
     this.state.feed(events);
     this.rememberEvents(events);
+    this.appendObservation(events);
     const replayed = this.replayAction(request);
     if (replayed !== undefined) return replayed;
     this.activeToolRequest = request;
@@ -1036,6 +1105,22 @@ export class LLMEngine extends BaseEngine {
     const substituted = substitution
       ? { requested_choices: substitution.requested, substitution_reason: substitution.reason }
       : {};
+    this.appendContext('decision', {
+      game_id: this.gameId,
+      series_id: this.seriesId ?? null,
+      game_number: this.gameNumber,
+      turn: this.state.turn,
+      phase,
+      action,
+      rationale,
+      notebook: this.notebook,
+      evidence_supplied: {
+        rationale: pending.rationale !== undefined,
+        notebook_update: pending.notebook !== undefined,
+      },
+      automatic,
+      fallback: pending.fallback ?? false,
+    });
     this.writeLog(this.options.decisionLog, {
       kind: 'decision',
       game_id: this.gameId,
@@ -1336,6 +1421,17 @@ export class LLMEngine extends BaseEngine {
     this.reasoningTotal += Math.trunc(usage.reasoning_tokens ?? 0);
     this.notebook = review.notebook;
     this.remember(`Game review: ${review.summary} Next-game adjustment: ${review.adjustment}`);
+    this.appendContext('reflection', {
+      game_id: this.gameId,
+      series_id: this.seriesId ?? null,
+      game_number: context.gameNumber,
+      result,
+      series_over: seriesOver,
+      summary: review.summary,
+      adjustment: review.adjustment,
+      notebook: this.notebook,
+      fallback,
+    });
     this.writeLog(this.options.decisionLog, {
       kind: 'game_reflection',
       game_id: this.gameId,
@@ -1433,6 +1529,28 @@ export class LLMEngine extends BaseEngine {
       if (turn) this.remember(`Turn ${turn[1]}:`);
       else this.rememberTurnDetail(event);
     }
+  }
+
+  private appendObservation(lines: string[]): void {
+    if (!lines.length) return;
+    this.appendContext('observation', {
+      game_id: this.gameId,
+      series_id: this.seriesId ?? null,
+      game_number: this.gameNumber,
+      turn: this.state.turn,
+      lines,
+    });
+  }
+
+  private appendContext(kind: AgentContextKind, payload: JsonObject): void {
+    const event = this.fullContext.append(kind, { ...payload, attempt_id: this.contextAttempt });
+    this.writeLog(this.options.contextLog, {
+      kind: 'agent_context',
+      context_id: event.id,
+      sequence: event.sequence,
+      context_kind: event.kind,
+      payload: event.payload,
+    });
   }
 
   private scoreText(): string {

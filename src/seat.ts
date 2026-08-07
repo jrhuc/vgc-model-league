@@ -3,6 +3,7 @@ import type { IncomingMessage, Server, ServerResponse } from 'node:http';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 
+import type { AgentContextQuery } from './agent-context.js';
 import { DRAFT_SERIES_REFLECTION_SYSTEM, REFLECTION_SYSTEM, SERIES_REFLECTION_SYSTEM } from './prompts.js';
 import { DEX_TOOLS } from './reference.js';
 import type { Completion, JsonObject, Provider, ProviderMessage, ToolDefinition } from './types.js';
@@ -30,6 +31,7 @@ interface PendingExchange {
 export interface SeatBridgeOptions {
   lookup: (name: string, args: JsonObject) => string;
   tools?: () => readonly ToolDefinition[];
+  context?: (query: AgentContextQuery) => JsonObject;
   onExchange?: (view: SeatExchangeView) => void;
   onTool?: (name: string, args: JsonObject, result: string) => void;
 }
@@ -162,6 +164,14 @@ export class SeatBridge {
     if (route === '/messages') {
       if (!this.exchange) return send(404, { error: 'no pending exchange' });
       return send(200, { id: this.exchange.id, messages: this.exchange.messages });
+    }
+    if (route === '/context') {
+      if (!this.options.context) return send(404, { error: 'context stream is not available' });
+      try {
+        return send(200, this.options.context(body as AgentContextQuery));
+      } catch (error) {
+        return send(400, { error: error instanceof Error ? error.message : 'invalid context query' });
+      }
     }
     if (route === '/tool') {
       const name = text(body.name);

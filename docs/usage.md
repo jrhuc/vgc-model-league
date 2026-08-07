@@ -290,4 +290,6 @@ This is a trusted, unrated manual-integration mode. The tokenized bridge exposes
 only the seat's authorized view, but the launched process is not isolated from
 the host filesystem or network. Do not use exhibition results as a controlled
 Prime Agent or scaffold comparison; that requires a least-privilege sandbox
-mounting only this workspace.
+mounting only this workspace. During an exchange,
+`node seat.mjs context '{"after":"ctx-00000010","limit":50}'` pages the full
+authorized seat-history stream when the compact prompt has omitted older turns.

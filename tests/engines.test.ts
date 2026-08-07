@@ -171,6 +171,25 @@ test('LLM choices parse prose, retry, and record fallbacks', async () => {
   }
 });
 
+test('full seat context remains cursor-addressable when compact prompts move on', async () => {
+  const provider = new ScriptedProvider(['{"choices":[1]}']);
+  const contextRows: Record<string, unknown>[] = [];
+  const engine = new LLMEngine('p1', 'scripted', { provider, contextLog: contextRows });
+  engine.beginGame({ gameId: 'game-1', gameNumber: 1, seriesId: 'series-1' });
+  assert.equal(await engine.act(request(), { povLines: ['|turn|1'] }), 'move 2');
+  const context = engine.readContext();
+  assert.deepEqual(
+    context.events.map((event) => event.kind),
+    ['episode', 'observation', 'decision'],
+  );
+  assert.equal(context.cursor, 'ctx-00000003');
+  assert.deepEqual(engine.readContext({ after: 'ctx-00000001', limit: 1 }).events[0]?.payload.lines, ['|turn|1']);
+  assert.deepEqual(
+    contextRows.map((row) => row.context_id),
+    ['ctx-00000001', 'ctx-00000002', 'ctx-00000003'],
+  );
+});
+
 test('Gemini-like nested candidate objects preserve the complete top-level decision', async () => {
   const longCandidate = 'candidate '.repeat(40);
   const provider = new ScriptedProvider([

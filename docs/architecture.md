@@ -132,22 +132,30 @@ to the live request and open team sheets rather than trusting model-supplied
 state. Explicit item and ability lookups return the simulator's full mechanics
 descriptions. The tools expose only information that is legal in the match.
 
-The model returns one JSON object:
+The model returns one JSON object whose only referee-relevant field is the legal
+`choices` array. `rationale` is optional evidence. `notebook` is an optional
+complete replacement, emitted only when the durable series plan changes. Missing
+or malformed evidence never replaces an otherwise legal action.
 
 ```json
-{
-  "choices": [0, 2],
-  "rationale": "short reason for the final choice",
-  "notebook": "private notes for this series"
-}
+{"choices":[0,2],"rationale":"optional reason","notebook":"optional durable replacement"}
 ```
 
-Malformed decisions are retried according to the decision policy; an exhausted
+Invalid or illegal choices are retried according to the decision policy; an exhausted
 untimed decision produces a recorded model-choice default. Game evidence keeps
 model-choice defaults, simulator substitutions, and timer autodefaults
 separate. Provider failure during a timed decision abandons that decision and
 lets the Showdown timer act. Simulator, reference, and team validation failures
 stop the run.
+
+Alongside the bounded prompt timeline, each LLM seat now writes an append-only
+private context stream with stable `ctx-########` cursors for game boundaries,
+raw authorized observations, accepted decisions, memory revisions, and reviews.
+A resumed process adopts the prior stream, continues its cursor, and assigns a
+new `attempt_id` rather than overwriting or conflating the interrupted branch.
+The baseline renderer may compact its prompt; an authorized external seat can
+page the retained stream through the bridge. This does not sandbox the trusted
+exhibition process and is a context capability, not hidden-state access.
 
 After each game, both models review the game and record an adjustment. This
 step occurs outside the battle clock. The final review remains in the evidence

@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import type { AgentContextEvent, AgentContextKind } from './agent-context.js';
 import type { DecisionLog, GameEnd, GameStart } from './battle-agent.js';
 import { RandomEngine } from './battle-agent.js';
 import { LLMEngine } from './llm-engine.js';
@@ -68,6 +69,8 @@ export interface EngineSetup {
   seed: number;
   decisionLog: DecisionLog;
   traceLog: DecisionLog;
+  contextLog?: DecisionLog;
+  initialContext?: readonly AgentContextEvent[];
   format: string;
   psDir: string;
   reasoning?: ReasoningLevel | undefined;
@@ -462,6 +465,40 @@ function pruneDecisionFiles(adopted: AdoptedSeries): void {
   }
 }
 
+function loadAgentContext(seriesDir: string, pid: Pid): AgentContextEvent[] {
+  const file = path.join(seriesDir, `${pid}-context.jsonl`);
+  if (!fs.existsSync(file)) return [];
+  return fs
+    .readFileSync(file, 'utf8')
+    .split('\n')
+    .filter(Boolean)
+    .map((line, index) => {
+      let row: JsonObject;
+      try {
+        row = JSON.parse(line) as JsonObject;
+      } catch (error) {
+        throw new Error(`invalid ${pid} context row ${index + 1}`, { cause: error });
+      }
+      const kind = row.context_kind;
+      if (
+        row.kind !== 'agent_context' ||
+        typeof row.context_id !== 'string' ||
+        !Number.isInteger(row.sequence) ||
+        !['episode', 'observation', 'decision', 'reflection'].includes(String(kind)) ||
+        !row.payload ||
+        typeof row.payload !== 'object' ||
+        Array.isArray(row.payload)
+      )
+        throw new Error(`invalid ${pid} context row ${index + 1}`);
+      return {
+        id: row.context_id,
+        sequence: Number(row.sequence),
+        kind: kind as AgentContextKind,
+        payload: row.payload as JsonObject,
+      };
+    });
+}
+
 export async function playRecordedSeries(context: RecordedSeriesContext): Promise<RecordedSeries> {
   context.signal?.throwIfAborted();
   const timerScale = context.timerScale ?? DEFAULT_TIMER_SCALE;
@@ -508,6 +545,8 @@ export async function playRecordedSeries(context: RecordedSeriesContext): Promis
         seed: context.engineSeeds[pid],
         decisionLog: decisionSink(pid),
         traceLog: path.join(seriesDir, `${pid}-trace.jsonl`),
+        contextLog: path.join(seriesDir, `${pid}-context.jsonl`),
+        initialContext: adopted ? loadAgentContext(seriesDir, pid) : [],
         format: context.format,
         psDir: context.psDir,
         reasoning: reasoning[pid],

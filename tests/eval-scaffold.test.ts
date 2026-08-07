@@ -20,12 +20,13 @@ const COMPONENTS = {
   toolRender: 'c',
   tools: 'd',
   policy: 'e',
-  reflection: 'f',
+  context: 'f',
+  reflection: 'g',
 };
 
 test('the live scaffold decomposes into stable component hashes', () => {
   const parts = scaffoldComponents();
-  assert.equal(Object.keys(parts).length, 6);
+  assert.equal(Object.keys(parts).length, 7);
   for (const value of Object.values(parts)) assert.match(value, /^[0-9a-f]{12}$/);
   assert.deepEqual(scaffoldComponents(), parts);
   assert.match(scaffoldRevision(), /^[0-9a-f]{12}$/);

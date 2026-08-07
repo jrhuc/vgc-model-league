@@ -109,6 +109,10 @@ export async function runExhibition(runDir: string, options: ExhibitionOptions):
   let seatEngine: LLMEngine | undefined;
   const bridge = new SeatBridge({
     tools: () => seatEngine?.decisionToolDefinitions() ?? [],
+    context: (query) => {
+      if (!seatEngine) throw new Error('seat engine is not ready');
+      return seatEngine.readContext(query);
+    },
     lookup: (name, args) => {
       if (!seatEngine) throw new Error('seat engine is not ready');
       return seatEngine.lookupDecisionTool(name, args);
@@ -144,6 +148,7 @@ export async function runExhibition(runDir: string, options: ExhibitionOptions):
       provider: bridge.provider(),
       decisionLog: path.join(seriesDir, `${seatSide}-decisions.jsonl`),
       traceLog: path.join(seriesDir, `${seatSide}-trace.jsonl`),
+      contextLog: path.join(seriesDir, `${seatSide}-context.jsonl`),
       format: pool.format,
       psDir,
       reference,
@@ -283,6 +288,10 @@ const commands = {
   async messages() {
     console.log(JSON.stringify(await call('/messages'), null, 2));
   },
+  async context() {
+    const query = args[0] ? JSON.parse(args[0]) : {};
+    console.log(JSON.stringify(await call('/context', query), null, 2));
+  },
   async tools() {
     const data = await call('/tools');
     for (const tool of data.tools) {
@@ -310,7 +319,7 @@ const commands = {
 
 const run = commands[command];
 if (!run) {
-  console.log('Usage: node seat.mjs <status|wait|show|system|messages|tools|tool|submit> [args] [--force]');
+  console.log('Usage: node seat.mjs <status|wait|show|system|messages|context|tools|tool|submit> [args] [--force]');
   process.exitCode = 2;
 } else {
   run().catch((error) => {
@@ -323,8 +332,9 @@ if (!run) {
 const SEAT_INSTRUCTIONS = `# Seat instructions
 
 You are playing one side of a Pokémon VGC best-of-three hosted by a separate process.
-Everything you may know arrives through \`seat.mjs\`. The host holds both sides'
-hidden information, so work only inside this directory.
+The \`seat.mjs\` API exposes only your authorized seat view. This trusted manual mode does
+not sandbox the process from the host filesystem or network, so its result is not a
+controlled evaluation. Do not inspect sibling run files or opponent-private artifacts.
 
 Loop:
 
@@ -347,5 +357,6 @@ Notes:
 - There is no move timer. Take the time you need, but submit every exchange; the game
   cannot continue without you.
 - \`node seat.mjs status\` shows the game number and series score.
+- \`node seat.mjs context '{"after":"ctx-00000010","limit":50}'\` retrieves authorized full-history events that the compact prompt may omit.
 - When the host process exits, requests fail with a connection error; the series is over.
 `;
