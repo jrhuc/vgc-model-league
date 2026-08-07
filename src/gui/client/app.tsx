@@ -4,8 +4,7 @@ import type { AppState, AuthView, BattleMessage, PoolInfo, RunSnapshot, ServerEv
 import { api, configureCsrf } from './http';
 import type { StoredBattle } from './views/arena';
 import { ArenaView } from './views/arena';
-import type { DataRoomSection } from './views/dataroom';
-import { DataRoomView, isDataRoomSection } from './views/dataroom';
+import { DataRoomView } from './views/dataroom';
 import { FixturesView } from './views/fixtures';
 import { DraftRoomView } from './views/league';
 import { LeaguesView } from './views/leagues';
@@ -29,7 +28,6 @@ export type ViewId = (typeof NAV)[number]['id'];
 
 interface Route {
   view: ViewId;
-  section: DataRoomSection;
   run?: string;
   team?: string;
   series?: number;
@@ -43,23 +41,19 @@ function routeFromHash(): Route {
     const series = /^\d+$/.test(fourth) ? Number(fourth) : undefined;
     return {
       view: 'leagues',
-      section: 'play',
       ...(second ? { run: second } : {}),
       ...(third ? { team: third } : {}),
       ...(series === undefined ? {} : { series }),
     };
   }
-  if (head === 'tournaments') return { view: 'tournaments', section: 'play', ...(second ? { run: second } : {}) };
-  if (head === 'data') {
-    if (second && !isDataRoomSection(second)) return { view: 'data', section: 'play', model: second };
-    return { view: 'data', section: isDataRoomSection(second) ? second : 'play' };
-  }
-  if (head === 'arena' || head === 'league') return { view: 'arena', section: 'play' };
+  if (head === 'tournaments') return { view: 'tournaments', ...(second ? { run: second } : {}) };
+  if (head === 'data') return { view: 'data', ...(second ? { model: second } : {}) };
+  if (head === 'arena' || head === 'league') return { view: 'arena' };
   if (head === 'results') {
-    if (second === 'brackets') return { view: 'tournaments', section: 'play' };
-    return { view: 'data', section: isDataRoomSection(second) ? second : 'play' };
+    if (second === 'brackets') return { view: 'tournaments' };
+    return { view: 'data' };
   }
-  return { view: 'fixtures', section: 'play' };
+  return { view: 'fixtures' };
 }
 
 function isFresherBattle(candidate: BattleMessage, current: BattleMessage | undefined): boolean {
@@ -186,15 +180,9 @@ export function App() {
 
   const view = route.view;
 
-  const navigate = (next: ViewId, section: DataRoomSection = 'play') => {
-    setRoute({ view: next, section });
-    const hash =
-      next === 'fixtures'
-        ? '#'
-        : next === 'data' && section !== 'play'
-          ? `#data/${section}`
-          : `#${next === 'data' ? 'data' : next}`;
-    history.replaceState(null, '', hash);
+  const navigate = (next: ViewId) => {
+    setRoute({ view: next });
+    history.replaceState(null, '', next === 'fixtures' ? '#' : `#${next}`);
     window.scrollTo(0, 0);
   };
 
@@ -435,13 +423,7 @@ export function App() {
                 onOpenTournament={openTournament}
               />
             ) : (
-              <DataRoomView
-                active
-                epoch={recordsEpoch}
-                section={route.section}
-                onSection={(next) => navigate('data', next)}
-                onOpenModel={openModel}
-              />
+              <DataRoomView active epoch={recordsEpoch} onOpenModel={openModel} />
             )}
           </section>
         ) : null}
