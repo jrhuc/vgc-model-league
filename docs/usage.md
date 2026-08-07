@@ -212,6 +212,7 @@ manifest, and writes explicit completion, exclusion, and failure rows. It is not
 ```sh
 pnpm run grade-positions --workers 4 --restart
 pnpm run freeze-positions --size 500 --seed set-1
+pnpm run export-position-panels --horizon 2 --luck 8 --opponents 4 --seed panels-1
 ```
 
 Grading is CPU-bound and defaults to a third of the machine's cores. Resume is
@@ -220,13 +221,21 @@ match `<output>.manifest.json`; use `--restart` or another `--out` after changin
 settings. Scores use the realized hidden state and remain exploratory. See
 [Measurement principles](measurement.md) for their limits.
 
-Freezing writes two files. `position-set.json` contains the standardized
-point-of-view tasks. By default `private/position-set.json` contains simulator
-snapshots, opponent requests, source identities, and source actions for the
-grader. Never
-pass the private file to a model. The freezer aborts rather than silently writing
-a smaller or unreplayable set. No command on this branch yet asks a new model to
-answer the public tasks.
+Freezing writes two candidate files. `position-set.json` contains standardized
+point-of-view inputs. By default `private/position-set.json` contains simulator
+snapshots, opponent requests, source identities, and source actions. Never pass
+the private file to a model. The freezer aborts rather than silently writing a
+smaller or unreplayable set.
+
+`export-position-panels` then evaluates every non-concession joint action on two
+independent stability panels and a third untouched measurement panel. Common
+opponent slots, battle RNG seeds, and continuation seeds make every panel
+rectangular and paired; one failed cell rejects the position. It writes frozen
+prompts to `position-panels/tasks.pilot.jsonl`, while scores and full draw
+matrices go to the separate `private/position-panels` root. The manifest binds
+all files and deliberately says `release_ready: false`: thresholds, duplicate
+clustering, and immutable train/eval splits still require a pilot. No command on
+this branch yet runs a model over these tasks.
 
 ## Archive a run
 

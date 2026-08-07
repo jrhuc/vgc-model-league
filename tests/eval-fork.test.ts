@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import {
   type GameSource,
+  legalActionEntries,
   legalActions,
   newBattle,
   omniscientLog,
@@ -132,6 +133,17 @@ test('the counterfactual action set contains each offered legal command once', (
   assert.equal(new Set(actions).size, actions.length);
   assert.ok(!actions.includes('forfeit'));
   assert.ok(actions.every((action) => (action.match(/ mega/g) ?? []).length <= 1));
+  const entries = legalActionEntries(turn.requests.p1);
+  assert.deepEqual(
+    entries.map((entry) => entry.command),
+    actions,
+  );
+  assert.deepEqual(
+    entries.map((entry) => entry.number),
+    entries.map((_, index) => index),
+  );
+  assert.ok(entries.every((entry) => entry.label));
+  assert.deepEqual(actions, [...actions].sort((a, b) => Buffer.from(a).compare(Buffer.from(b))));
 });
 
 test('a forced replacement cannot pass every fainted slot while a reserve remains', () => {

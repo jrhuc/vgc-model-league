@@ -58,14 +58,23 @@ scaffold.
 ### Static scoring, not a live service
 
 The first package should not need Node, an HTTP service, a tunnel, or a secret at
-rollout time. A TypeScript exporter will use the embedded simulator to score
-**every** legal action before release. It will write:
+rollout time. The provisional TypeScript panel exporter now uses the embedded
+simulator to score **every** legal action on two stability panels and an
+untouched measurement panel. Before release it must write:
 
 - the model-visible prompt and action map;
 - a score vector keyed by canonical action;
 - repeated-seed uncertainty and an eligibility flag;
 - the full Showdown SHA, format, scaffold version, reference configuration,
-  sampling seeds, and content checksum.
+  sampling seeds, executed evaluator digest, and content checksum.
+
+All action values within a panel share opponent draws, battle seeds, and
+continuation seeds. The matrix must be rectangular: a failed cell excludes the
+whole panel rather than giving different actions different sample counts. The
+pilot exporter keeps task prompts, private score rows, and sealed matrices in
+separate roots and marks its manifest non-release-ready. Eligibility thresholds,
+near-duplicate clustering, and immutable train/eval splits are still gates, not
+postponed metadata.
 
 The Python task then parses one choice and performs a deterministic lookup. For
 a legal action `a`, the proposed primary reward is

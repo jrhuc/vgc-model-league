@@ -47,10 +47,13 @@ export interface Replay {
 }
 
 export const ACTION_PROTOCOL = {
-  version: 1,
+  version: 2,
   canonicalization: 'showdown-choice-v1',
   concession: 'excluded-stream-command',
   jointOrder: 'active-slot',
+  numberBase: 0,
+  sort: 'canonical-action-utf8-byte-ascending',
+  label: 'menu-labels-v1',
 } as const;
 
 const CHOICE_LIMIT = 500;
@@ -79,7 +82,14 @@ function comparable(lines: string[]): string[] {
   return lines.filter((line) => line && !line.startsWith('|t:|') && !line.startsWith('|timer|'));
 }
 
-export function legalActions(request: BattleRequest): string[] {
+export interface LegalActionEntry {
+  number: number;
+  choices: number[];
+  command: string;
+  label: string;
+}
+
+export function legalActionEntries(request: BattleRequest): LegalActionEntry[] {
   const menus = buildMenus(request);
   if (!menus.length) return [];
   let combinations: number[][] = [[]];
@@ -88,7 +98,7 @@ export function legalActions(request: BattleRequest): string[] {
       menu.flatMap((item, index) => (item.kind === 'forfeit' ? [] : [[...prefix, index]])),
     );
   }
-  const actions: string[] = [];
+  const actions = new Map<string, LegalActionEntry>();
   for (const choices of combinations) {
     let parts: string[];
     try {
@@ -96,9 +106,24 @@ export function legalActions(request: BattleRequest): string[] {
     } catch {
       continue;
     }
-    actions.push(request.teamPreview ? `team ${parts.join('')}` : parts.join(', '));
+    const command = request.teamPreview ? `team ${parts.join('')}` : parts.join(', ');
+    const labels = choices.map((choice, slot) => menus[slot]?.[choice]?.label ?? parts[slot] ?? 'pass');
+    const label = request.teamPreview
+      ? labels
+          .map((entry, slot) => `${['Lead 1', 'Lead 2', 'Back 1', 'Back 2'][slot] ?? `Slot ${slot + 1}`}: ${entry}`)
+          .join('; ')
+      : labels.length === 1
+        ? (labels[0] ?? command)
+        : labels.map((entry, slot) => `Slot ${slot + 1}: ${entry}`).join('; ');
+    if (!actions.has(command)) actions.set(command, { number: -1, choices, command, label });
   }
-  return [...new Set(actions)];
+  return [...actions.values()]
+    .sort((a, b) => Buffer.from(a.command).compare(Buffer.from(b.command)))
+    .map((entry, number) => ({ ...entry, number }));
+}
+
+export function legalActions(request: BattleRequest): string[] {
+  return legalActionEntries(request).map((entry) => entry.command);
 }
 
 export function requestPhase(request: BattleRequest): 'team_preview' | 'forced_switch' | 'turn' {

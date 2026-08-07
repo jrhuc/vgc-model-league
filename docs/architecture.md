@@ -191,10 +191,19 @@ corpus digest, and Showdown SHA are resume-validated in the grading manifest. A
 released set becomes immutable only when its content-addressed artifacts are
 frozen.
 
-Frozen positions have two schemas. The public task contains only the tested
-seat's point-of-view history, own request, and action menu. The private grader
-record contains the simulator snapshot, opponent request, and provenance. Code
-that loads model tasks must not accept the private type.
+The freeze stage first separates public point-of-view inputs from private
+snapshots, opponent requests, and provenance. The panel exporter then writes
+three physically separate artifact types: model-visible frozen prompts and
+numbered joint-action maps; private deterministic score tables; and sealed
+snapshots, draw identities, and rectangular action-value matrices. Exact file
+bytes and the executed evaluator are hashed. Code that loads model tasks must
+not accept either private type.
+
+Every candidate action is measured on two stability panels and an untouched
+measurement panel. Common opponent slots, battle seeds, and continuation seeds
+are shared across all actions within a panel. The current exporter is explicitly
+a pilot artifact until eligibility thresholds, near-duplicate clustering, and
+immutable train/eval splits are frozen.
 
 The first verifiers integration is a static v1 `Taskset`: TypeScript exports a
 frozen value table and Python performs strict response parsing and lookup. It

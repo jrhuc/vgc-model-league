@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { evaluatePosition, REFERENCE } from '../src/eval/counterfactual.js';
+import { evaluateActionTable, evaluatePosition, REFERENCE } from '../src/eval/counterfactual.js';
 import {
   type GameSource,
   legalActions,
@@ -122,6 +122,40 @@ test('a horizon of zero admits that it cannot grade team preview', () => {
   const played = evaluatePosition(preview, 'p1', { ...BUDGET, horizon: 2 });
   assert.ok(played);
   assert.equal(played.vsSampledOpponent.discriminating, true);
+});
+
+test('the exhaustive table uses complete, normalized, common-draw action panels', () => {
+  const position = battleTurn();
+  const table = evaluateActionTable(position, 'p1', { ...BUDGET, horizon: 0, seed: 'table' });
+  assert.ok(table);
+  const legal = legalActions(position.requests.p1);
+  assert.deepEqual(
+    table.measurement.actions.map((entry) => entry.action),
+    legal,
+  );
+  assert.equal(table.legal, legal.length);
+  assert.equal(table.stability[0].actions.length, legal.length);
+  assert.ok(table.measurement.actions.every((entry) => entry.samples === BUDGET.luckSamples * BUDGET.opponentSamples));
+  assert.ok(
+    table.measurement.actions.every((entry) => entry.reward === null || (entry.reward >= 0 && entry.reward <= 1)),
+  );
+  if (table.valueSpan > 0) {
+    assert.equal(Math.max(...table.measurement.actions.map((entry) => entry.reward as number)), 1);
+    assert.equal(Math.min(...table.measurement.actions.map((entry) => entry.reward as number)), 0);
+  } else {
+    assert.ok(table.measurement.actions.every((entry) => entry.reward === null));
+  }
+  assert.equal(table.measurement.matrix.length, BUDGET.luckSamples * BUDGET.opponentSamples);
+  assert.ok(table.measurement.matrix.every((row) => row.length === legal.length));
+  assert.equal(new Set(table.stability.map((panel) => panel.matrixDigest)).size, 2);
+  assert.equal(table.heldOutGap.selectedAction, table.selectionBest);
+});
+
+test('the exhaustive table is deterministic for a fixed sampling namespace', () => {
+  const position = battleTurn();
+  const first = evaluateActionTable(position, 'p1', { ...BUDGET, horizon: 0, seed: 'table' });
+  const second = evaluateActionTable(position, 'p1', { ...BUDGET, horizon: 0, seed: 'table' });
+  assert.deepEqual(first, second);
 });
 
 test('a position the recorded action is not legal in is refused rather than graded', () => {
