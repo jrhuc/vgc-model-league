@@ -1290,6 +1290,7 @@ export class ShowdownReference {
     const isSpread = typeof args.is_spread_hit === 'boolean' ? args.is_spread_hit : spreadDefault;
     const crit = args.is_critical_hit === true;
     const helpingHand = args.helping_hand === true;
+    const faintedAllies = Math.max(0, Math.trunc(asFinite(args.attacker_fainted_allies) ?? 0));
 
     const run = (offValue: number, defValue: number, rollPercent: 85 | 100) =>
       this.scratchDamage({
@@ -1310,6 +1311,7 @@ export class ShowdownReference {
         weather: weatherId,
         terrain: terrainId,
         helpingHand,
+        faintedAllies,
         crit,
         spread: isSpread,
         attackerHpPercent,
@@ -1427,6 +1429,7 @@ export class ShowdownReference {
     weather?: string | undefined;
     terrain?: string | undefined;
     helpingHand: boolean;
+    faintedAllies: number;
     crit: boolean;
     spread: boolean;
     attackerHpPercent?: number | undefined;
@@ -1486,6 +1489,9 @@ export class ShowdownReference {
       if (cfg.attackerStatus) (att as unknown as { status: string }).status = cfg.attackerStatus;
       if (cfg.defenderStatus) (def as unknown as { status: string }).status = cfg.defenderStatus;
       if (cfg.helpingHand) att.addVolatile('helpinghand');
+      /** Last Respects reads the attacker's side fainted count off the battle it runs in, and the
+       * scratch battle starts empty; without this every fainted ally is worth 50 lost base power. */
+      (att.side as unknown as { totalFainted: number }).totalFainted = cfg.faintedAllies;
       if (cfg.attackerHpPercent !== undefined)
         att.hp = Math.max(1, Math.round((att.maxhp * cfg.attackerHpPercent) / 100));
       if (cfg.defenderHpPercent !== undefined)
@@ -1509,7 +1515,9 @@ export class ShowdownReference {
         ? [active.multihit[0]!, active.multihit[active.multihit.length - 1]!]
         : [active.multihit ?? 1, active.multihit ?? 1];
       let basePower = active.basePower;
-      if (!basePower && active.basePowerCallback) {
+      /** A move can carry both a static basePower and a callback that overrides it, so the callback
+       * decides whenever it exists; reading the static field first reports the unscaled floor. */
+      if (active.basePowerCallback) {
         const computed = active.basePowerCallback.call(battle, att, def, active);
         if (typeof computed === 'number') basePower = computed;
       }

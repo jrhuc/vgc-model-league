@@ -620,6 +620,9 @@ export class BattleState {
     };
     setMon('attacker', attacker);
     setMon('defender', defender);
+    authoritative.attacker_fainted_allies = [...this.sides[attacker.pid].mons.values()].filter(
+      (mon) => mon.fainted,
+    ).length;
     const screens = [...this.sides[defender.pid].conditions.keys()].filter((condition) => SCREEN_MOVES.has(condition));
     if (screens.length) authoritative.defender_screens = screens;
     if (this.weather) authoritative.weather = this.weather.name;

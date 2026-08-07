@@ -585,3 +585,18 @@ test('Unaware ignores attacker boosts in the damage estimate', () => {
   });
   assert.notEqual(range(noAbility), range(unboosted));
 });
+
+test('Last Respects scales with the attacker side fainted count', () => {
+  const reference = new ShowdownReference('gen9championsvgc2026regmb');
+  const base = { attacker: 'Basculegion', defender: 'Kingambit', move: 'Last Respects' };
+  const power = (fainted: number): number => {
+    const text = reference.lookup('estimate_damage', { ...base, attacker_fainted_allies: fainted });
+    return Number(/BP (\d+)/.exec(text)?.[1]);
+  };
+  assert.equal(power(0), 50);
+  assert.equal(power(3), 200);
+  const floor = reference.lookup('estimate_damage', { ...base, attacker_fainted_allies: 0 });
+  const nuke = reference.lookup('estimate_damage', { ...base, attacker_fainted_allies: 3 });
+  const high = (text: string): number => Number(/-(\d+(?:\.\d+)?)% of maximum HP/.exec(text)?.[1]);
+  assert.ok(high(nuke) > high(floor) * 3, `${nuke} should far outdamage ${floor}`);
+});
