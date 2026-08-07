@@ -185,3 +185,38 @@ Intervals resample games, never decisions. Decisions inside a game share a
 seed, two teams and a running position; treating them as independent would
 report an interval several times too narrow. Two models are called apart only
 when their intervals miss each other.
+
+## What a regret is divided by, and who it is compared against
+
+Raw regret is not a clean measure of choice quality, because it is confounded
+with the position it was measured in. A position where one side is far ahead
+has more on offer than a level one — mean spread rises from 0.46 to 0.72 as the
+material gap grows — so the player who is ahead has more room to give away and
+the player who is behind has less. Over the corpus the difference in raw regret
+between the two sides of a position correlates -0.20 with the difference in
+their position values, which is to say raw regret partly measures how swingy a
+game was rather than how well anyone chose. Dividing by what the position had
+on offer takes that to -0.04. Share is therefore the reported quantity, and raw
+regret is kept only as the input to it. Positions with almost nothing on offer
+are left out rather than divided by, and a share above one is noise between the
+screening and measuring draws, so it is clamped.
+
+Models are compared inside positions, never across them. Both sides of every
+position are graded, so the difference between them is taken in the same game,
+against the same opponent, under the same scaffold, and a per-model effect is
+fitted to those differences. A marginal per-model average cannot do this: a
+corpus accumulated across runs of differing opponents and scaffolds measures
+the company a model kept as much as its choices, and the same model routed two
+ways moved by more than half the entire spread of the field before the
+differencing.
+
+Fitting effects to a graph of who met whom only identifies what the graph
+connects. A comparison between two models that actually met is evidence; one
+inferred through a chain of intermediaries is an extrapolation, and the two are
+reported apart. A model is ranked only once it has met more than one opponent
+across several games, because a single-opponent arm is anchored entirely to
+that opponent, and a cluster of models that mostly played each other has a
+well-identified internal order and a poorly-identified level against everyone
+else. The corpus this measures was accumulated, not designed: it connects 8% of
+possible pairings, which supports a modest set of direct comparisons and does
+not support a full ranking. A position set every model is evaluated on would.

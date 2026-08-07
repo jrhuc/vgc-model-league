@@ -1,6 +1,8 @@
 import { seededRng } from '../random.js';
 import type { JsonObject } from '../types.js';
 
+export const SPREAD_FLOOR = 0.05;
+
 export interface GradedDecision {
   runId: string;
   seriesId: string;
@@ -112,7 +114,7 @@ export function summarize(graded: GradedDecision[], options: SummaryOptions = {}
         `${options.seed ?? ''}post:${model}`,
       ),
       share: clusteredInterval(
-        pick((row) => (row.spread > 0 ? row.exAnte / row.spread : 0)),
+        pick((row) => (row.spread >= SPREAD_FLOOR ? Math.min(1, row.exAnte / row.spread) : 0)),
         resamples,
         `${options.seed ?? ''}share:${model}`,
       ),
