@@ -7,12 +7,7 @@ import { Mark } from '../components/mark';
 import { MatchGame, useMatchGame } from '../components/matchgame';
 import { MatchMenu, MatchMenuRow } from '../components/matchmenu';
 import { api, apiFresh } from '../http';
-import { entrantOrigin, formatTeamSlug, modelName } from '../lib/labels';
-
-function when(iso: string): string {
-  const date = new Date(iso);
-  return Number.isNaN(date.getTime()) ? iso : date.toLocaleDateString(undefined, { dateStyle: 'medium' });
-}
+import { entrantOrigin, formatTeamSlug, modelName, when } from '../lib/labels';
 
 function entrantName(archive: TournamentArchiveView, entrant: number | null | undefined, fallback = 'TBD'): string {
   if (entrant === null || entrant === undefined) return fallback;

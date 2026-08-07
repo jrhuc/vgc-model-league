@@ -3,6 +3,7 @@ import { useEffect, useState } from 'preact/hooks';
 
 import type { LeagueGameResponse, TeambuildSetView } from '../../api';
 import { api, apiFresh } from '../http';
+import { latestFallback } from '../lib/labels';
 import { Battlefield } from './battlefield';
 import { GameReflections, GameTimeline } from './gamelog';
 import { TeamLineup } from './lineup';
@@ -42,15 +43,6 @@ export function useMatchGame(path: string, pollingMs: number): { view: StoredGam
   }, [view?.live, path, pollingMs]);
 
   return { view, error };
-}
-
-function sideWarning(view: LeagueGameResponse, side: 0 | 1): string {
-  for (let index = view.decisions.length - 1; index >= 0; index -= 1) {
-    const decision = view.decisions[index]!;
-    if (decision.side !== side || decision.automatic) continue;
-    return decision.fallback ? 'Latest model decision used a fallback.' : '';
-  }
-  return '';
 }
 
 export function MatchGame({
@@ -138,7 +130,10 @@ export function MatchGame({
             receivedAt={view.receivedAt}
             players={{ p1: players[0], p2: players[1] }}
             labels={{ p1: titles[0], p2: titles[1] }}
-            warnings={{ p1: sideWarning(view, 0), p2: sideWarning(view, 1) }}
+            warnings={{
+              p1: latestFallback(view.decisions, (d) => d.side === 0),
+              p2: latestFallback(view.decisions, (d) => d.side === 1),
+            }}
             teams={{ p1: teams[0], p2: teams[1] }}
             meta={<span class="turn-badge">{view.snapshot.turn ? `Turn ${view.snapshot.turn}` : 'Team preview'}</span>}
           />

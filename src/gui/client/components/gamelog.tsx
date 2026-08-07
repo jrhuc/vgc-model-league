@@ -1,6 +1,6 @@
 import type { BattleLogEntryView, LeagueGameDecisionView, LeagueGameReflectionView } from '../../api';
 
-export function secondsLabel(ms: number | null): string {
+function secondsLabel(ms: number | null): string {
   return ms === null ? '' : `${Math.round(ms / 1000)}s`;
 }
 

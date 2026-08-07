@@ -16,12 +16,7 @@ export function roundName(index: number, count: number): string {
   return `Round ${index + 1}`;
 }
 
-export function entrantLabel(entrant: BracketEntrantView | undefined): string {
-  if (!entrant) return 'TBD';
-  return entrant.model || 'TBD';
-}
-
-export function seedLabel(entrant: BracketEntrantView | undefined): string {
+function seedLabel(entrant: BracketEntrantView | undefined): string {
   const place = entrant?.placement ?? entrant?.seed ?? null;
   return place === null ? '' : `#${place}`;
 }
@@ -73,7 +68,7 @@ export function BracketGrid<M extends BracketMatchLike>({
                     {seed && <em class="bracket-seed">{seed}</em>}
                     <span class="bracket-name">
                       {entrant && <Mark spec={entrant.model} size={13} />}
-                      <b>{bye && slot === null ? 'Bye' : modelName(entrantLabel(entrant))}</b>
+                      <b>{bye && slot === null ? 'Bye' : modelName(entrant?.model || 'TBD')}</b>
                     </span>
                     <span class="bracket-score">{scoreFor(match, side)}</span>
                     {entrant?.team && <small>{entrant.team}</small>}

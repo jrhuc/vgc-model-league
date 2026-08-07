@@ -4,6 +4,27 @@ export function displaySpec(spec: string): string {
   return spec.replace(/:(?:nitro|floor|free)$/, '');
 }
 
+export function when(iso: string | null): string {
+  if (!iso) return '–';
+  const date = new Date(iso);
+  return Number.isNaN(date.getTime()) ? iso : date.toLocaleDateString(undefined, { dateStyle: 'medium' });
+}
+
+/** Walks back to the side's most recent deliberate decision; anything older has been superseded.
+ * Null is "did not fall back" — an empty string is "fell back with no detail recorded". */
+export function latestFallback<D extends { automatic: boolean; fallback: boolean }>(
+  decisions: readonly D[],
+  onSide: (decision: D) => boolean,
+  detail?: (decision: D) => string,
+): string | null {
+  for (let index = decisions.length - 1; index >= 0; index -= 1) {
+    const decision = decisions[index]!;
+    if (decision.automatic || !onSide(decision)) continue;
+    return decision.fallback ? (detail?.(decision) ?? '') : null;
+  }
+  return null;
+}
+
 export function modelName(spec: string): string {
   return displaySpec(spec).replace(/^[^:]+:/, '');
 }

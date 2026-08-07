@@ -115,6 +115,8 @@ function timerInfo(
   };
 }
 
+const FELL_BACK = 'Latest model decision used a fallback.';
+
 function monRank(mon: MonView): number {
   if (mon.slot) return mon.slot.charCodeAt(0) - 65;
   return mon.fainted ? 9 : 5;
@@ -138,7 +140,7 @@ function Side({
   timer: SideTimerView | null | undefined;
   spend: SpendView | undefined;
   receivedAt: number;
-  warning: string;
+  warning: string | null;
   model?: string | undefined;
   label?: string | undefined;
   team?: TeambuildSetView[] | undefined;
@@ -151,15 +153,18 @@ function Side({
   }, [timer?.running, receivedAt]);
   const clock = timerInfo(timer, spend, receivedAt);
   const mons = [...side.mons].sort((a, b) => monRank(a) - monRank(b));
-  const warningLabel =
-    warning && !/latest model decision used a fallback/i.test(warning)
-      ? `Latest model decision used a fallback. ${warning}`
-      : warning;
   return (
     <div class={`side ${right ? 'right' : ''}`}>
       <div class="side-name">
         <div class="side-model">
-          {warningLabel && <span class="side-fallback-warning" role="img" aria-label={warningLabel} title={warning} />}
+          {warning !== null && (
+            <span
+              class="side-fallback-warning"
+              role="img"
+              aria-label={warning ? `${FELL_BACK} ${warning}` : FELL_BACK}
+              title={warning || FELL_BACK}
+            />
+          )}
           <Mark spec={model ?? side.player} size={16} />
           <b>{label ?? model ?? side.player}</b>
         </div>
@@ -207,7 +212,7 @@ export function Battlefield({
   receivedAt: number;
   players?: Partial<Record<'p1' | 'p2', string>>;
   labels?: Partial<Record<'p1' | 'p2', string>>;
-  warnings?: Partial<Record<'p1' | 'p2', string>>;
+  warnings?: Partial<Record<'p1' | 'p2', string | null>>;
   teams?: Partial<Record<'p1' | 'p2', TeambuildSetView[] | undefined>>;
   meta?: ComponentChildren;
 }) {
@@ -237,7 +242,7 @@ export function Battlefield({
             timer={snapshot.timers?.p1}
             spend={snapshot.spend?.p1}
             receivedAt={receivedAt}
-            warning={warnings?.p1 ?? ''}
+            warning={warnings?.p1 ?? null}
             model={players?.p1}
             label={labels?.p1}
             team={teams?.p1}
@@ -250,7 +255,7 @@ export function Battlefield({
             timer={snapshot.timers?.p2}
             spend={snapshot.spend?.p2}
             receivedAt={receivedAt}
-            warning={warnings?.p2 ?? ''}
+            warning={warnings?.p2 ?? null}
             model={players?.p2}
             label={labels?.p2}
             team={teams?.p2}

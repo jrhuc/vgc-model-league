@@ -4,12 +4,7 @@ import type { ModelProfileResponse, QuartileView } from '../../api';
 import { StatTile } from '../components/chartkit';
 import { Mark } from '../components/mark';
 import { api } from '../http';
-
-function when(iso: string | null): string {
-  if (!iso) return '–';
-  const date = new Date(iso);
-  return Number.isNaN(date.getTime()) ? iso : date.toLocaleDateString(undefined, { dateStyle: 'medium' });
-}
+import { when } from '../lib/labels';
 
 function seconds(ms: number): string {
   return ms >= 100_000 ? `${Math.round(ms / 1000)}s` : `${(ms / 1000).toFixed(1)}s`;

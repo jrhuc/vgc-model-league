@@ -830,7 +830,6 @@ textarea { min-height: 170px; resize: vertical; font: 12px/1.5 var(--mono); }
 .empty-note { color: var(--ink-soft); font: 500 13px/1.5 var(--body); }
 .league-view > .panel > .empty-note { margin: 18px 24px; }
 .league-view > .panel > .stat-row { margin-bottom: 14px; padding: 18px 24px 0; }
-.board-callout { margin: 18px 24px 0; padding: 12px 14px; border-left: 3px solid var(--blue); background: #edf3ff; color: var(--blue-dark); font-size: 12px; }
 
 .franchise-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px; padding: 20px 24px 4px; }
 .franchise { border: 1px solid var(--line); background: white; padding: 11px 13px; }
@@ -983,7 +982,6 @@ textarea { min-height: 170px; resize: vertical; font: 12px/1.5 var(--mono); }
 
 @media (max-width: 700px) {
   .league-view .section-head { padding: 17px 16px; }
-  .board-callout { margin: 14px 16px 0; }
   .franchise-grid { padding: 16px 16px 4px; }
   .board-browser { padding: 14px 16px 18px; }
   .board-controls { flex-wrap: wrap; gap: 10px; }
