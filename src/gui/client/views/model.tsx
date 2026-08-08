@@ -55,11 +55,11 @@ export function ModelProfileView({
   if (error) {
     return (
       <div class="league-view research-observation-index">
-        <div class="message error">Could not load this legacy observation index: {error}</div>
+        <div class="message error">Could not load this model archive: {error}</div>
       </div>
     );
   }
-  if (!profile || profile.id !== model) return <p class="muted">Loading the legacy observation index…</p>;
+  if (!profile || profile.id !== model) return <p class="muted">Loading the model archive…</p>;
 
   const modes = [...profile.modes].sort((a, b) =>
     (MODE_LABELS[a.mode] ?? a.mode).localeCompare(MODE_LABELS[b.mode] ?? b.mode),
@@ -75,32 +75,32 @@ export function ModelProfileView({
         <div>
           <p class="eyebrow">
             <button type="button" class="text-link" onClick={onBack}>
-              ← Data room
+              ← Position Lab
             </button>{' '}
-            / legacy observation index
+            / model archive
           </p>
-          <h1>Legacy Observation Index</h1>
+          <h1>Model archive</h1>
           <p class="legacy-model-key-value">
-            Collapsed backend id: <code>{profile.id}</code>
+            Archive key: <code>{profile.id}</code>
           </p>
         </div>
         <p class="lede research-coverage-span">
-          Archived non-test-pool observations span {when(profile.firstSeen)} to {when(profile.lastSeen)}.
+          Recorded runs span {when(profile.firstSeen)} to {when(profile.lastSeen)}.
         </p>
       </header>
 
       <section class="panel legacy-identity-panel" aria-labelledby="legacy-identity-heading">
         <div class="section-head">
           <div>
-            <h2 id="legacy-identity-heading">Legacy identity boundary</h2>
+            <h2 id="legacy-identity-heading">Model identifiers</h2>
             <p>
-              The backend id is a legacy collapsed <code>modelKey</code>, not a provider-qualified specification.
+              Older records group models by the short <code>modelKey</code> shown above.
             </p>
           </div>
         </div>
-        <p>The archived records grouped under that id contain these exact provider-qualified specifications:</p>
+        <p>These full provider and model identifiers appear in the grouped records:</p>
         {profile.providers.length === 0 ? (
-          <p class="muted">No provider-qualified specification was retained.</p>
+          <p class="muted">No full provider and model identifier is available.</p>
         ) : (
           <ul class="legacy-provider-spec-list">
             {profile.providers.map((provider) => (
@@ -111,52 +111,50 @@ export function ModelProfileView({
           </ul>
         )}
         <div class="message legacy-identity-warning">
-          This endpoint collapses those specifications before counting. It does not expose provider-specific counts or
-          denominators, so no observation below can be attributed to one listed specification.
+          The counts below combine every identifier listed above. Provider-specific totals are unavailable.
         </div>
       </section>
 
       <section class="panel research-coverage-panel" aria-labelledby="coverage-inventory-heading">
         <div class="section-head">
           <div>
-            <h2 id="coverage-inventory-heading">Coverage inventory</h2>
-            <p>Record counts only; they are not results, rates, or comparisons.</p>
+            <h2 id="coverage-inventory-heading">Recorded activity</h2>
+            <p>These are record counts, not performance results.</p>
           </div>
         </div>
         <div class="message legacy-denominator-warning">
-          <b>Legacy denominator warning.</b> Series and games are player-side observations, not distinct-event totals; a
-          record with this collapsed key on both sides can be counted twice. The endpoint does not report eligible
-          decision or reflection opportunities, archive-completeness denominators, or missing-log counts.
+          <b>Count limits.</b> Series and games count each recorded side, so a match with this archive key on both sides
+          can be counted twice. Totals for available and missing decision or reflection logs are unavailable.
         </div>
         <div class="table-scroll">
           <table class="data-table research-coverage-table">
             <thead>
               <tr>
                 <th>Record type</th>
-                <th class="num">Observed records</th>
-                <th>Available denominator or scope</th>
+                <th class="num">Records</th>
+                <th>What is counted</th>
               </tr>
             </thead>
             <tbody>
               <tr>
                 <td>Series</td>
                 <td class="num">{profile.series.toLocaleString()}</td>
-                <td>Matched player-side series outside the test pool; no distinct-series denominator.</td>
+                <td>Recorded sides in series outside the test pool. Distinct-series totals are unavailable.</td>
               </tr>
               <tr>
                 <td>Games</td>
                 <td class="num">{profile.games.toLocaleString()}</td>
-                <td>Games attached to the matched player-side series; no distinct-game denominator.</td>
+                <td>Games attached to those recorded sides. Distinct-game totals are unavailable.</td>
               </tr>
               <tr>
                 <td>Decisions</td>
                 <td class="num">{profile.decisions.toLocaleString()}</td>
-                <td>Logged decisions for matched sides; eligible decision opportunities are unavailable.</td>
+                <td>Logged decisions for those sides. Missing-decision totals are unavailable.</td>
               </tr>
               <tr>
                 <td>Reflections</td>
                 <td class="num">{profile.reflections.toLocaleString()}</td>
-                <td>Logged reflections for matched sides; eligible reflection opportunities are unavailable.</td>
+                <td>Logged reflections for those sides. Missing-reflection totals are unavailable.</td>
               </tr>
             </tbody>
           </table>
@@ -167,7 +165,7 @@ export function ModelProfileView({
         <div class="section-head">
           <div>
             <h2 id="mode-inventory-heading">Recorded modes</h2>
-            <p>Series-observation coverage under the same collapsed identity and denominator warning.</p>
+            <p>Recorded series sides, grouped by run type.</p>
           </div>
         </div>
         <div class="table-scroll">
@@ -175,7 +173,7 @@ export function ModelProfileView({
             <thead>
               <tr>
                 <th>Mode</th>
-                <th class="num">Series observations</th>
+                <th class="num">Recorded sides</th>
               </tr>
             </thead>
             <tbody>
@@ -194,11 +192,11 @@ export function ModelProfileView({
         <div class="section-head">
           <div>
             <h2 id="archive-chronology-heading">Linked archive runs</h2>
-            <p>Stored league and tournament destinations in chronological order, oldest first.</p>
+            <p>Recorded leagues and tournaments, oldest first.</p>
           </div>
         </div>
         {archiveRuns.length === 0 ? (
-          <p class="muted">No linked league or tournament archive is available for this collapsed id.</p>
+          <p class="muted">No league or tournament run is available for this archive key.</p>
         ) : (
           <div class="table-scroll">
             <table class="data-table research-archive-table">

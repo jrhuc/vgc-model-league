@@ -328,7 +328,7 @@ export function ArenaView({
               <span class="live-dot" aria-hidden="true" />
             </div>
             <p class="eyebrow">League in progress</p>
-            <h2>A draft league is running from the CLI</h2>
+            <h2>A draft league is already in progress</h2>
             <p class="lede">Follow the draft board, teambuilds, and series as they land.</p>
             <button
               type="button"
@@ -521,7 +521,7 @@ export function ArenaView({
             <div class="field-surface">
               <div class="field-empty" aria-live="polite">
                 <h2>Waiting for assignments</h2>
-                <p>The scheduler is building the series list.</p>
+                <p>The series list will appear here when it is ready.</p>
               </div>
             </div>
           ) : !shown?.snapshot ? (

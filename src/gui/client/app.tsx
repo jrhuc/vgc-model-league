@@ -14,7 +14,7 @@ import { TournamentsView } from './views/tournaments';
 
 const NAV_SETS = [
   {
-    label: 'Research',
+    label: 'Explore',
     items: [
       { id: 'research', label: 'Overview' },
       { id: 'data', label: 'Position Lab' },
@@ -22,14 +22,14 @@ const NAV_SETS = [
     ],
   },
   {
-    label: 'Observe',
+    label: 'Watch',
     items: [
       { id: 'arena', label: 'Live run' },
       { id: 'tournaments', label: 'Tournaments' },
     ],
   },
   {
-    label: 'Operate',
+    label: 'Run',
     items: [{ id: 'fixtures', label: 'New run' }],
   },
 ] as const;
@@ -84,7 +84,7 @@ function routeFromHash(): Route {
 }
 
 function titleForRoute(route: Route): string {
-  if (route.view === 'research') return 'Research overview';
+  if (route.view === 'research') return 'Overview';
   if (route.view === 'data') return 'Position Lab';
   if (route.view === 'leagues') {
     if (route.series !== undefined) return 'Draft league series';
@@ -94,7 +94,7 @@ function titleForRoute(route: Route): string {
   if (route.view === 'tournaments') return route.run ? 'Tournament' : 'Tournaments';
   if (route.view === 'arena') return 'Live run';
   if (route.view === 'fixtures') return 'New run';
-  return 'Legacy Observation Index';
+  return 'Model archive';
 }
 
 function focusMainContent(event: MouseEvent, main: HTMLElement | null): void {
@@ -122,7 +122,7 @@ function AccessGate({ auth }: { auth: AuthView }) {
         <p class="eyebrow">Hosted mode</p>
         <h2>Read-only</h2>
         <p class="lede">
-          Public records stay open. Starting runs and publishing pools require GitHub authentication on this deployment.
+          You can browse records, but starting runs and creating team pools are disabled on this deployment.
         </p>
       </div>
     );
@@ -132,9 +132,7 @@ function AccessGate({ auth }: { auth: AuthView }) {
       <div class="access-gate panel">
         <p class="eyebrow">Sign in</p>
         <h2>GitHub sign-in required</h2>
-        <p class="lede">
-          Sign in to start runs and publish team pools. Public records remain available without an account.
-        </p>
+        <p class="lede">Sign in to start runs and create team pools. Records remain available without an account.</p>
         <a class="button primary" href="/auth/github">
           Sign in with GitHub
         </a>
@@ -321,7 +319,7 @@ export function App() {
     return (
       <main id="main-content" class="shell" tabIndex={-1} ref={mainRef}>
         <div class="message error" role="alert">
-          Could not load the research workspace: {bootError}
+          Could not load the application: {bootError}
         </div>
       </main>
     );
@@ -329,7 +327,7 @@ export function App() {
   if (!app) {
     return (
       <main id="main-content" class="shell" tabIndex={-1} ref={mainRef}>
-        <p class="muted">Loading the research workspace…</p>
+        <p class="muted">Loading VGC Model League…</p>
       </main>
     );
   }
@@ -363,7 +361,7 @@ export function App() {
         <div class="brand">
           <span class="brand-mark" aria-hidden="true" />
           <div class="brand-name">
-            VGC MODEL LEAGUE<small>Decision research on Pokémon Showdown</small>
+            VGC MODEL LEAGUE<small>Language models play VGC on Pokémon Showdown</small>
           </div>
         </div>
         <nav class="primary-nav" aria-label="Main navigation">

@@ -17,9 +17,9 @@ export function ProtocolExplorer({ artifact }: { artifact: ResearchArtifactView 
       <section class="panel research-provenance" aria-labelledby="provenance-title">
         <div class="section-head">
           <div>
-            <p class="eyebrow">Reproduction boundary</p>
-            <h2 id="provenance-title">Protocol and provenance digests</h2>
-            <p>Unavailable because the public artifact failed validation.</p>
+            <p class="eyebrow">Technical details</p>
+            <h2 id="provenance-title">Identifiers and protocols</h2>
+            <p>Technical details are unavailable because this task set could not be loaded.</p>
           </div>
         </div>
       </section>
@@ -29,11 +29,11 @@ export function ProtocolExplorer({ artifact }: { artifact: ResearchArtifactView 
     <section class="panel research-provenance" aria-labelledby="provenance-title">
       <div class="section-head">
         <div>
-          <p class="eyebrow">Reproduction boundary</p>
-          <h2 id="provenance-title">Protocol and provenance digests</h2>
+          <p class="eyebrow">Technical details</p>
+          <h2 id="provenance-title">Identifiers and protocols</h2>
           <p>
-            Selected public digests and protocol declarations are shown without private artifact bindings or evaluation
-            payloads. Digest labels remain distinct because they bind different parts of the protocol.
+            Use these identifiers to confirm which files and simulator build produced the task set. Evaluation results
+            are unavailable.
           </p>
         </div>
       </div>
@@ -121,7 +121,6 @@ export function ProtocolExplorer({ artifact }: { artifact: ResearchArtifactView 
         <ProtocolObject label="Action protocol" value={protocols.action} />
         <ProtocolObject label="Task protocol" value={protocols.task} />
         <ProtocolObject label="Counterfactual protocol" value={protocols.counterfactual} />
-        <ProtocolObject label="Exhaustive-panel protocol" value={protocols.exhaustivePanels} />
         <ProtocolObject label="Canonical JSON protocol" value={protocols.canonicalJson} />
         {protocols.nearDuplicates ? (
           <ProtocolObject label="Near-duplicate protocol" value={protocols.nearDuplicates} />
@@ -132,7 +131,7 @@ export function ProtocolExplorer({ artifact }: { artifact: ResearchArtifactView 
             <dd>v{protocols.schemaVersion}</dd>
           </div>
           <div>
-            <dt>Eligibility metrics</dt>
+            <dt>Task selection rules</dt>
             <dd>v{protocols.eligibilityMetricsVersion}</dd>
           </div>
         </dl>

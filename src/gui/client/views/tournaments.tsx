@@ -180,7 +180,7 @@ function TournamentCard({
               <span class="eyebrow">Champion</span>
               <b class="seat-cell">
                 <Mark spec={champion.model} size={16} />
-                <span>{champion.model}</span>
+                <span>{modelName(champion.model)}</span>
               </b>
               <small>{formatTeamSlug(champion.team)}</small>
             </>
@@ -317,8 +317,8 @@ export function TournamentsView({
             <h1>{archive?.event?.name || 'Tournament live.'}</h1>
           </div>
           <p class="lede">
-            The bracket and battle logs are streaming from the CLI. Open a live match to follow the field, model
-            decisions, and turn-by-turn action.
+            The bracket and battle logs update live. Open a match to follow the field, model decisions, and turn-by-turn
+            action.
           </p>
         </header>
         {error ? <div class="message error">Could not load the live tournament: {error}</div> : null}
@@ -361,7 +361,7 @@ export function TournamentsView({
         <StatTile label="Series archived" value={String(summary.matches)} note="best-of-three series" />
         <StatTile
           label="Latest bracket winner"
-          value={latestWinner ? latestWinner.model : '–'}
+          value={latestWinner ? modelName(latestWinner.model) : '–'}
           note={latestWinner ? formatTeamSlug(latestWinner.team) : 'no finished bracket yet'}
         />
       </div>

@@ -122,17 +122,17 @@ const HEADINGS: Record<RunMode, { eyebrow: string; title: [string, string]; lede
     lede: 'Pick two models and assign each a team from a pool or a Poképaste export. The match runs on the pinned Pokémon Showdown simulator.',
   },
   tournament: {
-    eyebrow: 'Tournament · protocol v1',
+    eyebrow: 'Tournament',
     title: ['Set up a', 'tournament.'],
     lede: 'Assign each model a team from a pool draw or by hand. Models keep that team through a single-elimination best-of-three bracket.',
   },
   draft: {
-    eyebrow: 'Draft league · protocol v1',
+    eyebrow: 'Draft league',
     title: ['Set up a', 'draft league.'],
     lede: 'Coaches snake-draft ten Pokémon each inside a points budget, then before every match pick six and build each set themselves. A weekly round robin, then playoffs.',
   },
   rotation: {
-    eyebrow: 'Rotation · protocol v1',
+    eyebrow: 'Rotation run',
     title: ['Set up a', 'rotation run.'],
     lede: 'Pick an immutable team pool and at least two models. Every pairing plays mirrored best-of-three series. Results append to the local record book.',
   },

@@ -110,7 +110,7 @@ test('the data room archives a bracket and expands it on demand', async () => {
     window.eval(bundle);
     const rendered = () => window.document.body.textContent ?? '';
     await waitFor(() => rendered().includes('1 finished'));
-    assert.match(rendered(), /openai:alpha/);
+    assert.match(rendered(), /Latest bracket winneralpha/);
     assert.doesNotMatch(
       rendered(),
       /Descriptive archive counts|Bracket entries|Won bracket|Lost final|Lost semifinal|Earlier exit|Tournament placements/,
@@ -198,8 +198,8 @@ test('legacy observation indices expose contextual counts without stale aggregat
     window.eval(bundle);
 
     const rendered = () => window.document.querySelector('.view.on')?.textContent ?? '';
-    await waitFor(() => rendered().includes('Legacy Observation Index'));
-    assert.match(rendered(), /legacy collapsed modelKey, not a provider-qualified specification/i);
+    await waitFor(() => rendered().includes('Model archive'));
+    assert.match(rendered(), /Older records group models by the short modelKey shown above/i);
     assert.deepEqual(
       [...window.document.querySelectorAll('.legacy-provider-spec-list code')].map((entry) => entry.textContent),
       ['google:zeta', 'openai:zeta'],
@@ -212,8 +212,8 @@ test('legacy observation indices expose contextual counts without stale aggregat
       }),
     );
     assert.deepEqual(coverage, { Series: '2', Games: '5', Decisions: '9', Reflections: '3' });
-    assert.match(rendered(), /Legacy denominator warning/i);
-    assert.match(rendered(), /eligible decision or reflection opportunities/i);
+    assert.match(rendered(), /Count limits/i);
+    assert.match(rendered(), /Totals for available and missing decision or reflection logs are unavailable/i);
     assert.match(rendered(), /Recorded modes/i);
     assert.doesNotMatch(
       rendered(),

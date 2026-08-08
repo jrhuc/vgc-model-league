@@ -1,6 +1,17 @@
 import type { ResearchArtifactView, ResearchLegacyPositionsView } from '../../../api';
 import { ErrorList } from './feedback';
-import { count, releaseDeclaration, titleCase } from './format';
+import { count } from './format';
+
+function taskSetName(artifact: ResearchArtifactView): string {
+  return artifact.kind === 'pilot' ? 'Pilot task set' : 'Frozen task set';
+}
+
+function previewSummary(artifact: ResearchArtifactView): string {
+  if (artifact.taskPreviewAvailability === 'available') {
+    return `${artifact.taskPreviewCount.toLocaleString()} of ${artifact.taskTotal.toLocaleString()} task previews shown`;
+  }
+  return `${artifact.taskTotal.toLocaleString()} tasks listed · previews unavailable`;
+}
 
 export function ArtifactLineage({
   artifacts,
@@ -15,18 +26,15 @@ export function ArtifactLineage({
     <section class="panel research-artifact-lineage" aria-labelledby="artifact-lineage-title">
       <div class="section-head">
         <div>
-          <p class="eyebrow">Artifact Room</p>
-          <h2 id="artifact-lineage-title">Lineage and release state</h2>
-          <p>
-            Each node is a discovered artifact and its public validation result. A valid public boundary does not make a
-            candidate release-ready.
-          </p>
+          <p class="eyebrow">Position data</p>
+          <h2 id="artifact-lineage-title">Available task sets</h2>
+          <p>Choose a task set to inspect its counts, previews, dataset split, and technical details.</p>
         </div>
       </div>
       <ol class="research-lineage-list">
         {artifacts.map((artifact, index) => {
           const active = artifact.kind === selected.kind;
-          const release = releaseDeclaration(artifact.releaseReady);
+          const available = artifact.validation.status === 'valid';
           return (
             <li class="research-lineage-stage" key={artifact.kind}>
               {index > 0 ? (
@@ -40,20 +48,16 @@ export function ArtifactLineage({
                 aria-pressed={active}
                 onClick={() => onSelect(artifact.kind)}
               >
-                <span class="research-artifact-stage">Stage {index + 1}</span>
-                <b>{artifact.kind === 'pilot' ? 'Pilot panel artifact' : 'Frozen split candidate'}</b>
-                <span>{titleCase(artifact.status)}</span>
+                <span class="research-artifact-stage">Set {index + 1}</span>
+                <b>{taskSetName(artifact)}</b>
+                <span>{available ? 'Task metadata available' : 'Task metadata unavailable'}</span>
                 <span class={`research-validation-state ${artifact.validation.status}`}>
-                  {artifact.validation.status === 'valid' ? 'Public boundary valid' : 'Artifact rejected'}
+                  {available ? 'Available' : 'Unavailable'}
                 </span>
-                <span class={`research-release-state ${release.className}`}>{release.label}</span>
+                <span class="research-release-state unknown">Evaluation results unavailable</span>
                 <small>
                   {artifact.schemaVersion === null ? 'Schema unavailable' : `Schema v${artifact.schemaVersion}`} ·{' '}
-                  {artifact.taskPreviewAvailability === 'withheld'
-                    ? `${artifact.taskTotal.toLocaleString()} bound public task${artifact.taskTotal === 1 ? '' : 's'} · content withheld`
-                    : artifact.taskPreviewAvailability === 'unavailable'
-                      ? 'task count unavailable'
-                      : `${artifact.taskTotal.toLocaleString()} bound public task${artifact.taskTotal === 1 ? '' : 's'}`}
+                  {previewSummary(artifact)}
                 </small>
               </button>
             </li>
@@ -66,11 +70,7 @@ export function ArtifactLineage({
 
 function ArtifactCounts({ artifact }: { artifact: ResearchArtifactView }) {
   const counts = artifact.counts;
-  if (!counts) {
-    return (
-      <div class="results-empty">Counts are unavailable because this artifact did not pass public validation.</div>
-    );
-  }
+  if (!counts) return <div class="results-empty">Position counts are unavailable for this task set.</div>;
   return (
     <dl class="research-count-grid">
       <div>
@@ -78,15 +78,15 @@ function ArtifactCounts({ artifact }: { artifact: ResearchArtifactView }) {
         <dd>{count(counts.input)}</dd>
       </div>
       <div>
-        <dt>Eligible</dt>
+        <dt>Usable positions</dt>
         <dd>{count(counts.eligible)}</dd>
       </div>
       <div>
-        <dt>Excluded</dt>
+        <dt>Excluded positions</dt>
         <dd>{count(counts.excluded)}</dd>
       </div>
       <div>
-        <dt>Train / eval</dt>
+        <dt>Training / evaluation</dt>
         <dd>
           {count(counts.train)} / {count(counts.eval)}
         </dd>
@@ -96,7 +96,7 @@ function ArtifactCounts({ artifact }: { artifact: ResearchArtifactView }) {
         <dd>{count(counts.sourceGroups)}</dd>
       </div>
       <div>
-        <dt>Duplicate clusters</dt>
+        <dt>Duplicate groups</dt>
         <dd>{count(counts.duplicateClusters)}</dd>
       </div>
       <div>
@@ -108,24 +108,20 @@ function ArtifactCounts({ artifact }: { artifact: ResearchArtifactView }) {
 }
 
 export function ArtifactSummary({ artifact }: { artifact: ResearchArtifactView }) {
-  const release = releaseDeclaration(artifact.releaseReady);
+  const available = artifact.validation.status === 'valid';
   return (
     <section class="panel research-artifact-summary" aria-labelledby="artifact-summary-title">
       <div class="section-head">
         <div>
-          <p class="eyebrow">Selected artifact / {artifact.kind}</p>
-          <h2 id="artifact-summary-title">{titleCase(artifact.status)}</h2>
-          <p>
-            {artifact.validation.status === 'valid'
-              ? 'Public manifest and task bindings validated within the API boundary.'
-              : 'This artifact is malformed or noncanonical. Metadata and task rows fail closed.'}
-          </p>
+          <p class="eyebrow">Selected task set / {artifact.kind}</p>
+          <h2 id="artifact-summary-title">{taskSetName(artifact)}</h2>
+          <p>{available ? 'Task metadata is available.' : 'This task set could not be loaded.'}</p>
         </div>
         <div class="research-artifact-state-stack">
           <span class={`research-validation-state ${artifact.validation.status}`}>
-            {titleCase(artifact.validation.status)}
+            {available ? 'Available' : 'Unavailable'}
           </span>
-          <span class={`research-release-state ${release.className}`}>{release.label}</span>
+          <span class="research-release-state unknown">Results unavailable</span>
         </div>
       </div>
       {artifact.validation.errors.length > 0 ? (
@@ -141,11 +137,11 @@ export function ArtifactSummary({ artifact }: { artifact: ResearchArtifactView }
 export function LegacyInventory({ legacy }: { legacy: ResearchLegacyPositionsView }) {
   if (!legacy.present) return null;
   return (
-    <aside class="panel research-legacy-inventory" aria-label="Legacy position inventory">
-      <p class="eyebrow">Legacy inventory / not a release artifact</p>
+    <aside class="panel research-legacy-inventory" aria-label="Older position data">
+      <p class="eyebrow">Older position data</p>
       <p>
-        {legacy.rows.toLocaleString()} legacy position row{legacy.rows === 1 ? '' : 's'} detected · inventory only · no
-        bound manifest. These rows are never folded into the schema-v2 lineage, validation states, or task totals below.
+        {legacy.rows.toLocaleString()} older position row{legacy.rows === 1 ? '' : 's'} found. Task details and
+        evaluation results are unavailable for these rows.
       </p>
     </aside>
   );

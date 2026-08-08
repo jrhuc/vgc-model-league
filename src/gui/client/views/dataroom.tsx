@@ -3,7 +3,6 @@ import { useEffect, useMemo, useState } from 'preact/hooks';
 import type { ResearchArtifactView, ResearchResponse } from '../../api';
 import { ArtifactLineage, ArtifactSummary, LegacyInventory } from '../components/research/artifact-lineage';
 import { ErrorList } from '../components/research/feedback';
-import { titleCase } from '../components/research/format';
 import { ProtocolExplorer } from '../components/research/protocol-explorer';
 import { ReleaseGates } from '../components/research/release-gates';
 import { SplitBalance } from '../components/research/split-balance';
@@ -59,39 +58,39 @@ export function DataRoomView({ active, epoch }: DataRoomViewProps) {
     <div class="research-view position-lab-view">
       <header class="page-heading research-heading">
         <div>
-          <p class="eyebrow">Research / public artifacts</p>
-          <h1>Position Lab / Artifact Room.</h1>
+          <p class="eyebrow">Research / position tasks</p>
+          <h1>Position Lab.</h1>
         </div>
         <p class="lede">
-          Inspect schema-v2 artifact lineage, declared protocols, provenance digests, release gates, frozen split
-          balance, and bounded model-visible position tasks. Comparative outcome telemetry does not belong here.
+          Browse available task metadata, prompt previews, dataset splits, and technical details. Evaluation results are
+          unavailable.
         </p>
       </header>
 
-      <aside class="research-privacy-boundary" aria-label="Public artifact boundary">
-        <b>Public boundary.</b> This view receives no score rows, sealed panels, source records, simulator snapshots,
-        opponent requests, or rollout matrices. It is a viewer, not a scoring authority.
+      <aside class="research-privacy-boundary" aria-label="Position data availability">
+        <b>Data availability.</b> This page shows position-task metadata only. Scores and other evaluation results are
+        unavailable.
       </aside>
 
       {loading ? (
         <section class="panel research-loading-state" role="status" aria-live="polite">
-          <p class="muted">Loading public research artifacts…</p>
+          <p class="muted">Loading position data…</p>
         </section>
       ) : null}
       {error ? (
         <div class="message error" role="alert">
-          Could not load public research artifacts: {error}
+          Could not load position data: {error}
         </div>
       ) : null}
       {data && data.errors.length > 0 ? (
         <section class="message error research-root-errors" role="alert">
-          <b>Some public artifacts were rejected.</b>
+          <b>Some position data could not be loaded.</b>
           <ErrorList errors={data.errors} />
         </section>
       ) : null}
       {data && data.warnings.length > 0 ? (
         <section class="notice-strip research-root-warnings" role="status" aria-live="polite">
-          <b>Public boundary notice.</b>
+          <b>Position data notice.</b>
           <ErrorList errors={data.warnings} />
         </section>
       ) : null}
@@ -99,22 +98,17 @@ export function DataRoomView({ active, epoch }: DataRoomViewProps) {
 
       {data && data.status === 'empty' && artifacts.length === 0 ? (
         <section class="panel research-empty-state" role="status">
-          <p class="eyebrow">
-            {data.program.positions.target} / {titleCase(data.program.positions.stage)}
-          </p>
-          <h2>No schema-v2 public position artifact is available.</h2>
-          <p>
-            This is an empty research state, not a zero score or a successful release. Legacy position rows are not
-            silently upgraded into manifests, validation results, or tasks.
-          </p>
+          <p class="eyebrow">Position tasks / unavailable</p>
+          <h2>No position tasks are available.</h2>
+          <p>Task metadata, previews, and evaluation results are unavailable.</p>
         </section>
       ) : null}
 
       {data && data.status !== 'empty' && artifacts.length === 0 ? (
         <section class="panel research-empty-state" role="alert">
-          <p class="eyebrow">Degraded</p>
-          <h2>No public artifact passed the discovery boundary.</h2>
-          <p>Review the reported validation errors. No metadata or task rows are inferred from malformed files.</p>
+          <p class="eyebrow">Unavailable</p>
+          <h2>No position data could be loaded.</h2>
+          <p>Review the errors above for details.</p>
         </section>
       ) : null}
 

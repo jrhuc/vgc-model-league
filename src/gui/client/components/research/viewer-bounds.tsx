@@ -4,15 +4,15 @@ import { bytes } from './format';
 export function ViewerBounds({ data }: { data: ResearchResponse }) {
   return (
     <details class="audit-details research-viewer-bounds">
-      <summary>Viewer safety bounds</summary>
+      <summary>Preview limits</summary>
       <div class="panel">
         <dl class="research-bounds-list">
           <div>
-            <dt>Research response schema</dt>
+            <dt>Response schema</dt>
             <dd>v{data.schemaVersion}</dd>
           </div>
           <div>
-            <dt>Task previews per artifact</dt>
+            <dt>Task previews per set</dt>
             <dd>{data.limits.taskPreviews.toLocaleString()}</dd>
           </div>
           <div>
@@ -20,29 +20,29 @@ export function ViewerBounds({ data }: { data: ResearchResponse }) {
             <dd>{data.limits.promptCharacters.toLocaleString()} characters</dd>
           </div>
           <div>
-            <dt>Complete action menu ceiling</dt>
+            <dt>Legal actions per task</dt>
             <dd>{data.limits.actionsPerTask.toLocaleString()} actions</dd>
           </div>
           <div>
-            <dt>Action text ceiling</dt>
+            <dt>Action text limit</dt>
             <dd>{data.limits.actionLabelCharacters.toLocaleString()} characters</dd>
           </div>
           <div>
-            <dt>Artifact row ceiling</dt>
+            <dt>Rows per task set</dt>
             <dd>{data.limits.artifactRows.toLocaleString()}</dd>
           </div>
           <div>
-            <dt>Manifest byte ceiling</dt>
+            <dt>Metadata file limit</dt>
             <dd>{bytes(data.limits.manifestBytes)}</dd>
           </div>
           <div>
-            <dt>Task artifact byte ceiling</dt>
+            <dt>Task file limit</dt>
             <dd>{bytes(data.limits.taskBytes)}</dd>
           </div>
         </dl>
         <p class="muted">
-          Prompt previews may be shortened and are marked when they are. Action menus are never shortened: an artifact
-          beyond the structural ceiling is rejected instead.
+          Shortened prompts are marked. If a task has too many legal actions to display completely, the task set is
+          unavailable.
         </p>
       </div>
     </details>

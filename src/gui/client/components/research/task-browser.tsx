@@ -16,11 +16,7 @@ const PHASE_LABELS: Record<ResearchTaskView['phase'], string> = {
 
 function CanonicalActionMenu({ task }: { task: ResearchTaskView }) {
   return (
-    <section
-      class="position-action-scroll"
-      aria-label={`Exhaustive canonical action menu for ${task.taskId}`}
-      tabIndex={0}
-    >
+    <section class="position-action-scroll" aria-label={`Legal actions for ${task.taskId}`} tabIndex={0}>
       <ol start={0} class="position-action-list">
         {task.actions.map((action) => (
           <li value={action.number} key={`${action.number}:${action.canonicalAction}`}>
@@ -38,7 +34,7 @@ function PositionTask({ task }: { task: ResearchTaskView }) {
     <article class="position-task-card">
       <header class="position-task-header">
         <div>
-          <p class="eyebrow">Public task</p>
+          <p class="eyebrow">Task preview</p>
           <h3>{task.taskId}</h3>
         </div>
         <dl class="position-task-meta">
@@ -59,23 +55,22 @@ function PositionTask({ task }: { task: ResearchTaskView }) {
             <dd>{task.turn}</dd>
           </div>
           <div>
-            <dt>Legal joint actions</dt>
+            <dt>Legal actions</dt>
             <dd>{task.actionCount.toLocaleString()}</dd>
           </div>
         </dl>
       </header>
       <section class="position-task-prompt" aria-labelledby="position-task-prompt-title">
-        <h4 id="position-task-prompt-title">Model-visible prompt</h4>
+        <h4 id="position-task-prompt-title">Prompt shown to the model</h4>
         <pre>{task.prompt}</pre>
         {task.promptTruncated ? (
           <p class="research-preview-warning" role="status">
-            The prompt exceeds the viewer bound and is truncated here. Use the immutable public artifact for the full
-            task; this preview is not a rollout input.
+            This preview is shortened. The full prompt is unavailable here.
           </p>
         ) : null}
       </section>
       <section class="position-action-menu" aria-labelledby="position-task-actions-title">
-        <h4 id="position-task-actions-title">Exhaustive canonical action menu</h4>
+        <h4 id="position-task-actions-title">Legal actions and simulator commands</h4>
         <CanonicalActionMenu task={task} />
       </section>
     </article>
@@ -95,14 +90,14 @@ export function TaskBrowser({ artifact }: { artifact: ResearchArtifactView }) {
   );
   const task = filtered.find((entry) => entry.taskId === taskId) ?? filtered[0] ?? null;
   const splitOptions = [
-    { value: 'all', label: 'All returned splits' },
+    { value: 'all', label: 'All available splits' },
     ...([...new Set(tasks.map((entry) => entry.split))].sort() as ResearchTaskView['split'][]).map((value) => ({
       value,
       label: titleCase(value),
     })),
   ];
   const phaseOptions = [
-    { value: 'all', label: 'All returned phases' },
+    { value: 'all', label: 'All available phases' },
     ...([...new Set(tasks.map((entry) => entry.phase))].sort() as ResearchTaskView['phase'][]).map((value) => ({
       value,
       label: PHASE_LABELS[value],
@@ -117,35 +112,31 @@ export function TaskBrowser({ artifact }: { artifact: ResearchArtifactView }) {
     <section class="panel position-task-browser" aria-labelledby="task-browser-title">
       <div class="section-head">
         <div>
-          <p class="eyebrow">Position Lab</p>
-          <h2 id="task-browser-title">Bounded public task browser</h2>
-          <p>
-            Filters apply to the API preview, not the full corpus. Every displayed task retains its complete canonical
-            legal-action map.
-          </p>
+          <p class="eyebrow">Position tasks</p>
+          <h2 id="task-browser-title">Task browser</h2>
+          <p>Filter the available previews, then choose a task to inspect its prompt and legal actions.</p>
         </div>
       </div>
       <p class="research-preview-scope" role="status">
         {taskPreviewsWithheld ? (
           <>
-            This deployment returned no unreleased candidate task bytes; the verified manifest inventory contains{' '}
-            {artifact.taskTotal.toLocaleString()} public task{artifact.taskTotal === 1 ? '' : 's'}.
+            Task previews are unavailable on this deployment. {artifact.taskTotal.toLocaleString()} task
+            {artifact.taskTotal === 1 ? ' is' : 's are'} listed.
           </>
         ) : (
           <>
-            Returned {artifact.taskPreviewCount.toLocaleString()} of {artifact.taskTotal.toLocaleString()}{' '}
-            manifest-bound public task{artifact.taskTotal === 1 ? '' : 's'}.
+            Showing {artifact.taskPreviewCount.toLocaleString()} of {artifact.taskTotal.toLocaleString()} task
+            {artifact.taskTotal === 1 ? '' : 's'}.
           </>
         )}
       </p>
       {tasks.length === 0 ? (
         <div class="results-empty" role="status">
           {artifact.validation.status === 'invalid' || artifact.taskPreviewAvailability === 'unavailable'
-            ? 'Task previews are unavailable because this artifact failed public validation.'
+            ? 'Task previews are unavailable because this task set could not be loaded.'
             : taskPreviewsWithheld
-              ? 'Unreleased public-task bytes are withheld on this deployment. No task content is inferred from their absence.'
-              : 'This artifact contains no public task previews.'}
-          {artifact.taskPreviewReason ? ` Reason: ${titleCase(artifact.taskPreviewReason)}.` : ''}
+              ? 'Task previews are unavailable on this deployment.'
+              : 'No task previews are available.'}
         </div>
       ) : (
         <>
@@ -171,14 +162,14 @@ export function TaskBrowser({ artifact }: { artifact: ResearchArtifactView }) {
               value={task?.taskId ?? ''}
               onChange={setTaskId}
               filterable
-              emptyText="No returned task matches these filters."
+              emptyText="No task matches these filters."
             />
           </div>
           {task ? (
             <PositionTask task={task} />
           ) : (
             <div class="results-empty" role="status">
-              No returned task matches these filters. Reset the split or phase to continue browsing.
+              No task matches these filters. Reset the split or phase to continue browsing.
             </div>
           )}
         </>

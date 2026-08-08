@@ -8,9 +8,9 @@ export function SplitBalance({ artifact }: { artifact: ResearchArtifactView }) {
       <section class="panel research-split-balance" aria-labelledby="split-balance-title">
         <div class="section-head">
           <div>
-            <p class="eyebrow">Split audit</p>
-            <h2 id="split-balance-title">Declared stratum balance</h2>
-            <p>No per-stratum split balance is declared for this artifact. Absence is not evidence of balance.</p>
+            <p class="eyebrow">Dataset split</p>
+            <h2 id="split-balance-title">Training and evaluation balance</h2>
+            <p>Split counts are unavailable for this task set.</p>
           </div>
         </div>
       </section>
@@ -21,20 +21,14 @@ export function SplitBalance({ artifact }: { artifact: ResearchArtifactView }) {
     <section class="panel research-split-balance" aria-labelledby="split-balance-title">
       <div class="section-head">
         <div>
-          <p class="eyebrow">Split audit</p>
-          <h2 id="split-balance-title">Declared stratum balance</h2>
-          <p>
-            Manifest counts for the frozen assignment. Deviation is the manifest-reported absolute distance from the
-            frozen policy target; the target and tolerances are not included in this viewer contract, so these rows are
-            descriptive rather than a gate verdict. Source-series and near-duplicate components stay whole under
-            deterministic greedy stratification; this table neither recomputes a global optimum nor proves
-            candidate/calibration corpora are disjoint.
-          </p>
+          <p class="eyebrow">Dataset split</p>
+          <h2 id="split-balance-title">Training and evaluation balance</h2>
+          <p>Counts reported for this task set. Targets and tolerance checks are unavailable in the GUI.</p>
         </div>
       </div>
       <dl class="research-balance-summary">
         <div>
-          <dt>Overall eval share</dt>
+          <dt>Overall evaluation share</dt>
           <dd>{percent(balance.evalFraction)}</dd>
         </div>
         <div>
@@ -42,20 +36,20 @@ export function SplitBalance({ artifact }: { artifact: ResearchArtifactView }) {
           <dd>{percent(balance.evalFractionDeviation)}</dd>
         </div>
         <div>
-          <dt>Largest stratum deviation</dt>
+          <dt>Largest group deviation</dt>
           <dd>{percent(balance.maxStratumDeviation)}</dd>
         </div>
       </dl>
       {strata.length === 0 ? (
-        <div class="results-empty">The split balance object contains no declared strata.</div>
+        <div class="results-empty">No split groups are available.</div>
       ) : (
         /* biome-ignore lint/a11y/noNoninteractiveTabindex: the overflow region must be keyboard-scrollable */
-        <section class="table-scroll" aria-label="Declared split balance by stratum" tabIndex={0}>
+        <section class="table-scroll" aria-label="Training and evaluation counts by group" tabIndex={0}>
           <table class="data-table research-strata-table">
-            <caption>Declared split balance by stratum</caption>
+            <caption>Training and evaluation counts by group</caption>
             <thead>
               <tr>
-                <th scope="col">Declared stratum</th>
+                <th scope="col">Group</th>
                 <th scope="col" class="num">
                   Total
                 </th>
@@ -63,10 +57,10 @@ export function SplitBalance({ artifact }: { artifact: ResearchArtifactView }) {
                   Train
                 </th>
                 <th scope="col" class="num">
-                  Eval
+                  Evaluation
                 </th>
                 <th scope="col" class="num">
-                  Eval share
+                  Evaluation share
                 </th>
                 <th scope="col" class="num">
                   Deviation
