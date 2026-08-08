@@ -256,6 +256,18 @@ test('hosted mode enforces its canonical origin and defaults to read-only', asyn
     assert.match(String(state.headers['strict-transport-security']), /max-age=31536000/);
     const providers = state.data.providers as Array<{ id: string }>;
     assert.ok(!providers.some((provider) => provider.id === 'compat'));
+    const cliReasoning = await rawJsonRequest(port, {
+      path: '/api/reasoning?spec=omp%3Amodel',
+      headers: { host: 'league.example' },
+    });
+    assert.equal(cliReasoning.status, 400);
+    assert.match(String(cliReasoning.data.error), /Local CLI providers are disabled in hosted mode/);
+    const claudeCliReasoning = await rawJsonRequest(port, {
+      path: '/api/reasoning?spec=claude-cli%3Amodel',
+      headers: { host: 'league.example' },
+    });
+    assert.equal(claudeCliReasoning.status, 400);
+    assert.match(String(claudeCliReasoning.data.error), /Local CLI providers are disabled in hosted mode/);
     assert.deepEqual(state.data.auth, { mode: 'read-only', user: null, csrfToken: null });
     assert.equal(await rawRequest(port, { path: '/api/state', headers: { host: 'evil.example' } }), 403);
     assert.equal(
@@ -429,6 +441,28 @@ test('gui requires browser credentials and never exposes server keys', async () 
   }
 });
 
+test('local GUI accepts CLI provider specs without browser API keys', async () => {
+  let received: string[] | undefined;
+  const gui = new GuiServer({
+    runsDir: RUNS_SCRATCH,
+    runner: async (models) => {
+      received = models;
+      return [];
+    },
+  });
+  const base = await gui.listen(0);
+  try {
+    const started = await apiJson(`${base}api/run`, {
+      models: ['omp:provider/model', 'claude-cli:claude-sonnet-4-6'],
+      pool: 'test',
+    });
+    assert.equal(started.status, 200, JSON.stringify(started.data));
+    assert.deepEqual(received, ['omp:provider/model', 'claude-cli:claude-sonnet-4-6']);
+  } finally {
+    gui.close();
+  }
+});
+
 test('gui validates shared and per-model reasoning before launching', async () => {
   let received: Record<string, string> | undefined;
   const gui = new GuiServer({
@@ -542,6 +576,16 @@ test('hosted runs accept untimed just like local runs', async () => {
   const port = address.port;
   const headers = { host: 'league.example', origin: 'https://league.example', 'content-type': 'application/json' };
   try {
+    for (const provider of ['omp', 'claude-cli']) {
+      const rejected = await rawJsonRequest(port, {
+        method: 'POST',
+        path: '/api/run',
+        headers,
+        body: JSON.stringify({ models: [`${provider}:model`, 'random'], pool: 'test' }),
+      });
+      assert.equal(rejected.status, 400);
+      assert.match(String(rejected.data.error), /Local CLI providers are disabled in hosted mode/);
+    }
     const untimed = await rawJsonRequest(port, {
       method: 'POST',
       path: '/api/run',

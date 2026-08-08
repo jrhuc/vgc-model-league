@@ -78,10 +78,15 @@ export interface ProviderSpec {
   baseUrl?: string;
 }
 
+function cliModelSpec(provider: 'omp' | 'claude-cli', model: string): ProviderSpec {
+  if (!model || model.startsWith('-') || /[\s\p{Cc}]/u.test(model)) throw new Error(USAGE);
+  return { provider, model };
+}
+
 export function parseSpec(value: string): ProviderSpec {
   if (value === 'random') return { provider: 'random', model: 'random' };
-  if (value.startsWith('omp:') && value.length > 4) return { provider: 'omp', model: value.slice(4) };
-  if (value.startsWith('claude-cli:') && value.length > 11) return { provider: 'claude-cli', model: value.slice(11) };
+  if (value.startsWith('omp:')) return cliModelSpec('omp', value.slice(4));
+  if (value.startsWith('claude-cli:')) return cliModelSpec('claude-cli', value.slice(11));
   for (const option of PROVIDER_OPTIONS) {
     const provider = option.id;
     if (provider === 'random' || provider === 'compat') continue;

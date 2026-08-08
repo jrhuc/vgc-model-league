@@ -108,6 +108,8 @@ const TIMEOUT_ERROR = 'run exceeded its maximum duration';
 const GUI_DISABLED_PROVIDERS = new Set(['anthropic']);
 const GUI_DISABLED_PROVIDER_ERROR =
   'Direct Anthropic seats are disabled here to protect your account — use openrouter:anthropic/<model> instead';
+const HOSTED_CLI_PROVIDERS = new Set(['omp', 'claude-cli']);
+const HOSTED_CLI_PROVIDER_ERROR = 'Local CLI providers are disabled in hosted mode';
 
 interface GuiServerOptions {
   teamsDir?: string;
@@ -792,6 +794,7 @@ export class GuiServer {
       if (this.publicOrigin && spec.provider === 'compat') {
         throw new Error('OpenAI-compatible custom endpoints are disabled in hosted mode');
       }
+      if (this.publicOrigin && HOSTED_CLI_PROVIDERS.has(spec.provider)) throw new Error(HOSTED_CLI_PROVIDER_ERROR);
       return { levels: reasoningLevels(spec) };
     } catch (error) {
       throw new HttpError(400, error instanceof Error ? error.message : String(error));
@@ -1040,6 +1043,9 @@ export class GuiServer {
   }
 
   private async modelsBody(providerId: string, apiKey: string): Promise<ModelsResponse> {
+    if (this.publicOrigin && HOSTED_CLI_PROVIDERS.has(providerId)) {
+      throw new HttpError(400, HOSTED_CLI_PROVIDER_ERROR);
+    }
     const option = providerOption(providerId);
     if (!option || (this.publicOrigin && option.id === 'compat')) {
       throw new HttpError(400, `unknown provider ${JSON.stringify(providerId)}`);
@@ -1102,11 +1108,13 @@ export class GuiServer {
         if (this.publicOrigin && spec.provider === 'compat') {
           throw new Error('OpenAI-compatible custom endpoints are disabled in hosted mode');
         }
+        if (this.publicOrigin && HOSTED_CLI_PROVIDERS.has(spec.provider)) throw new Error(HOSTED_CLI_PROVIDER_ERROR);
         if (GUI_DISABLED_PROVIDERS.has(spec.provider)) throw new Error(GUI_DISABLED_PROVIDER_ERROR);
         validateReasoning(spec, reasoningByModel[model] ?? reasoning);
         const apiKey = typeof suppliedKeys[model] === 'string' ? suppliedKeys[model].trim() : '';
         const option = providerOption(spec.provider);
-        if (!apiKey && (option?.requiresKey ?? spec.provider !== 'compat')) {
+        const requiresKey = option?.requiresKey ?? !['compat', 'omp', 'claude-cli'].includes(spec.provider);
+        if (!apiKey && requiresKey) {
           missing.push(`${option?.label ?? spec.provider} (${model})`);
         } else {
           apiKeys[model] = apiKey || 'none';
