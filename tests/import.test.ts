@@ -92,6 +92,27 @@ test('removeImportedRun deletes imported rows and mirrors but refuses local resu
     const runDir = path.join(store.paths.runsDir, '20260725T000000.000000Z-abcd1234');
     assert.ok(fs.existsSync(runDir));
 
+    const liveDir = path.join(store.paths.runsDir, '20260725T010000.000000Z-live1234');
+    fs.mkdirSync(liveDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(liveDir, 'status.json'),
+      JSON.stringify({
+        state: 'running',
+        error: null,
+        notices: [],
+        start_time: '2026-07-25T01:00:00.000Z',
+        end_time: null,
+        pid: process.pid,
+      }),
+    );
+    assert.throws(
+      () => removeImportedRun('20260725T000000.000000Z-abcd1234', store.paths),
+      /cannot remove imported results.*live pid/,
+    );
+    assert.equal(loadRows(store.paths.recordsPath).length, 1, 'a live writer leaves imported rows untouched');
+    assert.equal(fs.existsSync(runDir), true, 'a live writer leaves the imported run mirror untouched');
+    fs.rmSync(liveDir, { recursive: true, force: true });
+
     const result = removeImportedRun('20260725T000000.000000Z-abcd1234', store.paths);
     assert.equal(result.removed, 1);
     assert.equal(loadRows(store.paths.recordsPath).length, 0);

@@ -4,11 +4,14 @@ import path from 'node:path';
 import type { ImportRequest, ImportResponse, LeagueAssets } from './gui/api.js';
 import { SAFE_SEGMENT } from './path-safety.js';
 import { appendRow, loadRows, type SeriesRecord } from './records.js';
+import { findLiveRun } from './run-status.js';
 import { createPool, listPools } from './teams.js';
 import type { ExperimentMode, JsonObject, Pid } from './types.js';
 import { isRecord } from './value.js';
 
 export class ImportError extends Error {}
+
+export class ImportBusyError extends ImportError {}
 
 const MODES: Record<ExperimentMode, true> = { rotation: true, exhibition: true, tournament: true, draft: true };
 const SEATS: Pid[] = ['p1', 'p2'];
@@ -158,6 +161,12 @@ export interface RemoveResponse {
 
 export function removeImportedRun(runId: string, options: ImportOptions): RemoveResponse {
   const runDir = runDirectory(options.runsDir, runId);
+  const live = findLiveRun(options.runsDir);
+  if (live) {
+    throw new ImportBusyError(
+      `cannot remove imported results while run ${JSON.stringify(live.runId)} is owned by live pid ${live.pid}`,
+    );
+  }
   const rows = loadRows(options.recordsPath);
   const target = rows.filter((row) => String(row.run_id ?? '') === runId);
   if (target.length === 0) throw new ImportError(`no series held for run ${JSON.stringify(runId)}`);

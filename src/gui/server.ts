@@ -20,7 +20,7 @@ import { describeBoardMon, listBoards, loadBoard } from '../draft.js';
 import type { DraftLeagueEvent } from '../draftleague.js';
 import { DRAFT_PROTOCOL_VERSION, roundRobinWeeks, runDraftLeague } from '../draftleague.js';
 import { buildTournamentGame, buildTournaments } from '../evidence.js';
-import { ImportError, importSeries, removeImportedRun } from '../import.js';
+import { ImportBusyError, ImportError, importSeries, removeImportedRun } from '../import.js';
 import { discoverModels } from '../model-catalog.js';
 import { DATA_DIR, makeRunDirectory, prepareDataDirectories, RESULTS_PATH, RUNS_DIR, TEAMS_DIR } from '../paths.js';
 import { PROVIDER_OPTIONS, providerOption } from '../provider-registry.js';
@@ -891,6 +891,9 @@ export class GuiServer {
   }
 
   private importRemoveBody(body: Record<string, unknown>): JsonObject {
+    if (this.run && isActiveRunState(this.run.state)) {
+      throw new HttpError(409, 'stop the active run before removing imported results');
+    }
     try {
       const result = removeImportedRun(String(body.runId ?? ''), {
         recordsPath: this.options.recordsPath ?? RESULTS_PATH,
@@ -906,6 +909,7 @@ export class GuiServer {
       });
       return result as unknown as JsonObject;
     } catch (error) {
+      if (error instanceof ImportBusyError) throw new HttpError(409, error.message);
       if (error instanceof ImportError) throw new HttpError(400, error.message);
       throw error;
     }

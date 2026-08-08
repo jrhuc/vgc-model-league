@@ -42,6 +42,20 @@ export function liveRunPid(runDir: string): number | null {
   }
 }
 
+export function findLiveRun(runsDir: string): { runId: string; pid: number } | null {
+  let runIds: string[];
+  try {
+    runIds = fs.readdirSync(runsDir).sort((a, b) => a.localeCompare(b));
+  } catch {
+    return null;
+  }
+  for (const runId of runIds) {
+    const pid = liveRunPid(path.join(runsDir, runId));
+    if (pid !== null) return { runId, pid };
+  }
+  return null;
+}
+
 export function assertRunCanResume(runDir: string): void {
   const pid = liveRunPid(runDir);
   if (pid !== null) {
