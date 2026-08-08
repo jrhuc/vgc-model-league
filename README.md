@@ -1,120 +1,78 @@
 # VGC Model League
 
 VGC Model League is a research harness for language-model decisions in Pokémon
-Video Game Championships. Models can draft from a shared board, construct teams,
-negotiate trades, choose a bring and lead at team preview, play best-of-three
-matches, and review the season. Pokémon Showdown is embedded in the process and
-remains the authority for rules, legality, randomness, and results.
+Video Game Championships. Models can draft from a shared board, build teams,
+negotiate one transaction window, choose a bring and lead, play best-of-three
+matches, and review their season. The embedded, pinned Pokémon Showdown simulator
+remains authoritative for rules, legality, randomness, state transitions, and
+results.
 
-The project is a playground and data generator, not a public model ladder. It
-records per-series outcomes and standings within individual leagues or brackets;
-it does not aggregate the heterogeneous natural match corpus into a ranking.
+This is a playground and data generator, not a public ladder. Match outcomes and
+standings describe one league or bracket; the heterogeneous natural corpus is
+never aggregated into a model ranking.
 
-## Research design
+## Research program
 
-The repository supports two complementary protocols.
+The project separates two questions:
 
-### Controlled battle positions
+1. **Controlled battle positions.** Exact replays can be forked to estimate the
+   short-horizon value of alternative legal actions under a declared reference:
+   material value, uniform legal opponent actions, uniform-random continuations,
+   and a fixed Monte Carlo budget. These experimental values are
+   reference-relative realized-state diagnostics, not labels of optimal play.
+2. **Draft-to-battle trajectories.** A model must carry a plan through a scarce
+   shared draft, legal construction, bring and lead, battle, and review. Logs can
+   test deterministic links such as drafted-to-built or built-to-brought.
+   Semantic plan-fidelity claims require a published rubric, agreement checks,
+   and human audit; generated explanations are not private beliefs.
 
-A completed game can be replayed from its seed, teams, and recorded actions. A
-verified position can then be reopened and alternative legal actions simulated.
-The current grader estimates short-horizon, reference-relative opportunity loss.
-Its reference is deliberately explicit: material value, a uniform distribution
-over legal opponent actions, uniform-random continuations, and a fixed Monte
-Carlo budget.
+The working local league already produces exploratory trajectories and the
+TypeScript prototype can replay, fork, and export position panels. No public
+position package, validated benchmark, whole-regulation build comparison, or
+multi-agent Draft Circuit environment has been released. The current artifact
+status and mandatory release gates live in the
+[evaluation plan](docs/evaluation-plan.md).
 
-That number is a diagnostic, not an oracle for optimal play. It changes when the
-reference or compute budget changes, and the estimator is still being validated.
-Model comparisons will use a frozen position set and one frozen prompt/tool
-scaffold; natural league games are not a benchmark sample.
+## Contribution boundary
 
-### Draft-to-battle trajectories
+Pokémon agents, doubles play, simulator search, drafting, negotiation, and
+evaluation infrastructure all have prior art. This project targets the combined
+**draft-to-battle protocol**, its linked evidence, and a forkable battle
+diagnostic. It reuses Pokémon Showdown as referee and treats
+[poke-env](https://github.com/hsahovic/poke-env),
+[VGC-Bench](https://arxiv.org/abs/2506.10326), and other compatible systems as
+external baselines rather than copying generic clients or policies. See
+[Related work](docs/related-work.md) for the claim boundary.
 
-The less duplicated part of the project is the chain above the battle:
-
-```text
-shared draft -> team construction -> bring and lead -> battle -> review
-```
-
-A model has to make a plan under scarcity, respond to other drafters, turn its
-roster into legal sets, select four for a matchup, and then use them. This makes
-observable questions possible that a battle-only environment cannot ask:
-
-- Did a declared draft plan appear in the constructed team?
-- Did the matchup plan determine the bring and lead?
-- Did the named interaction occur in battle?
-- Does the review agree with the simulator log?
-
-Simple edges can be checked from structured logs. Semantic claims require a
-published rubric, judge agreement checks, and human audit; an explanation is not
-proof of a model's private belief.
-
-## What is and is not new
-
-“Language models play Pokémon” and “two agents play doubles” are prior work.
-This repository should not reproduce those layers when an existing project can
-serve as a baseline or adapter.
-
-- [poke-env](https://github.com/hsahovic/poke-env) provides a Showdown client,
-  battle abstractions, teambuilding support, baseline players, and PettingZoo
-  environments. It is the default comparison for client-side battle agents.
-  This project embeds the simulator instead because counterfactual replay needs
-  the authoritative state rather than a state reconstructed from a server
-  protocol stream.
-- [VGC-Bench](https://arxiv.org/abs/2506.10326) studies trained VGC battle
-  policies and population evaluation. Its policies and corpus are relevant
-  baselines where their interfaces and licences permit reuse.
-- [PokéLLMon](https://arxiv.org/abs/2402.01118) and
-  [PokéChamp](https://arxiv.org/abs/2503.04094) build stronger language-model
-  battle agents with retrieval, learning, or search. This project instead
-  records the same endpoint and weights without added search or task-specific training, under a declared scaffold.
-- [Prime Intellect verifiers](https://github.com/PrimeIntellect-ai/verifiers)
-  supplies tasksets, harnesses, runtimes, traces, multi-agent control flow,
-  hosted evaluation, and training integration. The planned adapter will use
-  those facilities rather than building another evaluation orchestrator.
-
-The intended contribution is the combined **draft-to-battle protocol** and its
-stage-linked evidence, plus a forkable battle diagnostic. The multi-agent API,
-the Pokémon battle client, and generic inference plumbing are not contributions.
-
-## Prime Intellect integration
-
-The first public artifact will be a small controlled position taskset, used to
-validate packaging and scoring. TypeScript will score its legal actions offline;
-the native verifiers v1 package can then be a deterministic parse-and-lookup
-`Taskset` with no required grading service. The multi-agent artifact will later
-expose a complete draft-to-battle episode: drafting is the start of the delayed
-decision problem, not a cheap draft-only proxy with an invented reward.
-
-For that dynamic circuit, TypeScript and Pokémon Showdown remain the referee. A
-thin Python `Env` will use a versioned local protocol while verifiers owns model
-calls, agent traces, runtimes, evaluation, and training integration. The local
-league client remains available for interactive runs, but it is not copied into
-the adapter.
-
-See [the evaluation plan](docs/evaluation-plan.md) for validation gates and the
-package boundary.
+The planned controlled release path uses
+[Prime Intellect verifiers](https://github.com/PrimeIntellect-ai/verifiers).
+For static positions, TypeScript exports frozen public tasks and private value
+tables; a thin Python `Taskset` will parse one choice and look up its score. A
+later dynamic `Env` will drive the same TypeScript/Showdown referee through a
+versioned protocol. Verifiers owns model calls, runtimes, traces, evaluation,
+and training integration; it never becomes the VGC rules or scoring authority.
 
 ## Run locally
 
-Prerequisites: Node.js 24.18.1, pnpm 11.11.0, and provider credentials for the
-models you select.
+Requires Node.js 24.18.1, pnpm 11.11.0, and credentials for selected providers.
 
 ```sh
 pnpm install --frozen-lockfile
 pnpm run setup:showdown
 pnpm test
-pnpm run vgcleague -- --help
+pnpm run vgcleague --help
 ```
 
-Custom pools, favourite models, and one-off tournaments are supported. They are
-useful exploratory runs as long as they are reported as such.
+Custom pools, model sets, and one-off tournaments are exploratory conditions and
+must be reported as such. See [Usage](docs/usage.md) for commands.
 
 ## Documentation
 
-- [Usage](docs/usage.md)
 - [Measurement principles](docs/measurement.md)
 - [Evaluation plan](docs/evaluation-plan.md)
-- [Related work](docs/related-work.md)
-- [System architecture](docs/architecture.md)
+- [Architecture](docs/architecture.md)
+- [Usage](docs/usage.md)
 - [Deployment](docs/deployment.md)
+- [Trade window](docs/trade-window.md)
+- [Season review](docs/season-review.md)
+- [Related work](docs/related-work.md)
