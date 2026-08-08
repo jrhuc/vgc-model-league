@@ -12,8 +12,7 @@ import type { BattleRequest, Pid } from '../src/types.js';
 
 const Showdown = loadShowdown();
 const SEED = '31,41,59,26' as const;
-const STANDARD_FORMAT = 'gen9vgc2025regi';
-const MEGA_FORMAT = 'gen9championsvgc2026regmbbo3';
+const FORMAT = 'gen9championsvgc2026regmbbo3';
 
 type PokemonSet = NonNullable<Parameters<typeof Showdown.Teams.pack>[0]>[number];
 
@@ -46,7 +45,7 @@ const MEGA_PACKED = fs
   .readFileSync(path.join(REPO_ROOT, 'teams', 'test', 'rios-mega-raichu-x-venusaur.team'), 'utf8')
   .trim();
 
-function newBattle(format = STANDARD_FORMAT, packed = ORACLE_PACKED): Battle {
+function newBattle(format = FORMAT, packed = ORACLE_PACKED): Battle {
   const battle = new Showdown.Battle({ formatid: format, seed: SEED });
   battle.setPlayer('p1', { name: 'oracle-p1', team: packed });
   battle.setPlayer('p2', { name: 'oracle-p2', team: packed });
@@ -165,7 +164,7 @@ test('a trapped active has only Showdown-accepted surfaced actions', () => {
 });
 
 test('joint menus surface either Mega Evolution but not Showdown-rejected double Mega', () => {
-  const battle = newBattle(MEGA_FORMAT, MEGA_PACKED);
+  const battle = newBattle(FORMAT, MEGA_PACKED);
   choosePreview(battle);
   const request = requestOf(battle);
   assert.ok(request.active?.every((active) => active?.canMegaEvo === true));

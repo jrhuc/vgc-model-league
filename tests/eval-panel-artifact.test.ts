@@ -446,7 +446,7 @@ test('frozen prompt, public fingerprint, source group, stratum, and panel seed a
   );
 
   const changedInvariant = artifacts();
-  changedInvariant.tasks[0]!.format = 'gen9vgc2025regi';
+  changedInvariant.tasks[0]!.format = 'gen9championsvgc2026regma';
   assert.throws(
     () => validatePositionPanelArtifacts(changedInvariant.tasks, changedInvariant.scores, changedInvariant.sealed),
     /sealed public fingerprint/,

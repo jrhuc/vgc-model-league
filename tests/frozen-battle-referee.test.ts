@@ -12,7 +12,7 @@ import { loadShowdown } from '../src/showdown.js';
 import type { Pid } from '../src/types.js';
 
 const Showdown = loadShowdown();
-const FORMAT = 'gen9vgc2025regi';
+const FORMAT = 'gen9championsvgc2026regmbbo3';
 const SEED = [101, 202, 303, 404] as const;
 
 type PokemonSet = NonNullable<Parameters<typeof Showdown.Teams.pack>[0]>[number];
