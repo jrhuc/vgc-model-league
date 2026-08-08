@@ -60,7 +60,28 @@ function freshState(overrides: Partial<DraftState> = {}): DraftState {
   };
 }
 
+function writeResumableTradeWindow(
+  directory: string,
+  artifact: Record<string, unknown>,
+  entrants: string[] = ['random', 'random'],
+  rosters: string[][] = entrants.map(() => []),
+): void {
+  fs.writeFileSync(
+    path.join(directory, 'config.json'),
+    `${JSON.stringify({
+      mode: 'draft',
+      entrants,
+      team_names: entrants.map((_, entrant) => `Team ${entrant + 1}`),
+      rosters,
+      draft_only: false,
+      trade_window: { after_week: 1, trades_allowed: 0 },
+    })}\n`,
+  );
+  fs.writeFileSync(path.join(directory, 'window.json'), `${JSON.stringify(artifact)}\n`);
+}
+
 test('scaffold identities are distinct and stable', () => {
+  assert.equal(DRAFT_PROTOCOL_VERSION, 9);
   for (const revision of [draftScaffoldRevision(), teambuildScaffoldRevision(), tradeWindowScaffoldRevision()]) {
     assert.match(revision, /^[0-9a-f]{12}$/);
   }
@@ -407,6 +428,10 @@ test('coach offers resolve before free agency and replay without model calls', a
   assert.equal(artifact.offers.length, 2, 'each seat has an offer-phase record');
   assert.equal(artifact.offers[0]!.accepted, true);
   assert.equal(artifact.offers[1]!.to, null);
+  assert.deepEqual(
+    artifact.rosters.map((roster) => roster.entrant),
+    [0, 1],
+  );
   assert.equal(artifact.rosters[0]!.roster.at(-1)?.id, cheap[10]!.id);
   assert.equal(artifact.rosters[1]!.roster.at(-1)?.id, cheap[0]!.id);
   assert.deepEqual(
@@ -1708,18 +1733,27 @@ test('a full draft league drafts, plays weekly rounds, and crowns a champion', a
   const stored = JSON.parse(fs.readFileSync(path.join(directory, 'rosters.json'), 'utf8')) as Array<
     Record<string, unknown>
   >;
+  assert.deepEqual(
+    stored.map((entry) => entry.entrant),
+    [0, 1, 2, 3],
+  );
   for (const entry of stored) assert.ok((entry.spent as number) <= 100, 'no coach overspends');
   const window = JSON.parse(fs.readFileSync(path.join(directory, 'window.json'), 'utf8')) as {
     after_week: number;
     order: number[];
     offers: Array<{ to: number | null }>;
     decisions: Array<{ swaps: unknown[] }>;
+    rosters: Array<{ entrant: number }>;
   };
   assert.equal(window.after_week, 3);
   assert.equal(window.decisions.length, 4);
   assert.equal(window.offers.length, 4);
   assert.ok(window.offers.every((offer) => offer.to === null));
   assert.ok(window.decisions.every((decision) => decision.swaps.length === 0));
+  assert.deepEqual(
+    window.rosters.map((roster) => roster.entrant),
+    [0, 1, 2, 3],
+  );
   assert.equal(window.order.length, 4);
 
   const teambuilds = fs
@@ -1827,6 +1861,146 @@ test('a draft league checkpoints after a week and resumes to a champion', async 
       return provenance?.seriesIndex === 2;
     }),
   );
+});
+
+test('a resumed trade window restores duplicate-model rosters by entrant', async (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-draft-window-duplicate-'));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const eligible: DraftBoardMon[] = [];
+  const bases = new Set<string>();
+  for (const candidate of BOARD.mons) {
+    if (bases.has(candidate.base)) continue;
+    bases.add(candidate.base);
+    eligible.push(candidate);
+    if (eligible.length === 20) break;
+  }
+  assert.equal(eligible.length, 20);
+  const drafted = [eligible.slice(0, 10), eligible.slice(10, 20)];
+  const restored = [drafted[1]!, drafted[0]!];
+  const rosterRows = restored.map((roster, entrant) => ({
+    entrant,
+    model: 'random',
+    team_name: `Team ${entrant + 1}`,
+    budget_left: BOARD.budget - roster.reduce((sum, mon) => sum + mon.cost, 0),
+    spent: roster.reduce((sum, mon) => sum + mon.cost, 0),
+    roster: roster.map(({ id, name, cost }) => ({ id, name, cost })),
+  }));
+  writeResumableTradeWindow(
+    directory,
+    {
+      after_week: 1,
+      order: [0, 1],
+      offers: [],
+      decisions: [],
+      rosters: [rosterRows[1]!, rosterRows[0]!],
+    },
+    ['random', 'random'],
+    drafted.map((roster) => roster.map((mon) => mon.id)),
+  );
+
+  await runDraftLeague(['random', 'random'], directory, {
+    recordsPath: path.join(directory, 'results.jsonl'),
+    resume: true,
+    seed: 19,
+    concurrency: 1,
+  });
+
+  const builds = loadRows(path.join(directory, 'teambuild', 'teambuild.jsonl'));
+  for (const entrant of [0, 1]) {
+    const build = builds.find((row) => row.entrant === entrant && row.seriesIndex === 0)!;
+    const artifact = build.artifact as { task: { constraint: { candidates: Array<{ id: string }> } } };
+    assert.deepEqual(
+      artifact.task.constraint.candidates.map((candidate) => candidate.id),
+      restored[entrant]!.map((mon) => mon.id),
+    );
+  }
+});
+
+test('a resumed trade window rejects ambiguous and malformed roster artifacts', async (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-draft-window-reject-'));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const base = { after_week: 1, order: [], offers: [], decisions: [] };
+  const cases: Array<{ artifact: Record<string, unknown>; error: RegExp; entrants?: string[] }> = [
+    {
+      artifact: {
+        ...base,
+        rosters: [
+          { model: 'random', roster: [] },
+          { model: 'random', roster: [] },
+        ],
+      },
+      error: /ambiguous legacy trade-window rosters/,
+    },
+    {
+      artifact: {
+        ...base,
+        rosters: [
+          { entrant: 0, model: 'random', roster: [] },
+          { model: 'random', roster: [] },
+        ],
+      },
+      error: /mix legacy and current rows/,
+    },
+    {
+      artifact: { ...base, rosters: [{ model: 1, roster: [] }] },
+      error: /rosters are malformed/,
+    },
+    {
+      artifact: {
+        ...base,
+        rosters: [
+          { entrant: 0, model: 'random', roster: [] },
+          { entrant: 0, model: 'random', roster: [] },
+        ],
+      },
+      error: /duplicate entrant/,
+    },
+    {
+      artifact: { ...base, rosters: [{ entrant: 0, model: 'random', roster: [] }] },
+      error: /no roster for entrant 2/,
+    },
+    {
+      artifact: {
+        ...base,
+        rosters: [
+          { entrant: 0, model: 'random', roster: [] },
+          { entrant: 2, model: 'random', roster: [] },
+        ],
+      },
+      error: /invalid entrant/,
+    },
+    {
+      artifact: {
+        ...base,
+        rosters: [
+          { entrant: 0, model: 'other', roster: [] },
+          { entrant: 1, model: 'random', roster: [] },
+        ],
+      },
+      error: /model does not match entrant 1/,
+    },
+    {
+      artifact: {
+        ...base,
+        rosters: [
+          { model: 'random', roster: [] },
+          { model: 'other', roster: [] },
+        ],
+      },
+      entrants: ['random', 'test:other'],
+      error: /legacy trade-window roster models do not match current entrants/,
+    },
+  ];
+  for (const { artifact, error, entrants } of cases) {
+    writeResumableTradeWindow(directory, artifact, entrants);
+    await assert.rejects(
+      runDraftLeague(['random', 'random'], directory, {
+        recordsPath: path.join(directory, 'results.jsonl'),
+        resume: true,
+      }),
+      error,
+    );
+  }
 });
 
 test('a two-coach league plays one week and a single final', async (t) => {

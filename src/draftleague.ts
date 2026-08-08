@@ -29,14 +29,16 @@ import {
   MAX_TRADE_SWAPS,
   readTradeWindow,
   runTradeWindow,
+  type TradeWindowArtifact,
   type TradeWindowConfig,
   type TradeWindowResult,
+  type TradeWindowRoster,
   tradeWindowScaffoldRevision,
 } from './trade-window.js';
 import type { Pid } from './types.js';
 import { ordinal } from './value.js';
 
-export const DRAFT_PROTOCOL_VERSION = 8;
+export const DRAFT_PROTOCOL_VERSION = 9;
 
 export type DraftLeagueEvent = TournamentEvent | { type: 'draft'; draft: DraftView };
 
@@ -383,15 +385,13 @@ export async function runDraftLeague(
       throw new Error(`run ${runId} trade-window artifact does not match its config`);
     }
     const monById = new Map(board.mons.map((mon) => [mon.id, mon] as const));
-    rosters = entrants.map((model, entrant) => {
-      const storedRoster = windowArtifact!.rosters.find((entry) => entry.model === model);
-      if (!storedRoster) throw new Error(`run ${runId} trade window has no roster for entrant ${entrant + 1}`);
-      return storedRoster.roster.map(({ id }) => {
+    rosters = tradeWindowRostersByEntrant(windowArtifact!, entrants, runId).map((storedRoster) =>
+      storedRoster.roster.map(({ id }) => {
         const mon = monById.get(id);
         if (!mon) throw new Error(`run ${runId} trade window added ${id}, which board ${board.id} does not hold`);
         return mon;
-      });
-    });
+      }),
+    );
     budgets = rosters.map((roster) => board.budget - roster.reduce((sum, mon) => sum + mon.cost, 0));
     for (const decision of windowArtifact.decisions) {
       if (draftNotes[decision.entrant] !== undefined) draftNotes[decision.entrant] = decision.notebook;
@@ -402,12 +402,13 @@ export async function runDraftLeague(
     fs.writeFileSync(
       path.join(runDir, 'rosters.json'),
       `${JSON.stringify(
-        entrants.map((model, index) => ({
+        entrants.map((model, entrant) => ({
+          entrant,
           model,
-          team_name: teamNames[index],
-          budget_left: budgets[index],
-          spent: board.budget - budgets[index]!,
-          roster: rosters[index]!.map((mon) => ({ id: mon.id, name: mon.name, cost: mon.cost })),
+          team_name: teamNames[entrant],
+          budget_left: budgets[entrant],
+          spent: board.budget - budgets[entrant]!,
+          roster: rosters[entrant]!.map((mon) => ({ id: mon.id, name: mon.name, cost: mon.cost })),
         })),
         null,
         2,
@@ -866,6 +867,74 @@ export async function runDraftLeague(
     options.onEvent?.({ type: 'draft', draft: draftView(true) });
   }
   return finish();
+}
+
+function tradeWindowRostersByEntrant(
+  artifact: TradeWindowArtifact,
+  entrants: readonly string[],
+  runId: string,
+): TradeWindowRoster[] {
+  const rows = artifact.rosters as unknown[];
+  const rosterRows = rows.map((row) => {
+    if (typeof row !== 'object' || row === null || Array.isArray(row)) {
+      throw new Error(`run ${runId} trade-window rosters are malformed`);
+    }
+    const roster = row as Record<string, unknown>;
+    if (typeof roster.model !== 'string' || !Array.isArray(roster.roster)) {
+      throw new Error(`run ${runId} trade-window rosters are malformed`);
+    }
+    return roster as TradeWindowRoster & Record<string, unknown>;
+  });
+  const hasEntrant = rosterRows.map((row) => Object.hasOwn(row, 'entrant'));
+  if (hasEntrant.some(Boolean)) {
+    if (!hasEntrant.every(Boolean)) throw new Error(`run ${runId} trade-window rosters mix legacy and current rows`);
+    const byEntrant = new Map<number, TradeWindowRoster>();
+    for (const row of rosterRows) {
+      if (!Number.isInteger(row.entrant) || row.entrant < 0 || row.entrant >= entrants.length) {
+        throw new Error(`run ${runId} trade-window roster has an invalid entrant`);
+      }
+      if (byEntrant.has(row.entrant)) {
+        throw new Error(`run ${runId} trade-window rosters duplicate entrant ${row.entrant + 1}`);
+      }
+      if (row.model !== entrants[row.entrant]) {
+        throw new Error(`run ${runId} trade-window roster model does not match entrant ${row.entrant + 1}`);
+      }
+      byEntrant.set(row.entrant, row);
+    }
+    return entrants.map((_, entrant) => {
+      const row = byEntrant.get(entrant);
+      if (!row) throw new Error(`run ${runId} trade window has no roster for entrant ${entrant + 1}`);
+      return row;
+    });
+  }
+
+  const duplicateSavedModel = duplicateModel(rosterRows.map((row) => row.model));
+  const duplicateCurrentModel = duplicateModel(entrants);
+  if (duplicateSavedModel !== undefined || duplicateCurrentModel !== undefined) {
+    throw new Error(
+      `run ${runId} has ambiguous legacy trade-window rosters: duplicate model ${JSON.stringify(
+        duplicateSavedModel ?? duplicateCurrentModel,
+      )}`,
+    );
+  }
+  const byModel = new Map(rosterRows.map((row) => [row.model, row]));
+  if (byModel.size !== entrants.length) {
+    throw new Error(`run ${runId} legacy trade-window roster models do not match current entrants`);
+  }
+  return entrants.map((model) => {
+    const row = byModel.get(model);
+    if (!row) throw new Error(`run ${runId} legacy trade-window roster models do not match current entrants`);
+    return row;
+  });
+}
+
+function duplicateModel(models: readonly string[]): string | undefined {
+  const seen = new Set<string>();
+  for (const model of models) {
+    if (seen.has(model)) return model;
+    seen.add(model);
+  }
+  return undefined;
 }
 
 function sorted(rows: SeriesRecord[]): SeriesRecord[] {

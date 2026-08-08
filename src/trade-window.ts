@@ -145,6 +145,7 @@ export interface TradeWindowDecision {
 }
 
 export interface TradeWindowRoster {
+  entrant: number;
   model: string;
   team_name: string;
   budget_left: number;
@@ -609,6 +610,7 @@ function responseUserPrompt(
 
 function rosterArtifact(state: TradeWindowState): TradeWindowRoster[] {
   return state.models.map((model, entrant) => ({
+    entrant,
     model,
     team_name: state.teamNames[entrant]!,
     budget_left: state.budgets[entrant]!,
