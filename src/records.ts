@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import type { ExperimentMode, JsonObject, Pid, TimerScale } from './types.js';
+import { isRecord } from './value.js';
 
 export interface SeriesRecord extends JsonObject {
   mode?: ExperimentMode;
@@ -54,11 +55,27 @@ export function loadRows(file: string): SeriesRecord[] {
   }
   const cached = rowCache.get(file);
   if (cached && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size) return cached.rows;
-  const rows = fs
-    .readFileSync(file, 'utf8')
-    .split('\n')
-    .filter((line) => line.trim())
-    .map((line) => JSON.parse(line) as SeriesRecord);
+  const contents = fs.readFileSync(file, 'utf8');
+  const lines = contents.split('\n');
+  const hasUnterminatedTail = !contents.endsWith('\n');
+  let lastNonEmptyLine = -1;
+  for (const [index, line] of lines.entries()) {
+    if (line.trim()) lastNonEmptyLine = index;
+  }
+  const rows: SeriesRecord[] = [];
+  for (const [index, line] of lines.entries()) {
+    if (!line.trim()) continue;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(line);
+    } catch (error) {
+      if (hasUnterminatedTail && index === lastNonEmptyLine) continue;
+      const detail = error instanceof Error ? error.message : String(error);
+      throw new Error(`invalid JSONL line ${index + 1} in ${file}: ${detail}`, { cause: error });
+    }
+    if (!isRecord(parsed)) throw new Error(`invalid JSONL line ${index + 1} in ${file}: expected a JSON object`);
+    rows.push(parsed as SeriesRecord);
+  }
   rowCache.set(file, { mtimeMs: stat.mtimeMs, size: stat.size, rows });
   return rows;
 }

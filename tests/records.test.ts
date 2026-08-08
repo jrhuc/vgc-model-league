@@ -48,6 +48,53 @@ test('record loading ignores whitespace-only lines', (t) => {
   assert.deepEqual(loadRows(records), [row('a', 'b', 'a')]);
 });
 
+test('record loading retains valid rows before a torn final JSONL fragment', (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-model-league-records-'));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const records = path.join(directory, 'results.jsonl');
+  const first = row('a', 'b', 'a');
+  const second = row('c', 'd', 'c');
+  fs.writeFileSync(records, `${JSON.stringify(first)}\n${JSON.stringify(second)}\n{"players":{"p1":"partial"`);
+  assert.deepEqual(loadRows(records), [first, second]);
+});
+
+test('record loading rejects a terminated malformed final JSONL row', (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-model-league-records-'));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const records = path.join(directory, 'results.jsonl');
+  fs.writeFileSync(records, `${JSON.stringify(row('a', 'b', 'a'))}\n{"players":\n`);
+  assert.throws(() => loadRows(records), /invalid JSONL line 2.*results\.jsonl/);
+});
+
+test('record loading rejects a malformed interior JSONL row with its line number', (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-model-league-records-'));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const records = path.join(directory, 'results.jsonl');
+  fs.writeFileSync(
+    records,
+    `${JSON.stringify(row('a', 'b', 'a'))}\n{"players":\n${JSON.stringify(row('c', 'd', 'c'))}\n`,
+  );
+  assert.throws(() => loadRows(records), /invalid JSONL line 2.*results\.jsonl/);
+});
+
+test('record loading invalidates a cached torn tail after it is completed by an append', (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-model-league-records-'));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const records = path.join(directory, 'results.jsonl');
+  const first = row('a', 'b', 'a');
+  const second = row('c', 'd', 'c');
+  fs.writeFileSync(records, `${JSON.stringify(first)}\n{"players":{"p1":"c","p2":`);
+  const cached = loadRows(records);
+  assert.deepEqual(cached, [first]);
+  assert.equal(loadRows(records), cached, 'an unchanged torn snapshot returns the cached valid prefix');
+
+  fs.appendFileSync(records, `"d"},"winner":"c","games":[]}\n`);
+
+  const completed = loadRows(records);
+  assert.deepEqual(completed, [first, second]);
+  assert.notEqual(completed, cached, 'the changed size invalidates the cached torn snapshot');
+});
+
 test('HTML reports include nested games and filter pools', (t) => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-model-league-records-'));
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
