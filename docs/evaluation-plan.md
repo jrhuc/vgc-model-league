@@ -186,21 +186,19 @@ comparative orchestration. TypeScript and Showdown remain authoritative for
 candidate generation, native action acceptance, state, battle reconstruction, and reward.
 
 `vgc-positions-v1` is a static `Taskset`. The dynamic Draft Circuit will be an
-`Env` whose control flow is programmed in `Env.run(task, agents)` and whose
-runtime launches the versioned JSON-lines TypeScript referee as a subprocess. The
-image must include Node and the compiled pinned bundle. Clients fail closed on
-protocol, Showdown SHA, format, board digest, or scaffold mismatch. The specific
-provisioning entry points are unverified against a pinned verifiers release and
-must be confirmed before any support claim. See [Architecture](architecture.md)
-for the component boundary.
+`Env` whose control flow is programmed in `Env.run(task, agents)`. Each role is
+provisioned through `Agent.provision(task)`, and its runtime launches the
+versioned JSON-lines TypeScript referee with `Runtime.open_process`. The image
+must include Node and the compiled pinned bundle. Clients fail closed on
+protocol and every digest implemented by the relevant referee slice. These APIs
+are verified against `verifiers==0.3.0`; Docker, Hub, and hosted compatibility
+remain separate smokes. See [Architecture](architecture.md) for the component
+boundary.
 
-Seats are separate roles, not one policy. Verifiers configures roles through
-per-role `AgentConfig` and can freeze a counterpart while scoring another, which
-is the shape the trade window and any human-reference opponent need. Role-
-Conditioned Advantage Estimation measures each role against its own reward
-history; the measurement analogue here is per-position share normalisation, which
-is why raw regret must not be pooled across seats that were not in comparable
-positions.
+Seats are separate roles, not one policy. Per-role `AgentConfig` keeps reference
+roles non-trainable and gives each competing seat an isolated runtime. The
+measurement profiles and comparison limits are canonical in
+[Measurement](measurement.md).
 
 Compatibility is evidence, not assumption:
 

@@ -150,11 +150,12 @@ verifiers Env -> provisioned runtime -> versioned JSON-lines referee
                                       -> TypeScript domain -> Pokémon Showdown
 ```
 
-The process must run through the runtime supplied by the verifiers `Runtime`
-passed to a rollout, with Node and the compiled pinned bundle in its image. HTTP
-is only an optional runtime transport; MCP is only for model-facing mechanics
-tools. The exact provisioning entry points are not yet verified against a pinned
-verifiers release; treat them as a target, not a supported path.
+The adapter provisions each role through the verified `Agent.provision(task)`
+boundary and starts the compiled TypeScript referee with
+`Runtime.open_process`. The runtime image must contain Node and the pinned
+bundle. HTTP is only an optional runtime transport; MCP is only for model-facing
+mechanics tools. Local source verification does not substitute for separate
+Docker, Hub, and hosted compatibility smokes.
 
 The implemented first slice is `src/frozen-battle-referee.ts` plus the
 `tools/frozen-battle-referee.ts` JSONL process. It runs one seeded fixed-roster
