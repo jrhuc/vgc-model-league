@@ -160,3 +160,77 @@ test('strict rendering is deterministic and binds open and closed policy identit
   assert.equal(open.executionPolicy, 'strict');
   assert.equal(open.task.executionPolicy, 'strict');
 });
+
+test('strict run and referee preserve the same malformed rejection artifact', async (t) => {
+  const response = '{"sets": []}';
+  const pure = validateTeamBuildSubmission(task(), response, {
+    psDir: defaultPsDir(),
+    attempts: 5,
+    createdAt: CREATED_AT,
+  });
+  assert.equal(pure.status, 'rejected');
+  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-team-build-referee-rejected-'));
+  t.after(() => fs.rmSync(logDir, { recursive: true, force: true }));
+  const result = await runTeamBuild(task(), {
+    logDir,
+    rng: seededRng(1),
+    psDir: defaultPsDir(),
+    createdAt: CREATED_AT,
+    makeTeambuildProvider: () => provider(response),
+  });
+  if (pure.status !== 'rejected') return;
+  assert.deepEqual(result.artifact, pure.artifact);
+  assert.equal(result.packed, null);
+});
+
+test('strict referee preserves and detaches a refused non-strict task', () => {
+  const input = task();
+  input.executionPolicy = 'league-resilient';
+  const before = structuredClone(input);
+  const rejected = validateTeamBuildSubmission(input, RESPONSE, {
+    psDir: defaultPsDir(),
+    createdAt: CREATED_AT,
+  });
+  assert.equal(rejected.status, 'rejected');
+  if (rejected.status !== 'rejected') return;
+  assert.deepEqual(rejected.artifact.task, before);
+  assert.equal(rejected.artifact.executionPolicy, 'strict');
+  rejected.artifact.task.notebook = 'changed downstream';
+  rejected.artifact.task.constraint.candidates[0]!.name = 'Changed downstream';
+  assert.deepEqual(input, before);
+});
+
+test('strict run records token truncation as the rejection problem', async (t) => {
+  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-team-build-referee-truncated-'));
+  t.after(() => fs.rmSync(logDir, { recursive: true, force: true }));
+  const result = await runTeamBuild(task(), {
+    logDir,
+    rng: seededRng(1),
+    psDir: defaultPsDir(),
+    createdAt: CREATED_AT,
+    makeTeambuildProvider: () => ({
+      complete: () => Promise.resolve({ text: '{"sets": []}', finishReason: 'length', usage: {}, toolCalls: [] }),
+    }),
+  });
+  assert.equal(result.packed, null);
+  assert.deepEqual(result.artifact.validation.problems, [
+    'the reply used its whole token budget before finishing the team',
+  ]);
+});
+
+test('strict random task fails without manufacturing a fallback action', async (t) => {
+  const input = task();
+  input.model = 'random';
+  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-team-build-referee-random-'));
+  t.after(() => fs.rmSync(logDir, { recursive: true, force: true }));
+  const result = await runTeamBuild(input, {
+    logDir,
+    rng: seededRng(1),
+    psDir: defaultPsDir(),
+    createdAt: CREATED_AT,
+  });
+  assert.equal(result.packed, null);
+  assert.equal(result.artifact.attempts, 0);
+  assert.equal(result.artifact.fallback, false);
+  assert.deepEqual(result.artifact.validation.problems, ['strict team building has no provider action']);
+});

@@ -289,7 +289,7 @@ export interface TeamBuildOptions extends ModelReasoningConfig {
   apiKeys?: Readonly<Record<string, string>>;
   logDir: string;
   rng: Rng;
-  /** Optional archival timestamp; strict referee results otherwise use an empty deterministic value. */
+  /** Optional archival timestamp; defaults to the current time. */
   createdAt?: string;
   signal?: AbortSignal;
   recovery?: RecoveryGate;
@@ -703,7 +703,7 @@ function strictTask(task: TeamBuildTask): TeamBuildTask {
   if (task.executionPolicy !== undefined && task.executionPolicy !== 'strict') {
     throw new Error('the team-build referee accepts only strict executionPolicy tasks');
   }
-  return { ...task, executionPolicy: 'strict' };
+  return { ...structuredClone(task), executionPolicy: 'strict' };
 }
 
 function refereeArtifact(
@@ -803,7 +803,7 @@ export function validateTeamBuildSubmission(
     canonicalTask = strictTask(task);
   } catch (cause) {
     const problem = cause instanceof Error ? cause.message : String(cause);
-    const rejectedTask = { ...task, executionPolicy: 'strict' as const };
+    const rejectedTask = structuredClone(task);
     const evidence = noStageEvidence(task.notebook);
     const psDir = options.psDir ?? defaultPsDir();
     return {
@@ -949,10 +949,19 @@ export async function runTeamBuild(task: TeamBuildTask, options: TeamBuildOption
         if (validation.status === 'accepted') {
           strictAccepted = validation;
         } else {
-          strictRejected = validation;
           error = truncated
             ? 'the reply used its whole token budget before finishing the team'
             : validation.problems.join('\n');
+          strictRejected = truncated
+            ? {
+                ...validation,
+                problems: [error],
+                artifact: {
+                  ...validation.artifact,
+                  validation: { ...validation.artifact.validation, problems: [error] },
+                },
+              }
+            : validation;
           lastError = error;
         }
       } else {
