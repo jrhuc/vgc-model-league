@@ -14,6 +14,7 @@ import {
   validateTeamBuildSubmission,
 } from '../src/teambuild.js';
 import type { Completion, Provider } from '../src/types.js';
+import { legalTeamResponse } from './fixtures/team-build.js';
 
 const BOARD = loadBoard('regmb-202607');
 const candidate = (id: string) => {
@@ -40,59 +41,7 @@ function task(sheetPolicy: 'open' | 'closed' = 'open'): TeamBuildTask {
   };
 }
 
-const RESPONSE = JSON.stringify({
-  team_plan: 'Flexible speed control lets this team pressure both fast and slow modes.',
-  sets: [
-    {
-      id: 'garchomp',
-      item: 'Life Orb',
-      ability: 'Rough Skin',
-      nature: 'Jolly',
-      moves: ['Earthquake', 'Dragon Claw', 'Rock Slide', 'Protect'],
-      evs: { hp: 2, atk: 32, def: 0, spa: 0, spd: 0, spe: 32 },
-    },
-    {
-      id: 'incineroar',
-      item: 'Sitrus Berry',
-      ability: 'Intimidate',
-      nature: 'Impish',
-      moves: ['Fake Out', 'Flare Blitz', 'Parting Shot', 'Darkest Lariat'],
-      evs: { hp: 32, atk: 0, def: 20, spa: 0, spd: 14, spe: 0 },
-    },
-    {
-      id: 'sinistcha',
-      item: 'Leftovers',
-      ability: 'Hospitality',
-      nature: 'Bold',
-      moves: ['Matcha Gotcha', 'Rage Powder', 'Life Dew', 'Protect'],
-      evs: { hp: 32, atk: 0, def: 20, spa: 0, spd: 14, spe: 0 },
-    },
-    {
-      id: 'farigiraf',
-      item: 'Colbur Berry',
-      ability: 'Armor Tail',
-      nature: 'Relaxed',
-      moves: ['Psychic', 'Trick Room', 'Helping Hand', 'Protect'],
-      evs: { hp: 32, atk: 0, def: 20, spa: 14, spd: 0, spe: 0 },
-    },
-    {
-      id: 'whimsicott',
-      item: 'Focus Sash',
-      ability: 'Prankster',
-      nature: 'Timid',
-      moves: ['Tailwind', 'Encore', 'Moonblast', 'Protect'],
-      evs: { hp: 2, atk: 0, def: 0, spa: 32, spd: 0, spe: 32 },
-    },
-    {
-      id: 'charizard-mega-y',
-      item: 'Charizardite Y',
-      ability: 'Blaze',
-      nature: 'Modest',
-      moves: ['Heat Wave', 'Solar Beam', 'Weather Ball', 'Protect'],
-      evs: { hp: 20, atk: 0, def: 0, spa: 32, spd: 0, spe: 14 },
-    },
-  ],
-});
+const RESPONSE = legalTeamResponse('Flexible speed control lets this team pressure both fast and slow modes.');
 
 function provider(response: string): Provider {
   return {
