@@ -14,7 +14,7 @@ import { RecoveryGate } from './recovery.js';
 import { writeReport } from './report.js';
 import { restartGui, stopGui } from './restart.js';
 import { runRotation } from './rotation.js';
-import { withRunStatus } from './run-status.js';
+import { assertRunCanResume, withRunStatus } from './run-status.js';
 import type { Team } from './teams.js';
 import { parseTimerScale } from './timer.js';
 import type { TimerScale } from './types.js';
@@ -361,6 +361,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
     if (provenance !== 'disclosed' && provenance !== 'blind')
       throw new Error('--provenance must be "disclosed" or "blind"');
     const runDir = resumeDir ?? makeRunDirectory();
+    if (resumeDir) assertRunCanResume(runDir);
     armModelOverrides(runDir);
     const rows = await withRunStatus(runDir, () =>
       runTournament(models, runDir, {
@@ -449,6 +450,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
             ? null
             : { afterWeek: positiveInteger('trade-window', values['trade-window']), tradesAllowed: 1 };
     const runDir = resumeDir ?? makeRunDirectory();
+    if (resumeDir) assertRunCanResume(runDir);
     armModelOverrides(runDir);
     let lastTeambuilds = 0;
     const rows = await withRunStatus(runDir, () =>

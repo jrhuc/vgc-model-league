@@ -10,6 +10,45 @@ export interface RunStatus {
   pid?: number;
 }
 
+function isRunningStatus(value: unknown): value is RunStatus & { state: 'running'; pid: number } {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  const status = value as Record<string, unknown>;
+  return (
+    status.state === 'running' &&
+    status.error === null &&
+    Array.isArray(status.notices) &&
+    status.notices.every((notice) => typeof notice === 'string') &&
+    typeof status.start_time === 'string' &&
+    status.end_time === null &&
+    typeof status.pid === 'number' &&
+    Number.isSafeInteger(status.pid) &&
+    status.pid > 0
+  );
+}
+
+export function liveRunPid(runDir: string): number | null {
+  let status: unknown;
+  try {
+    status = JSON.parse(fs.readFileSync(path.join(runDir, 'status.json'), 'utf8'));
+  } catch {
+    return null;
+  }
+  if (!isRunningStatus(status)) return null;
+  try {
+    process.kill(status.pid, 0);
+    return status.pid;
+  } catch {
+    return null;
+  }
+}
+
+export function assertRunCanResume(runDir: string): void {
+  const pid = liveRunPid(runDir);
+  if (pid !== null) {
+    throw new Error(`Cannot resume run at ${runDir}: pid ${pid} is still live; only one resume owner is allowed.`);
+  }
+}
+
 export function writeRunStatus(runDir: string, status: RunStatus): void {
   try {
     fs.writeFileSync(path.join(runDir, 'status.json'), `${JSON.stringify(status, null, 1)}\n`, 'utf8');
