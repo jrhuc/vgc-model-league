@@ -257,6 +257,27 @@ export interface TeamBuildResult {
   artifact: TeamBuildArtifact;
 }
 
+/** The serialized, provider-independent rendering of a strict team-build task. */
+export interface RenderedTeamBuildTask {
+  task: TeamBuildTask;
+  executionPolicy: 'strict';
+  system: string;
+  user: string;
+  scaffold: string;
+  showdownCommit: string;
+}
+
+/** Optional deterministic metadata for the provider-free team-build referee. */
+export interface TeamBuildRefereeOptions {
+  psDir?: string;
+  attempts?: number;
+  createdAt?: string;
+}
+
+export type TeamBuildSubmissionValidation =
+  | { status: 'accepted'; packed: string; artifact: TeamBuildArtifact }
+  | { status: 'rejected'; problems: string[]; evidence: StageEvidence; artifact: TeamBuildArtifact };
+
 export interface TeambuildResult {
   packed: string;
   artifact: TeamBuildArtifact;
@@ -268,6 +289,8 @@ export interface TeamBuildOptions extends ModelReasoningConfig {
   apiKeys?: Readonly<Record<string, string>>;
   logDir: string;
   rng: Rng;
+  /** Optional archival timestamp; strict referee results otherwise use an empty deterministic value. */
+  createdAt?: string;
   signal?: AbortSignal;
   recovery?: RecoveryGate;
   makeTeambuildProvider?: (spec: string, apiKey: string | undefined, reasoning: ReasoningLevel | undefined) => Provider;
@@ -675,6 +698,161 @@ function validateTeamBuildTask(task: TeamBuildTask): void {
   }
 }
 
+function strictTask(task: TeamBuildTask): TeamBuildTask {
+  validateTeamBuildTask(task);
+  if (task.executionPolicy !== undefined && task.executionPolicy !== 'strict') {
+    throw new Error('the team-build referee accepts only strict executionPolicy tasks');
+  }
+  return { ...task, executionPolicy: 'strict' };
+}
+
+function refereeArtifact(
+  task: TeamBuildTask,
+  psDir: string,
+  action: TeamBuildAction | null,
+  evidence: StageEvidence,
+  problems: string[],
+  options: TeamBuildRefereeOptions,
+): TeamBuildArtifact {
+  return {
+    schemaVersion: 1,
+    status: action ? 'valid' : 'invalid',
+    task,
+    executionPolicy: 'strict',
+    scaffold: teamBuildScaffoldRevision(task.objective, task.sheetPolicy, 'strict'),
+    showdownCommit: showdownCommit(psDir),
+    action,
+    evidence,
+    validation: {
+      showdown: Boolean(action),
+      repaired: false,
+      repairs: [],
+      problems,
+    },
+    attempts: options.attempts ?? 0,
+    fallback: false,
+    createdAt: options.createdAt ?? new Date().toISOString(),
+  };
+}
+
+/**
+ * Renders the frozen strict referee input. It does not create providers, make
+ * provider calls, write logs, retry, repair, or select a fallback team.
+ */
+export function renderTeamBuildTask(
+  task: TeamBuildTask,
+  options: Pick<TeamBuildRefereeOptions, 'psDir'> = {},
+): RenderedTeamBuildTask {
+  const canonicalTask = strictTask(task);
+  const psDir = options.psDir ?? defaultPsDir();
+  const { Dex } = loadShowdown(psDir);
+  const format = Dex.formats.get(canonicalTask.format);
+  const dex = Dex.mod(format.mod || 'base') as unknown as DexLike;
+  const ruleTable = Dex.formats.getRuleTable(format);
+  const evLimit = ruleTable.evLimit ?? 508;
+  const evMax = 32;
+  return {
+    task: canonicalTask,
+    executionPolicy: 'strict',
+    system: systemPrompt(canonicalTask, dex, evLimit, evMax),
+    user: userPrompt(canonicalTask, dex),
+    scaffold: teamBuildScaffoldRevision(canonicalTask.objective, canonicalTask.sheetPolicy, 'strict'),
+    showdownCommit: showdownCommit(psDir),
+  };
+}
+
+function actionForCandidateTeam(
+  dex: DexLike,
+  task: TeamBuildTask,
+  entries: readonly { mon: TeamBuildCandidate; set: RawSet }[],
+  psDir: string,
+): TeamBuildAction {
+  const packed = normalizePackedTeam(packCandidateTeam(dex, entries, psDir), psDir);
+  validateTeam(packed, task.format, psDir);
+  return {
+    selected: entries.map((entry) => entry.mon.id),
+    packed,
+    sets: entries.map(({ mon, set }) => ({
+      species: mon.name,
+      spriteId: dex.species.get(mon.forme ?? mon.species).spriteid,
+      item: set.item,
+      ability: set.ability,
+      nature: set.nature,
+      moves: [...set.moves],
+      evs: { ...set.evs },
+      note: set.note,
+      repaired: false,
+      repairs: [],
+    })),
+  };
+}
+
+/**
+ * Validates one submitted response at the strict construction boundary.
+ * The result contains JSON-safe data only; no Dex object or provider state is
+ * exposed. Canonical action bytes are deterministic; callers may supply
+ * createdAt when the enclosing artifact also needs deterministic bytes.
+ */
+export function validateTeamBuildSubmission(
+  task: TeamBuildTask,
+  response: string,
+  options: TeamBuildRefereeOptions = {},
+): TeamBuildSubmissionValidation {
+  let canonicalTask: TeamBuildTask;
+  try {
+    canonicalTask = strictTask(task);
+  } catch (cause) {
+    const problem = cause instanceof Error ? cause.message : String(cause);
+    const rejectedTask = { ...task, executionPolicy: 'strict' as const };
+    const evidence = noStageEvidence(task.notebook);
+    const psDir = options.psDir ?? defaultPsDir();
+    return {
+      status: 'rejected',
+      problems: [problem],
+      evidence,
+      artifact: refereeArtifact(rejectedTask, psDir, null, evidence, [problem], options),
+    };
+  }
+  const psDir = options.psDir ?? defaultPsDir();
+  const parsed = parseSets(response, canonicalTask);
+  if (typeof parsed === 'string') {
+    const evidence = noStageEvidence(canonicalTask.notebook);
+    return {
+      status: 'rejected',
+      problems: [parsed],
+      evidence,
+      artifact: refereeArtifact(canonicalTask, psDir, null, evidence, [parsed], options),
+    };
+  }
+  const { Dex } = loadShowdown(psDir);
+  const format = Dex.formats.get(canonicalTask.format);
+  const dex = Dex.mod(format.mod || 'base') as unknown as DexLike;
+  const owned = new Map(canonicalTask.constraint.candidates.map((mon) => [mon.id, mon]));
+  const problems = validateCandidate(dex, canonicalTask.format, parsed.sets, owned, psDir);
+  if (problems.length) {
+    return {
+      status: 'rejected',
+      problems,
+      evidence: parsed.evidence,
+      artifact: refereeArtifact(canonicalTask, psDir, null, parsed.evidence, problems, options),
+    };
+  }
+  try {
+    const entries = parsed.sets.map((set) => ({ mon: owned.get(set.id)!, set }));
+    const action = actionForCandidateTeam(dex, canonicalTask, entries, psDir);
+    const artifact = refereeArtifact(canonicalTask, psDir, action, parsed.evidence, [], options);
+    return { status: 'accepted', packed: action.packed, artifact };
+  } catch (cause) {
+    const problems = [cause instanceof Error ? cause.message : String(cause)];
+    return {
+      status: 'rejected',
+      problems,
+      evidence: parsed.evidence,
+      artifact: refereeArtifact(canonicalTask, psDir, null, parsed.evidence, problems, options),
+    };
+  }
+}
+
 function attemptLogFile(task: TeamBuildTask, logDir: string): string {
   if (task.provenance.seriesIndex !== undefined && task.provenance.entrant !== undefined) {
     return path.join(
@@ -704,8 +882,9 @@ export async function runTeamBuild(task: TeamBuildTask, options: TeamBuildOption
   fs.mkdirSync(options.logDir, { recursive: true });
   const logFile = attemptLogFile(task, options.logDir);
 
-  const system = systemPrompt(task, dex, evLimit, evMax);
-  const messages: ProviderMessage[] = [{ role: 'user', content: userPrompt(task, dex) }];
+  const rendered = executionPolicy === 'strict' ? renderTeamBuildTask(canonicalTask, { psDir }) : undefined;
+  const system = rendered?.system ?? systemPrompt(task, dex, evLimit, evMax);
+  const messages: ProviderMessage[] = [{ role: 'user', content: rendered?.user ?? userPrompt(task, dex) }];
   const reasoning = reasoningForModel(task.model, options);
   const resolvedModel = resolveSpecOverride(task.model);
   const provider =
@@ -720,12 +899,19 @@ export async function runTeamBuild(task: TeamBuildTask, options: TeamBuildOption
         }));
 
   const owned = new Map(task.constraint.candidates.map((mon) => [mon.id, mon]));
+  const runCreatedAt = options.createdAt ?? new Date().toISOString();
   let accepted: ParsedTeamBuild | undefined;
+  let strictAccepted: Extract<TeamBuildSubmissionValidation, { status: 'accepted' }> | undefined;
+  let strictRejected: Extract<TeamBuildSubmissionValidation, { status: 'rejected' }> | undefined;
   let lastParsed: ParsedTeamBuild | undefined;
   let attemptsUsed = 0;
   let lastError = '';
 
-  for (let attempt = 1; provider && attempt <= TEAMBUILD_PROMPT_POLICY.attempts && !accepted; attempt += 1) {
+  for (
+    let attempt = 1;
+    provider && attempt <= TEAMBUILD_PROMPT_POLICY.attempts && !accepted && !strictAccepted;
+    attempt += 1
+  ) {
     options.signal?.throwIfAborted();
     attemptsUsed = attempt;
     const promptForAttempt = messages[messages.length - 1]!.content ?? '';
@@ -754,18 +940,35 @@ export async function runTeamBuild(task: TeamBuildTask, options: TeamBuildOption
         const salvaged = parseSets(completion.reasoning, task);
         if (typeof salvaged !== 'string') response = completion.reasoning;
       }
-      const parsed = parseSets(response, task);
-      if (typeof parsed === 'string') {
-        error = truncated ? 'the reply used its whole token budget before finishing the team' : parsed;
-        lastError = error;
-      } else {
-        const problems = validateCandidate(dex, task.format, parsed.sets, owned, psDir);
-        if (problems.length) {
-          error = problems.join('\n');
-          lastError = error;
-          lastParsed = parsed;
+      if (executionPolicy === 'strict') {
+        const validation = validateTeamBuildSubmission(canonicalTask, response, {
+          psDir,
+          attempts: attempt,
+          createdAt: runCreatedAt,
+        });
+        if (validation.status === 'accepted') {
+          strictAccepted = validation;
         } else {
-          accepted = parsed;
+          strictRejected = validation;
+          error = truncated
+            ? 'the reply used its whole token budget before finishing the team'
+            : validation.problems.join('\n');
+          lastError = error;
+        }
+      } else {
+        const parsed = parseSets(response, task);
+        if (typeof parsed === 'string') {
+          error = truncated ? 'the reply used its whole token budget before finishing the team' : parsed;
+          lastError = error;
+        } else {
+          const problems = validateCandidate(dex, task.format, parsed.sets, owned, psDir);
+          if (problems.length) {
+            error = problems.join('\n');
+            lastError = error;
+            lastParsed = parsed;
+          } else {
+            accepted = parsed;
+          }
         }
       }
       if (error) {
@@ -820,29 +1023,18 @@ export async function runTeamBuild(task: TeamBuildTask, options: TeamBuildOption
     }
   }
 
-  if (executionPolicy === 'strict' && !accepted) {
-    const problem =
-      lastError || (provider ? 'no valid team was returned' : 'strict team building has no provider action');
-    const artifact: TeamBuildArtifact = {
-      schemaVersion: 1,
-      status: 'invalid',
-      task: canonicalTask,
-      executionPolicy,
-      scaffold: teamBuildScaffoldRevision(task.objective, task.sheetPolicy, executionPolicy),
-      showdownCommit: showdownCommit(psDir),
-      action: null,
-      evidence: lastParsed?.evidence ?? noStageEvidence(task.notebook),
-      validation: {
-        showdown: false,
-        repaired: false,
-        repairs: [],
-        problems: [problem],
-      },
-      attempts: attemptsUsed,
-      fallback: false,
-      createdAt: new Date().toISOString(),
+  if (executionPolicy === 'strict') {
+    if (strictAccepted) return { packed: strictAccepted.packed, artifact: strictAccepted.artifact };
+    if (strictRejected) return { packed: null, artifact: strictRejected.artifact };
+    const problem = provider ? 'no valid team was returned' : 'strict team building has no provider action';
+    const evidence = noStageEvidence(canonicalTask.notebook);
+    return {
+      packed: null,
+      artifact: refereeArtifact(canonicalTask, psDir, null, evidence, [problem], {
+        attempts: attemptsUsed,
+        createdAt: runCreatedAt,
+      }),
     };
-    return { packed: null, artifact };
   }
 
   const noParseRationale = provider
