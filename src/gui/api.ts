@@ -93,6 +93,7 @@ export interface TeambuildSetView {
   nature: string;
   moves: string[];
   evs: Record<string, number>;
+  note?: string;
   repaired: boolean;
   repairs: string[];
 }
@@ -280,78 +281,9 @@ export interface BattleMessage {
 
 export type ServerEvent = { type: 'run'; run: RunSnapshot | null } | ({ type: 'battle' } & BattleMessage);
 
-export interface RecordsResponse {
-  count: number;
-  /** Applied pool filter; null is the overall view, which excludes the test pool. */
-  pool: string | null;
-  pools: string[];
-  imported: number;
-}
-
-export interface LatencyPoint {
-  ms: number;
-  tokens?: number;
-  seriesId: string;
-  game: number;
-  turn: number;
-  phase: string;
-}
-
-export interface ModelEvidence {
-  spec: string;
-  providers: string[];
-  series: number;
-  decisions: number;
-  reflections: number;
-  latency: { median: number; p25: number; p75: number; max: number } | null;
-  tokens: { median: number; p25: number; p75: number; max: number } | null;
-  points: LatencyPoint[];
-  rates: {
-    fallback: number;
-    parseFailure: number;
-    providerRetry: number;
-    switch: number;
-    protect: number;
-    toolLookups: number;
-    reflectionFallback: number | null;
-  };
-}
-
-export interface SeriesLuckEntry {
-  seriesId: string;
-  runId: string;
-  timestamp: string;
-  p1: string;
-  p2: string;
-  winner: string | null;
-  score: [number, number];
-  games: number;
-  turns: number;
-  luck: Record<Pid, number>;
-  winnerLuckDelta: number | null;
-}
-
-export interface TournamentRecord {
-  spec: string;
-  entered: number;
-  titles: number;
-  runnerUp: number;
-  semis: number;
-  earlier: number;
-}
-
 export interface TournamentSummary {
   tournaments: number;
   matches: number;
-  records: TournamentRecord[];
-}
-
-export interface EvidenceResponse {
-  pool: string | null;
-  count: number;
-  decisions: number;
-  models: ModelEvidence[];
-  series: SeriesLuckEntry[];
 }
 
 export interface ArchivedMatchView {
@@ -676,7 +608,7 @@ export interface ModeRecordView {
   runs: Array<{ runId: string; when: string }>;
 }
 
-export interface ModelProfileResponse {
+export interface LegacyObservationIndexResponse {
   id: string;
   providers: string[];
   firstSeen: string | null;
@@ -685,27 +617,6 @@ export interface ModelProfileResponse {
   games: number;
   decisions: number;
   reflections: number;
-  totalTokens: number;
-  reasoningTokens: number | null;
-  cost: number | null;
-  latency: QuartileView | null;
-  tokensPerDecision: QuartileView | null;
-  rates: {
-    fallback: number;
-    parseFailure: number;
-    providerRetry: number;
-    abandoned: number;
-    switch: number;
-    protect: number;
-    spread: number;
-    allyTarget: number;
-    megaPerGame: number;
-    toolLookups: number;
-    repeatedActions: number;
-    bringChanges: number | null;
-    leadChanges: number | null;
-    reflectionFallback: number | null;
-  };
   modes: ModeRecordView[];
 }
 
@@ -773,4 +684,141 @@ export interface CreatePoolResponse {
   ok: boolean;
   name: string;
   pools: PoolInfo[];
+}
+
+export interface ResearchValidationView {
+  status: 'valid' | 'invalid';
+  scope: 'public-artifacts-only';
+  errors: string[];
+}
+
+export interface ResearchTaskActionView {
+  number: number;
+  canonicalAction: string;
+  label: string;
+}
+
+export interface ResearchTaskView {
+  taskId: string;
+  format: string;
+  split: 'pilot' | 'train' | 'eval';
+  phase: 'team_preview' | 'forced_switch' | 'turn';
+  turn: number;
+  prompt: string;
+  promptTruncated: boolean;
+  actionCount: number;
+  actions: ResearchTaskActionView[];
+}
+
+export interface ResearchProtocolsView {
+  schemaVersion: number;
+  action: Record<string, unknown>;
+  task: Record<string, unknown>;
+  counterfactual: Record<string, unknown>;
+  exhaustivePanels: Record<string, unknown>;
+  canonicalJson: Record<string, unknown>;
+  nearDuplicates: Record<string, unknown> | null;
+  eligibilityMetricsVersion: number;
+}
+
+export interface ResearchRuntimeView {
+  node: string;
+  platform: string;
+  arch: string;
+}
+
+export interface ResearchProvenanceView {
+  sourceSetId: string;
+  calibrationSourceSetId: string | null;
+  manifestSha256: string;
+  upstreamPilotManifestSha256: string | null;
+  upstreamCalibrationManifestSha256: string | null;
+  evaluatorDigest: string;
+  splitterDigest: string | null;
+  showdownCommit: string;
+  seedNamespace: string;
+  policyId: string | null;
+  runtime: ResearchRuntimeView;
+}
+
+export interface ResearchCountsView {
+  input: number;
+  eligible: number | null;
+  excluded: number | null;
+  train: number | null;
+  eval: number | null;
+  sourceGroups: number | null;
+  duplicateClusters: number | null;
+  nearDuplicatePairs: number | null;
+}
+
+export interface ResearchSplitBalanceStratumView {
+  total: number;
+  eval: number;
+  evalFraction: number;
+  deviation: number;
+}
+
+export interface ResearchSplitBalanceView {
+  evalFraction: number;
+  evalFractionDeviation: number;
+  strata: Record<string, ResearchSplitBalanceStratumView>;
+  maxStratumDeviation: number;
+}
+
+export interface ResearchArtifactView {
+  kind: 'pilot' | 'frozen';
+  schemaVersion: number | null;
+  releaseReady: boolean | null;
+  status: string;
+  validation: ResearchValidationView;
+  protocols: ResearchProtocolsView | null;
+  provenance: ResearchProvenanceView | null;
+  releaseGates: string[];
+  counts: ResearchCountsView | null;
+  splitBalance: ResearchSplitBalanceView | null;
+  taskPreviewAvailability: 'available' | 'withheld' | 'unavailable';
+  taskPreviewReason: string | null;
+  taskTotal: number;
+  taskPreviewCount: number;
+  tasks: ResearchTaskView[];
+}
+
+export interface ResearchLimitsView {
+  taskPreviews: number;
+  promptCharacters: number;
+  actionsPerTask: number;
+  actionLabelCharacters: number;
+  artifactRows: number;
+  manifestBytes: number;
+  taskBytes: number;
+}
+
+export interface ResearchProgramView {
+  positions: {
+    target: 'vgc-positions-v1';
+    stage: 'not-generated' | 'pilot' | 'candidate' | 'invalid';
+  };
+  draftCircuit: {
+    target: 'vgc-draft-circuit-v1';
+    stage: 'design';
+  };
+}
+
+export interface ResearchLegacyPositionsView {
+  present: boolean;
+  rows: number;
+  manifestBound: false;
+  displayPolicy: 'inventory-only';
+}
+
+export interface ResearchResponse {
+  schemaVersion: 1;
+  status: 'empty' | 'ready' | 'degraded';
+  program: ResearchProgramView;
+  legacyPositions: ResearchLegacyPositionsView;
+  artifacts: ResearchArtifactView[];
+  errors: string[];
+  warnings: string[];
+  limits: ResearchLimitsView;
 }

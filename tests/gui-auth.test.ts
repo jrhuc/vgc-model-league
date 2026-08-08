@@ -144,7 +144,7 @@ test('hosted GitHub OAuth protects mutations with sessions, CSRF, and run owners
     dbPath: path.join(directory, 'league.sqlite'),
     clientId: 'client-id',
     clientSecret: 'client-secret',
-    publicOrigin: 'http://league.example',
+    publicOrigin: 'https://league.example',
     fetch: github,
   });
   let emitLateUpdate: (() => void) | undefined;
@@ -184,7 +184,7 @@ test('hosted GitHub OAuth protects mutations with sessions, CSRF, and run owners
   const gui = new GuiServer({
     runsDir: RUNS_SCRATCH,
     host: '127.0.0.1',
-    publicOrigin: 'http://league.example',
+    publicOrigin: 'https://league.example',
     auth,
     runner,
     recordsPath: path.join(directory, 'records.jsonl'),
@@ -213,7 +213,7 @@ test('hosted GitHub OAuth protects mutations with sessions, CSRF, and run owners
         await request(port, {
           path: '/api/run/stop',
           method: 'POST',
-          headers: { origin: 'http://league.example', 'content-type': 'application/json' },
+          headers: { origin: 'https://league.example', 'content-type': 'application/json' },
           body: '{}',
         })
       ).status,
@@ -227,7 +227,7 @@ test('hosted GitHub OAuth protects mutations with sessions, CSRF, and run owners
           path: '/api/run/stop',
           method: 'POST',
           headers: {
-            origin: 'http://league.example',
+            origin: 'https://league.example',
             'content-type': 'application/json',
             cookie: owner.cookie,
             'x-csrf-token': 'wrong',
@@ -241,7 +241,7 @@ test('hosted GitHub OAuth protects mutations with sessions, CSRF, and run owners
       path: '/api/run',
       method: 'POST',
       headers: {
-        origin: 'http://league.example',
+        origin: 'https://league.example',
         'content-type': 'application/json',
         cookie: owner.cookie,
         'x-csrf-token': owner.csrf,
@@ -285,7 +285,7 @@ test('hosted GitHub OAuth protects mutations with sessions, CSRF, and run owners
       path: '/api/run/stop',
       method: 'POST',
       headers: {
-        origin: 'http://league.example',
+        origin: 'https://league.example',
         'content-type': 'application/json',
         cookie: other.cookie,
         'x-csrf-token': other.csrf,
@@ -302,7 +302,7 @@ test('hosted GitHub OAuth protects mutations with sessions, CSRF, and run owners
       path: '/api/run/stop',
       method: 'POST',
       headers: {
-        origin: 'http://league.example',
+        origin: 'https://league.example',
         'content-type': 'application/json',
         cookie: owner.cookie,
         'x-csrf-token': owner.csrf,
@@ -316,7 +316,7 @@ test('hosted GitHub OAuth protects mutations with sessions, CSRF, and run owners
         path: '/api/models',
         method: 'POST',
         headers: {
-          origin: 'http://league.example',
+          origin: 'https://league.example',
           'content-type': 'application/json',
           cookie: owner.cookie,
           'x-csrf-token': owner.csrf,
@@ -329,7 +329,7 @@ test('hosted GitHub OAuth protects mutations with sessions, CSRF, and run owners
       path: '/api/models',
       method: 'POST',
       headers: {
-        origin: 'http://league.example',
+        origin: 'https://league.example',
         'content-type': 'application/json',
         cookie: owner.cookie,
         'x-csrf-token': owner.csrf,
@@ -346,7 +346,7 @@ test('hosted GitHub OAuth protects mutations with sessions, CSRF, and run owners
       path: '/api/logout',
       method: 'POST',
       headers: {
-        origin: 'http://league.example',
+        origin: 'https://league.example',
         'content-type': 'application/json',
         cookie: owner.cookie,
         'x-csrf-token': owner.csrf,

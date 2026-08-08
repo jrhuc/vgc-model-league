@@ -237,9 +237,13 @@ test('the import route answers only to the configured operator token', async () 
     assert.equal(accepted.status, 200);
     assert.equal(((await accepted.json()) as { imported: boolean }).imported, true);
 
-    const records = (await (await fetch(`${base}api/records?pool=majors`)).json()) as Record<string, unknown>;
-    assert.equal(records.count, 1);
-    assert.equal(records.imported, 1, 'the record book separates imported evidence from local runs');
+    const records = loadRows(store.paths.recordsPath);
+    assert.equal(records.length, 1);
+    assert.equal(
+      (records[0]?.origin as { source?: string } | undefined)?.source,
+      'import',
+      'the authoritative row retains its import provenance',
+    );
   } finally {
     gui.close();
     store.dispose();

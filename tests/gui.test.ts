@@ -529,7 +529,7 @@ test('hosted runs accept untimed just like local runs', async () => {
   const gui = new GuiServer({
     runsDir: RUNS_SCRATCH,
     host: '127.0.0.1',
-    publicOrigin: 'http://league.example',
+    publicOrigin: 'https://league.example',
     mutationsEnabled: true,
     runner: async (_models, _seriesPerPair, _runDir, options = {}) => {
       received = options.timerScale;
@@ -540,7 +540,7 @@ test('hosted runs accept untimed just like local runs', async () => {
   const address = gui.server.address();
   assert.ok(address && typeof address === 'object');
   const port = address.port;
-  const headers = { host: 'league.example', origin: 'http://league.example', 'content-type': 'application/json' };
+  const headers = { host: 'league.example', origin: 'https://league.example', 'content-type': 'application/json' };
   try {
     const untimed = await rawJsonRequest(port, {
       method: 'POST',
@@ -799,7 +799,7 @@ test('hosted runs execute in a child process and return events to the server', a
   const gui = new GuiServer({
     runsDir: RUNS_SCRATCH,
     host: '127.0.0.1',
-    publicOrigin: 'http://league.example',
+    publicOrigin: 'https://league.example',
     mutationsEnabled: true,
     recordsPath: path.join(scratch, 'results.jsonl'),
     logger: (entry) => {
@@ -816,7 +816,7 @@ test('hosted runs execute in a child process and return events to the server', a
       path: '/api/run',
       headers: {
         host: 'league.example',
-        origin: 'http://league.example',
+        origin: 'https://league.example',
         'content-type': 'application/json',
       },
       body: '{"models":["random","random"],"pool":"test","seriesPerPair":1,"concurrency":1,"seed":1}',
@@ -839,7 +839,7 @@ test('a hung hosted worker is killed without taking down the web process', async
   const gui = new GuiServer({
     runsDir: RUNS_SCRATCH,
     host: '127.0.0.1',
-    publicOrigin: 'http://league.example',
+    publicOrigin: 'https://league.example',
     mutationsEnabled: true,
     maxRunMs: 1,
     workerStopGraceMs: 1,
@@ -858,7 +858,7 @@ test('a hung hosted worker is killed without taking down the web process', async
       path: '/api/run',
       headers: {
         host: 'league.example',
-        origin: 'http://league.example',
+        origin: 'https://league.example',
         'content-type': 'application/json',
       },
       body: '{"models":["random","random"],"pool":"test"}',
@@ -950,35 +950,10 @@ test('gui runs a random-vs-random series and streams live battle state', async (
     assert.ok(firstSnapshot, 'game 1 stays viewable after the series ends');
     assert.ok(Number(firstSnapshot.turn) >= 1);
 
-    const overall = await apiJson(`${base}api/records`);
-    assert.equal(overall.status, 200);
-    assert.deepEqual(overall.data, {
-      count: 0,
-      pool: null,
-      pools: ['test'],
-      imported: 0,
-    });
-
     const records = await apiJson(`${base}api/records?pool=test`);
-    assert.equal(records.status, 200);
-    assert.deepEqual(records.data, {
-      count: 1,
-      pool: 'test',
-      pools: ['test'],
-      imported: 0,
-    });
-
+    assert.equal(records.status, 404, 'the unused aggregate records endpoint stays unavailable');
     const evidence = await apiJson(`${base}api/evidence?pool=test`);
-    assert.equal(evidence.status, 200);
-    assert.equal(evidence.data.pool, 'test');
-    assert.equal(evidence.data.count, 1);
-    assert.deepEqual(evidence.data.models, [], 'reference agents leave no engine evidence');
-    const luckSeries = evidence.data.series as Array<Record<string, unknown>>;
-    assert.equal(luckSeries.length, 1);
-    assert.equal(luckSeries[0]!.p1, 'random');
-    assert.ok(typeof (luckSeries[0]!.luck as Record<string, number>).p1 === 'number');
-    const emptyEvidence = await apiJson(`${base}api/evidence`);
-    assert.equal(emptyEvidence.data.count, 0, 'the test pool stays out of overall evidence');
+    assert.equal(evidence.status, 404, 'the unused aggregate evidence endpoint stays unavailable');
 
     for (let attempt = 0; attempt < 40; attempt += 1) {
       if (/"type":"battle"/.test(stream) && /"type":"run"/.test(stream)) break;
@@ -1159,7 +1134,7 @@ test('hosted tournament runs execute in the worker and stream the bracket', asyn
   const gui = new GuiServer({
     runsDir: RUNS_SCRATCH,
     host: '127.0.0.1',
-    publicOrigin: 'http://league.example',
+    publicOrigin: 'https://league.example',
     mutationsEnabled: true,
     recordsPath: path.join(scratch, 'results.jsonl'),
     logger: (entry) => {
@@ -1176,7 +1151,7 @@ test('hosted tournament runs execute in the worker and stream the bracket', asyn
       path: '/api/run',
       headers: {
         host: 'league.example',
-        origin: 'http://league.example',
+        origin: 'https://league.example',
         'content-type': 'application/json',
       },
       body: '{"mode":"tournament","models":["random","random"],"pool":"test","concurrency":1,"seed":1}',
@@ -1315,7 +1290,7 @@ test('hosted draft runs execute in the worker and stream draft state', async (t)
   const gui = new GuiServer({
     runsDir: RUNS_SCRATCH,
     host: '127.0.0.1',
-    publicOrigin: 'http://league.example',
+    publicOrigin: 'https://league.example',
     mutationsEnabled: true,
     recordsPath: path.join(scratch, 'results.jsonl'),
     logger: (entry) => {
@@ -1332,7 +1307,7 @@ test('hosted draft runs execute in the worker and stream draft state', async (t)
       path: '/api/run',
       headers: {
         host: 'league.example',
-        origin: 'http://league.example',
+        origin: 'https://league.example',
         'content-type': 'application/json',
       },
       body: '{"mode":"draft","models":["random","random"],"board":"regmb-202607","concurrency":1,"seed":5}',

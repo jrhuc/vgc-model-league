@@ -9,35 +9,56 @@ import { FixturesView } from './views/fixtures';
 import { DraftRoomView } from './views/league';
 import { LeaguesView } from './views/leagues';
 import { ModelProfileView } from './views/model';
+import { ResearchOverviewView } from './views/research';
 import { TournamentsView } from './views/tournaments';
 
 const NAV_SETS = [
-  [
-    { id: 'fixtures', label: 'New run' },
-    { id: 'arena', label: 'Live run' },
-  ],
-  [
-    { id: 'leagues', label: 'Draft leagues' },
-    { id: 'tournaments', label: 'Tournaments' },
-    { id: 'data', label: 'Data room' },
-  ],
+  {
+    label: 'Research',
+    items: [
+      { id: 'research', label: 'Overview' },
+      { id: 'data', label: 'Position Lab' },
+      { id: 'leagues', label: 'Draft leagues' },
+    ],
+  },
+  {
+    label: 'Observe',
+    items: [
+      { id: 'arena', label: 'Live run' },
+      { id: 'tournaments', label: 'Tournaments' },
+    ],
+  },
+  {
+    label: 'Operate',
+    items: [{ id: 'fixtures', label: 'New run' }],
+  },
 ] as const;
-const NAV = NAV_SETS.flat();
 
-export type ViewId = (typeof NAV)[number]['id'];
+export type ViewId = (typeof NAV_SETS)[number]['items'][number]['id'];
+type RouteViewId = ViewId | 'observations';
 
 interface Route {
-  view: ViewId;
+  view: RouteViewId;
   run?: string;
   team?: string;
   series?: number;
   model?: string;
 }
 
+function decodeHashSegment(segment: string): string {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return segment;
+  }
+}
+
 function routeFromHash(): Route {
-  const hash = decodeURIComponent(window.location.hash.slice(1));
-  const [head = '', second = '', third = '', fourth = ''] = hash.split('/');
-  if (head === 'leagues') {
+  const [head = '', second = '', third = '', fourth = ''] = window.location.hash
+    .slice(1)
+    .split('/')
+    .map(decodeHashSegment);
+  if (head === 'leagues' || head === 'draft-circuit') {
     const series = /^\d+$/.test(fourth) ? Number(fourth) : undefined;
     return {
       view: 'leagues',
@@ -47,16 +68,38 @@ function routeFromHash(): Route {
     };
   }
   if (head === 'tournaments') return { view: 'tournaments', ...(second ? { run: second } : {}) };
+  if (head === 'position-lab') return { view: 'data' };
+  if (head === 'observations') return second ? { view: 'observations', model: second } : { view: 'data' };
   if (head === 'data') {
     const retiredSections = new Set(['play', 'ladder', 'deliberation', 'reliability', 'chance']);
-    return { view: 'data', ...(second && !retiredSections.has(second) ? { model: second } : {}) };
+    return second && !retiredSections.has(second) ? { view: 'observations', model: second } : { view: 'data' };
   }
-  if (head === 'arena' || head === 'league') return { view: 'arena' };
+  if (head === 'arena' || head === 'league' || head === 'live') return { view: 'arena' };
+  if (head === 'fixtures' || head === 'new-run') return { view: 'fixtures' };
   if (head === 'results') {
     if (second === 'brackets') return { view: 'tournaments' };
     return { view: 'data' };
   }
-  return { view: 'fixtures' };
+  return { view: 'research' };
+}
+
+function titleForRoute(route: Route): string {
+  if (route.view === 'research') return 'Research overview';
+  if (route.view === 'data') return 'Position Lab';
+  if (route.view === 'leagues') {
+    if (route.series !== undefined) return 'Draft league series';
+    if (route.team) return 'Draft league team';
+    return route.run ? 'Draft league' : 'Draft leagues';
+  }
+  if (route.view === 'tournaments') return route.run ? 'Tournament' : 'Tournaments';
+  if (route.view === 'arena') return 'Live run';
+  if (route.view === 'fixtures') return 'New run';
+  return 'Legacy Observation Index';
+}
+
+function focusMainContent(event: MouseEvent, main: HTMLElement | null): void {
+  event.preventDefault();
+  main?.focus();
 }
 
 function isFresherBattle(candidate: BattleMessage, current: BattleMessage | undefined): boolean {
@@ -122,6 +165,9 @@ export function App() {
   const [, setClockTick] = useState(0);
   const runWasLive = useRef(false);
   const runIdRef = useRef<string | null>(null);
+  const mainRef = useRef<HTMLElement | null>(null);
+  const skipLinkRef = useRef<HTMLAnchorElement | null>(null);
+  const routeFocusReady = useRef(false);
 
   useEffect(() => {
     api<AppState>('/api/state')
@@ -135,6 +181,14 @@ export function App() {
       })
       .catch((error: Error) => setBootError(error.message));
   }, []);
+
+  useEffect(() => {
+    const link = skipLinkRef.current;
+    if (!link) return;
+    const onClick = (event: MouseEvent) => focusMainContent(event, mainRef.current);
+    link.addEventListener('click', onClick);
+    return () => link.removeEventListener('click', onClick);
+  }, [app]);
 
   const contribute = app ? canContribute(app.auth) : false;
   const eventsPath = app ? (contribute ? '/api/events' : '/api/events/public') : null;
@@ -181,11 +235,21 @@ export function App() {
     return () => window.removeEventListener('hashchange', onHashChange);
   }, []);
 
+  useEffect(() => {
+    document.title = `${titleForRoute(route)} · VGC Model League`;
+    if (!routeFocusReady.current) {
+      routeFocusReady.current = true;
+      return;
+    }
+    const frame = requestAnimationFrame(() => mainRef.current?.focus({ preventScroll: true }));
+    return () => cancelAnimationFrame(frame);
+  }, [route.view, route.run, route.team, route.series, route.model]);
+
   const view = route.view;
 
   const navigate = (next: ViewId) => {
     setRoute({ view: next });
-    history.replaceState(null, '', next === 'fixtures' ? '#' : `#${next}`);
+    history.replaceState(null, '', next === 'research' ? '#' : `#${next}`);
     window.scrollTo(0, 0);
   };
 
@@ -197,7 +261,7 @@ export function App() {
   const openTeam = (runId: string, slug: string, series?: number) =>
     drill(series === undefined ? `leagues/${runId}/${slug}` : `leagues/${runId}/${slug}/${series}`);
   const openTournament = (runId: string) => drill(runId ? `tournaments/${runId}` : 'tournaments');
-  const openModel = (id: string) => drill(`data/${id}`);
+  const openModel = (id: string) => drill(`observations/${encodeURIComponent(id)}`);
 
   const fetchBattle = (index: number) => {
     api<BattleMessage>(`${contribute ? '/api/battle' : '/api/battle/public'}?index=${index}`)
@@ -255,17 +319,17 @@ export function App() {
 
   if (bootError) {
     return (
-      <main class="shell">
+      <main id="main-content" class="shell" tabIndex={-1} ref={mainRef}>
         <div class="message error" role="alert">
-          Could not load the league: {bootError}
+          Could not load the research workspace: {bootError}
         </div>
       </main>
     );
   }
   if (!app) {
     return (
-      <main class="shell">
-        <p class="muted">Loading the league…</p>
+      <main id="main-content" class="shell" tabIndex={-1} ref={mainRef}>
+        <p class="muted">Loading the research workspace…</p>
       </main>
     );
   }
@@ -289,38 +353,48 @@ export function App() {
   const showLiveTabs = Boolean(run?.mode === 'draft' && run.draft);
   const liveShowsDraft = showLiveTabs && liveTab === 'draft';
   const externalTournament = externalRun?.mode === 'tournament' ? externalRun : null;
+  const showHeaderState = running || paused || externallyRunning || view === 'arena' || view === 'fixtures';
   return (
     <>
+      <a ref={skipLinkRef} class="skip-link" href="#main-content" aria-controls="main-content">
+        Skip to main content
+      </a>
       <header class="app-header">
         <div class="brand">
           <span class="brand-mark" aria-hidden="true" />
           <div class="brand-name">
-            VGC MODEL LEAGUE<small>Frontier model evaluation on Pokémon Showdown</small>
+            VGC MODEL LEAGUE<small>Decision research on Pokémon Showdown</small>
           </div>
         </div>
         <nav class="primary-nav" aria-label="Main navigation">
-          {NAV_SETS.map((set, index) => (
-            <div class="nav-set" key={index}>
-              {set.map((item) => (
-                <button
-                  key={item.id}
-                  type="button"
-                  class={`nav-button ${view === item.id ? 'on' : ''}`}
-                  onClick={() => navigate(item.id)}
-                >
-                  {item.label}
-                </button>
-              ))}
+          {NAV_SETS.map((set) => (
+            <div class="nav-set" key={set.label}>
+              <span class="nav-set-label">{set.label}</span>
+              <div class="nav-set-items">
+                {set.items.map((item) => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    class={`nav-button ${view === item.id ? 'on' : ''}`}
+                    aria-current={view === item.id ? 'page' : undefined}
+                    onClick={() => navigate(item.id)}
+                  >
+                    {item.label}
+                  </button>
+                ))}
+              </div>
             </div>
           ))}
         </nav>
         <div class="header-aside">
-          <div class={`header-state ${running || externallyRunning ? 'live' : paused ? 'paused' : ''}`}>
-            <span class="live-dot" />
-            <span>{headerLabel}</span>
-          </div>
-          {app.auth.mode === 'read-only' ? <span class="header-readonly">Read-only</span> : null}
-          {app.auth.mode === 'github' && !user ? (
+          {showHeaderState ? (
+            <div class={`header-state ${running || externallyRunning ? 'live' : paused ? 'paused' : ''}`}>
+              <span class="live-dot" />
+              <span>{headerLabel}</span>
+            </div>
+          ) : null}
+          {view === 'fixtures' && app.auth.mode === 'read-only' ? <span class="header-readonly">Read-only</span> : null}
+          {view === 'fixtures' && app.auth.mode === 'github' && !user ? (
             <a class="header-auth-link" href="/auth/github">
               Sign in with GitHub
             </a>
@@ -341,7 +415,18 @@ export function App() {
           ) : null}
         </div>
       </header>
-      <main class="shell">
+      <main id="main-content" class="shell" tabIndex={-1} ref={mainRef}>
+        {view === 'research' ? (
+          <section class="view on research-workspace-view">
+            <ResearchOverviewView
+              onOpenPositions={() => navigate('data')}
+              onOpenDraftArchive={() => navigate('leagues')}
+              onOpenLive={() => navigate('arena')}
+              onOpenTournaments={() => navigate('tournaments')}
+              onNewRun={() => navigate('fixtures')}
+            />
+          </section>
+        ) : null}
         <section class={`view ${view === 'fixtures' ? 'on' : ''}`}>{fixturesSection}</section>
         <section class={`view ${view === 'arena' ? 'on' : ''}`}>
           {showLiveTabs ? (
@@ -349,6 +434,7 @@ export function App() {
               <button
                 type="button"
                 class={`section-tab ${liveTab === 'arena' ? 'on' : ''}`}
+                aria-current={liveTab === 'arena' ? 'page' : undefined}
                 onClick={() => setLiveTab('arena')}
               >
                 Arena
@@ -356,6 +442,7 @@ export function App() {
               <button
                 type="button"
                 class={`section-tab ${liveTab === 'draft' ? 'on' : ''}`}
+                aria-current={liveTab === 'draft' ? 'page' : undefined}
                 onClick={() => setLiveTab('draft')}
               >
                 Draft room
@@ -369,7 +456,6 @@ export function App() {
               run={externalTournament.runId}
               focusRun={externalTournament.runId}
               onOpenRun={openTournament}
-              onOpenModel={openModel}
             />
           ) : (
             <div style={liveShowsDraft ? 'display:none' : ''}>
@@ -406,28 +492,23 @@ export function App() {
         ) : null}
         {view === 'tournaments' ? (
           <section class="view on">
-            <TournamentsView
-              active
-              epoch={recordsEpoch}
-              run={route.run}
-              onOpenRun={openTournament}
-              onOpenModel={openModel}
-            />
+            <TournamentsView active epoch={recordsEpoch} run={route.run} onOpenRun={openTournament} />
           </section>
         ) : null}
         {view === 'data' ? (
           <section class="view on">
-            {route.model ? (
-              <ModelProfileView
-                active
-                model={route.model}
-                onBack={() => navigate('data')}
-                onOpenLeague={openLeague}
-                onOpenTournament={openTournament}
-              />
-            ) : (
-              <DataRoomView active epoch={recordsEpoch} onOpenModel={openModel} />
-            )}
+            <DataRoomView active epoch={recordsEpoch} />
+          </section>
+        ) : null}
+        {view === 'observations' && route.model ? (
+          <section class="view on observation-index-view">
+            <ModelProfileView
+              active
+              model={route.model}
+              onBack={() => navigate('data')}
+              onOpenLeague={openLeague}
+              onOpenTournament={openTournament}
+            />
           </section>
         ) : null}
       </main>

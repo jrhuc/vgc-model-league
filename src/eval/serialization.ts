@@ -23,7 +23,9 @@ function normalize(value: unknown, location: string): unknown {
     });
   if (typeof value === 'object') {
     const object = value as Record<string, unknown>;
-    const normalized: Record<string, unknown> = {};
+    const prototype = Object.getPrototypeOf(object);
+    if (prototype !== Object.prototype && prototype !== null) throw new Error(`${location} is not a plain JSON object`);
+    const normalized: Record<string, unknown> = Object.create(null) as Record<string, unknown>;
     for (const key of Object.keys(object).sort()) {
       if (object[key] === undefined) throw new Error(`${location}.${key} is undefined`);
       normalized[key] = normalize(object[key], `${location}.${key}`);

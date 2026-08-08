@@ -12,6 +12,8 @@ test('near-duplicate features isolate the visible position and normalize numeric
   assert.deepEqual(first, second);
   assert.equal(jaccard(first, second), 1);
   assert.ok(jaccard(first, positionDuplicateFeatures(prompt('Flutter Mane uses Moonblast in sun'))) < 1);
+  assert.throws(() => positionDuplicateFeatures('no frozen markers'), /section markers/);
+  assert.throws(() => positionDuplicateFeatures(`${prompt('state')}\n\nLEGAL JOINT ACTIONS:`), /section markers/);
 });
 
 test('near-duplicate components are deterministic and keep pair evidence', () => {

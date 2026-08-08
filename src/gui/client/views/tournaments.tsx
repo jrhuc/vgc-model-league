@@ -249,14 +249,12 @@ export function TournamentsView({
   run,
   focusRun,
   onOpenRun,
-  onOpenModel,
 }: {
   active: boolean;
   epoch: number;
   run: string | undefined;
   focusRun?: string;
   onOpenRun: (runId: string) => void;
-  onOpenModel: (id: string) => void;
 }) {
   const [data, setData] = useState<TournamentsResponse | null>(null);
   const [error, setError] = useState('');
@@ -287,11 +285,10 @@ export function TournamentsView({
     return () => clearInterval(timer);
   }, [active, anyLive]);
 
-  const summary = data?.summary ?? { tournaments: 0, matches: 0, records: [] };
+  const summary = data?.summary ?? { tournaments: 0, matches: 0 };
   const finished = archives.filter((archive) => archive.complete);
   const latest = finished[0];
   const latestWinner = latest && latest.champion !== null ? latest.entrants[latest.champion] : null;
-  const archiveCounts = [...summary.records].sort((a, b) => a.spec.localeCompare(b.spec));
 
   if (game) {
     const archive = archives.find((entry) => entry.runId === game.runId);
@@ -389,52 +386,6 @@ export function TournamentsView({
           />
         ))
       )}
-      <section class="panel">
-        <div class="section-head">
-          <div>
-            <h2>Descriptive archive counts</h2>
-            <p>
-              Counts from differently seeded brackets are listed alphabetically for archive navigation. They are not
-              standings or comparable measures of model quality.
-            </p>
-          </div>
-        </div>
-        <div class="table-scroll">
-          {archiveCounts.length === 0 ? (
-            <div class="results-empty">Aggregate counts appear after the first completed bracket.</div>
-          ) : (
-            <table class="data-table">
-              <thead>
-                <tr>
-                  <th>Model (alphabetical)</th>
-                  <th class="num">Bracket entries</th>
-                  <th class="num">Won bracket</th>
-                  <th class="num">Lost final</th>
-                  <th class="num">Lost semifinal</th>
-                  <th class="num">Earlier exit</th>
-                </tr>
-              </thead>
-              <tbody>
-                {archiveCounts.map((row) => (
-                  <tr key={row.spec}>
-                    <td class="spec-cell" title={row.spec}>
-                      <button type="button" class="model-link" onClick={() => onOpenModel(row.spec)}>
-                        <Mark spec={row.spec} size={14} />
-                        <span>{row.spec}</span>
-                      </button>
-                    </td>
-                    <td class="num">{row.entered}</td>
-                    <td class="num">{row.titles}</td>
-                    <td class="num">{row.runnerUp}</td>
-                    <td class="num">{row.semis}</td>
-                    <td class="num">{row.earlier}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </div>
-      </section>
     </div>
   );
 }

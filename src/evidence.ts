@@ -5,11 +5,7 @@ import { buildSeriesGame, isRunLive, scanUnfinishedSeries, viewTeamSheet } from 
 import type {
   ArchivedMatchView,
   BracketEntrantView,
-  EvidenceResponse,
-  LatencyPoint,
   LeagueGameResponse,
-  ModelEvidence,
-  SeriesLuckEntry,
   TournamentArchiveView,
   TournamentEventView,
   TournamentLiveSeriesView,
@@ -17,48 +13,10 @@ import type {
   TournamentsResponse,
 } from './gui/api.js';
 import { SAFE_SEGMENT } from './path-safety.js';
-import { modelKey, type SeriesRecord, scopeRows, TEST_POOL } from './records.js';
+import { modelKey, type SeriesRecord, TEST_POOL } from './records.js';
 import { loadPool } from './teams.js';
 import { buildBracket } from './tournament.js';
 import type { Pid } from './types.js';
-
-const MAX_POINTS_PER_MODEL = 600;
-
-const LUCK_FIELDS = ['misses', 'crits_taken', 'flinched_turns', 'full_paralysis'] as const;
-
-interface StatBucket {
-  providers: Set<string>;
-  series: number;
-  decisions: number;
-  reflections: number;
-  reflectionFallbacks: number;
-  fallbacks: number;
-  parseFailures: number;
-  providerRetries: number;
-  moveSelections: number;
-  switchSelections: number;
-  protectSelections: number;
-  toolLookups: number;
-  points: LatencyPoint[];
-}
-
-function bucket(): StatBucket {
-  return {
-    providers: new Set(),
-    series: 0,
-    decisions: 0,
-    reflections: 0,
-    reflectionFallbacks: 0,
-    fallbacks: 0,
-    parseFailures: 0,
-    providerRetries: 0,
-    moveSelections: 0,
-    switchSelections: 0,
-    protectSelections: 0,
-    toolLookups: 0,
-    points: [],
-  };
-}
 
 export function count(value: unknown): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : 0;
@@ -118,24 +76,6 @@ export function readDecisionLog(file: string): DecisionLogRow[] {
   return rows;
 }
 
-function readLatencyPoints(file: string, seriesId: string): LatencyPoint[] {
-  const points: LatencyPoint[] = [];
-  for (const entry of readDecisionLog(file)) {
-    if (entry.kind !== 'decision' || entry.automatic) continue;
-    if (entry.latencyMs === null || entry.latencyMs <= 0) continue;
-    const tokens = entry.totalTokens !== null && entry.totalTokens > 0 ? entry.totalTokens : undefined;
-    points.push({
-      ms: entry.latencyMs,
-      ...(tokens === undefined ? {} : { tokens }),
-      seriesId,
-      game: entry.game,
-      turn: entry.turn,
-      phase: entry.phase,
-    });
-  }
-  return points;
-}
-
 export function quantile(sorted: number[], q: number): number {
   if (sorted.length === 0) return 0;
   const position = (sorted.length - 1) * q;
@@ -144,183 +84,15 @@ export function quantile(sorted: number[], q: number): number {
   return sorted[low]! + (sorted[high]! - sorted[low]!) * (position - low);
 }
 
-function adverseLuck(row: SeriesRecord, pid: Pid): number {
-  const games = Array.isArray(row.games) ? row.games : [];
-  let total = 0;
-  for (const game of games) {
-    const luck = (game as Record<string, unknown>).luck as Record<string, Record<string, unknown>> | undefined;
-    for (const field of LUCK_FIELDS) total += count(luck?.[pid]?.[field]);
-  }
-  return total;
-}
-
-function luckEntry(row: SeriesRecord): SeriesLuckEntry {
-  const games = Array.isArray(row.games) ? row.games : [];
-  const score = row.score as Record<Pid, number> | undefined;
-  const p1 = modelKey(row.players.p1);
-  const p2 = modelKey(row.players.p2);
-  const winner = row.winner === row.players.p1 ? p1 : row.winner === row.players.p2 ? p2 : null;
-  const luck = { p1: adverseLuck(row, 'p1'), p2: adverseLuck(row, 'p2') };
-  const winnerSide = row.winner === row.players.p1 ? 'p1' : row.winner === row.players.p2 ? 'p2' : null;
-  return {
-    seriesId: String(row.series_id ?? ''),
-    runId: String(row.run_id ?? ''),
-    timestamp: String(row.timestamp ?? ''),
-    p1,
-    p2,
-    winner,
-    score: [count(score?.p1), count(score?.p2)],
-    games: games.length,
-    turns: count(row.turns),
-    luck,
-    winnerLuckDelta: winnerSide === null ? null : luck[winnerSide] - luck[winnerSide === 'p1' ? 'p2' : 'p1'],
-  };
-}
-
-function evenSample<T>(items: T[], cap: number): T[] {
-  if (items.length <= cap) return items;
-  const sampled: T[] = [];
-  for (let index = 0; index < cap; index += 1) {
-    sampled.push(items[Math.floor((index * items.length) / cap)]!);
-  }
-  return sampled;
-}
-
-interface TournamentBucket {
-  entered: number;
-  titles: number;
-  runnerUp: number;
-  semis: number;
-  earlier: number;
-}
-
 function summarizeTournaments(rows: SeriesRecord[]): TournamentSummary {
-  const runs = new Map<string, SeriesRecord[]>();
+  const runs = new Set<string>();
+  let matches = 0;
   for (const row of rows) {
     if (!row.players?.p1 || !row.players?.p2) continue;
-    const runId = String(row.run_id ?? '');
-    const list = runs.get(runId) ?? [];
-    list.push(row);
-    runs.set(runId, list);
+    runs.add(String(row.run_id ?? ''));
+    matches += 1;
   }
-  const buckets = new Map<string, TournamentBucket>();
-  const bucketFor = (spec: string) => {
-    const entry = buckets.get(spec) ?? {
-      entered: 0,
-      titles: 0,
-      runnerUp: 0,
-      semis: 0,
-      earlier: 0,
-    };
-    buckets.set(spec, entry);
-    return entry;
-  };
-  let matches = 0;
-  for (const runRows of runs.values()) {
-    const maxRound = Math.max(...runRows.map((row) => count(row.round)));
-    const finalRows = runRows.filter((row) => count(row.round) === maxRound);
-    const champion = finalRows.length === 1 ? modelKey(String(finalRows[0]!.advanced ?? '')) : null;
-    const lastRound = new Map<string, number>();
-    for (const row of runRows) {
-      matches += 1;
-      for (const pid of ['p1', 'p2'] as const) {
-        const spec = modelKey(row.players[pid]);
-        lastRound.set(spec, Math.max(lastRound.get(spec) ?? 0, count(row.round)));
-      }
-    }
-    for (const [spec, round] of lastRound) {
-      const entry = bucketFor(spec);
-      entry.entered += 1;
-      if (spec === champion) entry.titles += 1;
-      else if (round === maxRound) entry.runnerUp += 1;
-      else if (round === maxRound - 1) entry.semis += 1;
-      else entry.earlier += 1;
-    }
-  }
-  return {
-    tournaments: runs.size,
-    matches,
-    records: [...buckets.entries()]
-      .map(([spec, entry]) => ({ spec, ...entry }))
-      .sort((a, b) => a.spec.localeCompare(b.spec)),
-  };
-}
-
-export function buildEvidence(allRows: SeriesRecord[], runsDir: string, pool: string | null): EvidenceResponse {
-  const rated = scopeRows(allRows, pool ?? undefined)
-    .filter((row) => row.players?.p1 && row.players?.p2)
-    .sort((a, b) => String(a.timestamp ?? '').localeCompare(String(b.timestamp ?? '')));
-  const buckets = new Map<string, StatBucket>();
-  for (const row of rated) {
-    const stats = row.decision_stats as Record<Pid, Record<string, unknown>> | undefined;
-    for (const pid of ['p1', 'p2'] as const) {
-      const spec = row.players[pid];
-      const sideStats = stats?.[pid];
-      if (!sideStats || count(sideStats.decisions) === 0) continue;
-      const key = modelKey(spec);
-      const entry = buckets.get(key) ?? bucket();
-      buckets.set(key, entry);
-      entry.providers.add(spec);
-      entry.series += 1;
-      entry.decisions += count(sideStats.decisions);
-      entry.reflections += count(sideStats.reflections);
-      entry.reflectionFallbacks += count(sideStats.reflection_fallbacks);
-      entry.fallbacks += count(sideStats.fallbacks);
-      entry.parseFailures += count(sideStats.parse_failures);
-      entry.providerRetries += count(sideStats.provider_retries);
-      entry.moveSelections += count(sideStats.move_selections);
-      entry.switchSelections += count(sideStats.switch_selections);
-      entry.protectSelections += count(sideStats.protect_selections);
-      entry.toolLookups += count(sideStats.tool_lookups);
-      const file = decisionLogPath(runsDir, String(row.run_id ?? ''), String(row.series_id ?? ''), pid);
-      if (file) entry.points.push(...readLatencyPoints(file, String(row.series_id ?? '')));
-    }
-  }
-  const models: ModelEvidence[] = [...buckets.entries()]
-    .map(([spec, entry]) => {
-      const sorted = entry.points.map((point) => point.ms).sort((a, b) => a - b);
-      const tokenValues = entry.points
-        .map((point) => point.tokens)
-        .filter((tokens): tokens is number => tokens !== undefined)
-        .sort((a, b) => a - b);
-      const selections = entry.moveSelections + entry.switchSelections;
-      const summary = (values: number[]) =>
-        values.length === 0
-          ? null
-          : {
-              median: quantile(values, 0.5),
-              p25: quantile(values, 0.25),
-              p75: quantile(values, 0.75),
-              max: values[values.length - 1]!,
-            };
-      return {
-        spec,
-        providers: [...entry.providers].sort(),
-        series: entry.series,
-        decisions: entry.decisions,
-        reflections: entry.reflections,
-        latency: summary(sorted),
-        tokens: summary(tokenValues),
-        points: evenSample(entry.points, MAX_POINTS_PER_MODEL),
-        rates: {
-          fallback: entry.decisions ? entry.fallbacks / entry.decisions : 0,
-          parseFailure: entry.decisions ? entry.parseFailures / entry.decisions : 0,
-          providerRetry: entry.decisions ? entry.providerRetries / entry.decisions : 0,
-          switch: selections ? entry.switchSelections / selections : 0,
-          protect: selections ? entry.protectSelections / selections : 0,
-          toolLookups: entry.decisions ? entry.toolLookups / entry.decisions : 0,
-          reflectionFallback: entry.reflections ? entry.reflectionFallbacks / entry.reflections : null,
-        },
-      };
-    })
-    .sort((a, b) => a.spec.localeCompare(b.spec));
-  return {
-    pool,
-    count: rated.length,
-    decisions: models.reduce((total, model) => total + model.decisions, 0),
-    models,
-    series: rated.map(luckEntry),
-  };
+  return { tournaments: runs.size, matches };
 }
 
 function liveTournamentRuns(runsDir: string): string[] {

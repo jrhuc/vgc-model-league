@@ -1,11 +1,10 @@
-import { createHash } from 'node:crypto';
-
 import type { Battle } from 'pokemon-showdown';
 
 import { defaultPsDir } from '../paths.js';
 import { type Rng, seededRng, shuffle } from '../random.js';
 import type { BattleRequest, Pid } from '../types.js';
 import { legalActions, openPosition, type Position, pendingSides, playJoint } from './fork.js';
+import { canonicalJsonDigest } from './serialization.js';
 
 export const COUNTERFACTUAL_PROTOCOL_VERSION = 3;
 
@@ -17,8 +16,10 @@ export const REFERENCE = {
 } as const;
 
 export const EXHAUSTIVE_PANEL_PROTOCOL = {
-  version: 2,
+  version: 4,
   panels: ['stability-a', 'stability-b', 'measurement'],
+  matrixDigest: 'sha256-canonical-exhaustive-panel-matrix-v2',
+  drawPlan: 'seeded-srswor-opponents-and-battle-words-v1',
   opponent: 'srswor-uniform-legal-when-simultaneous-or-null-census-when-unilateral',
   commonRandomNumbers: ['opponent-action', 'battle-rng', 'continuation-rng'],
   completeness: 'rectangular-or-ineligible',
@@ -58,7 +59,36 @@ export interface CounterfactualProtocol {
   rolloutLimit: number;
 }
 
+export function validateCounterfactualOptions(options: CounterfactualOptions): void {
+  if (!options || typeof options !== 'object' || Array.isArray(options))
+    throw new Error('counterfactual options must be an object');
+  if (options.psDir !== undefined && (typeof options.psDir !== 'string' || !options.psDir))
+    throw new Error('counterfactual psDir must be a non-empty string');
+  if (options.seed !== undefined) {
+    const validSeed =
+      (typeof options.seed === 'string' && Boolean(options.seed)) ||
+      (typeof options.seed === 'number' && Number.isSafeInteger(options.seed));
+    if (!validSeed) throw new Error('counterfactual seed must be a non-empty string or safe integer');
+  }
+  if (
+    options.horizon !== undefined &&
+    options.horizon !== Number.POSITIVE_INFINITY &&
+    (!Number.isSafeInteger(options.horizon) || options.horizon < 0)
+  )
+    throw new Error('counterfactual horizon must be a non-negative safe integer or positive infinity');
+  for (const [name, value] of [
+    ['luckSamples', options.luckSamples],
+    ['opponentSamples', options.opponentSamples],
+    ['shortlist', options.shortlist],
+    ['screenSamples', options.screenSamples],
+  ] as const) {
+    if (value !== undefined && (!Number.isSafeInteger(value) || value < 1))
+      throw new Error(`counterfactual ${name} must be a positive safe integer`);
+  }
+}
+
 export function counterfactualProtocol(options: CounterfactualOptions = {}): CounterfactualProtocol {
+  validateCounterfactualOptions(options);
   const horizon = options.horizon ?? DEFAULTS.horizon;
   return {
     version: COUNTERFACTUAL_PROTOCOL_VERSION,
@@ -134,6 +164,47 @@ export interface ExhaustivePanel {
   matrix: number[][];
   matrixDigest: string;
   span: number;
+}
+
+export interface ExhaustivePanelDrawPlanInput {
+  panelSeed: string;
+  id: ExhaustivePanel['id'];
+  opponentLegalActions: readonly string[];
+  opponentSlots: number;
+  luckReplications: number;
+}
+
+export interface ExhaustivePanelDrawPlan {
+  seedNamespace: string;
+  opponentPopulation: number;
+  opponentSlots: number;
+  luckReplications: number;
+  draws: ExhaustiveDraw[];
+}
+
+export interface ExhaustivePanelMatrixDigestInput {
+  id: ExhaustivePanel['id'];
+  seedNamespace: string;
+  opponentPopulation: number;
+  opponentSlots: number;
+  luckReplications: number;
+  draws: readonly ExhaustiveDraw[];
+  actions: readonly string[];
+  matrix: readonly (readonly number[])[];
+}
+
+export function exhaustivePanelMatrixDigest(input: ExhaustivePanelMatrixDigestInput): string {
+  return canonicalJsonDigest([
+    'exhaustive-panel-matrix-v2',
+    input.id,
+    input.seedNamespace,
+    input.opponentPopulation,
+    input.opponentSlots,
+    input.luckReplications,
+    input.draws,
+    input.actions,
+    input.matrix,
+  ]);
 }
 
 export interface ExhaustiveActionTable {
@@ -366,6 +437,48 @@ function sampleOpponents(actions: string[], count: number, random: Rng): string[
   return shuffle(actions, random).slice(0, count);
 }
 
+export function exhaustivePanelDrawPlan(input: ExhaustivePanelDrawPlanInput): ExhaustivePanelDrawPlan {
+  if (!input.panelSeed) throw new Error('panelSeed must be non-empty');
+  if (!Number.isInteger(input.opponentSlots) || input.opponentSlots < 1)
+    throw new Error('opponentSlots must be a positive integer');
+  if (!Number.isInteger(input.luckReplications) || input.luckReplications < 1)
+    throw new Error('luckReplications must be a positive integer');
+  if (
+    input.opponentLegalActions.some((action) => !action) ||
+    new Set(input.opponentLegalActions).size !== input.opponentLegalActions.length
+  )
+    throw new Error('opponentLegalActions entries must be non-empty and unique');
+  const opponentPopulation = input.opponentLegalActions.length || 1;
+  if (input.opponentSlots > opponentPopulation) throw new Error('opponentSlots cannot exceed the opponent population');
+  if (!input.opponentLegalActions.length && input.opponentSlots !== 1)
+    throw new Error('a unilateral draw plan must use one null opponent slot');
+  const seedNamespace = `${input.panelSeed}:panel:${input.id}`;
+  const opponents: OpponentAction[] = input.opponentLegalActions.length
+    ? sampleOpponents([...input.opponentLegalActions], input.opponentSlots, seededRng(`${seedNamespace}:opponents`))
+    : [null];
+  const draws: ExhaustiveDraw[] = [];
+  for (const opponentAction of opponents) {
+    for (let luck = 0; luck < input.luckReplications; luck += 1) {
+      const index = draws.length;
+      const random = seededRng(`${seedNamespace}:battle:${index}`);
+      const word = () => 1 + Math.floor(random() * 0xffff);
+      draws.push({
+        index,
+        opponentAction,
+        battleSeed: [word(), word(), word(), word()],
+        continuationSeed: `${seedNamespace}:continuation:${index}`,
+      });
+    }
+  }
+  return {
+    seedNamespace,
+    opponentPopulation,
+    opponentSlots: opponents.length,
+    luckReplications: input.luckReplications,
+    draws,
+  };
+}
+
 export function evaluatePosition(
   position: Position,
   pid: Pid,
@@ -434,25 +547,17 @@ function exhaustivePanel(
   luckSamples: number,
   id: ExhaustivePanel['id'],
 ): ExhaustivePanel | null {
-  const seedNamespace = `${trial.seed}:panel:${id}`;
-  const opponents: OpponentAction[] = opponentLegal.length
-    ? sampleOpponents(opponentLegal, opponentSamples, seededRng(`${seedNamespace}:opponents`))
-    : [null];
-  const draws: ExhaustiveDraw[] = [];
-  for (const opponentAction of opponents) {
-    for (let luck = 0; luck < luckSamples; luck += 1) {
-      const index = draws.length;
-      const random = seededRng(`${seedNamespace}:battle:${index}`);
-      const word = () => 1 + Math.floor(random() * 0xffff);
-      draws.push({
-        index,
-        opponentAction,
-        battleSeed: [word(), word(), word(), word()],
-        continuationSeed: `${seedNamespace}:continuation:${index}`,
-      });
-    }
-  }
-  if (!draws.length) return null;
+  if (!Number.isInteger(opponentSamples) || opponentSamples < 1 || !Number.isInteger(luckSamples) || luckSamples < 1)
+    return null;
+  const opponentSlots = opponentLegal.length ? Math.min(opponentSamples, opponentLegal.length) : 1;
+  const plan = exhaustivePanelDrawPlan({
+    panelSeed: trial.seed,
+    id,
+    opponentLegalActions: opponentLegal,
+    opponentSlots,
+    luckReplications: luckSamples,
+  });
+  const { seedNamespace, opponentPopulation, luckReplications, draws } = plan;
   const matrix: number[][] = [];
   for (const draw of draws) {
     const row: number[] = [];
@@ -463,11 +568,8 @@ function exhaustivePanel(
     }
     matrix.push(row);
   }
-  const opponentPopulation = opponentLegal.length || 1;
-  const opponentSlots = opponents.length;
-  const luckReplications = draws.length / opponentSlots;
   const estimates: ExhaustiveActionValue[] = actions.map((action, actionIndex) => {
-    const blocks = opponents.map((_, opponentIndex) =>
+    const blocks = Array.from({ length: opponentSlots }, (_, opponentIndex) =>
       matrix
         .slice(opponentIndex * luckReplications, (opponentIndex + 1) * luckReplications)
         .map((row) => row[actionIndex] as number),
@@ -480,9 +582,16 @@ function exhaustivePanel(
   const minimum = Math.min(...values);
   const span = maximum - minimum;
   for (const estimate of estimates) estimate.reward = span > 0 ? (estimate.value - minimum) / span : null;
-  const matrixDigest = createHash('sha256')
-    .update(JSON.stringify([id, seedNamespace, draws, actions, matrix]))
-    .digest('hex');
+  const matrixDigest = exhaustivePanelMatrixDigest({
+    id,
+    seedNamespace,
+    opponentPopulation,
+    opponentSlots,
+    luckReplications,
+    draws,
+    actions,
+    matrix,
+  });
   return {
     id,
     seedNamespace,

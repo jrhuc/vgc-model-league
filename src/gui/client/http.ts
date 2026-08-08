@@ -4,8 +4,7 @@ export function configureCsrf(token: string | null | undefined): void {
   csrfToken = token ?? '';
 }
 
-const CACHEABLE =
-  /^\/api\/(?:leagues|league|league\/game|tournaments|board|records|evidence|model|pool\/teams)(?:\?|$)/;
+const CACHEABLE = /^\/api\/(?:leagues|league|league\/game|tournaments|board|model|pool\/teams)(?:\?|$)/;
 const CACHE_TTL_MS = 300_000;
 const cache = new Map<string, { at: number; data: unknown }>();
 

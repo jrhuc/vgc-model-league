@@ -12,7 +12,13 @@ import {
 } from '../src/eval/counterfactual.js';
 import { POSITION_ELIGIBILITY_METRICS_VERSION, positionEligibilityMetrics } from '../src/eval/eligibility.js';
 import { ACTION_PROTOCOL, type Position } from '../src/eval/fork.js';
-import { validatePositionPanelArtifacts } from '../src/eval/panel-artifact.js';
+import {
+  exactPublicPositionFingerprint,
+  POSITION_SOURCE_GROUP_PROTOCOL,
+  positionSourceGroup,
+  validatePositionPanelArtifacts,
+} from '../src/eval/panel-artifact.js';
+import { validatePilotManifestV2 } from '../src/eval/position-artifact-manifest.js';
 import {
   CANONICAL_JSON_PROTOCOL,
   canonicalJson,
@@ -29,6 +35,140 @@ interface Settings extends CounterfactualOptions {
   privateSet: string;
   out: string;
   privateOut: string;
+}
+
+interface OutputRoot {
+  directory: string;
+  realDirectory: string;
+  device: number;
+  inode: number;
+  directoryMode: number;
+  fileMode: number;
+}
+
+const PUBLIC_DIRECTORY_MODE = 0o755;
+const PRIVATE_DIRECTORY_MODE = 0o700;
+const PUBLIC_FILE_MODE = 0o644;
+const PRIVATE_FILE_MODE = 0o600;
+
+function errorCode(error: unknown): string | undefined {
+  return error && typeof error === 'object' && 'code' in error ? String(error.code) : undefined;
+}
+
+function pathsOverlap(left: string, right: string): boolean {
+  const relative = path.relative(left, right);
+  return relative === '' || (relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
+}
+
+function assertDisjointPaths(publicRoot: string, privateRoot: string, resolution: string): void {
+  if (pathsOverlap(publicRoot, privateRoot) || pathsOverlap(privateRoot, publicRoot)) {
+    throw new Error(`public and private output roots must not overlap ${resolution}`);
+  }
+}
+
+function secureOutputDirectory(directory: string, directoryMode: number, fileMode: number): OutputRoot {
+  const requested = path.resolve(directory);
+  let existing = requested;
+  const missingComponents: string[] = [];
+  let existingStatus: fs.Stats;
+  for (;;) {
+    try {
+      existingStatus = fs.lstatSync(existing);
+      break;
+    } catch (error) {
+      if (errorCode(error) !== 'ENOENT') throw error;
+      const parent = path.dirname(existing);
+      if (parent === existing) throw new Error(`output root has no existing filesystem ancestor: ${requested}`);
+      missingComponents.unshift(path.basename(existing));
+      existing = parent;
+    }
+  }
+  if (!missingComponents.length && (existingStatus.isSymbolicLink() || !existingStatus.isDirectory())) {
+    throw new Error(`output root must be a non-symlink directory: ${requested}`);
+  }
+
+  const canonicalParent = fs.realpathSync.native(existing);
+  let current = canonicalParent;
+  let parentStatus = fs.statSync(canonicalParent);
+  if (!parentStatus.isDirectory()) {
+    throw new Error(`nearest existing output parent must resolve to a directory: ${existing}`);
+  }
+  for (const component of missingComponents) {
+    const checkedParent = fs.lstatSync(current);
+    if (
+      checkedParent.isSymbolicLink() ||
+      !checkedParent.isDirectory() ||
+      checkedParent.dev !== parentStatus.dev ||
+      checkedParent.ino !== parentStatus.ino
+    ) {
+      throw new Error(`physical output parent changed while creating the root: ${current}`);
+    }
+    current = path.join(current, component);
+    try {
+      fs.mkdirSync(current, { mode: directoryMode });
+    } catch (error) {
+      if (errorCode(error) !== 'EEXIST') throw error;
+    }
+    const created = fs.lstatSync(current);
+    if (created.isSymbolicLink()) {
+      throw new Error(`created output root component must not be a symlink: ${current}`);
+    }
+    if (!created.isDirectory()) {
+      throw new Error(`created output root component must be a directory: ${current}`);
+    }
+    fs.chmodSync(current, directoryMode);
+    parentStatus = fs.lstatSync(current);
+  }
+
+  fs.chmodSync(current, directoryMode);
+  const beforeRealpath = fs.lstatSync(current);
+  if (beforeRealpath.isSymbolicLink() || !beforeRealpath.isDirectory()) {
+    throw new Error(`output root must remain a non-symlink directory: ${current}`);
+  }
+  const realDirectory = fs.realpathSync.native(current);
+  const afterRealpath = fs.lstatSync(current);
+  if (
+    afterRealpath.isSymbolicLink() ||
+    !afterRealpath.isDirectory() ||
+    afterRealpath.dev !== beforeRealpath.dev ||
+    afterRealpath.ino !== beforeRealpath.ino
+  ) {
+    throw new Error(`output root changed while it was resolved: ${current}`);
+  }
+  if ((afterRealpath.mode & 0o777) !== directoryMode) {
+    throw new Error(`output root has an unexpected mode after chmod: ${current}`);
+  }
+  return {
+    directory: realDirectory,
+    realDirectory,
+    device: afterRealpath.dev,
+    inode: afterRealpath.ino,
+    directoryMode,
+    fileMode,
+  };
+}
+
+function prepareOutputRoots(
+  publicDirectory: string,
+  privateDirectory: string,
+): {
+  publicRoot: OutputRoot;
+  privateRoot: OutputRoot;
+} {
+  const publicRoot = secureOutputDirectory(publicDirectory, PUBLIC_DIRECTORY_MODE, PUBLIC_FILE_MODE);
+  const privateRoot = secureOutputDirectory(privateDirectory, PRIVATE_DIRECTORY_MODE, PRIVATE_FILE_MODE);
+  assertDisjointPaths(publicRoot.realDirectory, privateRoot.realDirectory, 'after realpath resolution');
+  if (publicRoot.device === privateRoot.device && publicRoot.inode === privateRoot.inode) {
+    throw new Error('public and private output roots must not be realpath aliases');
+  }
+  return { publicRoot, privateRoot };
+}
+
+function verifyOutputRoot(root: OutputRoot): void {
+  const checked = secureOutputDirectory(root.directory, root.directoryMode, root.fileMode);
+  if (checked.realDirectory !== root.realDirectory || checked.device !== root.device || checked.inode !== root.inode) {
+    throw new Error(`output root changed during publication: ${root.directory}`);
+  }
 }
 
 function parse(argv: string[]): Settings {
@@ -70,9 +210,7 @@ function parse(argv: string[]): Settings {
   ) {
     throw new Error('--horizon must be a non-negative integer or end');
   }
-  if (path.resolve(settings.out) === path.resolve(settings.privateOut)) {
-    throw new Error('public and private output roots must differ');
-  }
+  assertDisjointPaths(settings.out, settings.privateOut, 'lexically');
   return settings;
 }
 
@@ -90,25 +228,27 @@ function digestParts(parts: Iterable<string>): string {
   return hash.digest('hex');
 }
 
+function runtimeFiles(tool: string): string[] {
+  const sourceRoot = path.resolve(path.dirname(tool), '../src');
+  const visit = (directory: string): string[] =>
+    fs.readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+      const file = path.join(directory, entry.name);
+      return entry.isDirectory() ? visit(file) : entry.isFile() && file.endsWith('.js') ? [file] : [];
+    });
+  return [
+    tool,
+    ...visit(sourceRoot),
+    path.resolve(path.dirname(tool), '../../package.json'),
+    path.resolve(path.dirname(tool), '../../pnpm-lock.yaml'),
+  ].sort((a, b) => Buffer.from(a).compare(Buffer.from(b)));
+}
+
 function evaluatorDigest(): string {
   const tool = fileURLToPath(import.meta.url);
-  const files = [
-    tool,
-    path.resolve(path.dirname(tool), '../src/eval/counterfactual.js'),
-    path.resolve(path.dirname(tool), '../src/eval/eligibility.js'),
-    path.resolve(path.dirname(tool), '../src/eval/fork.js'),
-    path.resolve(path.dirname(tool), '../src/eval/panel-artifact.js'),
-    path.resolve(path.dirname(tool), '../src/eval/serialization.js'),
-    path.resolve(path.dirname(tool), '../src/eval/task.js'),
-    path.resolve(path.dirname(tool), '../src/choices.js'),
-    path.resolve(path.dirname(tool), '../src/state.js'),
-    path.resolve(path.dirname(tool), '../src/reference.js'),
-    path.resolve(path.dirname(tool), '../src/random.js'),
-    path.resolve(path.dirname(tool), '../src/sim.js'),
-  ];
+  const root = path.resolve(path.dirname(tool), '..');
   return digestParts(
-    files.map(
-      (file) => `${path.basename(file)}
+    runtimeFiles(tool).map(
+      (file) => `${path.relative(root, file)}
 ${fs.readFileSync(file, 'utf8')}`,
     ),
   );
@@ -129,11 +269,158 @@ function rows(value: JsonObject, file: string): JsonObject[] {
   });
 }
 
-function writeAtomic(file: string, content: string): void {
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  const temporary = `${file}.${process.pid}.tmp`;
-  fs.writeFileSync(temporary, content, 'utf8');
-  fs.renameSync(temporary, file);
+type ExistingTargetState = 'missing' | 'identical' | 'different';
+
+function assertRegularTarget(file: string, status: fs.Stats, expectedMode: number): void {
+  if (status.isSymbolicLink() || !status.isFile()) {
+    throw new Error(`pilot artifact target must be a regular file and not a symbolic link: ${file}`);
+  }
+  if (status.nlink !== 1 || (status.mode & 0o777) !== expectedMode) {
+    throw new Error(`pilot artifact target has an unexpected mode or hard-link alias: ${file}`);
+  }
+}
+
+function existingTargetState(file: string, expected: Buffer, expectedMode: number): ExistingTargetState {
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    let initial: fs.Stats;
+    try {
+      initial = fs.lstatSync(file);
+    } catch (error) {
+      if (errorCode(error) === 'ENOENT') return 'missing';
+      throw error;
+    }
+    assertRegularTarget(file, initial, expectedMode);
+    let descriptor: number;
+    try {
+      descriptor = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+    } catch (error) {
+      if (errorCode(error) === 'ENOENT') continue;
+      if (errorCode(error) === 'ELOOP') {
+        throw new Error(`pilot artifact target must not be a symbolic link: ${file}`);
+      }
+      throw error;
+    }
+    let opened: fs.Stats;
+    let finished: fs.Stats;
+    let actual: Buffer;
+    try {
+      opened = fs.fstatSync(descriptor);
+      assertRegularTarget(file, opened, expectedMode);
+      actual = fs.readFileSync(descriptor);
+      finished = fs.fstatSync(descriptor);
+    } finally {
+      fs.closeSync(descriptor);
+    }
+    let current: fs.Stats;
+    try {
+      current = fs.lstatSync(file);
+    } catch (error) {
+      if (errorCode(error) === 'ENOENT') continue;
+      throw error;
+    }
+    assertRegularTarget(file, current, expectedMode);
+    if (
+      initial.dev !== opened.dev ||
+      initial.ino !== opened.ino ||
+      opened.dev !== current.dev ||
+      opened.ino !== current.ino ||
+      opened.size !== finished.size ||
+      opened.mtimeMs !== finished.mtimeMs ||
+      opened.ctimeMs !== finished.ctimeMs ||
+      finished.size !== current.size ||
+      finished.mtimeMs !== current.mtimeMs ||
+      finished.ctimeMs !== current.ctimeMs
+    ) {
+      continue;
+    }
+    return actual.equals(expected) ? 'identical' : 'different';
+  }
+  throw new Error(`pilot artifact target changed while it was being checked: ${file}`);
+}
+
+function stageArtifact(root: OutputRoot, file: string, content: Buffer): string {
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const temporary = path.join(
+      root.directory,
+      `.${path.basename(file)}.${process.pid}.${crypto.randomBytes(12).toString('hex')}.tmp`,
+    );
+    let descriptor: number;
+    try {
+      descriptor = fs.openSync(
+        temporary,
+        fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW,
+        root.fileMode,
+      );
+    } catch (error) {
+      if (errorCode(error) === 'EEXIST') continue;
+      throw error;
+    }
+    try {
+      fs.fchmodSync(descriptor, root.fileMode);
+      fs.writeFileSync(descriptor, content);
+      fs.fsyncSync(descriptor);
+      assertRegularTarget(temporary, fs.fstatSync(descriptor), root.fileMode);
+    } catch (error) {
+      fs.closeSync(descriptor);
+      fs.unlinkSync(temporary);
+      throw error;
+    }
+    fs.closeSync(descriptor);
+    return temporary;
+  }
+  throw new Error(`could not allocate a temporary pilot artifact beside ${file}`);
+}
+
+function publishImmutable(root: OutputRoot, name: string, content: string): void {
+  if (path.basename(name) !== name) throw new Error(`pilot artifact name must be a basename: ${name}`);
+  verifyOutputRoot(root);
+  const file = path.join(root.directory, name);
+  const expected = Buffer.from(content, 'utf8');
+  const initial = existingTargetState(file, expected, root.fileMode);
+  if (initial === 'identical') return;
+  if (initial === 'different') {
+    throw new Error(`refusing to replace non-identical pilot artifact: ${file}`);
+  }
+  const temporary = stageArtifact(root, file, expected);
+  let published = false;
+  let publicationFailed = false;
+  let publicationError: unknown;
+  try {
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      verifyOutputRoot(root);
+      const current = existingTargetState(file, expected, root.fileMode);
+      if (current === 'identical') {
+        published = true;
+        break;
+      }
+      if (current === 'different') {
+        throw new Error(`refusing to replace non-identical pilot artifact: ${file}`);
+      }
+      try {
+        fs.linkSync(temporary, file);
+        published = true;
+        break;
+      } catch (error) {
+        if (errorCode(error) !== 'EEXIST') throw error;
+      }
+    }
+    if (!published) throw new Error(`pilot artifact target changed during publication: ${file}`);
+  } catch (error) {
+    publicationFailed = true;
+    publicationError = error;
+  }
+  let cleanupFailed = false;
+  let cleanupError: unknown;
+  try {
+    fs.unlinkSync(temporary);
+  } catch (error) {
+    if (errorCode(error) !== 'ENOENT') {
+      cleanupFailed = true;
+      cleanupError = error;
+    }
+  }
+  if (publicationFailed) throw publicationError;
+  if (cleanupFailed) throw cleanupError;
 }
 
 function taskPosition(publicRow: JsonObject, privateRow: JsonObject): { position: Position; pid: Pid } {
@@ -223,17 +510,19 @@ async function main(): Promise<void> {
     });
     validateTaskScoreJoin(rendered.actions, scoredActions);
     const structuralReasons = [
-      ...(table.stability.some((panel) => panel.span <= 0) ? ['zero_stability_span'] : []),
-      ...(table.valueSpan <= 0 ? ['zero_measurement_span'] : []),
+      ...(table.stability.some((panel) => panel.span <= 0) ? ['zero_qualification_span'] : []),
     ];
     const diagnosticFlags = [
-      ...(table.heldOutSpan.lower95 <= 0 ? ['span_uncertain'] : []),
+      ...(table.heldOutSpan.normalApproxLower95 !== null && table.heldOutSpan.normalApproxLower95 <= 0
+        ? ['normal_approx_span_crosses_zero']
+        : []),
       ...(!table.rankingStable ? ['best_anchor_unstable'] : []),
       ...(!table.anchorAgreement ? ['extrema_sets_unstable'] : []),
+      ...(table.valueSpan <= 0 ? ['measurement_zero_span'] : []),
     ];
     const eligibilityMetrics = positionEligibilityMetrics(table);
     taskRows.push({
-      schema_version: 1,
+      schema_version: 2,
       task_id: taskId,
       split: 'pilot',
       format: rendered.format,
@@ -253,10 +542,11 @@ async function main(): Promise<void> {
       })),
     });
     scoreRows.push({
-      schema_version: 1,
+      schema_version: 2,
       task_id: taskId,
       structural_pass: structuralReasons.length === 0,
       structural_reasons: structuralReasons,
+      measurement_ready: table.valueSpan > 0,
       diagnostic_flags: diagnosticFlags,
       eligibility_status: 'pilot-thresholds-not-frozen',
       eligibility_metrics: eligibilityMetrics,
@@ -286,19 +576,14 @@ async function main(): Promise<void> {
       },
     });
     const source = privateRow.source as JsonObject;
-    const sourceGroup = `${String(source.run_id)}:${String(source.series_id)}:${String(source.game_number)}`;
-    const exactPublicFingerprint = canonicalJsonDigest([
-      'exact-public-task-v1',
-      rendered.format,
-      rendered.phase,
-      rendered.prompt,
-      rendered.actions,
-    ]);
+    const sourceGroup = positionSourceGroup(source);
+    const exactPublicFingerprint = exactPublicPositionFingerprint(taskRows.at(-1) as JsonObject);
     sealedRows.push({
-      schema_version: 1,
+      schema_version: 2,
       task_id: taskId,
       source_id: sourceId,
       source_group: sourceGroup,
+      selection_stratum: String(privateRow.selection_stratum ?? ''),
       exact_public_fingerprint: exactPublicFingerprint,
       source: privateRow.source,
       snapshot: privateRow.snapshot,
@@ -310,27 +595,30 @@ async function main(): Promise<void> {
   }
   if (privateById.size !== taskRows.length) throw new Error('private position set contains an unmatched row');
 
-  const taskFile = path.join(settings.out, 'tasks.pilot.jsonl');
-  const scoreFile = path.join(settings.privateOut, 'scores.pilot.jsonl');
-  const sealedFile = path.join(settings.privateOut, 'sealed-panels.pilot.jsonl');
   validatePositionPanelArtifacts(taskRows, scoreRows, sealedRows);
-  writeAtomic(taskFile, canonicalJsonl(taskRows));
-  writeAtomic(scoreFile, canonicalJsonl(scoreRows));
-  writeAtomic(sealedFile, canonicalJsonl(sealedRows));
+  const { publicRoot, privateRoot } = prepareOutputRoots(settings.out, settings.privateOut);
+  const taskFile = path.join(publicRoot.directory, 'tasks.pilot.jsonl');
+  const scoreFile = path.join(privateRoot.directory, 'scores.pilot.jsonl');
+  const sealedFile = path.join(privateRoot.directory, 'sealed-panels.pilot.jsonl');
+  publishImmutable(publicRoot, path.basename(taskFile), canonicalJsonl(taskRows));
+  publishImmutable(privateRoot, path.basename(scoreFile), canonicalJsonl(scoreRows));
+  publishImmutable(privateRoot, path.basename(sealedFile), canonicalJsonl(sealedRows));
   const manifest = {
-    schema_version: 1,
+    schema_version: 2,
     release_ready: false,
     eligibility_status: 'pilot-thresholds-not-frozen',
     eligibility_metrics_version: POSITION_ELIGIBILITY_METRICS_VERSION,
     split_status: 'pilot-only-source-groups-and-exact-fingerprints-recorded',
     source_set_id: publicSet.id,
     evaluator_digest: evaluatorDigest(),
+    runtime: { node: process.version, platform: process.platform, arch: process.arch },
     showdown_commit: showdownCommit(settings.psDir ?? defaultPsDir()),
     action_protocol: ACTION_PROTOCOL,
     task_protocol: POSITION_TASK_PROTOCOL,
     canonical_json: CANONICAL_JSON_PROTOCOL,
     counterfactual: counterfactualProtocol(settings),
     exhaustive_panels: EXHAUSTIVE_PANEL_PROTOCOL,
+    source_group_protocol: POSITION_SOURCE_GROUP_PROTOCOL,
     seed_namespace: String(settings.seed ?? 'position-panels'),
     inputs: {
       public_set: fileDigest(settings.set),
@@ -343,7 +631,8 @@ async function main(): Promise<void> {
     },
     ordered_task_ids: taskRows.map((row) => row.task_id),
   };
-  writeAtomic(path.join(settings.out, 'manifest.pilot.json'), `${canonicalJson(manifest)}\n`);
+  validatePilotManifestV2(manifest, 'constructed pilot manifest');
+  publishImmutable(publicRoot, 'manifest.pilot.json', `${canonicalJson(manifest)}\n`);
 }
 
 await main();

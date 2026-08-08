@@ -1,11 +1,15 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  counterfactualProtocol,
   EXHAUSTIVE_PANEL_PROTOCOL,
   evaluateActionTable,
   evaluatePosition,
+  exhaustivePanelDrawPlan,
+  exhaustivePanelMatrixDigest,
   REFERENCE,
   twoStageClusterEstimate,
+  validateCounterfactualOptions,
 } from '../src/eval/counterfactual.js';
 import {
   type GameSource,
@@ -67,8 +71,96 @@ function battleTurn(): Position {
 
 test('the reference every number is measured against is named, not implied', () => {
   assert.deepEqual(Object.keys(REFERENCE).toSorted(), ['continuation', 'hiddenState', 'opponent', 'value']);
+  assert.equal(EXHAUSTIVE_PANEL_PROTOCOL.version, 4);
   assert.equal(EXHAUSTIVE_PANEL_PROTOCOL.uncertaintyEstimator, 'two-stage-srswor-opponent-cluster-v1');
+  assert.equal(EXHAUSTIVE_PANEL_PROTOCOL.matrixDigest, 'sha256-canonical-exhaustive-panel-matrix-v2');
+  assert.equal(EXHAUSTIVE_PANEL_PROTOCOL.drawPlan, 'seeded-srswor-opponents-and-battle-words-v1');
   assert.match(EXHAUSTIVE_PANEL_PROTOCOL.normalApproximation, /not-claimed-calibrated/);
+});
+
+test('counterfactual option validation admits diagnostic zero horizon and rejects unsafe budgets', () => {
+  assert.doesNotThrow(() =>
+    validateCounterfactualOptions({
+      horizon: 0,
+      luckSamples: 1,
+      opponentSamples: 1,
+      shortlist: 1,
+      screenSamples: 1,
+      seed: 0,
+      psDir: '.',
+    }),
+  );
+  assert.equal(counterfactualProtocol({ horizon: 0 }).horizon, 0);
+  assert.equal(counterfactualProtocol({ horizon: Number.POSITIVE_INFINITY }).horizon, 'end');
+  assert.doesNotThrow(() => validateCounterfactualOptions({ horizon: Number.MAX_SAFE_INTEGER, seed: 'seed' }));
+
+  for (const horizon of [-1, 0.5, Number.NaN, Number.NEGATIVE_INFINITY, Number.MAX_SAFE_INTEGER + 1]) {
+    assert.throws(() => validateCounterfactualOptions({ horizon }), /counterfactual horizon/);
+  }
+  for (const field of ['luckSamples', 'opponentSamples', 'shortlist', 'screenSamples'] as const) {
+    for (const value of [0, -1, 0.5, Number.POSITIVE_INFINITY, Number.MAX_SAFE_INTEGER + 1]) {
+      assert.throws(() => validateCounterfactualOptions({ [field]: value }), new RegExp(`counterfactual ${field}`));
+    }
+  }
+  for (const seed of ['', 0.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+    assert.throws(() => validateCounterfactualOptions({ seed }), /counterfactual seed/);
+  }
+  assert.throws(() => validateCounterfactualOptions({ psDir: '' }), /counterfactual psDir/);
+
+  const invalidPosition = {} as Position;
+  assert.throws(
+    () => evaluatePosition(invalidPosition, 'p1', { luckSamples: 0 }, 'move 1'),
+    /counterfactual luckSamples/,
+  );
+  assert.throws(
+    () => evaluateActionTable(invalidPosition, 'p1', { opponentSamples: 0 }),
+    /counterfactual opponentSamples/,
+  );
+});
+
+test('the exhaustive draw plan deterministically samples opponents and all battle seed words', () => {
+  const input = {
+    panelSeed: 'panel-root',
+    id: 'stability-a' as const,
+    opponentLegalActions: ['move 1', 'move 2', 'move 3'],
+    opponentSlots: 2,
+    luckReplications: 2,
+  };
+  const plan = exhaustivePanelDrawPlan(input);
+  assert.deepEqual(plan, exhaustivePanelDrawPlan(input));
+  assert.equal(plan.draws.length, 4);
+  assert.equal(new Set(plan.draws.map((draw) => draw.opponentAction)).size, 2);
+  for (const [index, draw] of plan.draws.entries()) {
+    assert.equal(draw.index, index);
+    assert.equal(draw.battleSeed.length, 4);
+    assert.ok(draw.battleSeed.every((word) => Number.isInteger(word) && word >= 1 && word <= 0xffff));
+    assert.equal(draw.continuationSeed, `${plan.seedNamespace}:continuation:${index}`);
+  }
+});
+
+test('the panel digest is versioned and binds the clustered sampling design', () => {
+  const panel = {
+    id: 'measurement' as const,
+    seedNamespace: 'seed:panel:measurement',
+    opponentPopulation: 1,
+    opponentSlots: 1,
+    luckReplications: 1,
+    draws: [
+      {
+        index: 0,
+        opponentAction: null,
+        battleSeed: [1, 2, 3, 4] as [number, number, number, number],
+        continuationSeed: 'seed:panel:measurement:continuation:0',
+      },
+    ],
+    actions: ['move 1', 'move 2'],
+    matrix: [[0, 1]],
+  };
+  const digest = exhaustivePanelMatrixDigest(panel);
+  assert.match(digest, /^[0-9a-f]{64}$/u);
+  assert.notEqual(exhaustivePanelMatrixDigest({ ...panel, opponentPopulation: 2 }), digest);
+  assert.notEqual(exhaustivePanelMatrixDigest({ ...panel, opponentSlots: 2 }), digest);
+  assert.notEqual(exhaustivePanelMatrixDigest({ ...panel, luckReplications: 2 }), digest);
 });
 
 test('the clustered estimator retains only within-opponent uncertainty at an opponent census', () => {

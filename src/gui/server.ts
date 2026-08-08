@@ -10,7 +10,7 @@ import {
   buildLeague,
   buildLeagueGame,
   buildLeagues,
-  buildModelProfile,
+  buildLegacyObservationIndex,
   findLiveCliRun,
   snapshotBattle,
 } from '../archive.js';
@@ -19,8 +19,8 @@ import { AuthError } from '../auth.js';
 import { describeBoardMon, listBoards, loadBoard } from '../draft.js';
 import type { DraftLeagueEvent } from '../draftleague.js';
 import { DRAFT_PROTOCOL_VERSION, roundRobinWeeks, runDraftLeague } from '../draftleague.js';
-import { buildEvidence, buildTournamentGame, buildTournaments } from '../evidence.js';
-import { ImportError, importSeries, isImported, removeImportedRun } from '../import.js';
+import { buildTournamentGame, buildTournaments } from '../evidence.js';
+import { ImportError, importSeries, removeImportedRun } from '../import.js';
 import { discoverModels } from '../model-catalog.js';
 import { DATA_DIR, makeRunDirectory, prepareDataDirectories, RESULTS_PATH, RUNS_DIR, TEAMS_DIR } from '../paths.js';
 import { PROVIDER_OPTIONS, providerOption } from '../provider-registry.js';
@@ -33,7 +33,7 @@ import {
   reasoningLevels,
   validateReasoning,
 } from '../providers.js';
-import { loadRows, scopeRows } from '../records.js';
+import { loadRows } from '../records.js';
 import type { RecoveryPause } from '../recovery.js';
 import { RecoveryGate } from '../recovery.js';
 import { ROTATION_PROTOCOL_VERSION, runRotation } from '../rotation.js';
@@ -56,13 +56,12 @@ import type {
   BracketView,
   DecisionView,
   DraftView,
-  EvidenceResponse,
   FormatInfo,
   ImportRequest,
   ModelInfo,
   ModelsResponse,
   PoolTeamsResponse,
-  RecordsResponse,
+  ResearchResponse,
   RunPauseView,
   RunSnapshot,
   SampleTeam,
@@ -71,6 +70,7 @@ import type {
   TournamentsResponse,
 } from './api.js';
 import { BattleLog } from './battlelog.js';
+import { buildResearchIndex } from './research.js';
 import type { RunWorkerInput, RunWorkerOutput, RunWorkerStart } from './run-worker-protocol.js';
 
 type SeriesRow = Omit<SeriesRowView, 'turn'>;
@@ -143,6 +143,9 @@ function configuredOrigin(value: string | undefined): URL | undefined {
   const url = new URL(value);
   if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.origin !== value) {
     throw new Error('VGC_LEAGUE_PUBLIC_ORIGIN must be an exact http(s) origin without a path');
+  }
+  if (url.protocol === 'http:' && !LOCAL_HOSTNAMES[url.hostname.toLowerCase()]) {
+    throw new Error('VGC_LEAGUE_PUBLIC_ORIGIN must use HTTPS for non-loopback hosts');
   }
   return url;
 }
@@ -536,8 +539,7 @@ export class GuiServer {
 
     if (method === 'GET' && !url.pathname.startsWith('/api/') && this.serveStatic(url.pathname, response)) return;
     if (key === 'GET /api/state') this.json(response, 200, this.stateBody(session));
-    else if (key === 'GET /api/records') this.json(response, 200, this.recordsBody(url.searchParams.get('pool')));
-    else if (key === 'GET /api/evidence') this.json(response, 200, this.evidenceBody(url.searchParams.get('pool')));
+    else if (key === 'GET /api/research') this.json(response, 200, this.researchBody(session));
     else if (key === 'GET /api/tournaments')
       this.json(response, 200, this.tournamentsBody(url.searchParams.get('pool')));
     else if (key === 'GET /api/leagues') this.json(response, 200, this.leaguesBody());
@@ -562,7 +564,8 @@ export class GuiServer {
           url.searchParams.get('game') ?? '',
         ),
       );
-    else if (key === 'GET /api/model') this.json(response, 200, this.modelBody(url.searchParams.get('id') ?? ''));
+    else if (key === 'GET /api/model')
+      this.json(response, 200, this.legacyObservationIndexBody(url.searchParams.get('id') ?? ''));
     else if (key === 'GET /api/board') {
       const board = this.boardBody(url.searchParams.get('id') ?? '');
       response.setHeader('cache-control', 'public, max-age=3600');
@@ -869,12 +872,9 @@ export class GuiServer {
     };
   }
 
-  private recordsBody(poolParam: string | null): RecordsResponse {
-    const all = loadRows(this.options.recordsPath ?? RESULTS_PATH);
-    const pool = poolParam?.trim() || null;
-    const rows = scopeRows(all, pool ?? undefined);
-    const pools = [...new Set(all.map((row) => (typeof row.pool === 'string' ? row.pool : '')))].filter(Boolean).sort();
-    return { count: rows.length, pool, pools, imported: rows.filter(isImported).length };
+  private researchBody(session: AuthSession | undefined): ResearchResponse {
+    const allowCandidateTasks = !this.publicOrigin || session?.user.role === 'operator';
+    return buildResearchIndex(path.dirname(this.options.recordsPath ?? RESULTS_PATH), { allowCandidateTasks });
   }
 
   private authorizeImport(request: http.IncomingMessage): void {
@@ -930,12 +930,6 @@ export class GuiServer {
     }
   }
 
-  private evidenceBody(poolParam: string | null): EvidenceResponse {
-    const all = loadRows(this.options.recordsPath ?? RESULTS_PATH);
-    const pool = poolParam?.trim() || null;
-    return buildEvidence(all, this.options.runsDir ?? RUNS_DIR, pool);
-  }
-
   private tournamentsBody(poolParam: string | null): TournamentsResponse {
     const all = loadRows(this.options.recordsPath ?? RESULTS_PATH);
     const pool = poolParam?.trim() || null;
@@ -985,11 +979,11 @@ export class GuiServer {
     return view as unknown as JsonObject;
   }
 
-  private modelBody(id: string): JsonObject {
+  private legacyObservationIndexBody(id: string): JsonObject {
     const all = loadRows(this.options.recordsPath ?? RESULTS_PATH);
-    const profile = buildModelProfile(all, this.options.runsDir ?? RUNS_DIR, id.trim());
-    if (!profile) throw new HttpError(404, `no recorded series for model ${JSON.stringify(id)}`);
-    return profile as unknown as JsonObject;
+    const index = buildLegacyObservationIndex(all, id.trim());
+    if (!index) throw new HttpError(404, `no recorded series for model ${JSON.stringify(id)}`);
+    return index as unknown as JsonObject;
   }
 
   private runBody(publicView = false): RunSnapshot | null {

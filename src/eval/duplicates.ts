@@ -22,8 +22,11 @@ export interface DuplicatePair {
 
 function visiblePosition(prompt: string): string {
   const start = prompt.indexOf('\n\n');
-  const end = prompt.indexOf('\n\nLEGAL JOINT ACTIONS:');
-  return prompt.slice(start < 0 ? 0 : start + 2, end < 0 ? prompt.length : end);
+  const marker = '\n\nLEGAL JOINT ACTIONS:';
+  const end = prompt.indexOf(marker);
+  if (start < 0 || end <= start || prompt.indexOf(marker, end + marker.length) >= 0)
+    throw new Error('position prompt has malformed or repeated section markers');
+  return prompt.slice(start + 2, end);
 }
 
 export function positionDuplicateFeatures(prompt: string): string[] {

@@ -1,28 +1,8 @@
 import { useEffect, useState } from 'preact/hooks';
 
-import type { ModelProfileResponse, QuartileView } from '../../api';
-import { StatTile } from '../components/chartkit';
-import { Mark } from '../components/mark';
+import type { LegacyObservationIndexResponse } from '../../api';
 import { api } from '../http';
 import { when } from '../lib/labels';
-
-function seconds(ms: number): string {
-  return ms >= 100_000 ? `${Math.round(ms / 1000)}s` : `${(ms / 1000).toFixed(1)}s`;
-}
-
-function pct(value: number | null): string {
-  return value === null ? '–' : `${(100 * value).toFixed(value >= 0.995 ? 0 : 1)}%`;
-}
-
-function tokensLabel(tokens: number): string {
-  if (tokens >= 1e6) return `${(tokens / 1e6).toFixed(1)}M`;
-  return tokens.toLocaleString();
-}
-
-function quartileText(quartile: QuartileView | null, format: (value: number) => string): string {
-  if (!quartile) return 'no logged decisions';
-  return `IQR ${format(quartile.p25)}–${format(quartile.p75)}`;
-}
 
 const MODE_LABELS: Record<string, string> = {
   rotation: 'Rotation',
@@ -31,35 +11,16 @@ const MODE_LABELS: Record<string, string> = {
   exhibition: 'Exhibitions',
 };
 
-interface RateRow {
-  label: string;
-  title: string;
-  value: string;
+interface ArchiveRun {
+  mode: string;
+  runId: string;
+  when: string;
 }
 
-function RatesPanel({ heading, blurb, rows }: { heading: string; blurb: string; rows: RateRow[] }) {
-  return (
-    <section class="panel">
-      <div class="section-head">
-        <div>
-          <h2>{heading}</h2>
-          <p>{blurb}</p>
-        </div>
-      </div>
-      <div class="table-scroll">
-        <table class="data-table profile-rates">
-          <tbody>
-            {rows.map((row) => (
-              <tr key={row.label}>
-                <td title={row.title}>{row.label}</td>
-                <td class="num">{row.value}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </section>
-  );
+function compareArchiveRuns(a: ArchiveRun, b: ArchiveRun): number {
+  if (!a.when && b.when) return 1;
+  if (a.when && !b.when) return -1;
+  return a.when.localeCompare(b.when) || a.runId.localeCompare(b.runId);
 }
 
 export function ModelProfileView({
@@ -75,14 +36,15 @@ export function ModelProfileView({
   onOpenLeague: (runId: string) => void;
   onOpenTournament: (runId: string) => void;
 }) {
-  const [profile, setProfile] = useState<ModelProfileResponse | null>(null);
+  const [profile, setProfile] = useState<LegacyObservationIndexResponse | null>(null);
   const [error, setError] = useState('');
 
   useEffect(() => {
     if (!active || !model) return;
     if (profile?.id === model) return;
     setProfile(null);
-    api<ModelProfileResponse>(`/api/model?id=${encodeURIComponent(model)}`)
+    setError('');
+    api<LegacyObservationIndexResponse>(`/api/model?id=${encodeURIComponent(model)}`)
       .then((response) => {
         setProfile(response);
         setError('');
@@ -92,178 +54,181 @@ export function ModelProfileView({
 
   if (error) {
     return (
-      <div class="league-view">
-        <div class="message error">Could not load this model: {error}</div>
+      <div class="league-view research-observation-index">
+        <div class="message error">Could not load this legacy observation index: {error}</div>
       </div>
     );
   }
-  if (!profile || profile.id !== model) return <p class="muted">Loading the profile…</p>;
+  if (!profile || profile.id !== model) return <p class="muted">Loading the legacy observation index…</p>;
 
-  const decisions = Math.max(1, profile.decisions);
-  const playRows: RateRow[] = [
-    { label: 'Switch share', title: 'Switch share of action selections', value: pct(profile.rates.switch) },
-    { label: 'Protect share', title: 'Protect share of action selections', value: pct(profile.rates.protect) },
-    { label: 'Spread moves', title: 'Spread-move share of move selections', value: pct(profile.rates.spread) },
-    { label: 'Ally targeting', title: 'Ally-targeted moves per move selection', value: pct(profile.rates.allyTarget) },
-    {
-      label: 'Megas per game',
-      title: 'Mega Evolutions clicked per game',
-      value: profile.rates.megaPerGame.toFixed(2),
-    },
-    {
-      label: 'Tool lookups',
-      title: 'Mechanics tool lookups per decision',
-      value: profile.rates.toolLookups.toFixed(2),
-    },
-    {
-      label: 'Repeated joint actions',
-      title: 'Turns repeating the exact previous joint action',
-      value: pct(profile.rates.repeatedActions),
-    },
-    {
-      label: 'Bring changes',
-      title: 'Changed the four brought between games of a series',
-      value: pct(profile.rates.bringChanges),
-    },
-    {
-      label: 'Lead changes',
-      title: 'Changed the two leads between games of a series',
-      value: pct(profile.rates.leadChanges),
-    },
-  ];
-  const reliabilityRows: RateRow[] = [
-    { label: 'Fallbacks', title: 'Decisions replaced by the first legal option', value: pct(profile.rates.fallback) },
-    {
-      label: 'Parse failures',
-      title: 'Replies that failed parsing, per decision',
-      value: pct(profile.rates.parseFailure),
-    },
-    {
-      label: 'Provider retries',
-      title: 'Provider retries per decision',
-      value: profile.rates.providerRetry.toFixed(2),
-    },
-    { label: 'Abandoned decisions', title: 'Decisions abandoned entirely', value: pct(profile.rates.abandoned) },
-    {
-      label: 'Reflection fallbacks',
-      title: 'Between-game reflections that fell back',
-      value: pct(profile.rates.reflectionFallback),
-    },
-  ];
+  const modes = [...profile.modes].sort((a, b) =>
+    (MODE_LABELS[a.mode] ?? a.mode).localeCompare(MODE_LABELS[b.mode] ?? b.mode),
+  );
+  const archiveRuns = modes
+    .filter((mode) => mode.mode === 'draft' || mode.mode === 'tournament')
+    .flatMap((mode) => mode.runs.map((run): ArchiveRun => ({ mode: mode.mode, runId: run.runId, when: run.when })))
+    .sort(compareArchiveRuns);
 
   return (
-    <div class="league-view">
-      <header class="page-heading league-heading">
+    <div class="league-view research-observation-index">
+      <header class="page-heading league-heading research-index-heading">
         <div>
           <p class="eyebrow">
             <button type="button" class="text-link" onClick={onBack}>
               ← Data room
             </button>{' '}
-            / model profile
+            / legacy observation index
           </p>
-          <h1 class="profile-title">
-            <Mark spec={profile.id} size={28} />
-            {profile.id}.
-          </h1>
+          <h1>Legacy Observation Index</h1>
+          <p class="legacy-model-key-value">
+            Collapsed backend id: <code>{profile.id}</code>
+          </p>
         </div>
-        <p class="lede">
-          Seen as {profile.providers.join(', ')} from {when(profile.firstSeen)} to {when(profile.lastSeen)}. Recorded
-          observations are pooled across every mode outside the test pool.
+        <p class="lede research-coverage-span">
+          Archived non-test-pool observations span {when(profile.firstSeen)} to {when(profile.lastSeen)}.
         </p>
       </header>
 
-      <div class="message">
-        <b>Context, not quality.</b> Opponents, teams, formats, schedules, and scaffolds differ across these runs. This
-        profile describes recorded activity; it does not rank this model or support model-quality comparisons.
-      </div>
-
-      <div class="stat-row">
-        <StatTile
-          label="Recorded series"
-          value={profile.series.toLocaleString()}
-          note={`${profile.games} games across ${profile.modes.length} mode${profile.modes.length === 1 ? '' : 's'}`}
-        />
-        <StatTile
-          label="Decisions"
-          value={profile.decisions.toLocaleString()}
-          note={`${profile.reflections} reflections`}
-        />
-        <StatTile
-          label="Median decision"
-          value={profile.latency ? seconds(profile.latency.median) : '–'}
-          note={quartileText(profile.latency, seconds)}
-        />
-        <StatTile
-          label="Tokens"
-          value={tokensLabel(profile.totalTokens)}
-          note={
-            profile.reasoningTokens !== null
-              ? `${tokensLabel(Math.round(profile.reasoningTokens / decisions))} reasoning per decision`
-              : 'no reasoning breakdown reported'
-          }
-        />
-        {profile.cost !== null ? (
-          <StatTile label="Known cost" value={`$${profile.cost.toFixed(2)}`} note="metered API spend" />
-        ) : null}
-      </div>
-
-      <div class="results-grid">
-        <RatesPanel
-          heading="Observed action mix in recorded contexts"
-          blurb="Descriptive action-selection rates pooled from logged decisions."
-          rows={playRows}
-        />
-        <RatesPanel
-          heading="Reliability"
-          blurb="Scaffold health: where responses failed and what it cost."
-          rows={reliabilityRows}
-        />
-      </div>
-
-      <section class="panel">
+      <section class="panel legacy-identity-panel" aria-labelledby="legacy-identity-heading">
         <div class="section-head">
           <div>
-            <h2>Recorded contexts by mode</h2>
-            <p>Descriptive coverage counts by mode, with links to the stored events where available.</p>
+            <h2 id="legacy-identity-heading">Legacy identity boundary</h2>
+            <p>
+              The backend id is a legacy collapsed <code>modelKey</code>, not a provider-qualified specification.
+            </p>
           </div>
         </div>
+        <p>The archived records grouped under that id contain these exact provider-qualified specifications:</p>
+        {profile.providers.length === 0 ? (
+          <p class="muted">No provider-qualified specification was retained.</p>
+        ) : (
+          <ul class="legacy-provider-spec-list">
+            {profile.providers.map((provider) => (
+              <li key={provider}>
+                <code>{provider}</code>
+              </li>
+            ))}
+          </ul>
+        )}
+        <div class="message legacy-identity-warning">
+          This endpoint collapses those specifications before counting. It does not expose provider-specific counts or
+          denominators, so no observation below can be attributed to one listed specification.
+        </div>
+      </section>
+
+      <section class="panel research-coverage-panel" aria-labelledby="coverage-inventory-heading">
+        <div class="section-head">
+          <div>
+            <h2 id="coverage-inventory-heading">Coverage inventory</h2>
+            <p>Record counts only; they are not results, rates, or comparisons.</p>
+          </div>
+        </div>
+        <div class="message legacy-denominator-warning">
+          <b>Legacy denominator warning.</b> Series and games are player-side observations, not distinct-event totals; a
+          record with this collapsed key on both sides can be counted twice. The endpoint does not report eligible
+          decision or reflection opportunities, archive-completeness denominators, or missing-log counts.
+        </div>
         <div class="table-scroll">
-          <table class="data-table">
+          <table class="data-table research-coverage-table">
             <thead>
               <tr>
-                <th>Mode</th>
-                <th class="num">Recorded series</th>
-                <th>Events</th>
+                <th>Record type</th>
+                <th class="num">Observed records</th>
+                <th>Available denominator or scope</th>
               </tr>
             </thead>
             <tbody>
-              {profile.modes.map((mode) => (
+              <tr>
+                <td>Series</td>
+                <td class="num">{profile.series.toLocaleString()}</td>
+                <td>Matched player-side series outside the test pool; no distinct-series denominator.</td>
+              </tr>
+              <tr>
+                <td>Games</td>
+                <td class="num">{profile.games.toLocaleString()}</td>
+                <td>Games attached to the matched player-side series; no distinct-game denominator.</td>
+              </tr>
+              <tr>
+                <td>Decisions</td>
+                <td class="num">{profile.decisions.toLocaleString()}</td>
+                <td>Logged decisions for matched sides; eligible decision opportunities are unavailable.</td>
+              </tr>
+              <tr>
+                <td>Reflections</td>
+                <td class="num">{profile.reflections.toLocaleString()}</td>
+                <td>Logged reflections for matched sides; eligible reflection opportunities are unavailable.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel research-mode-inventory" aria-labelledby="mode-inventory-heading">
+        <div class="section-head">
+          <div>
+            <h2 id="mode-inventory-heading">Recorded modes</h2>
+            <p>Series-observation coverage under the same collapsed identity and denominator warning.</p>
+          </div>
+        </div>
+        <div class="table-scroll">
+          <table class="data-table research-mode-table">
+            <thead>
+              <tr>
+                <th>Mode</th>
+                <th class="num">Series observations</th>
+              </tr>
+            </thead>
+            <tbody>
+              {modes.map((mode) => (
                 <tr key={mode.mode}>
                   <td>{MODE_LABELS[mode.mode] ?? mode.mode}</td>
-                  <td class="num">{mode.series}</td>
-                  <td>
-                    {mode.runs.length === 0 ? (
-                      <span class="muted">–</span>
-                    ) : (
-                      mode.runs.map((run) => (
-                        <button
-                          key={run.runId}
-                          type="button"
-                          class="text-link event-link"
-                          onClick={() =>
-                            mode.mode === 'draft' ? onOpenLeague(run.runId) : onOpenTournament(run.runId)
-                          }
-                        >
-                          {when(run.when)}
-                        </button>
-                      ))
-                    )}
-                  </td>
+                  <td class="num">{mode.series.toLocaleString()}</td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
+      </section>
+
+      <section class="panel research-archive-chronology" aria-labelledby="archive-chronology-heading">
+        <div class="section-head">
+          <div>
+            <h2 id="archive-chronology-heading">Linked archive runs</h2>
+            <p>Stored league and tournament destinations in chronological order, oldest first.</p>
+          </div>
+        </div>
+        {archiveRuns.length === 0 ? (
+          <p class="muted">No linked league or tournament archive is available for this collapsed id.</p>
+        ) : (
+          <div class="table-scroll">
+            <table class="data-table research-archive-table">
+              <thead>
+                <tr>
+                  <th>Date</th>
+                  <th>Mode</th>
+                  <th>Archive run</th>
+                </tr>
+              </thead>
+              <tbody>
+                {archiveRuns.map((run) => (
+                  <tr key={`${run.mode}:${run.runId}`}>
+                    <td>{when(run.when)}</td>
+                    <td>{MODE_LABELS[run.mode] ?? run.mode}</td>
+                    <td>
+                      <button
+                        type="button"
+                        class="text-link research-archive-link"
+                        onClick={() => (run.mode === 'draft' ? onOpenLeague(run.runId) : onOpenTournament(run.runId))}
+                      >
+                        {run.runId}
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </section>
     </div>
   );

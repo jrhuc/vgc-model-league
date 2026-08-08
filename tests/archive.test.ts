@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { buildLeague, buildLeagueGame, buildLeagues, buildModelProfile } from '../src/archive.js';
+import { buildLeague, buildLeagueGame, buildLeagues, buildLegacyObservationIndex } from '../src/archive.js';
 import { appendRow, loadRows, type SeriesRecord } from '../src/records.js';
 
 const RUN_ID = 'league-run-1';
@@ -528,7 +528,7 @@ test('archived leagues overlay post-window rosters without rewriting the draft',
   }
 });
 
-test('buildModelProfile aggregates every mode with per-mode records and run links', () => {
+test('buildLegacyObservationIndex exposes only caveated counts and contextual run links', () => {
   const runsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-archive-'));
   writeLeagueFixture(runsDir);
   const rotation: SeriesRecord = {
@@ -547,25 +547,33 @@ test('buildModelProfile aggregates every mode with per-mode records and run link
       p2: { decisions: 4 },
     },
   } as SeriesRecord;
-  const profile = buildModelProfile([...LEAGUE_ROWS, rotation], runsDir, 'alpha');
+  const profile = buildLegacyObservationIndex([...LEAGUE_ROWS, rotation], 'alpha');
   assert.ok(profile);
+  assert.deepEqual(Object.keys(profile).sort(), [
+    'decisions',
+    'firstSeen',
+    'games',
+    'id',
+    'lastSeen',
+    'modes',
+    'providers',
+    'reflections',
+    'series',
+  ]);
   assert.deepEqual(profile.providers, ['openai:alpha', 'openrouter:lab/alpha'], 'aliases merge by model key');
   assert.equal(profile.series, 3);
   assert.equal(profile.games, 7);
   assert.equal(profile.decisions, 27);
-  assert.equal(profile.totalTokens, 100, 'only logs for the sides this model played');
-  assert.equal(profile.reasoningTokens, 40);
-  assert.equal(profile.cost, 0.5);
-  assert.equal(profile.rates.switch, 2 / 10);
+  assert.equal(profile.reflections, 0);
   const modes = Object.fromEntries(profile.modes.map((mode) => [mode.mode, mode]));
   assert.equal(modes.draft!.series, 2);
   assert.equal(modes.rotation!.series, 1);
   assert.ok(!('w' in modes.draft!) && !('l' in modes.draft!));
   assert.equal(modes.draft!.runs[0]!.runId, RUN_ID);
   assert.equal(modes.rotation!.runs.length, 0, 'only draft and tournament runs link out');
-  assert.equal(buildModelProfile([rotation], runsDir, 'nobody'), null);
+  assert.equal(buildLegacyObservationIndex([rotation], 'nobody'), null);
   const testPool = { ...rotation, pool: 'test' } as SeriesRecord;
-  assert.equal(buildModelProfile([testPool], runsDir, 'alpha'), null, 'the test pool stays out of profiles');
+  assert.equal(buildLegacyObservationIndex([testPool], 'alpha'), null, 'the test pool stays out of the index');
   fs.rmSync(runsDir, { recursive: true, force: true });
 });
 

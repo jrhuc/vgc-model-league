@@ -109,15 +109,12 @@ test('the data room archives a bracket and expands it on demand', async () => {
     }
     window.eval(bundle);
     const rendered = () => window.document.body.textContent ?? '';
-    await waitFor(() => rendered().includes('Descriptive archive counts'));
+    await waitFor(() => rendered().includes('1 finished'));
     assert.match(rendered(), /openai:alpha/);
-    assert.match(rendered(), /1 finished/);
-    assert.match(rendered(), /not standings or comparable measures of model quality/i);
-    assert.doesNotMatch(rendered(), /Most titles|Tournament placements|Tournament record/);
-    assert.deepEqual(
-      [...window.document.querySelectorAll('.data-table td.spec-cell')].map((entry) => entry.getAttribute('title')),
-      ['alpha', 'beta', 'gamma'],
-      'cross-bracket counts remain alphabetical rather than performance ordered',
+    assert.doesNotMatch(
+      rendered(),
+      /Descriptive archive counts|Bracket entries|Won bracket|Lost final|Lost semifinal|Earlier exit|Tournament placements/,
+      'cross-tournament model placement aggregates stay absent',
     );
     const head = asButton(window.document.querySelector('.tournament-card-head'));
     head.click();
@@ -132,13 +129,13 @@ test('the data room archives a bracket and expands it on demand', async () => {
   }
 });
 
-test('direct model profiles present contextual observations without pooled records', async () => {
+test('legacy observation indices expose contextual counts without stale aggregates', async () => {
   const recordsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-gui-profile-'));
   const recordsPath = path.join(recordsDir, 'results.jsonl');
   const rows = [
     {
-      mode: 'rotation',
-      run_id: 'profile-rotation',
+      mode: 'draft',
+      run_id: 'profile-draft',
       series_id: 'series-a',
       timestamp: '2026-07-25T01:00:00.000Z',
       pool: 'majors',
@@ -148,30 +145,45 @@ test('direct model profiles present contextual observations without pooled recor
       score: { p1: 2, p2: 0 },
       games: [{ number: 1 }, { number: 2 }],
       decision_stats: {
-        p1: { decisions: 4, move_selections: 6, switch_selections: 2, protect_selections: 1 },
+        p1: { decisions: 4, reflections: 1, move_selections: 6, switch_selections: 2, protect_selections: 1 },
       },
     },
     {
-      mode: 'exhibition',
-      run_id: 'profile-exhibition',
+      mode: 'tournament',
+      run_id: 'profile-tournament',
       series_id: 'series-b',
       timestamp: '2026-07-26T01:00:00.000Z',
       pool: 'majors',
-      players: { p1: 'random', p2: 'openai:zeta' },
+      players: { p1: 'random', p2: 'google:zeta' },
       winner: 'random',
       winner_side: 'p1',
       score: { p1: 2, p2: 1 },
       games: [{ number: 1 }, { number: 2 }, { number: 3 }],
       decision_stats: {
-        p2: { decisions: 5, move_selections: 8, switch_selections: 2, protect_selections: 2 },
+        p2: { decisions: 5, reflections: 2, move_selections: 8, switch_selections: 2, protect_selections: 2 },
       },
     },
   ];
   fs.writeFileSync(recordsPath, `${rows.map((row) => JSON.stringify(row)).join('\n')}\n`, 'utf8');
   const gui = new GuiServer({ runsDir: RUNS_SCRATCH, recordsPath });
   const base = await gui.listen(0);
-  const window = new Window({ url: `${base}#data/zeta` });
+  const window = new Window({ url: `${base}#observations/zeta` });
   try {
+    const response = await fetch(`${base}api/model?id=zeta`);
+    assert.equal(response.status, 200);
+    const index = (await response.json()) as Record<string, unknown>;
+    assert.deepEqual(Object.keys(index).sort(), [
+      'decisions',
+      'firstSeen',
+      'games',
+      'id',
+      'lastSeen',
+      'modes',
+      'providers',
+      'reflections',
+      'series',
+    ]);
+
     const shell = await (await fetch(base)).text();
     const asset = /src="(\.\/assets\/[^"]+\.js)"/.exec(shell)?.[1];
     assert.ok(asset);
@@ -186,17 +198,38 @@ test('direct model profiles present contextual observations without pooled recor
     window.eval(bundle);
 
     const rendered = () => window.document.querySelector('.view.on')?.textContent ?? '';
-    await waitFor(() => rendered().includes('Observed action mix in recorded contexts'));
-    assert.match(rendered(), /Context, not quality/i);
-    assert.match(rendered(), /opponents, teams, formats, schedules, and scaffolds differ/i);
-    assert.match(rendered(), /does not rank this model or support model-quality comparisons/i);
-    assert.match(rendered(), /Recorded contexts by mode/);
-    assert.doesNotMatch(rendered(), /How this model plays|Records by mode|W-L/);
-    assert.equal(
-      [...window.document.querySelectorAll('.stat-value')].some((entry) => entry.textContent?.trim() === '1-1'),
-      false,
-      'the profile must not feature a pooled W-L tile',
+    await waitFor(() => rendered().includes('Legacy Observation Index'));
+    assert.match(rendered(), /legacy collapsed modelKey, not a provider-qualified specification/i);
+    assert.deepEqual(
+      [...window.document.querySelectorAll('.legacy-provider-spec-list code')].map((entry) => entry.textContent),
+      ['google:zeta', 'openai:zeta'],
+      'the collapsed key must retain the exact provider-qualified specifications as context',
     );
+    const coverage = Object.fromEntries(
+      [...window.document.querySelectorAll('.research-coverage-table tbody tr')].map((row) => {
+        const cells = row.querySelectorAll('td');
+        return [cells[0]?.textContent, cells[1]?.textContent];
+      }),
+    );
+    assert.deepEqual(coverage, { Series: '2', Games: '5', Decisions: '9', Reflections: '3' });
+    assert.match(rendered(), /Legacy denominator warning/i);
+    assert.match(rendered(), /eligible decision or reflection opportunities/i);
+    assert.match(rendered(), /Recorded modes/i);
+    assert.doesNotMatch(
+      rendered(),
+      /Observed action mix|Reliability|Switch share|Protect share|Fallbacks|Median decision|Tokens|Known cost|W-L|model quality/i,
+    );
+
+    const archiveLinks = [...window.document.querySelectorAll('.research-archive-link')].map(asButton);
+    assert.deepEqual(
+      archiveLinks.map((link) => link.textContent?.trim()),
+      ['profile-draft', 'profile-tournament'],
+      'archive destinations remain chronological rather than performance ordered',
+    );
+    archiveLinks[0]?.click();
+    assert.equal(window.location.hash, '#leagues/profile-draft');
+    archiveLinks[1]?.click();
+    assert.equal(window.location.hash, '#tournaments/profile-tournament');
   } finally {
     await window.happyDOM.close();
     gui.close();

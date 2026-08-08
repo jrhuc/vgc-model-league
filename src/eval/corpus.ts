@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
+import { SAFE_SEGMENT } from '../path-safety.js';
 import { defaultPsDir, REPO_ROOT, RESULTS_PATH, RUNS_DIR } from '../paths.js';
 import { showdownCommit } from '../showdown.js';
 import type { JsonObject, Pid } from '../types.js';
@@ -91,13 +92,16 @@ export function loadGameRecords(options: CorpusOptions = {}): GameRecord[] {
     const mode = String(row.mode ?? 'unknown');
     if (options.modes && !options.modes.includes(mode)) continue;
     const runId = String(row.run_id ?? '');
+    const seriesId = String(row.series_id ?? '');
     const players = row.players as Record<Pid, string>;
     if (!runId || !players) continue;
+    if (!SAFE_SEGMENT.test(runId) || !SAFE_SEGMENT.test(seriesId)) {
+      throw new Error('source record run_id and series_id must be path-safe identifiers');
+    }
     if (!scaffolds.has(runId)) scaffolds.set(runId, readRunScaffold(path.join(runsDir, runId)));
 
     for (const game of (row.games ?? []) as JsonObject[]) {
       const gameNumber = Number(game.number);
-      const seriesId = String(row.series_id ?? '');
       const gameKey = `${runId}:${seriesId}:${gameNumber}`;
       if (gameKeys.has(gameKey)) throw new Error(`duplicate source game ${gameKey}`);
       gameKeys.add(gameKey);

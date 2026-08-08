@@ -176,3 +176,15 @@ test('missing pieces are named rather than dropped', () => {
   fs.rmSync(path.join(decisionless.seriesDir, 'p2-decisions.jsonl'));
   assert.equal(loadGameRecords(decisionless)[0]?.skipped, 'no-decisions');
 });
+
+test('record identifiers cannot escape the pinned runs root', () => {
+  const escapedRun = buildCorpus((row) => {
+    row.run_id = '../escape';
+  });
+  assert.throws(() => loadGameRecords(escapedRun), /path-safe identifiers/);
+
+  const escapedSeries = buildCorpus((row) => {
+    row.series_id = '..';
+  });
+  assert.throws(() => loadGameRecords(escapedSeries), /path-safe identifiers/);
+});

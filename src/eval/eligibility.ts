@@ -1,30 +1,34 @@
-import type { ExhaustiveActionTable } from './counterfactual.js';
+import type { ExhaustiveActionTable, ExhaustivePanel } from './counterfactual.js';
 
-export const POSITION_ELIGIBILITY_METRICS_VERSION = 1;
+export const POSITION_ELIGIBILITY_METRICS_VERSION = 2;
 
 export interface PositionEligibilityMetrics {
-  version: 1;
+  version: 2;
   legalActions: number;
-  drawsPerPanel: [number, number, number];
+  qualificationDrawsPerPanel: [number, number];
+  qualificationOpponentPopulation: [number, number];
+  qualificationOpponentSlots: [number, number];
+  qualificationLuckReplications: [number, number];
   heldOutSpanValue: number;
-  heldOutSpanStandardError: number;
-  heldOutSpanLower95: number;
-  heldOutSpanSignalToNoise: number | null;
+  heldOutSpanStandardError: number | null;
+  heldOutSpanNormalApproxLower95: number | null;
   bestAnchorAgreement: boolean;
   extremaSetAgreement: boolean;
   stabilityRankCorrelation: number | null;
   maxNormalizedRewardDrift: number | null;
-  maxMeasurementNormalizedStandardError: number | null;
+  maxQualificationNormalizedStandardError: number | null;
 }
 
 export interface PositionEligibilityPolicy {
-  schema_version: 1;
+  schema_version: 2;
   status: 'frozen';
-  min_panel_draws: number;
-  min_held_out_span_lower95: number;
+  min_luck_replications: number;
+  min_sampled_opponent_slots: number;
+  min_held_out_span_value: number;
+  max_held_out_span_standard_error: number;
   min_stability_rank_correlation: number;
   max_normalized_reward_drift: number;
-  max_measurement_normalized_standard_error: number;
+  max_qualification_normalized_standard_error: number;
   require_best_anchor_agreement: boolean;
   require_extrema_set_agreement: boolean;
 }
@@ -69,36 +73,50 @@ export function rankCorrelation(first: readonly number[], second: readonly numbe
   return varianceA > 0 && varianceB > 0 ? covariance / Math.sqrt(varianceA * varianceB) : null;
 }
 
+function normalizedQualificationUncertainty(panels: readonly ExhaustivePanel[]): number | null {
+  const values: number[] = [];
+  for (const panel of panels) {
+    if (!(panel.span > 0)) return null;
+    for (const action of panel.actions) {
+      if (action.standardError === null) return null;
+      values.push(action.standardError / panel.span);
+    }
+  }
+  return values.length ? Math.max(...values) : null;
+}
+
 export function positionEligibilityMetrics(table: ExhaustiveActionTable): PositionEligibilityMetrics {
-  const span = table.measurement.span;
-  const spanSe = table.heldOutSpan.standardError;
+  const qualification = table.stability;
   return {
     version: POSITION_ELIGIBILITY_METRICS_VERSION,
     legalActions: table.legal,
-    drawsPerPanel: [table.stability[0].draws.length, table.stability[1].draws.length, table.measurement.draws.length],
+    qualificationDrawsPerPanel: [qualification[0].draws.length, qualification[1].draws.length],
+    qualificationOpponentPopulation: [qualification[0].opponentPopulation, qualification[1].opponentPopulation],
+    qualificationOpponentSlots: [qualification[0].opponentSlots, qualification[1].opponentSlots],
+    qualificationLuckReplications: [qualification[0].luckReplications, qualification[1].luckReplications],
     heldOutSpanValue: table.heldOutSpan.value,
-    heldOutSpanStandardError: spanSe,
-    heldOutSpanLower95: table.heldOutSpan.lower95,
-    heldOutSpanSignalToNoise: spanSe > 0 ? table.heldOutSpan.value / spanSe : null,
+    heldOutSpanStandardError: table.heldOutSpan.standardError,
+    heldOutSpanNormalApproxLower95: table.heldOutSpan.normalApproxLower95,
     bestAnchorAgreement: table.rankingStable,
     extremaSetAgreement: table.anchorAgreement,
     stabilityRankCorrelation: rankCorrelation(
-      table.stability[0].actions.map((entry) => entry.value),
-      table.stability[1].actions.map((entry) => entry.value),
+      qualification[0].actions.map((entry) => entry.value),
+      qualification[1].actions.map((entry) => entry.value),
     ),
     maxNormalizedRewardDrift: table.maxNormalizedRewardDrift,
-    maxMeasurementNormalizedStandardError:
-      span > 0 ? Math.max(...table.measurement.actions.map((entry) => entry.standardError / span)) : null,
+    maxQualificationNormalizedStandardError: normalizedQualificationUncertainty(qualification),
   };
 }
 
 export function validatePositionEligibilityPolicy(policy: PositionEligibilityPolicy): void {
   const keys = Object.keys(policy).sort();
   const expected = [
-    'max_measurement_normalized_standard_error',
+    'max_held_out_span_standard_error',
     'max_normalized_reward_drift',
-    'min_held_out_span_lower95',
-    'min_panel_draws',
+    'max_qualification_normalized_standard_error',
+    'min_held_out_span_value',
+    'min_luck_replications',
+    'min_sampled_opponent_slots',
     'min_stability_rank_correlation',
     'require_best_anchor_agreement',
     'require_extrema_set_agreement',
@@ -107,8 +125,12 @@ export function validatePositionEligibilityPolicy(policy: PositionEligibilityPol
   ].sort();
   if (JSON.stringify(keys) !== JSON.stringify(expected))
     throw new Error('eligibility policy has unexpected or missing keys');
-  if (policy.schema_version !== 1 || policy.status !== 'frozen')
-    throw new Error('eligibility policy must be frozen schema version 1');
+  if (policy.schema_version !== 2 || policy.status !== 'frozen')
+    throw new Error('eligibility policy must be frozen schema version 2');
+  if (!Number.isInteger(policy.min_luck_replications) || policy.min_luck_replications < 2)
+    throw new Error('eligibility min_luck_replications must be an integer >= 2');
+  if (!Number.isInteger(policy.min_sampled_opponent_slots) || policy.min_sampled_opponent_slots < 2)
+    throw new Error('eligibility min_sampled_opponent_slots must be an integer >= 2');
   if (
     !Number.isFinite(policy.min_stability_rank_correlation) ||
     policy.min_stability_rank_correlation < -1 ||
@@ -121,15 +143,13 @@ export function validatePositionEligibilityPolicy(policy: PositionEligibilityPol
     policy.max_normalized_reward_drift > 1
   )
     throw new Error('eligibility normalized reward drift must be in [0, 1]');
-  if (
-    !Number.isFinite(policy.max_measurement_normalized_standard_error) ||
-    policy.max_measurement_normalized_standard_error < 0
-  )
-    throw new Error('eligibility measurement uncertainty must be non-negative');
-  if (!Number.isInteger(policy.min_panel_draws) || policy.min_panel_draws < 1)
-    throw new Error('eligibility min_panel_draws must be a positive integer');
-  if (!Number.isFinite(policy.min_held_out_span_lower95) || policy.min_held_out_span_lower95 < 0)
-    throw new Error('eligibility min_held_out_span_lower95 must be non-negative');
+  for (const [name, value] of [
+    ['min_held_out_span_value', policy.min_held_out_span_value],
+    ['max_held_out_span_standard_error', policy.max_held_out_span_standard_error],
+    ['max_qualification_normalized_standard_error', policy.max_qualification_normalized_standard_error],
+  ] as const) {
+    if (!Number.isFinite(value) || value < 0) throw new Error(`eligibility ${name} must be non-negative`);
+  }
   if (
     typeof policy.require_best_anchor_agreement !== 'boolean' ||
     typeof policy.require_extrema_set_agreement !== 'boolean'
@@ -143,8 +163,21 @@ export function assessPositionEligibility(
 ): { eligible: boolean; reasons: string[] } {
   validatePositionEligibilityPolicy(policy);
   const reasons: string[] = [];
-  if (Math.min(...metrics.drawsPerPanel) < policy.min_panel_draws) reasons.push('insufficient_panel_draws');
-  if (metrics.heldOutSpanLower95 < policy.min_held_out_span_lower95) reasons.push('held_out_span_below_threshold');
+  if (Math.min(...metrics.qualificationLuckReplications) < policy.min_luck_replications)
+    reasons.push('insufficient_luck_replications');
+  if (
+    metrics.qualificationOpponentSlots.some(
+      (slots, index) =>
+        (metrics.qualificationOpponentPopulation[index] as number) > 1 && slots < policy.min_sampled_opponent_slots,
+    )
+  )
+    reasons.push('insufficient_sampled_opponent_slots');
+  if (metrics.heldOutSpanValue < policy.min_held_out_span_value) reasons.push('held_out_span_below_threshold');
+  if (
+    metrics.heldOutSpanStandardError === null ||
+    metrics.heldOutSpanStandardError > policy.max_held_out_span_standard_error
+  )
+    reasons.push('held_out_span_uncertainty_above_threshold');
   if (
     metrics.stabilityRankCorrelation === null ||
     metrics.stabilityRankCorrelation < policy.min_stability_rank_correlation
@@ -156,10 +189,10 @@ export function assessPositionEligibility(
   )
     reasons.push('normalized_reward_drift_above_threshold');
   if (
-    metrics.maxMeasurementNormalizedStandardError === null ||
-    metrics.maxMeasurementNormalizedStandardError > policy.max_measurement_normalized_standard_error
+    metrics.maxQualificationNormalizedStandardError === null ||
+    metrics.maxQualificationNormalizedStandardError > policy.max_qualification_normalized_standard_error
   )
-    reasons.push('measurement_uncertainty_above_threshold');
+    reasons.push('qualification_uncertainty_above_threshold');
   if (policy.require_best_anchor_agreement && !metrics.bestAnchorAgreement) reasons.push('best_anchor_unstable');
   if (policy.require_extrema_set_agreement && !metrics.extremaSetAgreement) reasons.push('extrema_sets_unstable');
   return { eligible: reasons.length === 0, reasons };
