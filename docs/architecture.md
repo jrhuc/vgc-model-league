@@ -10,10 +10,11 @@ renders typed API data and is never an alternate scoring authority.
 assets, and server-sent events; `src/gui/client/` contains the client. Shared API
 shapes belong in `src/gui/api.ts`.
 
-The GUI opens on **Overview**. **Position Lab** shows validated public position
-artifacts, provenance, gates, and decision evidence. **Draft Circuit** currently
-links to the exploratory **Draft leagues** archive; it is not a runnable
-circuit. **Live run**, **Tournaments**, and **New run** are operational paths.
+The GUI opens on **Overview**, which states the position method, the draft
+circuit stages, and what the server actually holds. **Position Lab** shows
+validated public position artifacts, provenance, gates, and decision evidence.
+**Draft leagues** is the exploratory season archive; there is no runnable Draft
+Circuit. **Live run**, **Tournaments**, and **New run** are operational paths.
 Private scores, snapshots, opponent requests, or sealed panels must never be
 served to a model or browser.
 
@@ -149,19 +150,25 @@ verifiers Env -> provisioned runtime -> versioned JSON-lines referee
                                       -> TypeScript domain -> Pokémon Showdown
 ```
 
-The process must run through the runtime supplied by `provision(task)` and
-`Runtime.open_process`, with Node and the compiled pinned bundle in its image.
-Every client handshakes on protocol version, Showdown SHA, format, board digest,
-and scaffold version and fails closed on mismatch. HTTP is only an optional
-runtime transport; MCP is only for model-facing mechanics tools.
+The process must run through the runtime supplied by the verifiers `Runtime`
+passed to a rollout, with Node and the compiled pinned bundle in its image. HTTP
+is only an optional runtime transport; MCP is only for model-facing mechanics
+tools. The exact provisioning entry points are not yet verified against a pinned
+verifiers release; treat them as a target, not a supported path.
 
 The implemented first slice is `src/frozen-battle-referee.ts` plus the
 `tools/frozen-battle-referee.ts` JSONL process. It runs one seeded fixed-roster
-Showdown game with a Showdown/config/condition handshake, seat-private
-observations, simultaneous submissions, stale-state rejection, bound snapshots,
-and terminal evidence. It does not yet perform
-construction, a best-of-three matchday, drafting, model rollout, or scoring; no
-verifiers package exists yet.
+Showdown game with seat-private observations, simultaneous submissions,
+stale-state rejection, bound snapshots, and terminal evidence. Its handshake
+covers the JSONL protocol version, the referee protocol version, and the
+Showdown SHA, and binds every response to an episode identifier, a caller-supplied
+condition digest, and a config digest over format, seed, and packed teams. Board
+and scaffold digests are not in this slice because it has no draft and no model
+seat. `tests/frozen-battle-process.test.ts` drives the compiled binary over
+stdio, so the framing and fail-closed behaviour are exercised as a subprocess
+rather than only in process. It does not yet perform construction, a
+best-of-three matchday, drafting, model rollout, or scoring; no verifiers package
+exists yet.
 
 The three named, non-comparable rollout profiles and their isolation rules are
 canonical in [Measurement](measurement.md). None is implemented as a published
