@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import {
   COUNTERFACTUAL_PROTOCOL_VERSION,
@@ -21,12 +21,18 @@ import {
   positionSourceGroup,
 } from '../src/eval/panel-artifact.js';
 import {
+  assertPinnedShowdownRuntime,
+  runtimeProducerDigest,
+  showdownRuntimeAuthorityFiles,
+} from '../src/eval/producer.js';
+import {
   CANONICAL_JSON_PROTOCOL,
   canonicalJson,
   canonicalJsonDigest,
   canonicalJsonl,
 } from '../src/eval/serialization.js';
 import { POSITION_TASK_PROTOCOL } from '../src/eval/task.js';
+import { SHOWDOWN_LOCK } from '../src/showdown.js';
 import type { JsonObject } from '../src/types.js';
 import { minimalPanelBattle } from './fixtures/position-panel.js';
 
@@ -411,8 +417,43 @@ function args(fixture: Fixture, publicOut = fixture.publicOut, privateOut = fixt
   ];
 }
 
-function run(argv: string[]) {
-  return spawnSync(process.execPath, [TOOL, ...argv], { encoding: 'utf8' });
+function run(argv: string[], overrides: NodeJS.ProcessEnv = {}) {
+  const environment = { ...process.env };
+  delete environment.VGC_LEAGUE_PS;
+  Object.assign(environment, overrides);
+  return spawnSync(process.execPath, [TOOL, ...argv], {
+    cwd: path.resolve('.'),
+    encoding: 'utf8',
+    maxBuffer: 32 * 1024 * 1024,
+    env: environment,
+  });
+}
+
+function alternateReviewedRuntime(): { root: string; psDir: string } {
+  const repository = path.resolve('.');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'position-split-alternate-showdown-'));
+  for (const relative of showdownRuntimeAuthorityFiles(repository)) {
+    const source = path.join(repository, relative);
+    const destination = path.join(root, relative);
+    fs.mkdirSync(path.dirname(destination), { recursive: true });
+    fs.copyFileSync(source, destination);
+  }
+  return { root, psDir: path.join(root, 'pokemon-showdown') };
+}
+
+function pathWithFakeGit(root: string, revision: string): string {
+  const directory = path.join(root, 'fake-bin');
+  fs.mkdirSync(directory);
+  const git = path.join(directory, 'git');
+  fs.writeFileSync(
+    git,
+    `#!/bin/sh
+printf '%s\n' ${JSON.stringify(revision)}
+`,
+    'utf8',
+  );
+  fs.chmodSync(git, 0o755);
+  return `${directory}${path.delimiter}${process.env.PATH ?? ''}`;
 }
 
 function succeeds(result: ReturnType<typeof run>): void {
@@ -476,11 +517,100 @@ test('the CLI freezes deterministic immutable output and refuses a non-identical
   }
 });
 
+test('clean and tampered external reviewed runtime roots are rejected before panel validation', () => {
+  const alternate = alternateReviewedRuntime();
+  const clean = makeFixture();
+  const tampered = makeFixture();
+  try {
+    assert.match(assertPinnedShowdownRuntime(alternate.root), /^[0-9a-f]{64}$/u);
+    fails(
+      run(args(clean), { VGC_LEAGUE_PS: alternate.psDir }),
+      /exact physical bundled reviewed Pokémon Showdown runtime/u,
+    );
+    assert.equal(fs.existsSync(clean.publicOut), false);
+    assert.equal(fs.existsSync(clean.privateOut), false);
+
+    fs.appendFileSync(path.join(alternate.psDir, 'dist', 'sim', 'index.js'), '\n/** alternate tamper */\n');
+    assert.throws(() => assertPinnedShowdownRuntime(alternate.root), /does not match reviewed/u);
+    fails(
+      run(args(tampered), { VGC_LEAGUE_PS: alternate.psDir }),
+      /exact physical bundled reviewed Pokémon Showdown runtime/u,
+    );
+    assert.equal(fs.existsSync(tampered.publicOut), false);
+    assert.equal(fs.existsSync(tampered.privateOut), false);
+  } finally {
+    dispose(clean, tampered);
+    fs.rmSync(alternate.root, { recursive: true, force: true });
+  }
+});
+
+test('an external runtime cannot gain authority from a fake git reporting the pinned-looking SHA', () => {
+  const alternate = alternateReviewedRuntime();
+  const fixture = makeFixture();
+  try {
+    const forgedRevision = SHOWDOWN_LOCK.commit;
+    fails(
+      run(args(fixture), {
+        PATH: pathWithFakeGit(fixture.root, forgedRevision),
+        VGC_LEAGUE_PS: alternate.psDir,
+      }),
+      /exact physical bundled reviewed Pokémon Showdown runtime/u,
+    );
+    assert.equal(fs.existsSync(fixture.publicOut), false);
+    assert.equal(fs.existsSync(fixture.privateOut), false);
+  } finally {
+    dispose(fixture);
+    fs.rmSync(alternate.root, { recursive: true, force: true });
+  }
+});
+
+test('a relative symlink alias to the bundled runtime is allowed and keeps the reviewed producer digest', (context) => {
+  const baseline = makeFixture();
+  const aliased = makeFixture();
+  try {
+    succeeds(run(args(baseline)));
+    const alias = path.join(aliased.root, 'relative-bundled-showdown');
+    try {
+      fs.symlinkSync(
+        path.relative(
+          fs.realpathSync.native(path.dirname(alias)),
+          fs.realpathSync.native(path.resolve('pokemon-showdown')),
+        ),
+        alias,
+        'dir',
+      );
+    } catch (error) {
+      if (['EPERM', 'ENOTSUP', 'EACCES'].includes((error as NodeJS.ErrnoException).code ?? '')) {
+        context.skip('directory symlinks are unavailable');
+        return;
+      }
+      throw error;
+    }
+    succeeds(
+      run(args(aliased), {
+        PATH: pathWithFakeGit(aliased.root, SHOWDOWN_LOCK.commit),
+        VGC_LEAGUE_PS: path.relative(path.resolve('.'), alias),
+      }),
+    );
+    const baselineManifest = readObject(path.join(baseline.publicOut, 'manifest.json'));
+    const aliasedManifest = readObject(path.join(aliased.publicOut, 'manifest.json'));
+    const capturedDigest = runtimeProducerDigest(pathToFileURL(TOOL).href);
+    assert.equal(baselineManifest.splitter_digest, capturedDigest);
+    assert.equal(aliasedManifest.splitter_digest, capturedDigest);
+  } finally {
+    dispose(baseline, aliased);
+  }
+});
+
 test('byte-identical crash-like partial artifact sets resume to deterministic complete output', () => {
   const complete = makeFixture();
   const oneArtifact = makeFixture();
   const severalArtifacts = makeFixture();
   try {
+    for (const input of ['tasks', 'scores', 'sealed', 'calibrationManifest', 'manifest', 'policy'] as const) {
+      assert.deepEqual(fs.readFileSync(oneArtifact[input]), fs.readFileSync(complete[input]));
+      assert.deepEqual(fs.readFileSync(severalArtifacts[input]), fs.readFileSync(complete[input]));
+    }
     succeeds(run(args(complete)));
     const expectedPublic = tree(complete.publicOut);
     const expectedPrivate = tree(complete.privateOut);

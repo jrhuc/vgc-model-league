@@ -1,4 +1,4 @@
-import { acceptedBattleActionEntries } from '../../src/eval/fork.js';
+import { acceptedBattleActionEntries, deterministicBattleSnapshot } from '../../src/eval/fork.js';
 import { loadShowdown } from '../../src/showdown.js';
 import type { BattleRequest } from '../../src/types.js';
 
@@ -38,7 +38,7 @@ export function minimalPanelBattle(
   }
   return {
     format,
-    snapshot: JSON.stringify(battle.toJSON()),
+    snapshot: deterministicBattleSnapshot(battle),
     requests: {
       p1: structuredClone(battle.getSide('p1').activeRequest) as unknown as BattleRequest,
       p2: structuredClone(battle.getSide('p2').activeRequest) as unknown as BattleRequest,

@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import {
   acceptedLegalActionEntries,
+  deterministicBattleSnapshot,
   type GameSource,
   newBattle,
   omniscientLog,
@@ -62,6 +63,123 @@ test('a game replays from its seed, teams and choices line for line', () => {
   assert.equal(replay.ranOutOfChoices, false);
   assert.ok(replay.positions.length > 0);
   assert.equal(replay.winner, log.some((line) => line.startsWith('|win|')) ? replay.winner : null);
+});
+
+test('snapshot bytes normalize only exact top-level Showdown timestamp messages and are recursively canonical', () => {
+  const log = [
+    '|t:|1700000000',
+    '|t:|0001',
+    '|t:|',
+    '|t:|-1',
+    '|t:|1.5',
+    '|t:|12x',
+    '|t:|１２３',
+    '|t:|123|suffix',
+    'prefix|t:|123',
+    '|raw|a user wrote |t:|123',
+  ];
+  const firstState = {
+    z: {
+      request: { wait: false, timestampText: '|t:|123' },
+      queue: [{ z: 2, a: 1 }],
+    },
+    log,
+    actions: ['move 2', 'move 1'],
+    pov: { p1: ['|t:|123'], p2: ['|raw||t:|123'] },
+    prng: [4, 3, 2, 1],
+  };
+  const secondState = {
+    prng: [4, 3, 2, 1],
+    pov: { p2: ['|raw||t:|123'], p1: ['|t:|123'] },
+    actions: ['move 2', 'move 1'],
+    log: [...log],
+    z: {
+      queue: [{ a: 1, z: 2 }],
+      request: { timestampText: '|t:|123', wait: false },
+    },
+  };
+  const snapshotOf = (state: unknown) =>
+    deterministicBattleSnapshot({ toJSON: () => state } as unknown as Parameters<
+      typeof deterministicBattleSnapshot
+    >[0]);
+
+  const first = snapshotOf(firstState);
+  const second = snapshotOf(secondState);
+  assert.equal(second, first);
+
+  const normalized = JSON.parse(first) as typeof firstState;
+  const expected = structuredClone(firstState);
+  expected.log[0] = '|t:|';
+  expected.log[1] = '|t:|';
+  assert.deepEqual(normalized, expected);
+  assert.deepEqual(Object.keys(normalized), ['actions', 'log', 'pov', 'prng', 'z']);
+  assert.deepEqual(Object.keys(normalized.pov), ['p1', 'p2']);
+  assert.deepEqual(Object.keys(normalized.z), ['queue', 'request']);
+  assert.deepEqual(Object.keys(normalized.z.queue[0] as object), ['a', 'z']);
+  assert.deepEqual(Object.keys(normalized.z.request), ['timestampText', 'wait']);
+});
+
+test('a canonical snapshot restores byte-for-byte and continues through the same replay', () => {
+  const base = source();
+  const live = newBattle(base);
+  const beforeState = structuredClone(live.toJSON());
+  const beforeLog = structuredClone(live.log);
+  const surface = (battle: typeof live) => {
+    const pending = pendingSides(battle);
+    return {
+      pending,
+      requests: Object.fromEntries(pending.map((pid) => [pid, structuredClone(battle.getSide(pid).activeRequest)])),
+      actions: Object.fromEntries(
+        pending.map((pid) => [
+          pid,
+          requestActionCandidates(battle.getSide(pid).activeRequest as unknown as BattleRequest),
+        ]),
+      ),
+    };
+  };
+  const beforeSurface = surface(live);
+  const initialSnapshot = deterministicBattleSnapshot(live);
+
+  assert.deepEqual(live.toJSON(), beforeState);
+  assert.deepEqual(live.log, beforeLog);
+  assert.deepEqual(surface(live), beforeSurface);
+
+  const restored = openPosition({ snapshot: initialSnapshot } as Parameters<typeof openPosition>[0]);
+  assert.equal(deterministicBattleSnapshot(restored), initialSnapshot);
+  assert.deepEqual(surface(restored), beforeSurface);
+
+  const choices: Record<Pid, string[]> = { p1: [], p2: [] };
+  const snapshots: string[] = [];
+  let steps = 0;
+  while (!live.ended && steps++ < 400) {
+    const liveSnapshot = deterministicBattleSnapshot(live);
+    snapshots.push(liveSnapshot);
+    assert.equal(deterministicBattleSnapshot(restored), liveSnapshot);
+    assert.deepEqual(surface(restored), surface(live));
+
+    const pending = pendingSides(live);
+    assert.ok(pending.length > 0);
+    const joint: Partial<Record<Pid, string>> = {};
+    for (const pid of pending) {
+      const request = live.getSide(pid).activeRequest as unknown as BattleRequest;
+      const action = requestActionCandidates(request)[0];
+      assert.notEqual(action, undefined);
+      joint[pid] = action as string;
+      choices[pid].push(action as string);
+    }
+    assert.equal(playJoint(live, joint), true);
+    assert.equal(playJoint(restored, joint), true);
+  }
+
+  assert.equal(live.ended, true);
+  assert.equal(restored.ended, true);
+  assert.equal(deterministicBattleSnapshot(restored), deterministicBattleSnapshot(live));
+  const replay = replayGame({ ...base, choices }, omniscientLog(live.log));
+  assert.equal(replay.verified, true);
+  assert.deepEqual(
+    replay.positions.map((position) => position.snapshot),
+    snapshots,
+  );
 });
 
 test('a replay that is fed a different battle refuses to verify', () => {

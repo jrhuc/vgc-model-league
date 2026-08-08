@@ -8,6 +8,7 @@ import { defaultPsDir } from '../paths.js';
 import { loadShowdown } from '../showdown.js';
 import { routeUpdateLines } from '../sim.js';
 import type { BattleRequest, Pid } from '../types.js';
+import { canonicalJson } from './serialization.js';
 
 export interface GameSource {
   format: string;
@@ -173,6 +174,18 @@ export function acceptedBattleActions(battle: Battle, pid: Pid): string[] {
   return acceptedBattleActionEntries(battle, pid).map((entry) => entry.command);
 }
 
+/** Removes exact Showdown wall-clock messages without treating lookalike text as time. Recursive
+ * canonical serialization defines new snapshot bytes; older noncanonical snapshots remain restorable. */
+export function deterministicBattleSnapshot(battle: Battle): string {
+  const serialized = JSON.parse(JSON.stringify(battle.toJSON())) as ReturnType<Battle['toJSON']> & { log?: unknown };
+  if (Array.isArray(serialized.log)) {
+    serialized.log = serialized.log.map((line: unknown) =>
+      typeof line === 'string' && /^\|t:\|\d+$/u.test(line) ? '|t:|' : line,
+    );
+  }
+  return canonicalJson(serialized);
+}
+
 export function requestPhase(request: BattleRequest): 'team_preview' | 'forced_switch' | 'turn' {
   if (request.teamPreview) return 'team_preview';
   if (request.forceSwitch) return 'forced_switch';
@@ -237,7 +250,7 @@ export function replayGame(source: GameSource, recordedLog?: string[]): Replay {
       actual: taken,
       choiceIndex: Object.fromEntries(pending.map((pid) => [pid, cursor[pid] - 1])),
       seen: { p1: state.pov.p1.length, p2: state.pov.p2.length },
-      snapshot: JSON.stringify(battle.toJSON()),
+      snapshot: deterministicBattleSnapshot(battle),
     });
     for (const pid of pending) {
       if ((taken[pid] as string).split(', ').includes('forfeit')) {

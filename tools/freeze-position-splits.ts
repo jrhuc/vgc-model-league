@@ -2,7 +2,6 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 
 import { clusterNearDuplicatePositions, NEAR_DUPLICATE_PROTOCOL } from '../src/eval/duplicates.js';
 import { assessPositionEligibility, type PositionEligibilityMetrics } from '../src/eval/eligibility.js';
@@ -18,6 +17,7 @@ import {
   validatePilotManifestV2,
   validatePositionSplitFreezePolicyV2,
 } from '../src/eval/position-artifact-manifest.js';
+import { captureRuntimeProducerAuthority, type RuntimeProducerAuthoritySnapshot } from '../src/eval/producer.js';
 import {
   CANONICAL_JSON_PROTOCOL,
   canonicalJson,
@@ -25,6 +25,7 @@ import {
   canonicalJsonl,
 } from '../src/eval/serialization.js';
 import { assignStratifiedPositionSplits, positionSplitDigest, splitBalance } from '../src/eval/splits.js';
+import { defaultPsDir, PINNED_PS_DIR, REPO_ROOT } from '../src/paths.js';
 import type { JsonObject } from '../src/types.js';
 
 interface Settings {
@@ -148,48 +149,78 @@ function contentDigest(content: Buffer | string): string {
   return crypto.createHash('sha256').update(content).digest('hex');
 }
 
-function digestParts(parts: Iterable<string>): string {
-  const hash = crypto.createHash('sha256');
-  for (const part of parts) hash.update(`${Buffer.byteLength(part)}:`, 'utf8').update(part, 'utf8');
-  return hash.digest('hex');
+interface PhysicalDirectory {
+  requestedPath: string;
+  realpath: string;
+  stat: fs.BigIntStats;
 }
 
-function runtimeLayout(tool: string): { root: string; sourceRoot: string; extension: '.js' | '.ts' } {
-  const toolDirectory = path.dirname(tool);
-  const compiled = path.basename(path.dirname(toolDirectory)) === 'dist';
-  return compiled
-    ? {
-        root: path.resolve(toolDirectory, '../..'),
-        sourceRoot: path.resolve(toolDirectory, '../src'),
-        extension: '.js',
-      }
-    : { root: path.resolve(toolDirectory, '..'), sourceRoot: path.resolve(toolDirectory, '../src'), extension: '.ts' };
+interface ReviewedRuntimeBinding {
+  repository: PhysicalDirectory;
+  bundledShowdown: PhysicalDirectory;
+  actualShowdown: PhysicalDirectory;
+  showdownRuntimeDigest: string;
 }
 
-function runtimeFiles(tool: string): string[] {
-  const layout = runtimeLayout(tool);
-  const visit = (directory: string): string[] =>
-    fs.readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
-      const file = path.join(directory, entry.name);
-      return entry.isDirectory() ? visit(file) : entry.isFile() && file.endsWith(layout.extension) ? [file] : [];
-    });
-  return [
-    tool,
-    ...visit(layout.sourceRoot),
-    path.join(layout.root, 'package.json'),
-    path.join(layout.root, 'pnpm-lock.yaml'),
-  ].sort((a, b) => Buffer.from(a).compare(Buffer.from(b)));
+function physicalDirectory(directory: string, label: string): PhysicalDirectory {
+  const requestedPath = path.resolve(directory);
+  const realpath = fs.realpathSync.native(requestedPath);
+  const stat = fs.lstatSync(realpath, { bigint: true });
+  if (stat.isSymbolicLink() || !stat.isDirectory()) {
+    throw new Error(`${label} must resolve to a physical directory: ${directory}`);
+  }
+  return { requestedPath, realpath, stat };
 }
 
-function splitterDigest(): string {
-  const tool = fileURLToPath(import.meta.url);
-  const root = runtimeLayout(tool).root;
-  return digestParts(
-    runtimeFiles(tool).map(
-      (file) => `${path.relative(root, file)}
-${fs.readFileSync(file, 'utf8')}`,
-    ),
-  );
+function sameDirectoryIdentity(left: fs.BigIntStats, right: fs.BigIntStats): boolean {
+  return left.dev === right.dev && left.ino === right.ino && left.nlink === right.nlink && left.mode === right.mode;
+}
+
+function captureReviewedRuntimeBinding(authority: RuntimeProducerAuthoritySnapshot): ReviewedRuntimeBinding {
+  const repository = physicalDirectory(REPO_ROOT, 'bundled repository root');
+  const bundledShowdown = physicalDirectory(PINNED_PS_DIR, 'bundled reviewed Pokémon Showdown runtime');
+  const actualShowdown = physicalDirectory(defaultPsDir(), 'VGC_LEAGUE_PS runtime');
+  if (authority.rootRealpath !== repository.realpath) {
+    throw new Error('producer authority root is not the exact physical bundled repository root');
+  }
+  if (authority.showdownRealpath !== bundledShowdown.realpath) {
+    throw new Error('producer Showdown authority is not the exact physical bundled reviewed runtime');
+  }
+  if (actualShowdown.realpath !== bundledShowdown.realpath) {
+    throw new Error('VGC_LEAGUE_PS must resolve to the exact physical bundled reviewed Pokémon Showdown runtime');
+  }
+  return {
+    repository,
+    bundledShowdown,
+    actualShowdown,
+    showdownRuntimeDigest: authority.showdownRuntimeDigest,
+  };
+}
+
+function assertPhysicalDirectoryUnchanged(captured: PhysicalDirectory, label: string): void {
+  const current = physicalDirectory(captured.requestedPath, label);
+  if (current.realpath !== captured.realpath || !sameDirectoryIdentity(captured.stat, current.stat)) {
+    throw new Error(`${label} physical identity changed during position-split derivation`);
+  }
+}
+
+function assertReviewedRuntimeBinding(
+  authority: RuntimeProducerAuthoritySnapshot,
+  binding: ReviewedRuntimeBinding,
+): void {
+  authority.assertUnchanged();
+  assertPhysicalDirectoryUnchanged(binding.repository, 'bundled repository root');
+  assertPhysicalDirectoryUnchanged(binding.bundledShowdown, 'bundled reviewed Pokémon Showdown runtime');
+  assertPhysicalDirectoryUnchanged(binding.actualShowdown, 'VGC_LEAGUE_PS runtime');
+  const currentActual = physicalDirectory(defaultPsDir(), 'VGC_LEAGUE_PS runtime');
+  if (
+    currentActual.realpath !== binding.bundledShowdown.realpath ||
+    authority.rootRealpath !== binding.repository.realpath ||
+    authority.showdownRealpath !== binding.bundledShowdown.realpath ||
+    authority.showdownRuntimeDigest !== binding.showdownRuntimeDigest
+  ) {
+    throw new Error('reviewed runtime path or digest binding changed during position-split derivation');
+  }
 }
 
 function readCanonicalObject(input: InputSnapshot, file: string): JsonObject {
@@ -647,10 +678,13 @@ const overlappingCalibrationIds = pilot.orderedTaskIds.filter((id) => calibratio
 if (overlappingCalibrationIds.length)
   throw new Error('calibration and candidate pilot manifests must not contain overlapping ordered_task_ids');
 
+const producerAuthority = captureRuntimeProducerAuthority(import.meta.url);
+const reviewedRuntime = captureReviewedRuntimeBinding(producerAuthority);
+assertReviewedRuntimeBinding(producerAuthority, reviewedRuntime);
 const taskRows = rows(taskInput, settings.tasks);
 const scoreRows = rows(scoreInput, settings.scores);
 const sealedRows = rows(sealedInput, settings.sealed);
-validatePositionPanelArtifacts(taskRows, scoreRows, sealedRows);
+validatePositionPanelArtifacts(taskRows, scoreRows, sealedRows, reviewedRuntime.actualShowdown.realpath);
 if (
   pilot.outputs.tasks.sha256 !== contentDigest(taskInput.bytes) ||
   pilot.outputs.scores.sha256 !== contentDigest(scoreInput.bytes) ||
@@ -733,7 +767,7 @@ const selectedScores = orderedIds.map((id) => ({
   eligibility_status: 'eligible-under-frozen-policy',
 }));
 const selectedSealed = orderedIds.map((id) => sealedById.get(id) as JsonObject);
-validatePositionPanelArtifacts(selectedTasks, selectedScores, selectedSealed);
+validatePositionPanelArtifacts(selectedTasks, selectedScores, selectedSealed, reviewedRuntime.actualShowdown.realpath);
 const roots = prepareOutputRoots(settings.out, settings.privateOut);
 const [publicRoot, privateRoot] = roots;
 const publicFiles = {
@@ -775,13 +809,19 @@ const outputContent = {
   exclusions: Buffer.from(canonicalJsonl(outputRows.exclusions), 'utf8'),
 };
 const artifact = (content: Buffer, rowCount: number) => ({ sha256: contentDigest(content), rows: rowCount });
+/**
+ * The legacy v2 splitter_digest field records the complete producer-authority snapshot captured before panel
+ * validation and rechecked immediately before publication. The retained snapshot detects mutations only after this
+ * capture; it does not attest process-start state or prove that already-loaded module memory equals the captured disk
+ * bytes.
+ */
 const manifest = {
   schema_version: 2,
   release_ready: false,
   status: FROZEN_POSITION_MANIFEST_STATUS,
   remaining_release_gates: FROZEN_POSITION_RELEASE_GATES,
   policy: splitPolicy,
-  splitter_digest: splitterDigest(),
+  splitter_digest: producerAuthority.producerDigest,
   runtime: { node: process.version, platform: process.platform, arch: process.arch },
   upstream_pilot_manifest: pilotManifestUpstreamProjectionV2(pilot, candidateManifestDigest),
   upstream_calibration_manifest: pilotManifestUpstreamProjectionV2(calibration, calibrationManifestDigest),
@@ -826,6 +866,7 @@ const manifest = {
 };
 validateFrozenManifestV2(manifest, 'constructed frozen manifest');
 const manifestContent = Buffer.from(`${canonicalJson(manifest)}\n`, 'utf8');
+assertReviewedRuntimeBinding(producerAuthority, reviewedRuntime);
 publishImmutableArtifacts(
   [
     { file: publicFiles.train, content: outputContent.tasksTrain },

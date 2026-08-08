@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 
 import { REPO_ROOT } from '../src/paths.js';
 import { DEX_TOOLS, ShowdownReference } from '../src/reference.js';
@@ -159,27 +159,18 @@ test('default Showdown checkout matches the pinned revision', () => {
   assert.equal(showdownCommit(), SHOWDOWN_LOCK.commit);
 });
 
-test('reference render revision binds the versioned executed module bytes', async () => {
+test('reference render revision binds the versioned executed module bytes', () => {
   const modulePath = fileURLToPath(new URL('../src/reference.js', import.meta.url));
-  const expected = createHash('sha256')
-    .update('showdown-reference-render-v1')
-    .update('\0')
-    .update(fs.readFileSync(modulePath))
-    .digest('hex')
-    .slice(0, 12);
+  const moduleBytes = fs.readFileSync(modulePath);
+  const revisionFor = (content: Buffer): string =>
+    createHash('sha256').update('showdown-reference-render-v1').update('\0').update(content).digest('hex').slice(0, 12);
   const revision = ShowdownReference.renderRevision();
   assert.match(revision, /^[0-9a-f]{12}$/);
-  assert.equal(revision, expected);
-
-  const copyPath = path.join(path.dirname(modulePath), `reference-revision-${randomUUID()}.js`);
-  try {
-    fs.copyFileSync(modulePath, copyPath);
-    fs.appendFileSync(copyPath, "\nvoid 'modified reference revision fixture';\n");
-    const copied = (await import(pathToFileURL(copyPath).href)) as typeof import('../src/reference.js');
-    assert.notEqual(copied.ShowdownReference.renderRevision(), revision);
-  } finally {
-    fs.rmSync(copyPath, { force: true });
-  }
+  assert.equal(revision, revisionFor(moduleBytes));
+  assert.notEqual(
+    revisionFor(Buffer.concat([moduleBytes, Buffer.from("\nvoid 'modified reference revision fixture';\n")])),
+    revision,
+  );
 });
 
 test('missing Showdown checkout fails immediately', () => {

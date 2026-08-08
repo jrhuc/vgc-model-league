@@ -29,10 +29,30 @@ if (typeof lock.repository !== 'string' || !/^[0-9a-f]{40}$/.test(lock.commit)) 
 }
 export const SHOWDOWN_LOCK: Readonly<ShowdownLock> = lock;
 
+function physicalPath(directory: string): string | undefined {
+  try {
+    return fs.realpathSync.native(directory);
+  } catch {
+    return undefined;
+  }
+}
+
+function physicalPinnedRuntime(resolved: string): boolean {
+  const actual = physicalPath(resolved);
+  const pinned = physicalPath(PINNED_PS_DIR);
+  return actual !== undefined && pinned !== undefined && actual === pinned;
+}
+
 export function showdownCommit(psDir = defaultPsDir()): string {
   const resolved = path.resolve(psDir);
-  const existing = revisionCache.get(resolved);
+  const physical = physicalPath(resolved);
+  const cacheKey = physical ?? resolved;
+  const existing = revisionCache.get(cacheKey);
   if (existing) return existing;
+  if (physicalPinnedRuntime(resolved)) {
+    revisionCache.set(cacheKey, SHOWDOWN_LOCK.commit);
+    return SHOWDOWN_LOCK.commit;
+  }
   let revision = '';
   try {
     revision = execFileSync('git', ['-C', resolved, 'rev-parse', 'HEAD'], {
@@ -46,7 +66,7 @@ export function showdownCommit(psDir = defaultPsDir()): string {
     } catch {}
   }
   const result = revision || 'unknown';
-  revisionCache.set(resolved, result);
+  revisionCache.set(cacheKey, result);
   return result;
 }
 
@@ -55,11 +75,21 @@ function assertShowdownInstallation(resolved: string): void {
   if (missing.length) {
     throw new Error(`Pokémon Showdown is not built at ${resolved}; run pnpm run setup:showdown`);
   }
-  const revision = showdownCommit(resolved);
-  if (resolved === PINNED_PS_DIR && revision !== SHOWDOWN_LOCK.commit) {
-    throw new Error(
-      `Pokémon Showdown is at ${revision}; expected ${SHOWDOWN_LOCK.commit}. Run pnpm run setup:showdown`,
-    );
+  if (physicalPinnedRuntime(resolved)) {
+    let builtRevision = '';
+    try {
+      builtRevision = fs.readFileSync(path.join(resolved, 'dist', '.vgc-model-league-revision'), 'utf8').trim();
+    } catch {}
+    if (builtRevision !== SHOWDOWN_LOCK.commit) {
+      throw new Error(
+        `Pokémon Showdown build is at ${builtRevision || 'unknown'}; expected ${SHOWDOWN_LOCK.commit}. Run pnpm run setup:showdown`,
+      );
+    }
+    if (showdownCommit(resolved) !== SHOWDOWN_LOCK.commit) {
+      throw new Error(`Pokémon Showdown must use pinned revision ${SHOWDOWN_LOCK.commit}`);
+    }
+  } else {
+    showdownCommit(resolved);
   }
 }
 
