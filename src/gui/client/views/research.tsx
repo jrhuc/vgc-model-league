@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'preact/hooks';
 
-import type { ResearchArtifactView, ResearchResponse } from '../../api';
+import type { ResearchResponse } from '../../api';
 import { api } from '../http';
 import { decodeResearchResponse } from '../lib/research-response';
 
@@ -12,71 +12,44 @@ interface ResearchOverviewProps {
   onNewRun: () => void;
 }
 
-function artifactTitle(artifact: ResearchArtifactView): string {
-  return artifact.kind === 'frozen' ? 'Frozen position set' : 'Position pilot';
-}
+const POSITION_STAGE: Record<ResearchResponse['program']['positions']['stage'], string> = {
+  'not-generated': 'No task sets exported',
+  pilot: 'Pilot task sets exported',
+  candidate: 'Candidate task sets frozen',
+  invalid: 'Task sets present but unreadable',
+};
 
-function artifactStatus(artifact: ResearchArtifactView): string {
-  if (artifact.validation.status === 'invalid') return 'Unavailable';
-  if (artifact.taskTotal === 0) return 'Available · no tasks';
-  return 'Available';
-}
+const METHOD = [
+  {
+    index: '01',
+    eyebrow: 'Fork',
+    title: 'Replay the game, stop at one choice',
+    body: 'A recorded game is replayed from its format, Showdown revision, seed, teams, and actions. A run that does not reproduce its stored log is refused, so the position is provably the one that was played.',
+  },
+  {
+    index: '02',
+    eyebrow: 'Panel',
+    title: 'Play every legal action from there',
+    body: 'The position forks once per Showdown-accepted joint action, across shared opponent draws and battle seeds. Two panels decide whether the position separates actions at all; a third, untouched panel supplies the values.',
+  },
+  {
+    index: '03',
+    eyebrow: 'Reward',
+    title: 'Score the choice against its alternatives',
+    body: 'Each action is normalised across the measured spread, so the reward is what the choice cost against what the position had on offer — not whether the game was later won.',
+  },
+] as const;
 
-function previewStatus(artifact: ResearchArtifactView): string {
-  if (artifact.taskPreviewAvailability === 'available') {
-    return `${artifact.taskPreviewCount.toLocaleString()} available`;
-  }
-  return 'Unavailable';
-}
-
-function positionStatus(research: ResearchResponse): string {
-  if (research.program.positions.stage === 'pilot') return 'Pilot tasks available';
-  if (research.program.positions.stage === 'candidate') return 'Position tasks available';
-  return 'Unavailable';
-}
-
-function ArtifactSummary({ artifact }: { artifact: ResearchArtifactView }) {
-  return (
-    <article class={`panel research-artifact-summary research-artifact-${artifact.kind}`}>
-      <header class="research-artifact-summary-header">
-        <div>
-          <p class="eyebrow">{artifactTitle(artifact)}</p>
-          <h3>{artifactStatus(artifact)}</h3>
-        </div>
-        <span class={`research-status research-status-${artifact.validation.status}`}>
-          {artifact.validation.status === 'valid' ? 'Available' : 'Unavailable'}
-        </span>
-      </header>
-      <dl class="research-artifact-summary-state">
-        <div>
-          <dt>Tasks listed</dt>
-          <dd>{artifact.taskTotal.toLocaleString()}</dd>
-        </div>
-        <div>
-          <dt>Task previews</dt>
-          <dd>{previewStatus(artifact)}</dd>
-        </div>
-        <div>
-          <dt>Evaluation results</dt>
-          <dd>Unavailable</dd>
-        </div>
-      </dl>
-      {artifact.taskPreviewReason ? (
-        <p class="muted research-task-availability-reason">Task previews are unavailable on this deployment.</p>
-      ) : null}
-      {artifact.validation.errors.length > 0 ? (
-        <div class="message error research-validation-errors" role="alert">
-          <b>This position set could not be loaded.</b>
-          <p>Open Position Lab for technical details.</p>
-        </div>
-      ) : null}
-    </article>
-  );
-}
+const CIRCUIT = [
+  'Anonymous seats draft one shared board in snake order under a budget.',
+  'Each seat turns its roster into complete legal matchup teams.',
+  'Seats choose what to bring and what to lead.',
+  'The teams play recorded best-of-three battles.',
+] as const;
 
 function ProgramState({ research, error }: { research: ResearchResponse | null; error: string }) {
-  if (research) return <span>{positionStatus(research)}</span>;
-  return <span role="status">{error ? 'Position data unavailable' : 'Loading position data…'}</span>;
+  if (research) return <span>{POSITION_STAGE[research.program.positions.stage]}</span>;
+  return <span role="status">{error ? 'Position data unavailable' : 'Loading…'}</span>;
 }
 
 export function ResearchOverviewView({
@@ -105,15 +78,17 @@ export function ResearchOverviewView({
   }, []);
 
   const previewCount = research?.artifacts.reduce((total, artifact) => total + artifact.taskPreviewCount, 0) ?? 0;
+  const taskTotal = research?.artifacts.reduce((total, artifact) => total + artifact.taskTotal, 0) ?? 0;
 
   return (
     <div class="research-view research-overview-view">
       <header class="research-hero">
         <div class="research-hero-copy">
           <p class="eyebrow">VGC Model League</p>
-          <h1>Explore how language models play VGC.</h1>
+          <h1>Grade the decision, not the scoreboard.</h1>
           <p class="lede">
-            Browse position tasks, draft leagues, tournaments, and live runs. Each page states which data is available.
+            Language models draft, build, and play Pokémon VGC on a pinned Showdown simulator. Because the simulator
+            forks, a single choice can be replayed against every legal alternative it had.
           </p>
         </div>
         <nav class="research-hero-actions" aria-label="Featured pages">
@@ -126,70 +101,64 @@ export function ResearchOverviewView({
         </nav>
       </header>
 
-      <section class="research-roadmap-section" aria-labelledby="research-roadmap-title">
+      <section class="research-roadmap-section" aria-labelledby="research-method-title">
         <header class="research-section-header">
-          <p class="eyebrow">Explore</p>
-          <h2 id="research-roadmap-title">Choose a place to start</h2>
-          <p class="lede">Inspect individual decisions, follow full seasons, or watch battles as they run.</p>
+          <p class="eyebrow">Method</p>
+          <h2 id="research-method-title">How a choice gets a number</h2>
+          <p class="lede">A win or a loss is one bit, and a critical hit can flip it. The forked position is denser.</p>
         </header>
         <ol class="research-roadmap">
-          <li class="panel research-roadmap-step research-roadmap-step-current">
-            <span class="research-roadmap-index">01</span>
-            <div>
-              <p class="eyebrow">Position tasks</p>
-              <h3>Review a single decision</h3>
-              <p class="research-roadmap-state">
-                <ProgramState research={research} error={error} />
-              </p>
-              <p>
-                Open a task to read the prompt and its legal actions. Evaluation results are not available in this GUI.
-              </p>
-              <button type="button" class="text-link research-roadmap-link" onClick={onOpenPositions}>
-                Open Position Lab →
-              </button>
-            </div>
-          </li>
-          <li class="panel research-roadmap-step research-roadmap-step-proposed">
-            <span class="research-roadmap-index">02</span>
-            <div>
-              <p class="eyebrow">Draft leagues</p>
-              <h3>Follow a complete season</h3>
-              <p class="research-roadmap-state research-proposal-state">
-                <span>Recorded seasons available</span>
-              </p>
-              <p>Review draft picks, matchup teams, battle decisions, and results from recorded leagues.</p>
-              <button type="button" class="text-link research-roadmap-link" onClick={onOpenDraftArchive}>
-                Browse draft leagues →
-              </button>
-            </div>
-          </li>
-          <li class="panel research-roadmap-step research-roadmap-step-next">
-            <span class="research-roadmap-index">03</span>
-            <div>
-              <p class="eyebrow">Live and recorded play</p>
-              <h3>Watch battles turn by turn</h3>
-              <p class="research-roadmap-state">
-                <span>Shown when runs are available</span>
-              </p>
-              <p>Follow an active run or open a recorded tournament bracket and its battle logs.</p>
-              <button type="button" class="text-link research-roadmap-link" onClick={onOpenLive}>
-                Open live run →
-              </button>
-            </div>
-          </li>
+          {METHOD.map((step) => (
+            <li class="panel research-roadmap-step" key={step.index}>
+              <span class="research-roadmap-index">{step.index}</span>
+              <div>
+                <p class="eyebrow">{step.eyebrow}</p>
+                <h3>{step.title}</h3>
+                <p>{step.body}</p>
+              </div>
+            </li>
+          ))}
         </ol>
         <aside class="panel research-referee-boundary">
-          <p class="eyebrow">Battle rules</p>
-          <h3>Pokémon Showdown resolves every game</h3>
-          <p>The GUI displays recorded choices and outcomes from the pinned simulator.</p>
+          <p class="eyebrow">Reference limits</p>
+          <h3>These values are reference-relative, not optimal play</h3>
+          <p>
+            The current reference is short-horizon material differential under uniform opponent actions and
+            uniform-random continuations, and it sees the realized hidden state. It is a diagnostic, not a solver.
+          </p>
         </aside>
       </section>
 
-      <section class="research-artifacts-section" aria-labelledby="research-artifacts-title">
+      <section class="research-roadmap-section" aria-labelledby="research-circuit-title">
         <header class="research-section-header">
-          <p class="eyebrow">Position data</p>
-          <h2 id="research-artifacts-title">Availability</h2>
-          <p class="lede">Missing task files and results are shown as unavailable.</p>
+          <p class="eyebrow">Draft circuit</p>
+          <h2 id="research-circuit-title">One season, one episode</h2>
+          <p class="lede">
+            A pick has no cheap quality oracle, so the episode stays intact rather than inventing a per-pick label.
+          </p>
+        </header>
+        <ol class="research-circuit">
+          {CIRCUIT.map((stage, index) => (
+            <li key={stage}>
+              <span class="research-circuit-index">{index + 1}</span>
+              <span>{stage}</span>
+            </li>
+          ))}
+        </ol>
+        <p class="research-circuit-note">
+          What a model drafted, what it built, and what it brought are recorded links, so a plan can be checked against
+          the play that followed. Standings describe one league; they are never aggregated into a ranking.
+        </p>
+      </section>
+
+      <section class="research-artifacts-section" aria-labelledby="research-state-title">
+        <header class="research-section-header">
+          <p class="eyebrow">Status</p>
+          <h2 id="research-state-title">What this server holds</h2>
+          <p class="lede">
+            No public task package, calibrated reward, or validated benchmark has been released. Everything here is
+            exploratory.
+          </p>
         </header>
 
         {error ? (
@@ -205,101 +174,71 @@ export function ResearchOverviewView({
             <dl class="research-state-summary">
               <div class="research-state-item">
                 <dt>Position tasks</dt>
-                <dd>{positionStatus(research)}</dd>
+                <dd>
+                  <ProgramState research={research} error={error} />
+                </dd>
               </div>
               <div class="research-state-item">
                 <dt>Task sets</dt>
                 <dd>{research.artifacts.length.toLocaleString()}</dd>
               </div>
               <div class="research-state-item">
-                <dt>Task previews</dt>
+                <dt>Tasks listed</dt>
+                <dd>{taskTotal.toLocaleString()}</dd>
+              </div>
+              <div class="research-state-item">
+                <dt>Prompt previews</dt>
                 <dd>{previewCount.toLocaleString()}</dd>
               </div>
               <div class="research-state-item">
-                <dt>Older position rows</dt>
-                <dd>{research.legacyPositions.present ? research.legacyPositions.rows.toLocaleString() : '0'}</dd>
-              </div>
-              <div class="research-state-item">
                 <dt>Evaluation results</dt>
-                <dd>Unavailable</dd>
+                <dd>None</dd>
               </div>
             </dl>
 
             {research.errors.length > 0 ? (
               <div class="message error research-root-errors" role="alert">
-                <b>Some position data is unavailable.</b>
-                <p>Open Position Lab for technical details.</p>
+                <b>Some position data could not be read.</b> Open Position Lab for details.
               </div>
             ) : null}
 
             {research.warnings.length > 0 ? (
-              <aside class="panel research-root-warnings" aria-label="Position data notices">
-                <b>Some position data needs attention.</b>
-                <p>Open Position Lab for technical details.</p>
+              <aside class="notice-strip research-root-warnings" aria-label="Position data notices">
+                <b>Some position data needs attention.</b> Open Position Lab for details.
               </aside>
             ) : null}
 
-            {research.artifacts.length > 0 ? (
-              <div class="research-artifact-summary-list">
-                {research.artifacts.map((artifact) => (
-                  <ArtifactSummary artifact={artifact} key={artifact.kind} />
-                ))}
-              </div>
-            ) : (
-              <div class="panel research-empty-state">
-                <h3>No position tasks are available</h3>
-                <p>This server has no browsable position-task files. Evaluation results are also unavailable.</p>
-              </div>
-            )}
-
             {research.legacyPositions.present ? (
-              <aside class="panel research-legacy-inventory">
-                <p class="eyebrow">Older position data</p>
-                <h3>{research.legacyPositions.rows.toLocaleString()} rows found</h3>
-                <p>Task details and evaluation results are unavailable for these rows.</p>
-              </aside>
+              <p class="muted research-legacy-note">
+                {research.legacyPositions.rows.toLocaleString()} older position rows are on disk without a bound
+                manifest. They are counted, not served.
+              </p>
             ) : null}
           </>
         )}
       </section>
 
-      <section class="research-workspace-links" aria-labelledby="research-workspace-links-title">
+      <section class="research-workspace-links" aria-labelledby="research-links-title">
         <header class="research-section-header">
-          <p class="eyebrow">More</p>
-          <h2 id="research-workspace-links-title">Browse, watch, or start a run</h2>
+          <p class="eyebrow">Go to</p>
+          <h2 id="research-links-title">Everywhere else</h2>
         </header>
-        <div class="research-link-grid">
-          <article class="panel research-link-card research-link-research">
-            <h3>Browse</h3>
-            <p>Open position tasks or recorded draft leagues.</p>
-            <div class="research-link-actions">
-              <button type="button" class="button" onClick={onOpenPositions}>
-                Position Lab
-              </button>
-              <button type="button" class="button" onClick={onOpenDraftArchive}>
-                Draft leagues
-              </button>
-            </div>
-          </article>
-          <article class="panel research-link-card research-link-observe">
-            <h3>Watch</h3>
-            <p>Follow an active run or inspect recorded tournament brackets.</p>
-            <div class="research-link-actions">
-              <button type="button" class="button" onClick={onOpenLive}>
-                Live run
-              </button>
-              <button type="button" class="button" onClick={onOpenTournaments}>
-                Tournaments
-              </button>
-            </div>
-          </article>
-          <article class="panel research-link-card research-link-operate">
-            <h3>Start</h3>
-            <p>Choose models, teams, and run settings.</p>
-            <button type="button" class="button" onClick={onNewRun}>
-              New run
-            </button>
-          </article>
+        <div class="research-destinations">
+          <button type="button" class="button" onClick={onOpenPositions}>
+            Position Lab
+          </button>
+          <button type="button" class="button" onClick={onOpenDraftArchive}>
+            Draft leagues
+          </button>
+          <button type="button" class="button" onClick={onOpenLive}>
+            Live run
+          </button>
+          <button type="button" class="button" onClick={onOpenTournaments}>
+            Tournaments
+          </button>
+          <button type="button" class="button" onClick={onNewRun}>
+            New run
+          </button>
         </div>
       </section>
     </div>
