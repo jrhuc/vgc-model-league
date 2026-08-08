@@ -4,10 +4,10 @@
 .fixture-layout { display: grid; grid-template-columns: minmax(0, 1.65fr) minmax(300px, .75fr); gap: 20px; align-items: start; }
 .stage { position: relative; border-top: 4px solid var(--yellow); }
 .settings { border-top: 4px solid var(--yellow); position: sticky; top: 98px; border-top-color: var(--ink); }
-.fixture-layout > .stage > .section-head::before { align-self: flex-start; min-width: 26px; color: var(--line-strong); font: 500 22px/1 var(--display); content: "01"; }
-.fixture-layout > .settings > .section-head::before { align-self: flex-start; min-width: 26px; color: var(--line-strong); font: 500 22px/1 var(--display); content: "02"; }
-.section-count { font: 500 25px/1 var(--display); }
-.section-count small { display: block; margin-top: 5px; color: var(--muted); font: 700 8px/1 var(--mono); letter-spacing: .09em; text-transform: uppercase; }
+.fixture-layout > .stage > .section-head::before { align-self: flex-start; min-width: 26px; color: var(--line-strong); font: 600 18px/1 var(--mono); content: "01"; }
+.fixture-layout > .settings > .section-head::before { align-self: flex-start; min-width: 26px; color: var(--line-strong); font: 600 18px/1 var(--mono); content: "02"; }
+.section-count { font: 600 24px/1 var(--body); letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+.section-count small { display: block; margin-top: 5px; color: var(--muted); font: 700 9px/1 var(--mono); letter-spacing: .09em; text-transform: uppercase; }
 .contender-deck { padding: 18px 24px 8px; }
 .contender { display: grid; grid-template-columns: 42px minmax(0, 1fr) auto; gap: 14px; align-items: center; min-height: 66px; padding: 10px 12px; margin-bottom: 9px; background: var(--surface-raised); border: 1px solid var(--line); }
 .contender-code { display: grid; height: 42px; place-items: center; color: white; background: var(--ink); font: 800 16px/1 var(--display); }
