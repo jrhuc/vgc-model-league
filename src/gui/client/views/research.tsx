@@ -13,38 +13,38 @@ interface ResearchOverviewProps {
 }
 
 const POSITION_STAGE: Record<ResearchResponse['program']['positions']['stage'], string> = {
-  'not-generated': 'No task sets exported',
-  pilot: 'Pilot task sets exported',
-  candidate: 'Candidate task sets frozen',
-  invalid: 'Task sets present but unreadable',
+  'not-generated': 'No position tasks available',
+  pilot: 'Pilot position tasks available',
+  candidate: 'Candidate position tasks available',
+  invalid: 'Position data unavailable',
 };
 
 const METHOD = [
   {
     index: '01',
     eyebrow: 'Fork',
-    title: 'Replay the game, stop at one choice',
-    body: 'A recorded game is replayed from its format, Showdown revision, seed, teams, and actions. A run that does not reproduce its stored log is refused, so the position is provably the one that was played.',
+    title: 'Reproduce the recorded position',
+    body: 'Replay the source game from its recorded format, Showdown revision, seed, teams, and actions. Reject the position unless the replay reproduces the stored log.',
   },
   {
     index: '02',
     eyebrow: 'Panel',
-    title: 'Play every legal action from there',
-    body: 'The position forks once per Showdown-accepted joint action, across shared opponent draws and battle seeds. Two panels decide whether the position separates actions at all; a third, untouched panel supplies the values.',
+    title: 'Evaluate accepted candidate actions',
+    body: 'Fork the reproduced position for each Showdown-accepted action from the frozen candidate protocol. Use common opponent-action draws and battle seeds within each panel, independent panels for eligibility, and a separate panel for reward values.',
   },
   {
     index: '03',
     eyebrow: 'Reward',
-    title: 'Score the choice against its alternatives',
-    body: 'Each action is normalised across the measured spread, so the reward is what the choice cost against what the position had on offer — not whether the game was later won.',
+    title: 'Compute the normalized reward',
+    body: 'Normalize each action’s measurement-panel mean over the task’s measured minimum-to-maximum span. The recorded match result is not part of the reward.',
   },
 ] as const;
 
 const CIRCUIT = [
-  'Anonymous seats draft one shared board in snake order under a budget.',
-  'Each seat turns its roster into complete legal matchup teams.',
-  'Seats choose what to bring and what to lead.',
-  'The teams play recorded best-of-three battles.',
+  'Anonymous seats draft from a shared board in snake order under a budget.',
+  'Each seat converts its roster into complete legal matchup teams.',
+  'Each seat selects its bring and lead.',
+  'Each matchup is recorded as a best-of-three series.',
 ] as const;
 
 function ProgramState({ research, error }: { research: ResearchResponse | null; error: string }) {
@@ -85,10 +85,10 @@ export function ResearchOverviewView({
       <header class="research-hero">
         <div class="research-hero-copy">
           <p class="eyebrow">VGC Model League</p>
-          <h1>Grade the decision, not the scoreboard.</h1>
+          <h1>Explore how language models play VGC.</h1>
           <p class="lede">
-            Language models draft, build, and play Pokémon VGC on a pinned Showdown simulator. Because the simulator
-            forks, a single choice can be replayed against every legal alternative it had.
+            Compare choices in replayable Pokémon Showdown positions, and inspect complete draft, teambuild, bring,
+            lead, and battle records.
           </p>
         </div>
         <nav class="research-hero-actions" aria-label="Featured pages">
@@ -104,8 +104,10 @@ export function ResearchOverviewView({
       <section class="research-roadmap-section" aria-labelledby="research-method-title">
         <header class="research-section-header">
           <p class="eyebrow">Method</p>
-          <h2 id="research-method-title">How a choice gets a number</h2>
-          <p class="lede">A win or a loss is one bit, and a critical hit can flip it. The forked position is denser.</p>
+          <h2 id="research-method-title">Position-task evaluation</h2>
+          <p class="lede">
+            Reproduce a position, evaluate its accepted candidate actions, and freeze the measured reward.
+          </p>
         </header>
         <ol class="research-roadmap">
           {METHOD.map((step) => (
@@ -120,11 +122,12 @@ export function ResearchOverviewView({
           ))}
         </ol>
         <aside class="panel research-referee-boundary">
-          <p class="eyebrow">Reference limits</p>
-          <h3>These values are reference-relative, not optimal play</h3>
+          <p class="eyebrow">Reference</p>
+          <h3>Rewards are relative to the prototype reference</h3>
           <p>
-            The current reference is short-horizon material differential under uniform opponent actions and
-            uniform-random continuations, and it sees the realized hidden state. It is a diagnostic, not a solver.
+            The reference uses short-horizon material differential, sampled uniform Showdown-accepted candidate opponent
+            actions, and uniform-random continuations. It evaluates the realized hidden state and does not estimate
+            optimal play.
           </p>
         </aside>
       </section>
@@ -132,9 +135,10 @@ export function ResearchOverviewView({
       <section class="research-roadmap-section" aria-labelledby="research-circuit-title">
         <header class="research-section-header">
           <p class="eyebrow">Draft circuit</p>
-          <h2 id="research-circuit-title">One season, one episode</h2>
+          <h2 id="research-circuit-title">Draft-circuit stages</h2>
           <p class="lede">
-            A pick has no cheap quality oracle, so the episode stays intact rather than inventing a per-pick label.
+            A legal draft pick has no direct quality label. Drafting, teambuilding, bring and lead choices, and battles
+            remain one episode.
           </p>
         </header>
         <ol class="research-circuit">
@@ -146,19 +150,16 @@ export function ResearchOverviewView({
           ))}
         </ol>
         <p class="research-circuit-note">
-          What a model drafted, what it built, and what it brought are recorded links, so a plan can be checked against
-          the play that followed. Standings describe one league; they are never aggregated into a ranking.
+          Draft picks, built teams, bring choices, and battle decisions remain linked. Standings describe one league and
+          are not model rankings.
         </p>
       </section>
 
       <section class="research-artifacts-section" aria-labelledby="research-state-title">
         <header class="research-section-header">
-          <p class="eyebrow">Status</p>
-          <h2 id="research-state-title">What this server holds</h2>
-          <p class="lede">
-            No public task package, calibrated reward, or validated benchmark has been released. Everything here is
-            exploratory.
-          </p>
+          <p class="eyebrow">Position data</p>
+          <h2 id="research-state-title">Availability</h2>
+          <p class="lede">No public task package, calibrated reward, or validated benchmark has been released.</p>
         </header>
 
         {error ? (
@@ -187,12 +188,12 @@ export function ResearchOverviewView({
                 <dd>{taskTotal.toLocaleString()}</dd>
               </div>
               <div class="research-state-item">
-                <dt>Prompt previews</dt>
+                <dt>Task previews</dt>
                 <dd>{previewCount.toLocaleString()}</dd>
               </div>
               <div class="research-state-item">
                 <dt>Evaluation results</dt>
-                <dd>None</dd>
+                <dd>Unavailable</dd>
               </div>
             </dl>
 
@@ -220,8 +221,8 @@ export function ResearchOverviewView({
 
       <section class="research-workspace-links" aria-labelledby="research-links-title">
         <header class="research-section-header">
-          <p class="eyebrow">Go to</p>
-          <h2 id="research-links-title">Everywhere else</h2>
+          <p class="eyebrow">More</p>
+          <h2 id="research-links-title">Browse, watch, or start a run</h2>
         </header>
         <div class="research-destinations">
           <button type="button" class="button" onClick={onOpenPositions}>
