@@ -60,7 +60,7 @@ A local `LLMEngine` seat receives only its authorized view:
 - public field state and timers, exact own-Pokémon state, and both open team
   sheets when the format uses them;
 - its bounded private timeline and series notebook;
-- numbered legal joint actions and matchup references;
+- numbered request-derived joint-action candidates and matchup references;
 - optional bounded mechanics tools for dex data, exact format-aware stats, and
   damage from the live request and visible sheets.
 
@@ -105,14 +105,16 @@ thinking budget.
 
 The local league generates exploratory trajectories. The evaluator replays only
 games bound to exact teams and current provenance, and refuses any source that
-does not reproduce its stored log. `src/eval/fork.ts` owns snapshots, forks, and
-action enumeration. Evaluation manifests bind the Showdown SHA, reference
+does not reproduce its stored log. `src/eval/fork.ts` owns snapshots, forks,
+request-menu candidate enumeration, and native Showdown acceptance filtering.
+Evaluation manifests bind the Showdown SHA, reference
 configuration, action encoding, source corpus, executed evaluator, seeds, and
 content digests.
 
 Position artifacts have three physically separate classes:
 
-1. **Public tasks:** neutral point-of-view prompts and numbered legal actions.
+1. **Public tasks:** neutral point-of-view prompts and numbered
+   Showdown-accepted candidate actions.
 2. **Private scores:** qualification evidence and frozen action values.
 3. **Sealed grader state:** snapshots, opponent requests, draws, and rectangular
    action-value matrices.

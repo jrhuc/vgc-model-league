@@ -2,15 +2,16 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  acceptedLegalActionEntries,
   type GameSource,
-  legalActionEntries,
-  legalActions,
   newBattle,
   omniscientLog,
   openPosition,
   pendingSides,
   playJoint,
   replayGame,
+  requestActionCandidateEntries,
+  requestActionCandidates,
 } from '../src/eval/fork.js';
 import { loadPool } from '../src/teams.js';
 import type { BattleRequest, Pid } from '../src/types.js';
@@ -42,7 +43,7 @@ function scripted(base: GameSource): { choices: Record<Pid, string[]>; log: stri
     const taken: Partial<Record<Pid, string>> = {};
     for (const pid of pending) {
       const request = battle.getSide(pid).activeRequest as unknown as BattleRequest;
-      const action = legalActions(request)[0];
+      const action = requestActionCandidates(request)[0];
       if (action === undefined) throw new Error(`no legal action for ${pid}`);
       taken[pid] = action;
       choices[pid].push(action);
@@ -117,7 +118,7 @@ test('one-sided replacement requests remain decision positions', () => {
   assert.ok(replacement, 'the scripted game reached a one-sided replacement');
   const pid = replacement.pending[0] as Pid;
   assert.equal(replacement.actual[pid], choices[pid][replacement.choiceIndex[pid] as number]);
-  assert.ok(legalActions(replacement.requests[pid]).includes(replacement.actual[pid] as string));
+  assert.ok(requestActionCandidates(replacement.requests[pid]).includes(replacement.actual[pid] as string));
 });
 
 test('the counterfactual action set contains each offered legal command once', () => {
@@ -127,13 +128,13 @@ test('the counterfactual action set contains each offered legal command once', (
   const turn = positions.find((position) => position.turn > 0 && position.pending.length === 2);
   assert.ok(turn, 'the scripted game reached a battle turn');
 
-  const actions = legalActions(turn.requests.p1);
+  const actions = requestActionCandidates(turn.requests.p1);
   assert.ok(actions.length > 1);
   assert.ok(actions.includes(turn.actual.p1 as string));
   assert.equal(new Set(actions).size, actions.length);
   assert.ok(!actions.includes('forfeit'));
   assert.ok(actions.every((action) => (action.match(/ mega/g) ?? []).length <= 1));
-  const entries = legalActionEntries(turn.requests.p1);
+  const entries = requestActionCandidateEntries(turn.requests.p1);
   assert.deepEqual(
     entries.map((entry) => entry.command),
     actions,
@@ -161,7 +162,7 @@ test('a forced replacement cannot pass every fainted slot while a reserve remain
       ],
     },
   } as unknown as BattleRequest;
-  assert.deepEqual(legalActions(request).toSorted(), ['pass, switch 3', 'switch 3, pass']);
+  assert.deepEqual(requestActionCandidates(request).toSorted(), ['pass, switch 3', 'switch 3, pass']);
 });
 
 test('every enumerated command is accepted by Showdown at its source position', () => {
@@ -172,7 +173,7 @@ test('every enumerated command is accepted by Showdown at its source position', 
   assert.ok(position);
 
   for (const pid of ['p1', 'p2'] as const) {
-    for (const action of legalActions(position.requests[pid])) {
+    for (const action of requestActionCandidates(position.requests[pid])) {
       const battle = openPosition(position);
       assert.equal(battle.choose(pid, action), true, `${pid} rejected ${action}`);
     }
@@ -195,7 +196,7 @@ test('a position reopens as a live battle that alternative actions can be played
   const replayed = openPosition(position);
   assert.equal(playJoint(replayed, position.actual), true);
 
-  const alternatives = legalActions(position.requests.p1).filter((action) => action !== position.actual.p1);
+  const alternatives = requestActionCandidates(position.requests.p1).filter((action) => action !== position.actual.p1);
   const outcomes = new Set<string>();
   for (const action of alternatives.slice(0, 12)) {
     const forked = openPosition(position);
@@ -241,4 +242,32 @@ test('a position records what each side had actually been shown by then', () => 
   const omniscient = replay.log.slice(0, position.seen.p2);
   assert.notDeepEqual(hidden, omniscient);
   assert.ok(hidden.length < replay.log.length);
+});
+
+test('the Showdown acceptance oracle rejects overgenerated candidates densely and deterministically', () => {
+  const base = source();
+  const { choices, log } = scripted(base);
+  const position = replayGame({ ...base, choices }, log).positions.find(
+    (entry) => entry.turn > 0 && entry.pending.includes('p1'),
+  );
+  assert.ok(position);
+  const candidates = requestActionCandidateEntries(position.requests.p1);
+  const rejected = {
+    number: 10_000,
+    choices: [999],
+    command: 'move 999, move 999',
+    label: 'overgenerated invalid action',
+  };
+  const overgenerated = [rejected, ...candidates.map((entry) => ({ ...entry, number: entry.number + 50 }))];
+  const before = structuredClone(overgenerated);
+  const first = acceptedLegalActionEntries(openPosition(position), 'p1', overgenerated);
+  const second = acceptedLegalActionEntries(openPosition(position), 'p1', overgenerated);
+
+  assert.ok(!first.some((entry) => entry.command === rejected.command));
+  assert.deepEqual(first, second);
+  assert.deepEqual(
+    first.map((entry) => entry.number),
+    first.map((_, index) => index),
+  );
+  assert.deepEqual(overgenerated, before);
 });

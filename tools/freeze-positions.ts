@@ -5,13 +5,14 @@ import path from 'node:path';
 
 import { canonicalScoreDigest, completedPositionScores } from '../src/eval/artifact.js';
 import { loadGameRecords, verifyGame } from '../src/eval/corpus.js';
-import { legalActions, positionDigest } from '../src/eval/fork.js';
+import { acceptedBattleActions, openPosition, positionDigest } from '../src/eval/fork.js';
 import {
   anonymiseLog,
   anonymiseRequest,
   type CandidatePosition,
   gameOf,
   MIN_MEASURED_CONTRAST,
+  POSITION_SET_SCHEMA_VERSION,
   readCandidates,
   type SelectionOptions,
   selectPositions,
@@ -78,7 +79,8 @@ async function main(): Promise<void> {
   const settings = parse(process.argv.slice(2));
   const gradedManifestPath = `${settings.graded}.manifest.json`;
   const gradedManifest = readJson(gradedManifestPath);
-  if (Number(gradedManifest.schema_version) < 3) throw new Error('graded manifest predates the sealed corpus protocol');
+  if (Number(gradedManifest.schema_version) < 4)
+    throw new Error('graded manifest predates the acceptance-filtered corpus protocol');
   if (gradedManifest.showdown_commit !== showdownCommit(defaultPsDir())) {
     throw new Error('graded manifest does not match the current Pokémon Showdown checkout');
   }
@@ -133,13 +135,15 @@ async function main(): Promise<void> {
         );
       }
       const id = digest([game, position.positionIndex, position.pid, liveDigest]);
+      const authoritative = openPosition(live);
+      const legal = acceptedBattleActions(authoritative, position.pid);
       publicPositions.push({
         id,
         format: position.format,
         phase: position.phase,
         turn: live.turn,
         request: anonymiseRequest(request, record.names),
-        legal: legalActions(request),
+        legal,
         seen: anonymiseLog(verified.replay.pov[position.pid].slice(0, live.seen[position.pid]), record.names),
       });
       privatePositions.push({
@@ -155,7 +159,9 @@ async function main(): Promise<void> {
           played: position.played,
         },
         snapshot: live.snapshot,
-        opponent_request: live.requests[position.pid === 'p1' ? 'p2' : 'p1'] ?? null,
+        opponent_request: live.pending.includes(position.pid === 'p1' ? 'p2' : 'p1')
+          ? (live.requests[position.pid === 'p1' ? 'p2' : 'p1'] ?? null)
+          : null,
         selection_stratum: stratumOf(position),
         measured_contrast: position.contrast,
         state_value: position.value,
@@ -171,7 +177,7 @@ async function main(): Promise<void> {
     formats: settings.formats ?? null,
   };
   const publicPayload = {
-    schema_version: 3,
+    schema_version: POSITION_SET_SCHEMA_VERSION,
     grader_manifest: gradedManifest,
     graded_checksum: gradedChecksum,
     selection_protocol: { version: 1, minimum_measured_contrast: MIN_MEASURED_CONTRAST },
@@ -181,7 +187,7 @@ async function main(): Promise<void> {
   const setId = digest(publicPayload);
   const publicSet = { ...publicPayload, id: setId };
   const privateSet = {
-    schema_version: 3,
+    schema_version: POSITION_SET_SCHEMA_VERSION,
     id: setId,
     public_checksum: digest(publicSet),
     strata: selection.strata,

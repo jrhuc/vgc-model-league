@@ -100,17 +100,21 @@ function, horizon, continuation policy, opponent-action distribution, search,
 random seeds, sample counts, selection/measurement estimates, and uncertainty.
 Never mix values from different references.
 
-The current prototype uses material differential, uniform legal opponent
-actions, uniform-random continuations, and bounded Monte Carlo rollouts. Call
+The current prototype uses material differential, uniform Showdown-accepted
+request-derived candidate opponent actions, uniform-random continuations, and
+bounded Monte Carlo rollouts. Call
 its output **reference-relative opportunity loss** (or attach the reference to
 “regret”). It is short-horizon and evaluates the realized hidden state, including
 information the acting seat may not have known. An ex-ante claim must average a
 published prior over compatible hidden states or retain positions robust across
 those states.
 
-All legal actions within a panel use common random draws. Two independent
-qualification panels determine eligibility under a policy calibrated outside
-the candidate corpus; an untouched measurement panel supplies rewards. A row
+Every Showdown-accepted action produced by the frozen request-menu candidate
+protocol uses common random draws within a panel. Native `Side.choose` filtering
+removes false positives; the generator does not claim coverage of every custom
+Showdown mechanic, and its declared omissions remain part of the protocol. Two
+independent qualification panels determine eligibility under a policy calibrated
+outside the candidate corpus; an untouched measurement panel supplies rewards. A row
 admitted by qualification but missing a usable measurement panel fails the
 candidate freeze. Do not select or remove rows using measurement values, call a
 noisy maximum the true best, or silently clamp an independent reversal.

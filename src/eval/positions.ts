@@ -2,6 +2,7 @@ import { seededRng, shuffle } from '../random.js';
 import type { BattleRequest, JsonObject, Pid } from '../types.js';
 
 export const MIN_MEASURED_CONTRAST = 0.05;
+export const POSITION_SET_SCHEMA_VERSION = 4;
 
 export interface CandidatePosition {
   runId: string;

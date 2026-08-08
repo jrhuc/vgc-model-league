@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import type { Battle } from 'pokemon-showdown';
 
-import { legalActionEntries } from '../src/eval/fork.js';
+import { requestActionCandidateEntries } from '../src/eval/fork.js';
 import {
   POSITION_TASK_PROTOCOL,
   parsePositionResponse,
@@ -39,6 +40,24 @@ function request(): BattleRequest {
   };
 }
 
+class AcceptingBattle {
+  static fromJSON(): AcceptingBattle {
+    return new AcceptingBattle();
+  }
+
+  toJSON(): Record<string, never> {
+    return {};
+  }
+
+  restart(_send: () => void): void {}
+
+  getSide(_pid: string): { activeRequest: BattleRequest; choose(command: string): boolean } {
+    return { activeRequest: request(), choose: (command) => command !== 'move 999' };
+  }
+}
+
+const taskBattle = new AcceptingBattle() as unknown as Battle;
+
 const seen = [
   '|player|p1|Player 1|',
   '|player|p2|Player 2|',
@@ -47,10 +66,10 @@ const seen = [
   '|turn|3',
 ];
 
-test('a canonical task freezes one numbered map of every legal joint action', () => {
+test('a canonical task freezes one numbered map of every Showdown-accepted candidate action', () => {
   const format = loadPool().format;
-  const task = renderPositionTask({ id: 'task', format, pid: 'p1', request: request(), seen });
-  const entries = legalActionEntries(request());
+  const task = renderPositionTask({ id: 'task', format, pid: 'p1', battle: taskBattle, request: request(), seen });
+  const entries = requestActionCandidateEntries(request());
   assert.deepEqual(
     task.actions.map((entry) => [entry.number, entry.canonicalAction, entry.label]),
     entries.map((entry) => [entry.number, entry.command, entry.label]),
@@ -109,10 +128,12 @@ test('task and score resources must join by both number and canonical action', (
     { number: 0, canonicalAction: 'move 1', label: 'Protect' },
     { number: 1, canonicalAction: 'move 2 1', label: 'Attack' },
   ];
-  validateTaskScoreJoin(taskActions, [
-    { number: 1, canonicalAction: 'move 2 1', normalizedReward: 1 },
-    { number: 0, canonicalAction: 'move 1', normalizedReward: 0 },
-  ]);
+  assert.throws(() =>
+    validateTaskScoreJoin(taskActions, [
+      { number: 1, canonicalAction: 'move 2 1', normalizedReward: 1 },
+      { number: 0, canonicalAction: 'move 1', normalizedReward: 0 },
+    ]),
+  );
   assert.throws(() =>
     validateTaskScoreJoin(taskActions, [
       { number: 0, canonicalAction: 'move 1', normalizedReward: 0 },

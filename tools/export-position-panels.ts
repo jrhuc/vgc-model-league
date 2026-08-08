@@ -11,7 +11,7 @@ import {
   evaluateActionTable,
 } from '../src/eval/counterfactual.js';
 import { POSITION_ELIGIBILITY_METRICS_VERSION, positionEligibilityMetrics } from '../src/eval/eligibility.js';
-import { ACTION_PROTOCOL, type Position } from '../src/eval/fork.js';
+import { ACTION_PROTOCOL, openPosition, type Position, pendingSides } from '../src/eval/fork.js';
 import {
   exactPublicPositionFingerprint,
   POSITION_SOURCE_GROUP_PROTOCOL,
@@ -19,6 +19,7 @@ import {
   validatePositionPanelArtifacts,
 } from '../src/eval/panel-artifact.js';
 import { validatePilotManifestV2 } from '../src/eval/position-artifact-manifest.js';
+import { anonymiseRequest, POSITION_SET_SCHEMA_VERSION } from '../src/eval/positions.js';
 import {
   CANONICAL_JSON_PROTOCOL,
   canonicalJson,
@@ -423,7 +424,7 @@ function publishImmutable(root: OutputRoot, name: string, content: string): void
   if (cleanupFailed) throw cleanupError;
 }
 
-function taskPosition(publicRow: JsonObject, privateRow: JsonObject): { position: Position; pid: Pid } {
+function taskPosition(publicRow: JsonObject, privateRow: JsonObject, psDir?: string): { position: Position; pid: Pid } {
   const source = privateRow.source as JsonObject | undefined;
   const pid = source?.pid;
   if (pid !== 'p1' && pid !== 'p2') throw new Error(`position ${String(publicRow.id)} has no private pid`);
@@ -433,25 +434,30 @@ function taskPosition(publicRow: JsonObject, privateRow: JsonObject): { position
   const opponent = privateRow.opponent_request as BattleRequest | null | undefined;
   const requests = { [pid]: request } as Record<Pid, BattleRequest>;
   if (opponent) requests[foe] = opponent;
-  return {
-    pid,
-    position: {
-      index: Number(source?.position_index ?? 0),
-      turn: Number(publicRow.turn ?? 0),
-      pending: opponent ? [pid, foe] : [pid],
-      requests,
-      actual: {},
-      choiceIndex: {},
-      seen: { p1: 0, p2: 0 },
-      snapshot: String(privateRow.snapshot ?? ''),
-    },
+  const position: Position = {
+    index: Number(source?.position_index ?? 0),
+    turn: Number(publicRow.turn ?? 0),
+    pending: [],
+    requests,
+    actual: {},
+    choiceIndex: {},
+    seen: { p1: 0, p2: 0 },
+    snapshot: String(privateRow.snapshot ?? ''),
   };
+  position.pending = pendingSides(openPosition(position, psDir));
+  return { pid, position };
 }
 
 async function main(): Promise<void> {
   const settings = parse(process.argv.slice(2));
   const publicSet = readObject(settings.set);
   const privateSet = readObject(settings.privateSet);
+  if (
+    publicSet.schema_version !== POSITION_SET_SCHEMA_VERSION ||
+    privateSet.schema_version !== POSITION_SET_SCHEMA_VERSION
+  ) {
+    throw new Error(`position sets must use schema version ${POSITION_SET_SCHEMA_VERSION}`);
+  }
   if (typeof publicSet.id !== 'string' || publicSet.id !== privateSet.id) {
     throw new Error('public and private position sets do not share one id');
   }
@@ -470,7 +476,26 @@ async function main(): Promise<void> {
     const sourceId = String(publicRow.id ?? '');
     const privateRow = privateById.get(sourceId);
     if (!sourceId || !privateRow) throw new Error(`public position ${sourceId || index} has no private row`);
-    const { position, pid } = taskPosition(publicRow, privateRow);
+    const { position, pid } = taskPosition(publicRow, privateRow, settings.psDir);
+    const authoritative = openPosition(position, settings.psDir);
+    const authoritativeRequest = authoritative.getSide(pid).activeRequest as unknown as BattleRequest | null;
+    if (!authoritativeRequest) throw new Error(`position ${sourceId} snapshot has no source request`);
+    const names = { p1: authoritative.getSide('p1').name, p2: authoritative.getSide('p2').name };
+    if (canonicalJson(anonymiseRequest(authoritativeRequest, names)) !== canonicalJson(position.requests[pid])) {
+      throw new Error(`position ${sourceId} public request does not match its anonymized snapshot request`);
+    }
+    const opponentPid: Pid = pid === 'p1' ? 'p2' : 'p1';
+    const authoritativeOpponent = authoritative.getSide(opponentPid).activeRequest as unknown as BattleRequest | null;
+    const submittedOpponent = position.requests[opponentPid];
+    if (position.pending.includes(opponentPid) !== Boolean(submittedOpponent)) {
+      throw new Error(`position ${sourceId} opponent request presence does not match its snapshot decision boundary`);
+    }
+    if (
+      submittedOpponent &&
+      (!authoritativeOpponent || canonicalJson(authoritativeOpponent) !== canonicalJson(submittedOpponent))
+    ) {
+      throw new Error(`position ${sourceId} opponent request does not match its snapshot request`);
+    }
     const seed = `${String(settings.seed ?? 'position-panels')}:${sourceId}`;
     const table = evaluateActionTable(position, pid, { ...settings, seed });
     if (!table) throw new Error(`position ${sourceId} did not produce three complete exhaustive panels`);
@@ -478,16 +503,21 @@ async function main(): Promise<void> {
       id: sourceId,
       format: String(publicRow.format ?? ''),
       pid,
+      battle: authoritative,
       request: position.requests[pid],
       seen: Array.isArray(publicRow.seen) ? publicRow.seen.map(String) : [],
       ...(settings.psDir ? { psDir: settings.psDir } : {}),
     });
     const measuredByAction = new Map(table.measurement.actions.map((entry) => [entry.action, entry]));
+    const renderedCommands = rendered.actions.map((entry) => entry.canonicalAction);
+    const measuredCommands = table.measurement.actions.map((entry) => entry.action);
+    const frozenPublicCommands = Array.isArray(publicRow.legal) ? publicRow.legal.map(String) : [];
     if (
       rendered.actions.length !== table.legal ||
-      rendered.actions.some((entry) => !measuredByAction.has(entry.canonicalAction))
+      JSON.stringify(renderedCommands) !== JSON.stringify(measuredCommands) ||
+      JSON.stringify(renderedCommands) !== JSON.stringify(frozenPublicCommands)
     ) {
-      throw new Error(`position ${sourceId} prompt action map does not match its exhaustive panel`);
+      throw new Error(`position ${sourceId} frozen, prompt, and graded action maps are not exactly equal`);
     }
     const taskId = canonicalJsonDigest([
       publicSet.id,
@@ -522,7 +552,7 @@ async function main(): Promise<void> {
     ];
     const eligibilityMetrics = positionEligibilityMetrics(table);
     taskRows.push({
-      schema_version: 2,
+      schema_version: 3,
       task_id: taskId,
       split: 'pilot',
       format: rendered.format,
@@ -542,7 +572,7 @@ async function main(): Promise<void> {
       })),
     });
     scoreRows.push({
-      schema_version: 2,
+      schema_version: 3,
       task_id: taskId,
       structural_pass: structuralReasons.length === 0,
       structural_reasons: structuralReasons,
@@ -579,7 +609,7 @@ async function main(): Promise<void> {
     const sourceGroup = positionSourceGroup(source);
     const exactPublicFingerprint = exactPublicPositionFingerprint(taskRows.at(-1) as JsonObject);
     sealedRows.push({
-      schema_version: 2,
+      schema_version: 3,
       task_id: taskId,
       source_id: sourceId,
       source_group: sourceGroup,
@@ -595,7 +625,7 @@ async function main(): Promise<void> {
   }
   if (privateById.size !== taskRows.length) throw new Error('private position set contains an unmatched row');
 
-  validatePositionPanelArtifacts(taskRows, scoreRows, sealedRows);
+  validatePositionPanelArtifacts(taskRows, scoreRows, sealedRows, settings.psDir);
   const { publicRoot, privateRoot } = prepareOutputRoots(settings.out, settings.privateOut);
   const taskFile = path.join(publicRoot.directory, 'tasks.pilot.jsonl');
   const scoreFile = path.join(privateRoot.directory, 'scores.pilot.jsonl');

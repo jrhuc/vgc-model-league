@@ -16,8 +16,9 @@ never aggregated into a model ranking.
 The project separates two questions:
 
 1. **Controlled battle positions.** Exact replays can be forked to estimate the
-   short-horizon value of alternative legal actions under a declared reference:
-   material value, uniform legal opponent actions, uniform-random continuations,
+   short-horizon value of alternative Showdown-accepted actions under a declared
+   candidate protocol and reference. The current reference uses material value,
+   uniform accepted candidate opponent actions, uniform-random continuations,
    and a fixed Monte Carlo budget. These experimental values are
    reference-relative realized-state diagnostics, not labels of optimal play.
 2. **Draft-to-battle trajectories.** A model must carry a plan through a scarce

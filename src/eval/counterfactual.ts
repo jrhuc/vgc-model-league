@@ -3,20 +3,30 @@ import type { Battle } from 'pokemon-showdown';
 import { defaultPsDir } from '../paths.js';
 import { type Rng, seededRng, shuffle } from '../random.js';
 import type { BattleRequest, Pid } from '../types.js';
-import { legalActions, openPosition, type Position, pendingSides, playJoint } from './fork.js';
+import {
+  acceptedBattleActions,
+  acceptedLegalActions,
+  openPosition,
+  type Position,
+  pendingSides,
+  playJoint,
+  requestActionCandidateEntries,
+} from './fork.js';
 import { canonicalJsonDigest } from './serialization.js';
 
-export const COUNTERFACTUAL_PROTOCOL_VERSION = 3;
+export const COUNTERFACTUAL_PROTOCOL_VERSION = 4;
 
 export const REFERENCE = {
   hiddenState: 'realized',
-  continuation: 'uniform-random-non-concession',
-  opponent: 'actual-or-sampled-uniform-legal-when-simultaneous',
+  continuation: 'uniform-random-permutation-first-showdown-accepted-request-derived-non-concession',
+  opponent: 'actual-or-sampled-uniform-showdown-accepted-request-derived-when-simultaneous',
+  actionSet: 'showdown-accepted-request-derived-candidates-not-universal-showdown-completeness',
   value: 'material-differential',
 } as const;
 
 export const EXHAUSTIVE_PANEL_PROTOCOL = {
-  version: 4,
+  version: 5,
+  actionSet: 'showdown-accepted-request-derived-candidates-not-universal-showdown-completeness',
   panels: ['stability-a', 'stability-b', 'measurement'],
   matrixDigest: 'sha256-canonical-exhaustive-panel-matrix-v2',
   drawPlan: 'seeded-srswor-opponents-and-battle-words-v1',
@@ -248,8 +258,15 @@ function requestOf(battle: Battle, pid: Pid): BattleRequest | null {
   return (battle.getSide(pid).activeRequest as unknown as BattleRequest | null) ?? null;
 }
 
-function policyActions(request: BattleRequest): string[] {
-  return legalActions(request);
+function policyActions(battle: Battle, pid: Pid): string[] {
+  return acceptedBattleActions(battle, pid);
+}
+
+function sampledPolicyAction(battle: Battle, pid: Pid, request: BattleRequest, random: Rng): string | null {
+  for (const candidate of shuffle(requestActionCandidateEntries(request), random)) {
+    if (acceptedLegalActions(battle, pid, [candidate]).length) return candidate.command;
+  }
+  return null;
 }
 
 function continueBattle(battle: Battle, turns: number, random: Rng): boolean {
@@ -262,9 +279,9 @@ function continueBattle(battle: Battle, turns: number, random: Rng): boolean {
     const picks: Partial<Record<Pid, string>> = {};
     for (const pid of pending) {
       const request = requestOf(battle, pid);
-      const actions = request ? policyActions(request) : [];
-      if (!actions.length) return false;
-      picks[pid] = actions[Math.floor(random() * actions.length)] as string;
+      const action = request ? sampledPolicyAction(battle, pid, request, random) : null;
+      if (!action) return false;
+      picks[pid] = action;
     }
     for (const pid of pending) {
       if (!battle.choose(pid, picks[pid] as string)) return false;
@@ -492,10 +509,10 @@ export function evaluatePosition(
   const request = position.requests[pid];
   const chosen = submittedAction ?? position.actual[pid];
   if (!request || !chosen) return null;
-  const actions = legalActions(request);
+  const opened = openPosition(position, psDir);
+  const actions = policyActions(opened, pid);
   if (!actions.includes(chosen)) return null;
 
-  const opened = openPosition(position, psDir);
   const trial: Trial = {
     position,
     pid,
@@ -506,8 +523,9 @@ export function evaluatePosition(
   };
   const stateValue = value(opened, pid, trial.name);
   const simultaneous = position.pending.includes(foe(pid));
-  const opponentRequest = position.requests[foe(pid)];
-  const opponentLegal = simultaneous ? policyActions(opponentRequest) : [];
+  const opponentPid = foe(pid);
+  const opponentRequest = position.requests[opponentPid];
+  const opponentLegal = simultaneous && opponentRequest ? policyActions(opened, opponentPid) : [];
   const selectionField: OpponentAction[] = simultaneous
     ? sampleOpponents(opponentLegal, protocol.opponentSamples, random)
     : [null];
@@ -521,8 +539,8 @@ export function evaluatePosition(
     shortlist: protocol.shortlist,
     screenSamples: protocol.screenSamples,
   };
-  const actualOpponent = simultaneous ? position.actual[foe(pid)] : null;
-  if (actualOpponent === undefined) return null;
+  const actualOpponent = simultaneous ? position.actual[opponentPid] : null;
+  if (actualOpponent === undefined || (actualOpponent !== null && !opponentLegal.includes(actualOpponent))) return null;
   const actual: OpponentAction[] = [actualOpponent];
   const vsActualOpponent = search(trial, actions, chosen, actual, actual, budget);
   const vsSampledOpponent = search(trial, actions, chosen, selectionField, measurementField, budget);
@@ -637,10 +655,10 @@ export function evaluateActionTable(
   const horizon = protocol.horizon === 'end' ? Number.POSITIVE_INFINITY : protocol.horizon;
   const request = position.requests[pid];
   if (!request) return null;
-  const actions = legalActions(request);
+  const opened = openPosition(position, psDir);
+  const actions = policyActions(opened, pid);
   if (actions.length < 2) return null;
 
-  const opened = openPosition(position, psDir);
   const trial: Trial = {
     position,
     pid,
@@ -650,8 +668,9 @@ export function evaluateActionTable(
     seed: String(options.seed ?? `${position.index}:${pid}`),
   };
   const simultaneous = position.pending.includes(foe(pid));
-  const opponentRequest = position.requests[foe(pid)];
-  const opponentLegal = simultaneous ? policyActions(opponentRequest) : [];
+  const opponentPid = foe(pid);
+  const opponentRequest = position.requests[opponentPid];
+  const opponentLegal = simultaneous && opponentRequest ? policyActions(opened, opponentPid) : [];
   if (simultaneous && !opponentLegal.length) return null;
   const build = (id: ExhaustivePanel['id']) =>
     exhaustivePanel(trial, actions, opponentLegal, protocol.opponentSamples, protocol.luckSamples, id);

@@ -5,7 +5,7 @@ import test from 'node:test';
 import type { Battle, Side } from 'pokemon-showdown';
 
 import { buildMenus } from '../src/choices.js';
-import { legalActions } from '../src/eval/fork.js';
+import { acceptedBattleActionEntries, requestActionCandidates } from '../src/eval/fork.js';
 import { REPO_ROOT } from '../src/paths.js';
 import { loadShowdown } from '../src/showdown.js';
 import type { BattleRequest, Pid } from '../src/types.js';
@@ -75,14 +75,21 @@ function assertAccepted(battle: Battle, command: string, pid: Pid = 'p1'): void 
 
 function assertAcceptedAndSurfaced(battle: Battle, command: string, pid: Pid = 'p1'): void {
   assertAccepted(battle, command, pid);
-  assert.ok(legalActions(requestOf(battle, pid)).includes(command), `accepted command was not surfaced: ${command}`);
+  assert.ok(
+    requestActionCandidates(requestOf(battle, pid)).includes(command),
+    `accepted command was not surfaced: ${command}`,
+  );
 }
 
 function assertEverySurfacedActionIsAccepted(battle: Battle, pid: Pid = 'p1'): string[] {
   const request = requestOf(battle, pid);
-  const actions = legalActions(request);
+  const actions = requestActionCandidates(request);
   assert.ok(actions.length > 0);
   for (const action of actions) assertAccepted(battle, action, pid);
+  assert.deepEqual(
+    acceptedBattleActionEntries(battle, pid).map((entry) => entry.command),
+    actions,
+  );
   return actions;
 }
 

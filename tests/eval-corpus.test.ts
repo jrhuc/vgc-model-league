@@ -6,7 +6,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { type CorpusOptions, loadGameRecords, verifyGame } from '../src/eval/corpus.js';
-import { type GameSource, legalActions, newBattle, omniscientLog, pendingSides } from '../src/eval/fork.js';
+import { type GameSource, newBattle, omniscientLog, pendingSides, requestActionCandidates } from '../src/eval/fork.js';
 import { defaultPsDir } from '../src/paths.js';
 import { showdownCommit } from '../src/showdown.js';
 import { loadPool } from '../src/teams.js';
@@ -31,7 +31,7 @@ function playOut(source: GameSource): { choices: Record<Pid, string[]>; log: str
     if (!pending.length) break;
     const taken: Partial<Record<Pid, string>> = {};
     for (const pid of pending) {
-      const action = legalActions(battle.getSide(pid).activeRequest as never)[0];
+      const action = requestActionCandidates(battle.getSide(pid).activeRequest as never)[0];
       if (action === undefined) throw new Error(`no legal action for ${pid}`);
       taken[pid] = action;
       choices[pid].push(action);

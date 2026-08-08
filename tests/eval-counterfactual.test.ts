@@ -13,12 +13,12 @@ import {
 } from '../src/eval/counterfactual.js';
 import {
   type GameSource,
-  legalActions,
   newBattle,
   omniscientLog,
   type Position,
   pendingSides,
   replayGame,
+  requestActionCandidates,
 } from '../src/eval/fork.js';
 import { loadPool } from '../src/teams.js';
 import type { Pid } from '../src/types.js';
@@ -49,7 +49,7 @@ function positions(): Position[] {
     if (!pending.length) break;
     const taken: Partial<Record<Pid, string>> = {};
     for (const pid of pending) {
-      const actions = legalActions(battle.getSide(pid).activeRequest as never);
+      const actions = requestActionCandidates(battle.getSide(pid).activeRequest as never);
       const action = actions[Math.min(actions.length - 1, 1)];
       if (action === undefined) throw new Error(`no legal action for ${pid}`);
       taken[pid] = action;
@@ -70,8 +70,14 @@ function battleTurn(): Position {
 }
 
 test('the reference every number is measured against is named, not implied', () => {
-  assert.deepEqual(Object.keys(REFERENCE).toSorted(), ['continuation', 'hiddenState', 'opponent', 'value']);
-  assert.equal(EXHAUSTIVE_PANEL_PROTOCOL.version, 4);
+  assert.deepEqual(Object.keys(REFERENCE).toSorted(), [
+    'actionSet',
+    'continuation',
+    'hiddenState',
+    'opponent',
+    'value',
+  ]);
+  assert.equal(EXHAUSTIVE_PANEL_PROTOCOL.version, 5);
   assert.equal(EXHAUSTIVE_PANEL_PROTOCOL.uncertaintyEstimator, 'two-stage-srswor-opponent-cluster-v1');
   assert.equal(EXHAUSTIVE_PANEL_PROTOCOL.matrixDigest, 'sha256-canonical-exhaustive-panel-matrix-v2');
   assert.equal(EXHAUSTIVE_PANEL_PROTOCOL.drawPlan, 'seeded-srswor-opponents-and-battle-words-v1');
@@ -273,7 +279,7 @@ test('the exhaustive table uses complete, normalized, common-draw action panels'
   const position = battleTurn();
   const table = evaluateActionTable(position, 'p1', { ...BUDGET, horizon: 0, seed: 'table' });
   assert.ok(table);
-  const legal = legalActions(position.requests.p1);
+  const legal = requestActionCandidates(position.requests.p1);
   assert.deepEqual(
     table.measurement.actions.map((entry) => entry.action),
     legal,
@@ -344,7 +350,7 @@ function oneSidedReplacement(): Position {
   while (!battle.ended && steps++ < 400) {
     const pending = pendingSides(battle);
     for (const pid of pending) {
-      const action = legalActions(battle.getSide(pid).activeRequest as never)[0];
+      const action = requestActionCandidates(battle.getSide(pid).activeRequest as never)[0];
       if (!action) throw new Error(`no legal action for ${pid}`);
       base.choices[pid].push(action);
     }

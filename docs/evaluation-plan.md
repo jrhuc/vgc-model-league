@@ -30,14 +30,15 @@ All `grade-positions` output is exploratory.
 ### Public task and private grader data
 
 Each task shows one anonymized seat a canonical public-history/own-request
-prompt, format and phase, numbered legal actions, and a schema selecting exactly
-one action. It excludes source identity, action, rationale, notebook, opponent
+prompt, format and phase, numbered Showdown-accepted candidate actions, and
+a schema selecting exactly one action. It excludes source identity, action, rationale, notebook, opponent
 request, snapshot, scores, and panel draws. Every evaluated model receives the
 same neutral position scaffold rather than another model's memory.
 
 The first package is static: no Node process, HTTP service, tunnel, or secret at
-rollout time. TypeScript must score every legal action before freezing and write
-three physically separated artifact classes:
+rollout time. TypeScript must score every accepted action from the frozen
+candidate protocol before freezing and write three physically separated artifact
+classes:
 
 - public prompts and canonical action maps;
 - private score vectors, qualification uncertainty, and eligibility evidence;
@@ -82,8 +83,8 @@ because values came from a simulator. The initial source distribution is
 ### Reference limits
 
 The prototype reference is short-horizon material differential under sampled
-uniform legal opponent actions and uniform-random continuations. It can miss
-positioning, information, setup, and long-term team value. It also sees the
+uniform Showdown-accepted candidate opponent actions and uniform-random
+continuations. It can miss positioning, information, setup, and long-term team value. It also sees the
 realized hidden state. Label it accordingly; uniform opponent actions do not
 remove hindsight. Ex-ante claims require a published compatible-hidden-state
 prior or robustness across hidden states.
@@ -182,7 +183,7 @@ task loading, configured agents/harnesses, runtimes, traces, rollout retries,
 evaluation output, episode control, and `prime-rl` integration. In the published
 adapter only, it replaces local provider routing, retries, `LLMEngine`, and
 comparative orchestration. TypeScript and Showdown remain authoritative for
-legal actions, accepted state, battle reconstruction, and reward.
+candidate generation, native action acceptance, state, battle reconstruction, and reward.
 
 `vgc-positions-v1` is a static `Taskset`. The dynamic Draft Circuit will be an
 `Env` whose runtime launches a versioned JSON-lines TypeScript referee through

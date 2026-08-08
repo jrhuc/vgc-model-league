@@ -1,11 +1,11 @@
 import type { Battle } from 'pokemon-showdown';
-import { type LegalActionEntry, legalActionEntries, pendingSides } from './eval/fork.js';
+import { acceptedBattleActionEntries, type LegalActionEntry, pendingSides } from './eval/fork.js';
 import { canonicalJsonDigest } from './eval/serialization.js';
 import { loadShowdown } from './showdown.js';
 import { finishUpdateRouting, routeUpdateLines } from './sim.js';
 import type { BattleRequest, Pid } from './types.js';
 
-export const FROZEN_BATTLE_REFEREE_PROTOCOL_VERSION = 1 as const;
+export const FROZEN_BATTLE_REFEREE_PROTOCOL_VERSION = 2 as const;
 
 export interface FrozenBattleSeat {
   pid: Pid;
@@ -37,7 +37,9 @@ export interface FrozenBattleObservation {
 export interface FrozenLegalActions {
   revision: number;
   stateHash: string;
-  candidateScope: 'request-derived';
+  candidateScope: 'showdown-accepted-request-derived';
+  candidateGenerator: 'request-derived-menus-v1';
+  acceptanceOracle: 'native-side-choose-on-tojson-fromjson-restart-clone-v1';
   exhaustive: false;
   actions: LegalActionEntry[];
 }
@@ -322,18 +324,13 @@ export class FrozenBattleReferee {
 
   legalActions(pid: Pid): FrozenLegalActions {
     this.requireSeat(pid);
-    const request = this.battle.getSide(pid).activeRequest;
-    const actions: LegalActionEntry[] = [];
-    if (request && !request.wait) {
-      for (const entry of legalActionEntries(request as unknown as BattleRequest)) {
-        const { battle } = this.cloneBattle();
-        if (battle.getSide(pid).choose(entry.command)) actions.push(structuredClone(entry));
-      }
-    }
+    const actions = acceptedBattleActionEntries(this.battle, pid);
     return {
       revision: this.revision,
       stateHash: stateHashOf(this.battle),
-      candidateScope: 'request-derived',
+      candidateScope: 'showdown-accepted-request-derived',
+      candidateGenerator: 'request-derived-menus-v1',
+      acceptanceOracle: 'native-side-choose-on-tojson-fromjson-restart-clone-v1',
       exhaustive: false,
       actions,
     };

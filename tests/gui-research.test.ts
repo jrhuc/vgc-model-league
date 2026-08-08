@@ -57,14 +57,14 @@ function task(
     { number: 1, canonical_action: 'switch 3, move 1 1', label: 'Switch slot 1 → reserve slot 3; Protect' },
   ];
   const prefix =
-    'Choose one legal joint action for this controlled Pokemon VGC position.\nThe action list is exhaustive. Select the number for the complete joint action, not one part of it.\n\n';
+    'Choose one listed joint action for this controlled Pokemon VGC position.\nSelect the number for the complete joint action, not one part of it.\n\n';
   const response =
     'Return exactly one JSON object {"choice":N}, where N is a zero-based action number above. Include no other keys or prose.';
   const prompt = `${prefix}Turn ${turn}\nPublic battlefield only\n\nLEGAL JOINT ACTIONS:\n${actions
     .map((action) => `${action.number}. ${action.label}`)
     .join('\n')}\n\n${response}`;
   return {
-    schema_version: 2,
+    schema_version: 3,
     task_id: taskId,
     split,
     format: 'gen9championsvgc2026regmbbo3',

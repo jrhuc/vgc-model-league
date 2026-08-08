@@ -1,4 +1,6 @@
-import type { BattleRequest, JsonObject } from '../types.js';
+import { defaultPsDir } from '../paths.js';
+import { loadShowdown } from '../showdown.js';
+import type { BattleRequest, JsonObject, Pid } from '../types.js';
 import {
   type ExhaustiveActionTable,
   type ExhaustiveDraw,
@@ -7,7 +9,7 @@ import {
   twoStageClusterEstimate,
 } from './counterfactual.js';
 import { POSITION_ELIGIBILITY_METRICS_VERSION, positionEligibilityMetrics } from './eligibility.js';
-import { legalActions } from './fork.js';
+import { acceptedBattleActionEntries, pendingSides } from './fork.js';
 import { type CandidatePosition, stratumOf } from './positions.js';
 import { canonicalJson, canonicalJsonDigest } from './serialization.js';
 import { validateTaskScoreJoin } from './task.js';
@@ -86,12 +88,12 @@ const DRAW_KEYS = ['battleSeed', 'continuationSeed', 'index', 'opponentAction'];
 const ACTION_VALUE_KEYS = ['action', 'reward', 'samples', 'standardError', 'value'];
 const HELD_OUT_KEYS = ['alternativeAction', 'normalApproxLower95', 'selectedAction', 'standardError', 'value'];
 const POSITION_PROMPT_PREFIX =
-  'Choose one legal joint action for this controlled Pokemon VGC position.\nThe action list is exhaustive. Select the number for the complete joint action, not one part of it.\n\n';
+  'Choose one listed joint action for this controlled Pokemon VGC position.\nSelect the number for the complete joint action, not one part of it.\n\n';
 const POSITION_PROMPT_RESPONSE =
   'Return exactly one JSON object {"choice":N}, where N is a zero-based action number above. Include no other keys or prose.';
 const POSITION_ELIGIBILITY_STATUSES = ['pilot-thresholds-not-frozen', 'eligible-under-frozen-policy'] as const;
 
-export const POSITION_PANEL_ARTIFACT_SCHEMA_VERSION = 2;
+export const POSITION_PANEL_ARTIFACT_SCHEMA_VERSION = 3;
 
 export const POSITION_SOURCE_GROUP_PROTOCOL = {
   version: 1,
@@ -499,7 +501,7 @@ function validateExhaustivePanel(
   const opponentLegal = new Set(opponentLegalActions);
   if (opponentLegal.size) {
     if (sampledOpponentActions.some((action) => action === null || !opponentLegal.has(action)))
-      throw new Error(`${location}.draws do not match the sealed opponent request`);
+      throw new Error(`${location}.draws do not match the snapshot-accepted opponent action set`);
   } else if (
     opponentPopulation !== 1 ||
     opponentSlots !== 1 ||
@@ -590,6 +592,7 @@ function validateExhaustiveTable(
   sourcePlayed: string,
   panelSeed: string,
   opponentLegalActions: readonly string[],
+  sourceLegalActions: readonly string[],
   location: string,
 ): void {
   const table = object(value, location);
@@ -643,6 +646,9 @@ function validateExhaustiveTable(
   ] as const;
   const actions = panels[0].actions;
   if (new Set(actions).size !== legal) throw new Error(`${location} legal actions must be unique`);
+  if (canonicalJson(actions) !== canonicalJson(sourceLegalActions)) {
+    throw new Error(`${location} actions do not match the snapshot-accepted source action set`);
+  }
   if (panels.slice(1).some((panel) => canonicalJson(panel.actions) !== canonicalJson(actions)))
     throw new Error(`${location} panels differ in their legal actions`);
   const samplingDesign = (panel: ValidatedPanelShape) => ({
@@ -730,7 +736,7 @@ function validateExhaustiveTable(
   if (table.valueSpan !== measurement.span) throw new Error(`${location}.valueSpan differs from measurement`);
 }
 
-export function validateSealedPositionPanel(row: JsonObject, index = 0): void {
+export function validateSealedPositionPanel(row: JsonObject, index = 0, psDir = defaultPsDir()): void {
   const location = `sealed[${index}]`;
   exactKeys(row, SEALED_KEYS, location);
   if (row.schema_version !== POSITION_PANEL_ARTIFACT_SCHEMA_VERSION)
@@ -749,27 +755,65 @@ export function validateSealedPositionPanel(row: JsonObject, index = 0): void {
   if (row.source_group !== positionSourceGroup(source))
     throw new Error(`${location}.source_group does not match its source series`);
   const snapshot = string(row.snapshot, `${location}.snapshot`);
+  let parsedSnapshot: JsonObject;
   try {
-    object(JSON.parse(snapshot), `${location}.snapshot JSON`);
+    parsedSnapshot = object(JSON.parse(snapshot), `${location}.snapshot JSON`);
   } catch {
     throw new Error(`${location}.snapshot must contain a JSON object`);
   }
   const opponentRequest =
     row.opponent_request === null ? null : object(row.opponent_request, `${location}.opponent_request`);
-  const opponentLegalActions = opponentRequest ? legalActions(opponentRequest as unknown as BattleRequest) : [];
-  if (opponentRequest && !opponentLegalActions.length)
-    throw new Error(`${location}.opponent_request must expose at least one legal action`);
+  const controlledPid = String(source.pid) as Pid;
+  const opponentPid: Pid = controlledPid === 'p1' ? 'p2' : 'p1';
+  let sourceLegalActions: string[];
+  let opponentLegalActions: string[] = [];
+  try {
+    const { Battle } = loadShowdown(psDir);
+    const battle = Battle.fromJSON(structuredClone(parsedSnapshot));
+    battle.restart(() => {});
+    const pending = pendingSides(battle);
+    if (!pending.includes(controlledPid)) throw new Error('snapshot does not have the source decision');
+    sourceLegalActions = acceptedBattleActionEntries(battle, controlledPid).map((entry) => entry.command);
+    const hasOpponentDecision = pending.includes(opponentPid);
+    if (hasOpponentDecision !== Boolean(opponentRequest)) {
+      throw new Error('opponent_request presence does not match the snapshot decision boundary');
+    }
+    if (opponentRequest) {
+      const authoritativeRequest = battle.getSide(opponentPid).activeRequest as unknown as BattleRequest | null;
+      if (!authoritativeRequest || canonicalJson(authoritativeRequest) !== canonicalJson(opponentRequest)) {
+        throw new Error('opponent_request does not match the snapshot');
+      }
+      opponentLegalActions = acceptedBattleActionEntries(battle, opponentPid).map((entry) => entry.command);
+    }
+  } catch (error) {
+    throw new Error(
+      `${location} cannot validate its action sets against the snapshot: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  if (sourceLegalActions.length < 2) {
+    throw new Error(`${location}.snapshot source has fewer than two Showdown-accepted request-derived actions`);
+  }
+  if (opponentRequest && !opponentLegalActions.length) {
+    throw new Error(`${location}.snapshot opponent has no Showdown-accepted request-derived action`);
+  }
+
   validateExhaustiveTable(
     row.table,
     String(source.pid),
     String(source.played),
     panelSeed,
     opponentLegalActions,
+    sourceLegalActions,
     `${location}.table`,
   );
 }
 
-export function validatePositionPanelArtifacts(tasks: JsonObject[], scores: JsonObject[], sealed: JsonObject[]): void {
+export function validatePositionPanelArtifacts(
+  tasks: JsonObject[],
+  scores: JsonObject[],
+  sealed: JsonObject[],
+  psDir = defaultPsDir(),
+): void {
   if (tasks.length !== scores.length || tasks.length !== sealed.length)
     throw new Error('task, score, and sealed row counts differ');
   const scoreById = new Map<string, JsonObject>();
@@ -782,7 +826,7 @@ export function validatePositionPanelArtifacts(tasks: JsonObject[], scores: Json
     scoreById.set(id, row);
   });
   sealed.forEach((row, index) => {
-    validateSealedPositionPanel(row, index);
+    validateSealedPositionPanel(row, index, psDir);
     const id = String(row.task_id);
     if (sealedById.has(id)) throw new Error(`duplicate sealed task_id ${id}`);
     const sourceId = String(row.source_id);

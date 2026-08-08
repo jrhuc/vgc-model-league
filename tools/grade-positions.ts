@@ -158,7 +158,7 @@ ${fs.readFileSync(file, 'utf8')}`,
 
 function manifestFor(settings: Settings, records: GameRecord[]): GradeManifest {
   return {
-    schema_version: 3,
+    schema_version: 4,
     showdown_commit: showdownCommit(settings.psDir ?? defaultPsDir()),
     evaluator_digest: evaluatorDigest(),
     source_digest: sourceDigest(records),

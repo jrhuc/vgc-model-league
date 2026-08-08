@@ -47,12 +47,16 @@ export interface Replay {
 }
 
 export const ACTION_PROTOCOL = {
-  version: 2,
+  version: 3,
   canonicalization: 'showdown-choice-v1',
   concession: 'excluded-stream-command',
   jointOrder: 'active-slot',
+  candidateGenerator: 'request-derived-menus-v1',
+  acceptanceOracle: 'native-side-choose-on-tojson-fromjson-restart-clone-v1',
+  completeness: 'accepted-candidates-only-not-universal-showdown-completeness',
   numberBase: 0,
-  sort: 'canonical-action-utf8-byte-ascending',
+  numbering: 'dense-after-acceptance-filter',
+  sort: 'canonical-action-utf8-byte-ascending-before-acceptance',
   label: 'menu-labels-v1',
 } as const;
 
@@ -89,7 +93,9 @@ export interface LegalActionEntry {
   label: string;
 }
 
-export function legalActionEntries(request: BattleRequest): LegalActionEntry[] {
+/** Enumerates the modeled request-menu candidate superset; only the native acceptance helpers
+ * below may promote these commands into an authoritative action set. */
+export function requestActionCandidateEntries(request: BattleRequest): LegalActionEntry[] {
   const menus = buildMenus(request);
   if (!menus.length) return [];
   let combinations: number[][] = [[]];
@@ -122,8 +128,49 @@ export function legalActionEntries(request: BattleRequest): LegalActionEntry[] {
     .map((entry, number) => ({ ...entry, number }));
 }
 
-export function legalActions(request: BattleRequest): string[] {
-  return legalActionEntries(request).map((entry) => entry.command);
+export function requestActionCandidates(request: BattleRequest): string[] {
+  return requestActionCandidateEntries(request).map((entry) => entry.command);
+}
+
+type NativeBattleConstructor = {
+  fromJSON(serialized: ReturnType<Battle['toJSON']>): Battle;
+};
+
+/** Filters the declared request-derived candidates through the authoritative Showdown side-choice
+ * oracle. Each candidate gets an independent restarted serialization clone, and accepted candidates
+ * are assigned canonical dense zero-based numbers without changing their generator order. */
+export function acceptedLegalActionEntries(
+  battle: Battle,
+  pid: Pid,
+  candidates: readonly LegalActionEntry[],
+): LegalActionEntry[] {
+  const BattleClass = battle.constructor as unknown as NativeBattleConstructor;
+  const serialized = battle.toJSON();
+  const accepted: LegalActionEntry[] = [];
+  for (const candidate of candidates) {
+    try {
+      const clone = BattleClass.fromJSON(structuredClone(serialized));
+      clone.restart(() => {});
+      if (clone.getSide(pid).choose(candidate.command) === true) {
+        accepted.push({ ...structuredClone(candidate), number: accepted.length });
+      }
+    } catch {}
+  }
+  return accepted;
+}
+
+export function acceptedLegalActions(battle: Battle, pid: Pid, candidates: readonly LegalActionEntry[]): string[] {
+  return acceptedLegalActionEntries(battle, pid, candidates).map((entry) => entry.command);
+}
+
+export function acceptedBattleActionEntries(battle: Battle, pid: Pid): LegalActionEntry[] {
+  const request = battle.getSide(pid).activeRequest;
+  if (!request || request.wait) return [];
+  return acceptedLegalActionEntries(battle, pid, requestActionCandidateEntries(request as unknown as BattleRequest));
+}
+
+export function acceptedBattleActions(battle: Battle, pid: Pid): string[] {
+  return acceptedBattleActionEntries(battle, pid).map((entry) => entry.command);
 }
 
 export function requestPhase(request: BattleRequest): 'team_preview' | 'forced_switch' | 'turn' {

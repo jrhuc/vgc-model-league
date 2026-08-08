@@ -53,15 +53,20 @@ test('the JSONL session fails closed on handshake and lifecycle mismatches', () 
   const session = new FrozenBattleProtocolSession();
   assert.deepEqual(session.ready(), {
     kind: 'ready',
-    protocolVersion: 1,
-    refereeProtocolVersion: 1,
+    protocolVersion: FROZEN_BATTLE_JSONL_PROTOCOL_VERSION,
+    refereeProtocolVersion: 2,
     showdownRevision: showdownCommit(),
   });
-  const beforeStart = session.handle({ protocolVersion: 1, id: 1, method: 'observe', params: { pid: 'p1' } });
+  const beforeStart = session.handle({
+    protocolVersion: FROZEN_BATTLE_JSONL_PROTOCOL_VERSION,
+    id: 1,
+    method: 'observe',
+    params: { pid: 'p1' },
+  });
   assert.equal(beforeStart.ok, false);
   assert.equal(beforeStart.error?.code, 'invalid-request');
   const mismatch = session.handle({
-    protocolVersion: 1,
+    protocolVersion: FROZEN_BATTLE_JSONL_PROTOCOL_VERSION,
     id: 2,
     method: 'start',
     params: { episodeId: 'episode-1', conditionDigest: CONDITION_DIGEST, showdownRevision: 'wrong', options },
@@ -71,7 +76,7 @@ test('the JSONL session fails closed on handshake and lifecycle mismatches', () 
   const started = start(session);
   assert.equal(boundValue(started).started, true);
   const duplicate = session.handle({
-    protocolVersion: 1,
+    protocolVersion: FROZEN_BATTLE_JSONL_PROTOCOL_VERSION,
     id: 3,
     method: 'start',
     params: { episodeId: 'episode-2', conditionDigest: CONDITION_DIGEST, showdownRevision: showdownCommit(), options },
@@ -112,7 +117,7 @@ test('the JSONL session preserves simultaneous secrecy and restorable binding', 
   const tampered = structuredClone(saved);
   tampered.binding.episodeId = 'another-episode';
   const refused = new FrozenBattleProtocolSession().handle({
-    protocolVersion: 1,
+    protocolVersion: FROZEN_BATTLE_JSONL_PROTOCOL_VERSION,
     id: 9,
     method: 'restore',
     params: { snapshot: tampered },

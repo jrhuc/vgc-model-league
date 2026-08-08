@@ -1,13 +1,21 @@
+import type { Battle } from 'pokemon-showdown';
+
 import { defaultPsDir } from '../paths.js';
 import { ShowdownReference } from '../reference.js';
 import { BattleState } from '../state.js';
 import type { BattleRequest, Pid } from '../types.js';
-import { ACTION_PROTOCOL, type LegalActionEntry, legalActionEntries, requestPhase } from './fork.js';
+import {
+  ACTION_PROTOCOL,
+  acceptedBattleActionEntries,
+  type LegalActionEntry,
+  requestActionCandidateEntries,
+  requestPhase,
+} from './fork.js';
 
 export const POSITION_TASK_PROTOCOL = {
-  version: 1,
+  version: 2,
   action: ACTION_PROTOCOL,
-  prompt: 'position-prompt-v1',
+  prompt: 'position-prompt-showdown-accepted-candidates-v2',
   response: 'exact-json-choice-zero-based-v1',
   invalidOutputReward: -1,
   legalRewardRange: [0, 1],
@@ -32,6 +40,7 @@ export interface RenderPositionTaskInput {
   id: string;
   format: string;
   pid: Pid;
+  battle: Battle;
   request: BattleRequest;
   seen: string[];
   psDir?: string;
@@ -54,11 +63,19 @@ export function renderPositionTask(input: RenderPositionTaskInput): CanonicalPos
     [...matchupSides.foes, ...matchupSides.allies],
     state.weather?.name ?? '',
   );
-  const actions = legalActionEntries(input.request);
-  if (!actions.length) throw new Error('position has no legal non-concession action');
+  const authoritativeRequest = input.battle.getSide(input.pid).activeRequest as unknown as BattleRequest | null;
+  if (!authoritativeRequest || authoritativeRequest.wait)
+    throw new Error('position has no active authoritative request');
+  const declaredCommands = requestActionCandidateEntries(input.request).map((entry) => entry.command);
+  const authoritativeCommands = requestActionCandidateEntries(authoritativeRequest).map((entry) => entry.command);
+  if (JSON.stringify(declaredCommands) !== JSON.stringify(authoritativeCommands)) {
+    throw new Error('public request candidate map does not match the authoritative snapshot request');
+  }
+  const actions = acceptedBattleActionEntries(input.battle, input.pid);
+  if (!actions.length) throw new Error('position has no Showdown-accepted request-derived non-concession action');
   const lines = [
-    'Choose one legal joint action for this controlled Pokemon VGC position.',
-    'The action list is exhaustive. Select the number for the complete joint action, not one part of it.',
+    'Choose one listed joint action for this controlled Pokemon VGC position.',
+    'Select the number for the complete joint action, not one part of it.',
     '',
     renderedState,
   ];
@@ -114,13 +131,17 @@ export function validateTaskScoreJoin(
   scoreActions: readonly PositionScoreAction[],
 ): void {
   if (taskActions.length !== scoreActions.length) throw new Error('task and score action counts differ');
-  const taskKeys = new Set(taskActions.map((entry) => `${entry.number}\0${entry.canonicalAction}`));
-  const scoreKeys = new Set(scoreActions.map((entry) => `${entry.number}\0${entry.canonicalAction}`));
-  if (taskKeys.size !== taskActions.length || scoreKeys.size !== scoreActions.length) {
-    throw new Error('task or score action map contains a duplicate');
+  if (
+    taskActions.some((entry, index) => entry.number !== index) ||
+    scoreActions.some((entry, index) => entry.number !== index)
+  ) {
+    throw new Error('task and score action maps must use the same dense zero-based order');
   }
-  if (taskKeys.size !== scoreKeys.size || [...taskKeys].some((entry) => !scoreKeys.has(entry))) {
-    throw new Error('task and score action maps are not an exact numbered canonical join');
+  if (
+    taskActions.some((entry, index) => entry.canonicalAction !== scoreActions[index]?.canonicalAction) ||
+    new Set(taskActions.map((entry) => entry.canonicalAction)).size !== taskActions.length
+  ) {
+    throw new Error('task and score action maps are not an exact ordered numbered canonical join');
   }
   for (const entry of scoreActions) {
     if (

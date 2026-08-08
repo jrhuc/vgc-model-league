@@ -8,7 +8,7 @@ import {
   exhaustivePanelMatrixDigest,
   twoStageClusterEstimate,
 } from '../src/eval/counterfactual.js';
-import { legalActions } from '../src/eval/fork.js';
+import { requestActionCandidates } from '../src/eval/fork.js';
 import {
   exactPublicPositionFingerprint,
   positionSourceGroup,
@@ -16,23 +16,25 @@ import {
 } from '../src/eval/panel-artifact.js';
 import { canonicalJson, canonicalJsonDigest, canonicalJsonl } from '../src/eval/serialization.js';
 import type { BattleRequest, JsonObject } from '../src/types.js';
+import { minimalPanelBattle } from './fixtures/position-panel.js';
 
 function artifacts(): { tasks: JsonObject[]; scores: JsonObject[]; sealed: JsonObject[] } {
+  const position = minimalPanelBattle();
   const actions = [
     { number: 0, canonical_action: 'move 1', label: 'Protect' },
     { number: 1, canonical_action: 'move 2', label: 'Tailwind' },
   ];
   const tasks: JsonObject[] = [
     {
-      schema_version: 2,
+      schema_version: 3,
       task_id: 'task-a',
       split: 'pilot',
-      format: 'gen9vgc',
+      format: 'gen9customgame',
       phase: 'turn',
       turn: 1,
       prompt: [
-        'Choose one legal joint action for this controlled Pokemon VGC position.',
-        'The action list is exhaustive. Select the number for the complete joint action, not one part of it.',
+        'Choose one listed joint action for this controlled Pokemon VGC position.',
+        'Select the number for the complete joint action, not one part of it.',
         '',
         'Turn 1 visible state',
         '',
@@ -53,7 +55,7 @@ function artifacts(): { tasks: JsonObject[]; scores: JsonObject[]; sealed: JsonO
   ];
   const scores: JsonObject[] = [
     {
-      schema_version: 2,
+      schema_version: 3,
       task_id: 'task-a',
       structural_pass: true,
       structural_reasons: [],
@@ -108,7 +110,7 @@ function artifacts(): { tasks: JsonObject[]; scores: JsonObject[]; sealed: JsonO
     const plan = exhaustivePanelDrawPlan({
       panelSeed: 'seed',
       id,
-      opponentLegalActions: [],
+      opponentLegalActions: position.actions.p2,
       opponentSlots: 1,
       luckReplications: 2,
     });
@@ -145,7 +147,7 @@ function artifacts(): { tasks: JsonObject[]; scores: JsonObject[]; sealed: JsonO
   };
   const sealed: JsonObject[] = [
     {
-      schema_version: 2,
+      schema_version: 3,
       task_id: 'task-a',
       source_id: 'source-a',
       source_group: 'pending',
@@ -161,8 +163,8 @@ function artifacts(): { tasks: JsonObject[]; scores: JsonObject[]; sealed: JsonO
         played_by: 'model',
         played: 'move 2',
       },
-      snapshot: '{}',
-      opponent_request: null,
+      snapshot: position.snapshot,
+      opponent_request: position.requests.p2 as unknown as JsonObject,
       panel_seed: 'seed',
       table: {
         pid: 'p1',
@@ -321,31 +323,9 @@ function measurementZeroSpanArtifacts(): ReturnType<typeof artifacts> {
   return artifact;
 }
 
-function sampledOpponentRequest(): BattleRequest {
-  return {
-    active: [
-      {
-        moves: [
-          { move: 'Protect', id: 'protect', pp: 10, maxpp: 10, target: 'self', disabled: false },
-          { move: 'Thunderbolt', id: 'thunderbolt', pp: 10, maxpp: 10, target: 'normal', disabled: false },
-        ],
-      },
-    ],
-    side: {
-      pokemon: [
-        {
-          ident: 'p2: Sparky',
-          details: 'Pikachu, L50',
-          condition: '100/100',
-          active: true,
-          stats: { atk: 75, def: 60, spa: 70, spd: 70, spe: 110 },
-          moves: ['protect', 'thunderbolt'],
-          ability: 'Static',
-          item: 'Light Ball',
-        },
-      ],
-    },
-  };
+function sampledOpponentPosition(): { request: BattleRequest; snapshot: string; actions: string[] } {
+  const position = minimalPanelBattle(['Protect', 'Tailwind']);
+  return { request: position.requests.p2, snapshot: position.snapshot, actions: position.actions.p2 };
 }
 
 function configurePanelForSampledOpponents(
@@ -370,9 +350,9 @@ function configurePanelForSampledOpponents(
 }
 
 function configureAllSampledOpponentPanels(artifact: ReturnType<typeof artifacts>): string[] {
-  const request = sampledOpponentRequest();
-  const opponentActions = legalActions(request);
+  const { request, snapshot, actions: opponentActions } = sampledOpponentPosition();
   if (opponentActions.length < 2) throw new Error('the opponent request fixture needs two legal actions');
+  artifact.sealed[0]!.snapshot = snapshot;
   artifact.sealed[0]!.opponent_request = request as unknown as JsonObject;
   for (const panel of panelsOf(artifact))
     configurePanelForSampledOpponents(panel, String(artifact.sealed[0]!.panel_seed), opponentActions);
@@ -415,7 +395,7 @@ test('public, private-score, and sealed panel rows form one exact schema join', 
   );
 });
 
-test('public, score, and sealed rows all require artifact schema version 2', () => {
+test('public, score, and sealed rows all require artifact schema version 3', () => {
   for (const collection of ['tasks', 'scores', 'sealed'] as const) {
     const artifact = artifacts();
     artifact[collection][0]!.schema_version = 1;
@@ -428,7 +408,7 @@ test('public, score, and sealed rows all require artifact schema version 2', () 
 
 test('frozen prompt, public fingerprint, source group, stratum, and panel seed are sealed joins', () => {
   const badHeader = artifacts();
-  badHeader.tasks[0]!.prompt = String(badHeader.tasks[0]!.prompt).replace('Choose one legal', 'Pick one legal');
+  badHeader.tasks[0]!.prompt = String(badHeader.tasks[0]!.prompt).replace('Choose one listed', 'Pick one listed');
   assert.throws(
     () => validatePositionPanelArtifacts(badHeader.tasks, badHeader.scores, badHeader.sealed),
     /frozen position prompt protocol/,
@@ -614,7 +594,7 @@ test('panel estimates, rewards, spans, digests, and table formulas are recompute
 test('opponent draws preserve clustered replication blocks and the sealed request design', () => {
   const emptyRequest = artifacts();
   const waitRequest = { wait: true } as BattleRequest;
-  const emptyOpponentActions = legalActions(waitRequest);
+  const emptyOpponentActions = requestActionCandidates(waitRequest);
   assert.deepEqual(emptyOpponentActions, []);
   emptyRequest.sealed[0]!.opponent_request = waitRequest as unknown as JsonObject;
   for (const panel of panelsOf(emptyRequest)) {
@@ -633,7 +613,7 @@ test('opponent draws preserve clustered replication blocks and the sealed reques
   }
   assert.throws(
     () => validatePositionPanelArtifacts(emptyRequest.tasks, emptyRequest.scores, emptyRequest.sealed),
-    /opponent_request must expose at least one legal action/,
+    /cannot validate its action sets against the snapshot/,
   );
 
   const changedBattleWord = artifacts();
@@ -691,7 +671,7 @@ test('opponent draws preserve clustered replication blocks and the sealed reques
   for (const draw of (illegalPanel.draws as JsonObject[]).slice(0, 2)) draw.opponentAction = 'move 99';
   assert.throws(
     () => validatePositionPanelArtifacts(illegalOpponent.tasks, illegalOpponent.scores, illegalOpponent.sealed),
-    /draws do not match the sealed opponent request/,
+    /draws do not match the snapshot-accepted opponent action set/,
   );
 
   const sameRowsDifferentDesign = artifacts();
@@ -796,6 +776,20 @@ test('sealed rows validate provenance, snapshots, and exhaustive panel internals
     /snapshot must contain a JSON object/,
   );
 
+  const changedSnapshot = artifacts();
+  changedSnapshot.sealed[0]!.snapshot = minimalPanelBattle(['Protect'], ['Protect']).snapshot;
+  assert.throws(
+    () => validatePositionPanelArtifacts(changedSnapshot.tasks, changedSnapshot.scores, changedSnapshot.sealed),
+    /snapshot source has fewer than two Showdown-accepted/,
+  );
+
+  const missingOpponent = artifacts();
+  missingOpponent.sealed[0]!.opponent_request = null;
+  assert.throws(
+    () => validatePositionPanelArtifacts(missingOpponent.tasks, missingOpponent.scores, missingOpponent.sealed),
+    /opponent_request presence does not match the snapshot decision boundary/,
+  );
+
   const badDraw = artifacts();
   const badDrawTable = badDraw.sealed[0]!.table as JsonObject;
   const badDrawPanels = badDrawTable.stability as JsonObject[];
@@ -824,7 +818,7 @@ test('sealed rows validate provenance, snapshots, and exhaustive panel internals
   const changedPlan = exhaustivePanelDrawPlan({
     panelSeed: String(mismatchedDimensions.sealed[0]!.panel_seed),
     id: secondPanel.id as ExhaustivePanel['id'],
-    opponentLegalActions: [],
+    opponentLegalActions: ['move 1'],
     opponentSlots: 1,
     luckReplications: 3,
   });

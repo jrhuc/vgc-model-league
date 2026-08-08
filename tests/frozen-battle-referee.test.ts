@@ -52,7 +52,7 @@ function options(names: readonly [string, string] = ['attacker', 'target']): Fro
 
 function commandFor(referee: FrozenBattleReferee, pid: Pid): string {
   const legal = referee.legalActions(pid);
-  assert.equal(legal.candidateScope, 'request-derived');
+  assert.equal(legal.candidateScope, 'showdown-accepted-request-derived');
   assert.equal(legal.exhaustive, false);
   assert.ok(legal.actions.length > 0, `${pid} has an active request but no surfaced candidate`);
   return legal.actions[0]!.command;

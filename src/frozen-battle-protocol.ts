@@ -12,7 +12,7 @@ import { showdownCommit } from './showdown.js';
 import type { Pid } from './types.js';
 import { isRecord } from './value.js';
 
-export const FROZEN_BATTLE_JSONL_PROTOCOL_VERSION = 1 as const;
+export const FROZEN_BATTLE_JSONL_PROTOCOL_VERSION = 2 as const;
 
 export interface FrozenBattleProtocolBinding {
   episodeId: string;

@@ -28,6 +28,7 @@ import {
 } from '../src/eval/serialization.js';
 import { POSITION_TASK_PROTOCOL } from '../src/eval/task.js';
 import type { JsonObject } from '../src/types.js';
+import { minimalPanelBattle } from './fixtures/position-panel.js';
 
 const TOOL = fileURLToPath(new URL('../tools/freeze-position-splits.js', import.meta.url));
 const TASK_KEYS = [
@@ -89,7 +90,7 @@ function panel(taskId: string, id: 'stability-a' | 'stability-b' | 'measurement'
   const drawPlan = exhaustivePanelDrawPlan({
     panelSeed: `private-panel-root-${taskId}`,
     id,
-    opponentLegalActions: [],
+    opponentLegalActions: ['move 1'],
     opponentSlots: 1,
     luckReplications: 2,
   });
@@ -135,6 +136,9 @@ function artifact(
   score: JsonObject;
   sealed: JsonObject;
 } {
+  const position = minimalPanelBattle();
+  assert.deepEqual(position.actions.p1, ['move 1', 'move 2']);
+  assert.deepEqual(position.actions.p2, ['move 1']);
   const actions = [
     { number: 0, canonical_action: 'move 1', label: 'Protect' },
     { number: 1, canonical_action: 'move 2', label: 'Tailwind' },
@@ -142,15 +146,15 @@ function artifact(
   const visible =
     index === 0 ? 'Alpha terrain favors a careful electric pivot.' : 'Beta rain favors an immediate water attack.';
   const task: JsonObject = {
-    schema_version: 2,
+    schema_version: 3,
     task_id: taskId,
     split: 'pilot',
-    format: 'gen9vgc',
+    format: position.format,
     phase: 'turn',
     turn: 1,
     prompt: [
-      'Choose one legal joint action for this controlled Pokemon VGC position.',
-      'The action list is exhaustive. Select the number for the complete joint action, not one part of it.',
+      'Choose one listed joint action for this controlled Pokemon VGC position.',
+      'Select the number for the complete joint action, not one part of it.',
       '',
       visible,
       '',
@@ -214,7 +218,7 @@ function artifact(
     maxNormalizedRewardDrift: qualificationReady ? 0 : null,
   };
   const score: JsonObject = {
-    schema_version: 2,
+    schema_version: 3,
     task_id: taskId,
     structural_pass: qualificationReady,
     structural_reasons: qualificationReady ? [] : ['zero_qualification_span'],
@@ -266,15 +270,15 @@ function artifact(
     },
   };
   const sealed: JsonObject = {
-    schema_version: 2,
+    schema_version: 3,
     task_id: taskId,
     source_id: `private-source-${index}`,
     source_group: positionSourceGroup(source),
     selection_stratum: 'turn/early/level',
     exact_public_fingerprint: exactPublicPositionFingerprint(task),
     source,
-    snapshot: canonicalJson({ private_snapshot: taskId }),
-    opponent_request: null,
+    snapshot: position.snapshot,
+    opponent_request: position.requests.p2 as unknown as JsonObject,
     panel_seed: `private-panel-root-${taskId}`,
     table,
   };
@@ -751,8 +755,13 @@ test('outputs preserve provenance while keeping public tasks separate from score
         ],
       },
     ]);
-    const sealedBytes = `${fs.readFileSync(path.join(fixture.privateOut, 'sealed-panels.train.jsonl'), 'utf8')}${fs.readFileSync(path.join(fixture.privateOut, 'sealed-panels.eval.jsonl'), 'utf8')}`;
-    assert.match(sealedBytes, /private_snapshot/);
+    const sealedRows = [
+      ...readRows(path.join(fixture.privateOut, 'sealed-panels.train.jsonl')),
+      ...readRows(path.join(fixture.privateOut, 'sealed-panels.eval.jsonl')),
+    ];
+    assert.ok(sealedRows.every((row) => String(row.snapshot).includes('"formatid":"gen9customgame"')));
+    assert.ok(sealedRows.every((row) => row.opponent_request && typeof row.opponent_request === 'object'));
+    const sealedBytes = sealedRows.map((row) => canonicalJson(row)).join('\n');
     assert.match(sealedBytes, /private-panel-root-.*:continuation:/);
 
     const manifest = readObject(path.join(fixture.publicOut, 'manifest.json'));
