@@ -73,21 +73,49 @@ private belief or use disagreement alone as proof of deception.
 Each run records hashes for the prompts, state renderer, tool renderer, tool
 schemas, decision policy, and reflection policy. Model-visible adapter and
 execution-harness identity is also part of the condition. Change a protocol or
-scaffold between runs, never during one.
+scaffold between runs, never during one. For comparative adapters, freeze and
+digest the harness prompts, memory policy, and any harness-provided initial
+memory content, and model-facing skills before rollout; the model notebook is
+per-episode model output.
 
-Evidence logging has a separate identity. Adding a sink or provenance field does
-not by itself change model behavior; exposing a new retrieval API, tool, prompt,
-or carried memory does. Do not use an evidence-log version as a substitute for
-the model-visible scaffold or adapter identity.
+The primary controlled baseline is `controlled-explicit-state`: exact explicit
+state scoped per seat and per episode plus that model's notebook. It has no
+cross-run memory, refinement state, or A2A. Competing seats run from isolated
+roots with no sibling messaging, shared kernel, or shared filesystem. A
+separate named, non-comparable `controlled-episodic` profile may use only a
+fixed deterministic compaction procedure; that procedure and its inputs and
+outputs are frozen and digested, and compaction events are append-only. A
+separate named, non-comparable `prime-agent-capable` system-level ablation may
+allow declared Prime Agent RLM refinement, subagents, and heartbeats. It is not
+comparable with either controlled profile. The verifiers `Agent` is distinct
+from both Prime Agent and Prime Agent RLM subagent.
 
-Results from different scaffolds may be shown side by side only when the changed
-component is irrelevant to the stated metric. Otherwise report them as separate
-conditions. Model routing, provider, served upstream stack, sampling parameters,
-timer mode, Showdown revision, board, and format are also provenance.
+Evidence logging has a separate identity. Raw submitted messages, actions,
+traces, and referee transitions are append-only. Adding a sink or provenance
+field does not by itself change model behavior; exposing a new retrieval API,
+tool, prompt, or carried memory does. Summaries and evidence projections are
+observational only and never affect legality or reward. Do not use an
+evidence-log version as a substitute for the model-visible scaffold or adapter
+identity.
+
+Results from different scaffolds may be shown side by side only when the
+changed component is irrelevant to the stated metric. Otherwise report them as
+separate conditions. Model routing, provider, served upstream stack, sampling
+parameters, timer mode, Showdown revision, board, and format are also
+provenance. Prime Agent refinement, subagents, and heartbeats are allowed for
+offline development and operator orchestration, but must not silently enter a
+comparative rollout; enabled use belongs to the declared ablation.
 
 The default condition is an untimed model without an added search or recursive
 reasoning harness. Timers and other scaffolds are opt-in arms, not silent
 baseline changes.
+
+Reward hacking is a protocol risk: a model or harness can optimize a proxy,
+summary, or judge signal without improving the declared decision. Contamination
+is a separate risk: training or prompt exposure to frozen tasks, private score
+artifacts, or source traces can invalidate a comparison. Keep those artifacts
+separate, record exposure, and report failures or exclusions rather than
+relabeling them as play quality.
 
 ## Caps are failure guards
 

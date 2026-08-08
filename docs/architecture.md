@@ -137,7 +137,10 @@ allowing only the seat endpoint is not by itself sufficient.
 
 ## Model decision path
 
-For each decision, `LLMEngine` sends the model:
+For each decision in the local league adapter, `LLMEngine` sends the model the
+following decision surface. The published verifiers adapter renders the same
+surface through its configured `Agent`; this transport change does not change
+the referee or domain authority described below.
 
 - the public field state and timers;
 - the exact state of its own Pokémon;
@@ -265,17 +268,54 @@ and two-battle-controller schedule. It records the candidate delta to the mean
 diagnostic only. This remains an internal vertical slice until exact licensed
 current packs, disjoint frozen suites, and complete controller coverage exist.
 
-The first verifiers integration is a static v1 `Taskset`: TypeScript exports a
-frozen value table and Python performs strict response parsing and lookup. It
-needs no service. A later dynamic draft-to-battle `Env` will drive the same
-TypeScript referee through a versioned JSON-lines child process. HTTP is an
-optional transport if a hosted runtime requires it. MCP is used only for
+The first verifiers integration is a static v1 `Taskset`, imported as
+`import verifiers.v1 as vf`: TypeScript exports a frozen value table and
+Python performs strict response parsing and lookup. It needs no service. A
+later dynamic draft-to-battle `Env` drives the same TypeScript referee over a
+versioned JSON-lines protocol through a runtime from `provision(task)` and its
+`Runtime.open_process` (Subprocess, Docker, Prime, or Modal), not an ad-hoc
+local subprocess; the runtime image must include Node and the compiled pinned
+bundle, because the repo-root TypeScript dist is not part of the wheel. HTTP
+is an optional transport if a hosted runtime requires it. MCP is used only for
 model-facing reference tools.
 
-verifiers owns external task loading, harnesses, model traffic, traces, rollout
-retries, evaluation outputs, and training integration. `LLMEngine` remains the
-local interactive client and is bypassed by the adapter; verifiers resume is not
-a replacement for replaying an interrupted battle.
+The published verifiers `Env` is an adapter boundary. In that adapter only, it
+replaces the local `LLMEngine`, provider routing, provider retries, and
+top-level comparative run/episode orchestration. It does not replace
+TypeScript Showdown, the VGC domain layer, or the referee: those remain
+authoritative for legal actions, accepted transitions, and rewards. It also
+does not replace replay or reconstruction of an interrupted battle. The local
+`LLMEngine` remains the local interactive adapter outside this published
+verifiers path.
+
+The `Env` API is the integration contract. A subclass declares static roles
+as `AgentConfig`-typed fields on its `EnvConfig` subclass, each with a
+declared default instance, and implements `run(task, agents)` for episode
+control with optional `setup(agents)` and `finalize(task, episode)` hooks.
+Agents are driven through `Agent.run(task, runtime=None, tools=None,
+on_trace=None)`, which returns a `Trace`. `finalize` runs after the trace
+runtimes close, so a terminal referee payload must be captured during `run`
+and aggregated in `finalize`; frozen and reference roles are not untrainable
+by default, so `setup` must set `trainable=False` on them explicitly.
+
+The verifiers `Agent` is the model-facing agent endpoint configured for an
+`Env`; it is not a Prime Agent and is not a Prime Agent RLM subagent. Prime
+Agent refinement, subagents, and heartbeats are permitted for offline
+repository development and operator orchestration, but must not enter a
+comparative rollout silently. If enabled as a system-level condition, they are
+declared in the profile and provenance.
+
+For a controlled comparative adapter, baseline memory is exact state scoped to
+one seat and one episode plus that model's notebook. It has no cross-run
+memory, refinement state, or agent-to-agent (A2A) channel. Before rollout, the
+harness prompts, memory policy, any harness-provided initial memory content,
+and model-facing skills are frozen and digested with the adapter identity;
+the model notebook is per-episode model output, not hidden cross-run memory.
+Competing seats use isolated roots; they have no sibling messaging, shared
+kernel, or shared
+filesystem. Raw submitted messages, actions, traces, and referee transitions
+are append-only. Summaries and evidence projections are observational only and
+never affect legality or reward.
 
 ## Dependency boundary
 
@@ -308,7 +348,9 @@ concurrent resume processes; operators must not resume the same run concurrently
 
 `records/results.jsonl` is append-only. Readers accept unknown fields and
 missing optional fields. Public readers expose contextual per-series outcomes
-and observational summaries without deriving an Elo or total order.
+and observational summaries without deriving an Elo or total order. Raw traces
+and referee evidence remain append-only; summaries are projections for
+inspection and never feed back into legal-action validation or reward.
 
 Local evidence uses files:
 

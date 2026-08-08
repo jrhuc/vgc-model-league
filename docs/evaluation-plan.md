@@ -265,10 +265,17 @@ experiment.
 
 ### Episode and training shape
 
-The verifiers environment will declare static roles such as `seat0` through
-`seat7` and use the configured subset. The control flow belongs in
-`Env.run(task, agents)`; cross-agent and delayed rewards belong in
-`Env.finalize`.
+The verifiers environment declares static roles such as `seat0` through
+`seat7` and uses the configured subset. Each role is an `AgentConfig`-typed
+field on the `EnvConfig` subclass with a declared default instance. The
+concrete env overrides `Env.run(task, agents)` for episode control, with
+optional `setup(agents)` before and `finalize(task, episode)` after, and
+drives each seat through `Agent.run(task, runtime=None, tools=None,
+on_trace=None)`, which returns a `Trace`. `finalize` runs after the trace
+runtimes close, so terminal referee payloads must be captured during
+`run`/interaction and aggregated in `finalize`. Frozen and reference roles are
+not automatically untrainable; `setup` must set `trainable=False` on them
+explicitly.
 
 One full-season trace per seat would broadcast one scalar over every token and
 would not turn turn-level diagnostics into turn-level credit. The implementation
@@ -278,16 +285,43 @@ the existing league's carried notebook without pretending that standard
 trace-level RL provides per-token credit assignment.
 
 A multi-seat season is expensive and a failed episode may replay the whole unit.
-Develop it in named, non-comparable profiles:
+Development smoke stages (random agents, one frozen matchday, a mini-season,
+then the intended six-to-eight-seat circuit) are not comparison profiles. The
+comparative profiles are named and explicitly non-comparable:
 
-- a deterministic random-agent smoke run;
-- one frozen matchday from recorded rosters;
-- a small mini-season;
-- only then the intended six-to-eight-seat circuit.
+- **`controlled-explicit-state` (primary):** the published `verifiers Env`
+  supplies each seat with reconstructed exact state for that seat and episode,
+  plus that model's notebook. The prompts, memory policy, any harness-provided
+  initial memory content, and model-facing skills are frozen and SHA-256
+  digested before rollout; the model notebook remains per-episode model output.
+  Each seat runs in an isolated root with no sibling messaging, shared kernel, or
+  shared filesystem; there is no cross-run memory, refinement state, or A2A.
+  Raw traces are append-only, while summaries and evidence projections are
+  observational and cannot affect legality or reward.
+- **`controlled-episodic`:** retains the same controlled seat isolation and
+  explicit-state boundary, but permits episode context to be compacted only by
+  one declared, fixed, deterministic compaction procedure. Its procedure and
+  inputs/outputs are frozen and digested, and compaction events are recorded;
+  no provider or operator may introduce an adaptive or hidden summary. This is
+  a separate, non-comparable profile even when the model and game schedule are
+  identical.
+- **`prime-agent-capable`:** a system-level ablation that permits Prime Agent
+  RLM refinement, per-seat subagents, and heartbeats under a declared,
+  digested configuration. It remains seat-isolated and cannot silently add
+  sibling communication or shared state. This profile is not comparable with
+  either controlled profile and is reported only as an ablation. A verifiers
+  `Agent` is the model endpoint configured for the `Env`; it is not a Prime
+  Agent and not a Prime Agent RLM subagent.
 
-Hosted evaluation comes before training. Multi-agent training remains a
-self-managed `prime-rl` experiment until the required role configuration and
-advantage method have been demonstrated on the hosted product.
+The baseline for the first profile is exact explicit state per seat/per episode
+plus the model notebook: no cross-run memory, refinement, or A2A. A profile
+change is a scaffold and execution-harness change, not a tuning detail. Do not
+rank profiles against one another. The Prime Agent capabilities above are
+allowed for offline development and operator orchestration, but never enter a
+comparative rollout implicitly. Hosted evaluation comes before training.
+Multi-agent training remains a self-managed `prime-rl` experiment until the
+required role configuration and advantage method have been demonstrated on the
+hosted product.
 
 ## Prime Intellect integration
 
@@ -297,26 +331,54 @@ verifiers should own the functions it already provides: task loading, model and
 harness configuration, runtimes, trace capture, rollout retries, evaluation
 outputs, multi-agent episode control, and integration with `prime-rl`.
 
-The local `LLMEngine` overlaps with that combined stack, not just with the
-interception server. It remains for local interactive leagues; the published
-adapter bypasses it. verifiers resume restarts missing or errored rollouts. It
-does not replace this repository's in-progress battle reconstruction.
+In the published verifiers adapter only, that ownership replaces the local
+`LLMEngine`, provider routing, provider retries, and top-level comparative
+run/episode orchestration. The local `LLMEngine` remains a local interactive
+adapter for the league and is not the published verifiers path. verifiers
+resume restarts missing or errored rollouts; it does not replace this
+repository's battle reconstruction or referee.
 
-For native verifiers v1, a package exports `Taskset`, and optionally `Env` or
-`Harness`, classes through `__all__`. Do not add legacy `load_environment`
-functions to the v1 package unless a separately tested compatibility wrapper
-requires them.
+The TypeScript Showdown/domain/referee boundary remains authoritative in every
+profile. The adapter can transport requests and responses, but it cannot
+rewrite legal actions, accepted transitions, or rewards. A verifiers `Agent` is
+the model endpoint configured for an `Env`; it is distinct from a Prime Agent
+and from a Prime Agent RLM subagent. Prime Agent refinement, subagents, and
+heartbeats are allowed for offline development and operator orchestration, not
+silently in comparative rollout. If enabled by the `prime-agent-capable`
+system-level ablation, they must be declared and digested as part of that
+profile.
+
+Freeze and digest the harness prompts, per-seat/per-episode memory policy and
+any harness-provided initial memory content, and model-facing skills before
+comparative rollout. Baseline memory is exact explicit state plus the model
+notebook, with no cross-run memory, refinement, or A2A; the notebook is
+per-episode model output. Competing seats must use isolated roots with no sibling
+messaging, shared kernel, or shared filesystem. Raw traces are append-only;
+summaries and evidence are observational projections and never affect
+legality or reward.
+
+For native verifiers v1, import the API as `import verifiers.v1 as vf`; the
+top-level `verifiers` import is the legacy surface. A package's `__all__` may
+export exactly one `Taskset` subclass and exactly one `Env` subclass together;
+the loader resolves each kind by filtering `__all__` independently. Do not add
+legacy `load_environment` functions to the v1 package unless a separately
+tested compatibility wrapper requires them.
 
 ### Runtime boundary
 
 `vgc-positions-v1` is static and needs no runtime bridge.
 
 The dynamic draft circuit keeps TypeScript and Pokémon Showdown authoritative.
-Start with a versioned JSON-lines referee process launched beside the Python
-environment. Add an HTTP transport only if a hosted runtime proves that the
-local process cannot be packaged. HTTP is a deployment option, not the domain
-API. MCP is reserved for model-facing mechanics tools; it is not the grading
-control plane.
+The versioned JSON-lines referee runs inside a runtime yielded by
+`provision(task)`, using `Runtime.open_process`. That process API is supported
+by the Subprocess, Docker, Prime, and Modal runtimes and exposes byte writes,
+async stdout/stderr, wait, terminate, and kill, rather than an ad-hoc local
+subprocess. The runtime image must include Node and the compiled pinned
+bundle; the repo-root TypeScript dist is not automatically part of the wheel.
+Add an HTTP transport only if a hosted runtime proves that the packaged
+process cannot run. HTTP is a deployment option, not the domain API. MCP is
+reserved for model-facing mechanics tools; it is not the grading control
+plane.
 
 Every dynamic client must handshake on protocol version, Showdown SHA, format,
 board checksum, and scaffold version, and fail closed on mismatch.
