@@ -15,7 +15,10 @@ const pool = loadPool();
 /** Drives the compiled referee as the external process a verifiers runtime opens, so the stdio
  * framing and handshake are exercised rather than only the in-process session object. */
 class RefereeProcess {
-  private readonly child = spawn(process.execPath, [REFEREE], { stdio: ['pipe', 'pipe', 'pipe'] });
+  private readonly child = spawn(process.execPath, [REFEREE], {
+    stdio: ['pipe', 'pipe', 'pipe'],
+    env: { ...process.env, NO_COLOR: undefined },
+  });
   private readonly lines: string[] = [];
   private waiting: ((line: string) => void) | undefined;
   private buffer = '';

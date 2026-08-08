@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 import { readBoundedLines } from '../src/bounded-lines.js';
-import { FrozenBattleProtocolSession } from '../src/frozen-battle-protocol.js';
+import { FrozenMatchdayProtocolSession } from '../src/frozen-matchday-protocol.js';
 
 const MAX_REQUEST_BYTES = 32 * 1024 * 1024;
-const session = new FrozenBattleProtocolSession();
+const session = new FrozenMatchdayProtocolSession();
 
 function write(value: unknown): void {
   process.stdout.write(`${JSON.stringify(value)}\n`);

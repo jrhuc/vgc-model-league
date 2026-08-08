@@ -60,6 +60,13 @@ The three named profiles are deliberately non-comparable:
   retaining seat isolation. It is not comparable with either controlled
   profile. A verifiers `Agent` is not a Prime Agent or RLM subagent.
 
+The future matchday adapter will give each seat one bounded full-replacement
+notebook submission after each nonterminal game. Omission retains that seat's
+current notebook; an empty replacement clears it. The notebook is optional
+noncausal evidence: it cannot change legality, Showdown state, RNG, score, or
+public observations. Its elicitation and reinjection prompts are part of the
+frozen scaffold identity.
+
 Do not rank profiles against one another. Prime Agent capabilities are fine for
 offline development or operator orchestration but may enter a comparative
 rollout only through the named ablation. The default is untimed and adds no

@@ -157,19 +157,26 @@ bundle. HTTP is only an optional runtime transport; MCP is only for model-facing
 mechanics tools. Local source verification does not substitute for separate
 Docker, Hub, and hosted compatibility smokes.
 
-The implemented first slice is `src/frozen-battle-referee.ts` plus the
-`tools/frozen-battle-referee.ts` JSONL process. It runs one seeded fixed-roster
-Showdown game with seat-private observations, simultaneous submissions,
-stale-state rejection, bound snapshots, and terminal evidence. Its handshake
-covers the JSONL protocol version, the referee protocol version, and the
-Showdown SHA, and binds every response to an episode identifier, a caller-supplied
-condition digest, and a config digest over format, seed, and packed teams. Board
-and scaffold digests are not in this slice because it has no draft and no model
-seat. `tests/frozen-battle-process.test.ts` drives the compiled binary over
-stdio, so the framing and fail-closed behaviour are exercised as a subprocess
-rather than only in process. It does not yet perform construction, a
-best-of-three matchday, drafting, model rollout, or scoring; no verifiers package
-exists yet.
+`src/frozen-battle-referee.ts` remains the single-game authority. The
+`src/frozen-matchday-referee.ts` layer accepts two already accepted strict
+construction artifacts, rejects noncanonical or illegal registrations, and
+runs up to three seeded native Champions games. The same registered six are
+used throughout; native team preview supplies a fresh bring-four and lead choice
+each game, and the pinned format supplies forced open team sheets. An explicit
+private notebook replacement is available between games as evidence only.
+
+`src/frozen-matchday-protocol.ts` and `tools/frozen-matchday-referee.ts` expose
+that matchday as JSON lines over stdio, with a 32 MiB limit per request line. The
+protocol binds `episodeId`, an opaque caller-supplied `conditionDigest`, the
+JSON-lines, matchday, and battle protocol versions, the Showdown SHA, and a
+`configDigest` that commits to the format, game seeds, seat names, and
+construction and team digests. The JSON-lines session is a trusted referee
+interface, not seat authentication. The future adapter will mediate role access;
+snapshots remain sealed referee state and private evidence remains seat-private.
+Snapshots restore the nested native battle and replay completed games to validate
+their terminal evidence. Process tests drive both the single-game and matchday
+binaries over stdio. This slice still does not draft, run a model, compute
+circuit reward, or provide a verifiers package.
 
 The three named, non-comparable rollout profiles and their isolation rules are
 canonical in [Measurement](measurement.md). None is implemented as a published
