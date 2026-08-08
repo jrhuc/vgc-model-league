@@ -37,12 +37,40 @@ export function scopeRows(rows: SeriesRecord[], pool?: string): SeriesRecord[] {
   return pool === undefined ? rows.filter((row) => row.pool !== TEST_POOL) : rows.filter((row) => row.pool === pool);
 }
 
-export function appendRow(file: string, row: JsonObject): void {
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.appendFileSync(file, `${JSON.stringify(row)}\n`, 'utf8');
+const rowCache = new Map<string, { mtimeMs: number; size: number; rows: SeriesRecord[] }>();
+
+function appendSeparator(file: string): string {
+  let contents: string;
+  try {
+    contents = fs.readFileSync(file, 'utf8');
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return '';
+    throw error;
+  }
+  if (!contents || contents.endsWith('\n')) return '';
+  const tailStart = contents.lastIndexOf('\n') + 1;
+  const tail = contents.slice(tailStart);
+  if (tail.trim()) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(tail);
+    } catch {
+      fs.truncateSync(file, Buffer.byteLength(contents.slice(0, tailStart), 'utf8'));
+      return '';
+    }
+    if (!isRecord(parsed)) throw new Error(`invalid unterminated JSONL tail in ${file}: expected a JSON object`);
+    return '\n';
+  }
+  fs.truncateSync(file, Buffer.byteLength(contents.slice(0, tailStart), 'utf8'));
+  return '';
 }
 
-const rowCache = new Map<string, { mtimeMs: number; size: number; rows: SeriesRecord[] }>();
+export function appendRow(file: string, row: JsonObject): void {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const separator = appendSeparator(file);
+  fs.appendFileSync(file, `${separator}${JSON.stringify(row)}\n`, 'utf8');
+  rowCache.delete(file);
+}
 
 /** Cached by mtime and size; callers must treat the returned rows as immutable. */
 export function loadRows(file: string): SeriesRecord[] {

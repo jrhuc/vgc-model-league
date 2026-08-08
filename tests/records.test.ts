@@ -58,6 +58,43 @@ test('record loading retains valid rows before a torn final JSONL fragment', (t)
   assert.deepEqual(loadRows(records), [first, second]);
 });
 
+test('record append removes a torn tail before committing the new row', (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-model-league-records-'));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const records = path.join(directory, 'results.jsonl');
+  const first = row('a', 'b', 'a');
+  const replacement = row('c', 'd', 'd');
+  fs.writeFileSync(records, `${JSON.stringify(first)}\n{"players":{"p1":"partial"`);
+
+  appendRow(records, replacement);
+
+  assert.deepEqual(loadRows(records), [first, replacement]);
+  assert.doesNotMatch(fs.readFileSync(records, 'utf8'), /partial/);
+});
+
+test('record append preserves a valid unterminated object with a separator', (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-model-league-records-'));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const records = path.join(directory, 'results.jsonl');
+  const first = row('a', 'b', 'a');
+  const second = row('c', 'd', 'c');
+  fs.writeFileSync(records, JSON.stringify(first));
+
+  appendRow(records, second);
+
+  assert.deepEqual(loadRows(records), [first, second]);
+});
+
+test('record append refuses a semantic-invalid unterminated tail', (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-model-league-records-'));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const records = path.join(directory, 'results.jsonl');
+  fs.writeFileSync(records, '42');
+
+  assert.throws(() => appendRow(records, row('a', 'b', 'a')), /invalid unterminated JSONL tail/);
+  assert.equal(fs.readFileSync(records, 'utf8'), '42');
+});
+
 test('record loading rejects a terminated malformed final JSONL row', (t) => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-model-league-records-'));
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
