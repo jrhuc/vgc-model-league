@@ -71,8 +71,14 @@ private belief or use disagreement alone as proof of deception.
 ## Keep scaffolds identifiable
 
 Each run records hashes for the prompts, state renderer, tool renderer, tool
-schemas, decision policy, and reflection policy. Change a protocol or scaffold
-between runs, never during one.
+schemas, decision policy, and reflection policy. Model-visible adapter and
+execution-harness identity is also part of the condition. Change a protocol or
+scaffold between runs, never during one.
+
+Evidence logging has a separate identity. Adding a sink or provenance field does
+not by itself change model behavior; exposing a new retrieval API, tool, prompt,
+or carried memory does. Do not use an evidence-log version as a substitute for
+the model-visible scaffold or adapter identity.
 
 Results from different scaffolds may be shown side by side only when the changed
 component is irrelevant to the stated metric. Otherwise report them as separate
@@ -135,16 +141,19 @@ average over a declared distribution of hidden states compatible with the seat's
 view, or restrict the task set to positions robust to those states. Report the
 hidden-state treatment with every result.
 
-Searching many noisy alternatives creates winner's bias. Candidate selection
-and final measurement therefore use independent draws. That also means the
-selected candidate can measure worse than the played action. Do not hide that
-with a claim that the selected action is the true best. Report selection
-instability and never interpret a per-position clamp as an unbiased estimate.
+Searching many noisy alternatives creates winner's bias. Qualification and
+final measurement therefore use independent panels. Eligibility thresholds use
+the two qualification panels only; the untouched measurement panel supplies the
+published reward. An item admitted by qualification but lacking a usable
+measurement panel fails the candidate freeze rather than being silently removed
+using measurement evidence.
 
-A normalized score must use an independently estimated opportunity span and
-exclude positions whose span is too small to estimate reliably. The threshold
-is part of the benchmark version. Do not mix values produced with different
-reference settings.
+A normalized score must use a reliably estimated opportunity span. Thresholds
+belong to a schema-v2 frozen policy calibrated on a separate canonical manifest,
+not chosen from the candidate corpus. Qualification can still select a candidate
+whose measurement ordering reverses. Do not call the selected action the true
+best or interpret a per-position clamp as an unbiased estimate. Do not mix values
+produced with different reference settings.
 
 Before this diagnostic becomes a public reward, it must pass the validation
 checks in [Evaluation plan](evaluation-plan.md): repeated-seed stability,
@@ -168,10 +177,22 @@ The original league scaffold is provenance, not context for the new model. A
 mid-game benchmark cannot give the new model another model's private notebook;
 it uses one explicit, neutral position scaffold instead.
 
+Thresholds and balance tolerances are reviewed on a separate canonical
+calibration manifest, then applied unchanged to a distinct candidate manifest.
+Frozen splits keep each source-series and near-duplicate connected component on
+one side. The current allocation is deterministic greedy stratification, not a
+global optimum. A candidate that misses the total or per-stratum tolerances fails
+closed. Public tasks and private scoring/sealed artifacts live in physically
+separate roots with immutable target files and are usable only with their
+complete verified manifest.
+
 ## Cross-stage measurements
 
 The draft-to-battle protocol records a linked temporal trajectory. Temporal
-order alone does not make adjacent fields causal labels.
+order alone does not make adjacent fields causal labels. Seat context and
+decision logs record observations delivered to the model and actions it
+submitted; they do not prove Showdown accepted the action. Legality, repair,
+substitution, and transition claims must join referee or Showdown evidence.
 
 Deterministic examples include:
 

@@ -13,14 +13,20 @@ cleanly, so the public work is split deliberately.
 
 | Artifact | Unit | Purpose | Status |
 | --- | --- | --- | --- |
-| `vgc-positions-v1` | one battle choice | controlled, inexpensive decision evaluation | exporter and package not built |
+| `vgc-positions-v1` | one battle choice | controlled, inexpensive decision evaluation | prototype exporter exists; package and model runner not built |
+| `vgc-whole-reg-build-v0` | one complete team build | internal construction-to-battle ablation | vertical-slice proposal only |
 | `vgc-draft-circuit-v1` | draft through played matches | multi-agent planning with delayed outcomes | design only |
 | local league | complete exploratory run | generate trajectories and inspect behaviour | working |
 
 The position taskset is built first because its contract is narrow and its score
-can be computed offline. The draft circuit is the eventual multi-agent flagship,
-but it is not ready to be called an RL environment until drafting is connected
-to team construction and battle outcomes.
+can be computed offline. The draft circuit is the eventual multi-agent flagship:
+the contribution boundary is the linked draft, construction, bring, lead, and
+battle episode, not another general battle environment. poke-env and VGC-Bench
+supply complementary baselines and artifacts; neither implements that combined
+circuit. It is not ready to be called an RL environment until those stages are
+connected to battle outcomes. The internal whole-build arm may exercise that
+shared path, but it does not move the positions-first order or replace the draft
+circuit as the flagship.
 
 ## What is already implemented
 
@@ -58,37 +64,47 @@ scaffold.
 ### Static scoring, not a live service
 
 The first package should not need Node, an HTTP service, a tunnel, or a secret at
-rollout time. The provisional TypeScript panel exporter now uses the embedded
-simulator to score **every** legal action on two stability panels and an
-untouched measurement panel. Before release it must write:
+rollout time. The provisional TypeScript exporter scores **every** legal action
+on two independent qualification panels and one untouched measurement panel.
+Before release it must write:
 
 - the model-visible prompt and action map;
 - a score vector keyed by canonical action;
-- repeated-seed uncertainty and an eligibility flag;
+- qualification uncertainty and an eligibility record;
 - the full Showdown SHA, format, scaffold version, reference configuration,
   sampling seeds, executed evaluator digest, and content checksum.
 
 All action values within a panel share opponent draws, battle seeds, and
-continuation seeds. The matrix must be rectangular: a failed cell excludes the
-whole panel rather than giving different actions different sample counts. The
-pilot exporter keeps task prompts, private score rows, and sealed matrices in
-separate roots and marks its manifest non-release-ready. It now records a
-versioned diagnostic vector: held-out span and standard error, full-ranking
-Spearman agreement, extrema agreement, maximum cross-panel normalized-reward
-drift, and measurement standard error relative to span. The advisory
-`summarize-position-pilot` command reports their empirical distributions without
-choosing thresholds. A separately reviewed, provenance-bound frozen policy must
-set the gates; the implementation does not promote pilot quantiles into criteria.
-The split freezer can apply an explicitly frozen policy, cluster normalized
-visible-position token trigrams at that policy's declared similarity threshold,
-and union those clusters with source-game groups before deterministic assignment.
-It emits pair evidence, exclusions, component assignments, checksums, and immutable
-candidate train/eval files. Choosing and reviewing the policy on a sufficient
-pilot remains a release gate; running the command does not approve the package.
-Public tasks, private score tables, sealed panels, and their manifest use the
-versioned canonical JSON byte protocol; strict boundary validators reject extra
-keys, malformed action maps, non-finite values, and incomplete task/score/sealed
-joins before any file is written.
+continuation seeds. The matrix is rectangular: a failed cell rejects the panel
+rather than giving actions different sample counts. Schema-v2 pilot artifacts
+keep public tasks, private score rows, and sealed matrices in physically separate
+roots and mark the manifest non-release-ready. Eligibility metrics come only
+from the qualification panels; the measurement panel supplies final rewards.
+`summarize-position-pilot` reports diagnostic distributions without choosing
+thresholds. `freeze-positions` performs preliminary replayable-corpus selection;
+only `freeze-position-splits` publishes immutable candidate train/evaluation
+artifacts.
+
+Split freeze requires two canonical manifests: the candidate pilot manifest that
+binds the supplied task, score, and sealed bytes, and a separate calibration
+manifest whose exact digest is bound by a reviewed schema-v2 policy. The policy
+sets qualification gates, duplicate threshold, split seed and fraction, and
+reviewed overall and per-stratum balance tolerances. A distinct calibration
+manifest establishes distinct bytes; corpus-disjointness still needs its own
+source and similarity checks.
+
+The freezer unions source-series groups with normalized visible-position
+near-duplicate clusters, then applies deterministic greedy stratification while
+keeping every connected component intact. It is not a globally optimal balance.
+Missing train or evaluation output, a tolerance failure, or any
+qualification-eligible row with `measurement_ready` false fails the complete
+candidate freeze. Candidate outputs remain `release_ready: false`.
+
+Public and private outputs use physically separate roots with immutable target
+files. A complete identical artifact-set rerun is a no-op; different bytes
+require new target roots. Schema-v2 boundary validation rejects malformed or
+noncanonical policy, manifest, task, score, and sealed bytes before publication. Freezing does not
+waive hidden-information, criterion, horizon, or package-smoke gates.
 
 The Python task then parses one choice and performs a deterministic lookup. For
 a legal action `a`, the proposed primary reward is
@@ -133,8 +149,10 @@ derived from the score vector, with uncertainty.
 Do not publish a model ranking or training recipe until all of these pass:
 
 1. **Replay:** every item reproduces its source game exactly.
-2. **Sampling stability:** action values and orderings are compared across
-   independent seed panels; unstable or low-span items are removed.
+2. **Sampling stability:** action values and orderings are compared across the
+   independent qualification panels under a policy calibrated outside the
+   candidate corpus; unstable or low-span items are excluded without consulting
+   measurement values.
 3. **Horizon sensitivity:** the report shows how scores move at longer horizons
    and, on a tractable subset, to the end of the game.
 4. **Hidden information:** realized-state and information-set scores are
@@ -149,9 +167,47 @@ Do not publish a model ranking or training recipe until all of these pass:
 8. **Hosted smoke test:** Hosted Evaluations and Hosted Training are tested
    separately instead of inferred from local compatibility.
 
-The frozen comparison split is stratified by phase and state, capped per source
-game, versioned, and unchanged after results are collected. Exploratory positions
-and training data may continue to grow under new version names.
+The frozen comparison split is capped per source game and stratified by phase
+and state with deterministic greedy component allocation. Reviewed balance
+tolerances are gates, not claims of optimal partitioning. The public and private
+roots are immutable once the complete candidate manifest is committed.
+Exploratory positions and training data may continue under new version names.
+
+## Internal arm: `vgc-whole-reg-build-v0`
+
+This proposed standalone arm is an ablation of the same construction and referee
+circuit, not a third public flagship. It removes drafting and asks for one
+complete Regulation MB team of six. Its foundation reuses the shared
+`TeamBuildTask` and `StageEvidence` contracts, Showdown validator, preview and
+battle adapters, and evidence schema. It adds no arm-specific repair path or
+separate reflection turn.
+
+Showdown decides legality. A comparative submission must contain exactly six
+complete legal sets. An invalid or incomplete answer remains an invalid build;
+it is never repaired, replaced, or defaulted into the comparison.
+
+Each candidate build and each team in the frozen human-reference suite `H` runs
+against the frozen opponent suite `O` on one common rectangular schedule:
+opponent, side, seed, two declared preview controllers, and two declared battle
+controllers. Every cross-product cell must complete. The reference statistic is
+the candidate's schedule mean minus the mean schedule value across `H`, under
+identical cells. Uncertainty uses build episode as the outer sampling unit;
+games inside one build schedule are not independent model samples.
+
+An LLM or expert meta-judge may label legality-adjacent style, metagame fit, or
+failure modes as a diagnostic. It never supplies reward or changes inclusion.
+Public teams may have been memorized, so public-pack performance is not evidence
+of de novo construction. An official stream without exact spreads is not an
+exact team pack.
+
+**GO:** build only the internal vertical slice needed to verify the shared task,
+evidence, Showdown, controller, and artifact path.
+
+**NO-GO:** do not publish a Regulation MB model comparison or ranking until
+current human packs have exact provenance and usable licences, `O` and `H` are
+frozen and disjoint, and the full two-preview-by-two-battle-controller coverage
+exists. These gates do not change the positions-first priority or the draft
+circuit's flagship status.
 
 ## Artifact 2: `vgc-draft-circuit-v1`
 
@@ -177,18 +233,22 @@ reward.
 
 The [Social Arena methodology](https://olamlabs.ai/research/social-arena) is a
 useful cross-domain implementation reference. The circuit should likewise use
-anonymous opponents, one continuous seat-private session, the same authorized
-state/action surface for human and agent clients, append-only accepted-action
-records, and explicit sandbox and harness descriptors. Its large-sample outcome
-ratings do not transfer to a small pilot season, and its LLM-judged behavioral
-indices are not a substitute for the controlled decision result here.
+anonymous opponents, harness-level logical seat continuity, the same authorized
+state/action surface for human and agent clients, and explicit sandbox and
+harness descriptors. Logical continuity means reconstructed explicit state, not
+an assumed persistent provider chat or process. Submitted model evidence and
+referee-accepted transitions must remain distinct append-only records. Its
+large-sample outcome ratings do not transfer to a small pilot season, and its
+LLM-judged behavioral indices are not a substitute for the controlled decision
+result here.
 
-The circuit also needs a canonical append-only transition ledger: accepted
-message/action, actor and visibility, input and resulting state hashes, RNG and
-protocol identity, plus separate rejection or substitution events. Operational
-resume files may be rebuilt, but accepted evidence may not be pruned or
-rewritten. A fork is a new episode with parent run/sequence, intervention, and
-changed scaffold components rather than a mutation of the source trace.
+The circuit also needs canonical append-only evidence with two boundaries:
+submitted model messages and actions, and referee-accepted transitions with
+actor, visibility, input and resulting state hashes, RNG, and protocol identity.
+Rejections and substitutions are separate events. Operational resume files may
+be rebuilt, but recorded evidence may not be pruned or rewritten. A fork is a
+new episode with parent run/sequence, intervention, and changed scaffold
+components rather than a mutation of the source trace.
 
 ### Signals
 
@@ -323,8 +383,9 @@ automatic funding commitment.
    overclaiming mechanics classifications, fix deterministic sampling and resume
    markers, and label current scores experimental.
 2. **Build the exhaustive exporter.** Render the neutral position prompt, score
-   every legal action on frozen draw panels, split model-visible and grader data,
-   and write the manifest.
+   every legal action on independent qualification and measurement panels, write
+   schema-v2 candidate artifacts, and calibrate policy on a separate manifest
+   before freezing the candidate.
 3. **Create `vgc-positions-v1`.** Keep it a small native v1 Taskset with strict
    parsing, deterministic lookup rewards, leakage tests, and a `null` harness
    config.
@@ -333,10 +394,13 @@ automatic funding commitment.
 5. **Run the controlled pilot.** Use several open or inexpensive models over the
    same evaluation split. Publish samples, uncertainty, costs, and the complete
    config, not a leaderboard alone.
-6. **Extract the dynamic referee.** Define the JSON protocol from the existing
-   draft, teambuild, preview, and battle state machines.
-7. **Build a draft-to-battle vertical slice.** Demonstrate delayed outcomes and
-   cross-stage metrics before scaling agents or attempting training.
+6. **Extract the shared dynamic referee.** Define `TeamBuildTask`, reuse
+   `StageEvidence`, and version the JSON protocol across construction, preview,
+   and battle.
+7. **Exercise construction, then build the flagship slice.** Use
+   `vgc-whole-reg-build-v0` only to validate that shared vertical path, then
+   demonstrate draft-to-battle delayed outcomes and cross-stage metrics before
+   scaling agents or attempting training.
 8. **Add reports last.** The GUI should consume versioned evaluation outputs; it
    should not invent scores from the exploratory league corpus.
 

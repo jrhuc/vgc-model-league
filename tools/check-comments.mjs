@@ -1,12 +1,13 @@
 #!/usr/bin/env node
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { parse } from '@babel/parser';
 
 const POLICY =
   'repo policy: comments only for constraints the code cannot express, written as /** doc */ blocks; // narration is rejected';
 
-const repoRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const violations = [];
 
 for (const root of ['src', 'tools', 'tests']) {

@@ -45,10 +45,7 @@ function revision() {
 }
 
 function assertBuild() {
-  const requiredFiles = [
-    ...requiredBuildFiles,
-    ...runtimePackages.map((name) => `node_modules/${name}/package.json`),
-  ];
+  const requiredFiles = [...requiredBuildFiles, ...runtimePackages.map((name) => `node_modules/${name}/package.json`)];
   const missing = requiredFiles.filter((file) => !fs.existsSync(path.join(directory, file)));
   if (missing.length) {
     throw new Error(`Pokémon Showdown is not built (${missing.join(', ')} missing); run pnpm run setup:showdown`);
