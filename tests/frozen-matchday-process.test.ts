@@ -5,11 +5,11 @@ import test from 'node:test';
 
 import { FROZEN_MATCHDAY_JSONL_PROTOCOL_VERSION } from '../src/frozen-matchday-protocol.js';
 import { REPO_ROOT } from '../src/paths.js';
-import { showdownCommit } from '../src/showdown.js';
 import type { JsonObject } from '../src/types.js';
 import { frozenMatchdayOptions } from './fixtures/frozen-matchday.js';
 
-const REFEREE = path.join(REPO_ROOT, 'dist', 'tools', 'frozen-matchday-referee.js');
+const SHOWDOWN_REVISION = '6a1836dd71c0718e923206f3d089e61074410868';
+const REFEREE = path.join(REPO_ROOT, 'dist-matchday', 'tools', 'frozen-matchday-referee.js');
 
 class MatchdayProcess {
   private readonly child = spawn(process.execPath, [REFEREE], {
@@ -85,14 +85,18 @@ function okObject(response: JsonObject): JsonObject {
   return value as JsonObject;
 }
 
-test('the compiled matchday process runs strict construction through a native Champions Bo3', async (t) => {
+test('the isolated matchday artifact runs strict construction through a native Champions Bo3', async (t) => {
   const referee = new MatchdayProcess();
   t.after(() => referee.close());
 
   const ready = await referee.read();
-  assert.equal(ready.kind, 'ready');
-  assert.equal(ready.protocolVersion, FROZEN_MATCHDAY_JSONL_PROTOCOL_VERSION);
-  assert.equal(ready.showdownRevision, showdownCommit());
+  assert.deepEqual(ready, {
+    kind: 'ready',
+    protocolVersion: 1,
+    matchdayProtocolVersion: 1,
+    battleProtocolVersion: 2,
+    showdownRevision: SHOWDOWN_REVISION,
+  });
   const malformed = await referee.sendRaw('{not json');
   assert.deepEqual(malformed.error, { code: 'invalid-json', message: 'request is not valid JSON' });
 
@@ -100,7 +104,7 @@ test('the compiled matchday process runs strict construction through a native Ch
     await referee.call(1, 'start', {
       episodeId: 'matchday-process',
       conditionDigest: 'd'.repeat(64),
-      showdownRevision: showdownCommit(),
+      showdownRevision: SHOWDOWN_REVISION,
       options: frozenMatchdayOptions(),
     }),
   );
@@ -110,7 +114,10 @@ test('the compiled matchday process runs strict construction through a native Ch
     const terminal = ok(await referee.call(id++, 'terminal'));
     if (terminal) {
       const evidence = terminal as JsonObject;
-      assert.equal(evidence.format, frozenMatchdayOptions().format);
+      assert.equal(evidence.protocolVersion, 1);
+      assert.equal(evidence.battleProtocolVersion, 2);
+      assert.equal(evidence.showdownRevision, SHOWDOWN_REVISION);
+      assert.equal(evidence.format, 'gen9championsvgc2026regmbbo3');
       assert.ok([2, 3].includes((evidence.games as unknown[]).length));
       assert.equal(referee.stderr.join(''), '');
       return;

@@ -1,0 +1,10 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "outDir": "dist-matchday",
+    "declaration": false,
+    "sourceMap": false
+  },
+  "files": ["tools/frozen-matchday-referee.ts"],
+  "include": []
+}
