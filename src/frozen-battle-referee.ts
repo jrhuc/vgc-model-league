@@ -1,10 +1,9 @@
-import crypto from 'node:crypto';
-
 import type { Battle } from 'pokemon-showdown';
-import { loadShowdown } from '../showdown.js';
-import { finishUpdateRouting, routeUpdateLines } from '../sim.js';
-import type { BattleRequest, Pid } from '../types.js';
-import { type LegalActionEntry, legalActionEntries, pendingSides } from './fork.js';
+import { type LegalActionEntry, legalActionEntries, pendingSides } from './eval/fork.js';
+import { canonicalJsonDigest } from './eval/serialization.js';
+import { loadShowdown } from './showdown.js';
+import { finishUpdateRouting, routeUpdateLines } from './sim.js';
+import type { BattleRequest, Pid } from './types.js';
 
 export const FROZEN_BATTLE_REFEREE_PROTOCOL_VERSION = 1 as const;
 
@@ -167,21 +166,9 @@ function withoutWallClockLines(serialized: unknown): unknown {
   return canonical;
 }
 
-function canonicalize(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(canonicalize);
-  if (!value || typeof value !== 'object') return value;
-  return Object.fromEntries(
-    Object.entries(value)
-      .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
-      .map(([key, entry]) => [key, canonicalize(entry)]),
-  );
-}
-
 function stateHashOf(battle: Battle): string {
-  return crypto
-    .createHash('sha256')
-    .update(JSON.stringify(canonicalize(withoutWallClockLines(battle.toJSON()))))
-    .digest('hex');
+  const serialized = JSON.parse(JSON.stringify(withoutWallClockLines(battle.toJSON()))) as unknown;
+  return canonicalJsonDigest(serialized);
 }
 
 function installWinnerTracker(battle: Battle, winnerPid: Pid | null): WinnerTracker {

@@ -153,6 +153,14 @@ Every client handshakes on protocol version, Showdown SHA, format, board digest,
 and scaffold version and fails closed on mismatch. HTTP is only an optional
 runtime transport; MCP is only for model-facing mechanics tools.
 
+The implemented first slice is `src/frozen-battle-referee.ts` plus the
+`tools/frozen-battle-referee.ts` JSONL process. It runs one seeded fixed-roster
+Showdown game with a Showdown/config/condition handshake, seat-private
+observations, simultaneous submissions, stale-state rejection, bound snapshots,
+and terminal evidence. It does not yet perform
+construction, a best-of-three matchday, drafting, model rollout, or scoring; no
+verifiers package exists yet.
+
 The three named, non-comparable rollout profiles and their isolation rules are
 canonical in [Measurement](measurement.md). None is implemented as a published
 Draft Circuit today.

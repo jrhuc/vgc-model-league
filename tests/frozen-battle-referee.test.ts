@@ -7,7 +7,7 @@ import {
   FrozenBattleRefereeError,
   type FrozenBattleRefereeOptions,
   type FrozenBattleTerminalEvidence,
-} from '../src/eval/frozen-battle-referee.js';
+} from '../src/frozen-battle-referee.js';
 import { loadShowdown } from '../src/showdown.js';
 import type { Pid } from '../src/types.js';
 

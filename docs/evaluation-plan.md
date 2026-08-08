@@ -9,7 +9,7 @@ order. [Measurement](measurement.md) defines what their results may mean.
 | --- | --- | --- |
 | `vgc-positions-v1` | one battle choice | TypeScript replay/fork/export prototype exists; Python package and model runner do not |
 | `vgc-whole-reg-build-v0` | one complete team build | internal vertical-slice proposal only |
-| `vgc-draft-circuit-v1` | draft through played matches | design only |
+| `vgc-draft-circuit-v1` | draft through played matches | fixed-roster single-game referee and JSONL bridge exist; draft, Bo3, and verifiers `Env` do not |
 | local league | exploratory full runs | working |
 
 The public program deliberately separates an inexpensive controlled choice from
@@ -211,10 +211,11 @@ Publishing a wheel does not grant evaluation credits or imply funding.
    leakage tests, and a tool-less/null harness.
 3. Run a controlled pilot over one frozen split; publish samples, uncertainty,
    cost, and full configuration rather than a leaderboard alone.
-4. Extract shared `TeamBuildTask`, `StageEvidence`, and versioned dynamic referee
-   interfaces.
-5. Exercise the internal construction slice, then demonstrate the connected
-   draft-to-battle episode and cross-stage metrics before scaling or training.
+4. Extend the fixed-roster single-game referee into one frozen matchday: strict
+   construction, preview, Bo3, and terminal evidence through the existing JSONL
+   bridge.
+5. Wrap that matchday in a native-v1 multi-agent `Env`, then demonstrate the
+   connected draft-to-battle episode before scaling or training.
 6. Add reports only from versioned evaluation outputs; the GUI must not invent
    scores from natural league games.
 
