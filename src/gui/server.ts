@@ -22,7 +22,15 @@ import { DRAFT_PROTOCOL_VERSION, roundRobinWeeks, runDraftLeague } from '../draf
 import { buildTournamentGame, buildTournaments } from '../evidence.js';
 import { ImportBusyError, ImportError, importSeries, removeImportedRun } from '../import.js';
 import { discoverModels } from '../model-catalog.js';
-import { DATA_DIR, makeRunDirectory, prepareDataDirectories, RESULTS_PATH, RUNS_DIR, TEAMS_DIR } from '../paths.js';
+import {
+  DATA_DIR,
+  defaultPsDir,
+  makeRunDirectory,
+  prepareDataDirectories,
+  RESULTS_PATH,
+  RUNS_DIR,
+  TEAMS_DIR,
+} from '../paths.js';
 import { PROVIDER_OPTIONS, providerOption } from '../provider-registry.js';
 import type { ModelReasoningConfig, ReasoningLevel } from '../providers.js';
 import {
@@ -42,7 +50,7 @@ import { redactSecrets } from '../sanitize.js';
 import { loadShowdown } from '../showdown.js';
 import { BattleState } from '../state.js';
 import type { Team, TeamDraft } from '../teams.js';
-import { createPool, inspectTeam, listPools, loadPool, packTeam, validateTeam } from '../teams.js';
+import { createPool, exportTeam, inspectTeam, listPools, loadPool, packTeam, validateTeam } from '../teams.js';
 import { parseTimerScale } from '../timer.js';
 import type { ProvenanceMode } from '../tournament.js';
 import { runTournament, TOURNAMENT_PROTOCOL_VERSION } from '../tournament.js';
@@ -767,11 +775,13 @@ export class GuiServer {
     if (!source) return [];
     if (this.sampleTeamsCache?.pool !== source) {
       try {
-        const { Teams } = loadShowdown();
-        const teams = loadPool(source, this.options.teamsDir ?? TEAMS_DIR).teams.slice(0, 2);
+        const pool = loadPool(source, this.options.teamsDir ?? TEAMS_DIR);
         this.sampleTeamsCache = {
           pool: source,
-          teams: teams.map((team) => ({ name: team.id, paste: Teams.export(Teams.unpack(team.packed) ?? []) })),
+          teams: pool.teams.slice(0, 2).map((team) => ({
+            name: team.id,
+            paste: exportTeam(team.packed, pool.format),
+          })),
         };
       } catch {
         this.sampleTeamsCache = { pool: source, teams: [] };
@@ -862,16 +872,11 @@ export class GuiServer {
     if (!listPools(teamsDir).some((entry) => entry.name === name)) {
       throw new HttpError(400, `unknown team pool ${JSON.stringify(name)}`);
     }
-    const { Teams } = loadShowdown();
     const pool = loadPool(name, teamsDir);
     return {
       name: pool.id,
       format: pool.format,
-      teams: pool.teams.map((team) => {
-        const unpacked = Teams.unpack(team.packed);
-        if (!unpacked) throw new Error(`stored team ${JSON.stringify(team.id)} is invalid`);
-        return { name: team.id, paste: Teams.export(unpacked) };
-      }),
+      teams: pool.teams.map((team) => ({ name: team.id, paste: exportTeam(team.packed, pool.format) })),
     };
   }
 
@@ -1154,7 +1159,7 @@ export class GuiServer {
           throw new HttpError(400, `team ${index + 1} must be a non-empty paste under 20k characters`);
         }
         try {
-          const packed = packTeam(paste);
+          const packed = packTeam(paste, defaultPsDir(), format!);
           validateTeam(packed, format!);
           return { id: `paste-${index + 1}`, packed };
         } catch (error) {

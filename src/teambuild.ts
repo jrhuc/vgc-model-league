@@ -767,7 +767,7 @@ function actionForCandidateTeam(
   entries: readonly { mon: TeamBuildCandidate; set: RawSet }[],
   psDir: string,
 ): TeamBuildAction {
-  const packed = normalizePackedTeam(packCandidateTeam(dex, entries, psDir), psDir);
+  const packed = normalizePackedTeam(packCandidateTeam(dex, entries, psDir), psDir, task.format);
   validateTeam(packed, task.format, psDir);
   return {
     selected: entries.map((entry) => entry.mon.id),
@@ -1110,7 +1110,7 @@ export async function runTeamBuild(task: TeamBuildTask, options: TeamBuildOption
     });
   }
 
-  const packed = normalizePackedTeam(packCandidateTeam(dex, repaired, psDir), psDir);
+  const packed = normalizePackedTeam(packCandidateTeam(dex, repaired, psDir), psDir, task.format);
   validateTeam(packed, task.format, psDir);
   const scaffold = teamBuildScaffoldRevision(task.objective, task.sheetPolicy, executionPolicy);
   const createdAt = new Date().toISOString();

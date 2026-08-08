@@ -17,6 +17,20 @@ become an engineering problem in its own right. Machinery that shapes *how* a
 model may think muddies the data. Prefer removing a constraint over compensating
 for it. Keep constrained modes, including the battle timer, opt-in and labeled.
 
+## Format rules
+
+The primary league format is the pinned Pokémon Champions Reg M-B mod, not a
+Scarlet/Violet VGC format. Before making any rule-sensitive change, read the
+format at the revision in `showdown.lock.json`, especially
+`pokemon-showdown/config/formats.ts` and `pokemon-showdown/data/mods/champions/`.
+Check current published Champions rules as well when making claims beyond the
+pinned simulator, and record the source/version rather than relying on model
+memory. Recheck these assumptions whenever the Showdown revision changes.
+
+The current pinned Champions format has no Terastallization. Do not surface a
+Tera type in prompts, team sheets, APIs, or the GUI merely because generic Gen 9
+Showdown structures still contain the field.
+
 ## Code
 
 Agents wrote this code and agents change it. Treat implementations as mutable

@@ -111,8 +111,10 @@ test('team preview candidates round-trip through a cloned Showdown battle', () =
   const request = requestOf(battle);
   assert.equal(request.teamPreview, true);
   assert.equal(request.maxChosenTeamSize, 4);
+  assert.equal(request.active, undefined);
 
-  assertEverySurfacedActionIsAccepted(battle);
+  const actions = assertEverySurfacedActionIsAccepted(battle);
+  assert.ok(actions.every((action) => !action.includes('terastallize')));
   assertAcceptedAndSurfaced(battle, 'team 6543');
 });
 
@@ -120,6 +122,7 @@ test('special target kinds round-trip through their real move request', () => {
   const battle = newBattle();
   choosePreview(battle);
   const request = requestOf(battle);
+  assert.ok(request.active?.every((active) => !active?.canTerastallize));
   const targets = request.active?.flatMap((active) =>
     ((active?.moves ?? []) as Array<Record<string, unknown>>).map((move) => move.target),
   );

@@ -22,9 +22,7 @@ function newDraft(key: number): Draft {
 }
 
 function Member({ member }: { member: TeamMemberView }) {
-  const line = [member.item, member.ability, member.teraType ? `Tera ${member.teraType}` : '']
-    .filter(Boolean)
-    .join(' · ');
+  const line = [member.item, member.ability].filter(Boolean).join(' · ');
   return (
     <div class="member">
       <b>{member.species}</b>

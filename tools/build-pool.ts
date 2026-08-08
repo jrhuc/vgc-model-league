@@ -34,7 +34,7 @@ export async function buildPool(manifestFile: string): Promise<string> {
   for (const source of sources) {
     const id = text(source.id);
     if (!id) throw new Error('every source team needs an id');
-    const packed = packTeam(await fetchPaste(text(source.paste)), psDir);
+    const packed = packTeam(await fetchPaste(text(source.paste)), psDir, format);
     validateTeam(packed, format, psDir);
     const duplicate = seen.get(packed);
     if (duplicate) throw new Error(`${id} is byte-for-byte the same team as ${duplicate}`);

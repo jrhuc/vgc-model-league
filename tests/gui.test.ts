@@ -298,9 +298,10 @@ test('gui validates teambuilder pastes and creates immutable pools', async () =>
   const base = await gui.listen(0);
   try {
     const pasteA = pasteFromPool('jpnats-mega-swampert.team');
+    const pasteAWithTera = pasteA.replace(/\nAbility:/g, '\nTera Type: Fire\nAbility:');
     const pasteB = pasteFromPool('wolfe-mega-raichu-y.team');
 
-    const legal = await apiJson(`${base}api/team/validate`, { paste: pasteA, format: FORMAT });
+    const legal = await apiJson(`${base}api/team/validate`, { paste: pasteAWithTera, format: FORMAT });
     assert.equal(legal.status, 200);
     assert.deepEqual(legal.data.problems, []);
     assert.equal((legal.data.species as string[]).length, 6);
@@ -309,7 +310,6 @@ test('gui validates teambuilder pastes and creates immutable pools', async () =>
       item: string;
       ability: string;
       moves: string[];
-      teraType: string;
     }>;
     assert.equal(members.length, 6);
     assert.deepEqual(
@@ -321,7 +321,7 @@ test('gui validates teambuilder pastes and creates immutable pools', async () =>
       assert.ok(member.item);
       assert.ok(member.ability);
       assert.ok(member.moves.length);
-      assert.equal(typeof member.teraType, 'string');
+      assert.equal('teraType' in member, false);
     }
 
     const illegal = await apiJson(`${base}api/team/validate`, {
@@ -339,7 +339,7 @@ test('gui validates teambuilder pastes and creates immutable pools', async () =>
       name: 'gui-pool',
       format: FORMAT,
       teams: [
-        { id: 'team-a', paste: pasteA },
+        { id: 'team-a', paste: pasteAWithTera },
         { id: 'team-b', paste: pasteB },
       ],
     });
@@ -357,6 +357,12 @@ test('gui validates teambuilder pastes and creates immutable pools', async () =>
     const pool = loadPool('gui-pool', teamsDir);
     assert.equal(pool.format, FORMAT);
     assert.equal(pool.teams.length, 2);
+    const servedPool = await apiJson(`${base}api/pool/teams?name=gui-pool`);
+    assert.equal(servedPool.status, 200);
+    assert.doesNotMatch(JSON.stringify(servedPool.data), /Tera Type|teraType/i);
+    const state = await apiJson(`${base}api/state`);
+    assert.equal(state.status, 200);
+    assert.doesNotMatch(JSON.stringify(state.data.sampleTeams), /Tera Type|teraType/i);
 
     const duplicateName = await apiJson(`${base}api/pool`, {
       name: 'gui-pool',

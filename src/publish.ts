@@ -4,7 +4,7 @@ import path from 'node:path';
 import type { AppState, ImportRequest, ImportResponse } from './gui/api.js';
 import { isImported } from './import.js';
 import { loadRows, type SeriesRecord, TEST_POOL } from './records.js';
-import { loadPool } from './teams.js';
+import { exportTeam, loadPool } from './teams.js';
 import type { Pid } from './types.js';
 
 const SEATS: Pid[] = ['p1', 'p2'];
@@ -114,19 +114,15 @@ function readLeagueAssets(runsDir: string, runId: string): ImportRequest['league
 }
 
 async function exportPool(name: string, teamsDir: string): Promise<NonNullable<ImportRequest['pool']>> {
-  const { loadShowdown } = await import('./showdown.js');
-  const { Teams } = loadShowdown();
   const pool = loadPool(name, teamsDir);
   return {
     name: pool.id,
     format: pool.format,
     ...pool.metadata,
     teams: pool.teams.map((team) => {
-      const unpacked = Teams.unpack(team.packed);
-      if (!unpacked) throw new Error(`team ${JSON.stringify(team.id)} in pool ${JSON.stringify(name)} is invalid`);
       return {
         id: team.id,
-        paste: Teams.export(unpacked),
+        paste: exportTeam(team.packed, pool.format),
         ...(team.seed === undefined ? {} : { seed: team.seed }),
         ...(team.source ? { source: team.source } : {}),
       };

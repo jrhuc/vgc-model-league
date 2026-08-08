@@ -667,7 +667,6 @@ export interface TeamMemberView {
   item: string;
   ability: string;
   moves: string[];
-  teraType: string;
 }
 
 export interface ValidateResponse {

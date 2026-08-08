@@ -230,7 +230,7 @@ export async function buildEventPool(manifestFile: string): Promise<string> {
       if (!open.some((set) => slug(set.species) === species)) throw new Error(`${id}: override for absent ${species}`);
     }
 
-    const packed = packTeam(resolved.map((entry) => exportSet(entry.set, entry.evs)).join('\n\n'), psDir);
+    const packed = packTeam(resolved.map((entry) => exportSet(entry.set, entry.evs)).join('\n\n'), psDir, format);
     validateTeam(packed, format, psDir);
     const { id: _id, overrides: _overrides, ...metadata } = source;
     teams.push({ id, packed, entry: { id, file: `${id}.team`, seed: metadata.placement, source: metadata } });

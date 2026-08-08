@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
 import test from 'node:test';
 
 import {
@@ -8,36 +10,13 @@ import {
   type FrozenBattleRefereeOptions,
   type FrozenBattleTerminalEvidence,
 } from '../src/frozen-battle-referee.js';
-import { loadShowdown } from '../src/showdown.js';
+import { TEAMS_DIR } from '../src/paths.js';
 import type { Pid } from '../src/types.js';
 
-const Showdown = loadShowdown();
 const FORMAT = 'gen9championsvgc2026regmbbo3';
 const SEED = [101, 202, 303, 404] as const;
-
-type PokemonSet = NonNullable<Parameters<typeof Showdown.Teams.pack>[0]>[number];
-
-function pokemonSet(name: string, species: string, ability: string, move: string, level: number): PokemonSet {
-  return {
-    name,
-    species,
-    item: '',
-    ability,
-    moves: [move],
-    nature: 'Serious',
-    gender: '',
-    evs: { hp: 0, atk: 252, def: 0, spa: 0, spd: 0, spe: 0 },
-    ivs: { hp: 31, atk: 31, def: 31, spa: 31, spd: 31, spe: 31 },
-    level,
-  };
-}
-
-const ATTACKERS = Showdown.Teams.pack(
-  Array.from({ length: 4 }, (_, index) => pokemonSet(`Alpha${index + 1}`, 'Mew', 'Synchronize', 'Earthquake', 100)),
-);
-const TARGETS = Showdown.Teams.pack(
-  Array.from({ length: 4 }, (_, index) => pokemonSet(`Beta${index + 1}`, 'Happiny', 'Natural Cure', 'Splash', 1)),
-);
+const ATTACKERS = fs.readFileSync(path.join(TEAMS_DIR, 'test', 'jpnats-mega-swampert.team'), 'utf8').trim();
+const TARGETS = fs.readFileSync(path.join(TEAMS_DIR, 'test', 'rios-mega-raichu-x-venusaur.team'), 'utf8').trim();
 
 function options(names: readonly [string, string] = ['attacker', 'target']): FrozenBattleRefereeOptions {
   return {
@@ -182,10 +161,10 @@ test('routed observations preserve Showdown split secrecy for exact HP', () => {
   const p1 = referee.observe('p1').povLines;
   const p2 = referee.observe('p2').povLines;
   assert.ok([...p1, ...p2].every((line) => !line.startsWith('|split|')));
-  const privateSwitch = p1.find((line) => line.startsWith('|switch|p1a: Alpha1|') && !line.endsWith('|100/100'));
+  const privateSwitch = p1.find((line) => line.startsWith('|switch|p1a: Grimmsnarl|') && !line.endsWith('|100/100'));
   assert.ok(privateSwitch, 'p1 must receive its exact active HP');
   assert.ok(!p2.includes(privateSwitch), 'p2 must not receive p1 exact HP');
-  assert.ok(p2.some((line) => line.startsWith('|switch|p1a: Alpha1|') && line.endsWith('|100/100')));
+  assert.ok(p2.some((line) => line.startsWith('|switch|p1a: Grimmsnarl|') && line.endsWith('|100/100')));
 });
 
 test('a snapshot with one staged action restores the same mid-decision', () => {

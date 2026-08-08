@@ -179,6 +179,13 @@ export function loadPool(name = 'test', teamsDir = TEAMS_DIR): TeamPool {
 
 type ShowdownSets = NonNullable<ReturnType<ReturnType<typeof loadShowdown>['Teams']['unpack']>>;
 
+function removeUnsupportedMetadata(sets: ShowdownSets, format: string | undefined, psDir: string): void {
+  if (!format) return;
+  const { Dex } = loadShowdown(psDir);
+  if (!Dex.formats.get(format).mod.startsWith('champions')) return;
+  for (const set of sets) delete set.teraType;
+}
+
 function enforceBaseFormes(sets: ShowdownSets, psDir = defaultPsDir()): void {
   const { Dex } = loadShowdown(psDir);
   for (const set of sets) {
@@ -206,24 +213,34 @@ function enforceBaseFormes(sets: ShowdownSets, psDir = defaultPsDir()): void {
   }
 }
 
-export function normalizePackedTeam(packed: string, psDir = defaultPsDir()): string {
+export function normalizePackedTeam(packed: string, psDir = defaultPsDir(), format?: string): string {
   const { Teams } = loadShowdown(psDir);
   const sets = Teams.unpack(packed);
   if (!sets) throw new Error('packed team does not unpack');
   enforceBaseFormes(sets, psDir);
+  removeUnsupportedMetadata(sets, format, psDir);
   const repacked = Teams.pack(sets);
   if (!repacked) throw new Error('Showdown produced an empty packed team');
   return repacked;
 }
 
-export function packTeam(exportText: string, psDir = defaultPsDir()): string {
+export function packTeam(exportText: string, psDir = defaultPsDir(), format?: string): string {
   const { Teams } = loadShowdown(psDir);
   const team = Teams.import(exportText);
   if (!team) throw new Error('Showdown could not parse team export');
   enforceBaseFormes(team, psDir);
+  removeUnsupportedMetadata(team, format, psDir);
   const packed = Teams.pack(team);
   if (!packed) throw new Error('Showdown produced an empty packed team');
   return packed;
+}
+
+export function exportTeam(packed: string, format: string, psDir = defaultPsDir()): string {
+  const { Teams } = loadShowdown(psDir);
+  const sets = Teams.unpack(packed);
+  if (!sets) throw new Error('packed team does not unpack');
+  removeUnsupportedMetadata(sets, format, psDir);
+  return Teams.export(sets);
 }
 
 export function validateTeam(packed: string, format: string, psDir = defaultPsDir()): void {
@@ -261,7 +278,6 @@ interface TeamMember {
   item: string;
   ability: string;
   moves: string[];
-  teraType: string;
 }
 
 interface TeamInspection {
@@ -283,7 +299,6 @@ function unpackTeam(packed: string, psDir: string): { species: string[]; members
       item: set.item,
       ability: set.ability,
       moves: set.moves,
-      teraType: set.teraType ?? '',
     });
   }
   return { species, members };
@@ -292,7 +307,7 @@ function unpackTeam(packed: string, psDir: string): { species: string[]; members
 export function inspectTeam(paste: string, format: string, psDir = defaultPsDir()): TeamInspection {
   let packed: string;
   try {
-    packed = packTeam(paste, psDir);
+    packed = packTeam(paste, psDir, format);
   } catch (error) {
     return { species: [], problems: [error instanceof Error ? error.message : String(error)], members: [] };
   }
@@ -328,7 +343,7 @@ export function createPool(
       throw new Error(`team id ${JSON.stringify(draft.id)} must be lowercase letters, digits, and dashes`);
     if (seenIds.has(id)) throw new Error(`duplicate team id ${JSON.stringify(id)}`);
     seenIds.add(id);
-    const packed = packTeam(draft.paste, psDir);
+    const packed = packTeam(draft.paste, psDir, format);
     try {
       validateTeam(packed, format, psDir);
     } catch (error) {
