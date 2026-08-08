@@ -16,6 +16,10 @@ export interface AgentContextQuery {
   limit?: number;
 }
 
+/** The stream commits only after the sink returns; it cannot roll back output from a custom
+ * sink that partially writes and then throws. */
+export type AgentContextSink = (event: AgentContextEvent) => void;
+
 function sequenceOf(cursor: string | undefined, fallback: number): number {
   if (cursor === undefined) return fallback;
   if (typeof cursor !== 'string') throw new Error(`invalid context cursor ${JSON.stringify(cursor)}`);
@@ -25,20 +29,24 @@ function sequenceOf(cursor: string | undefined, fallback: number): number {
 }
 
 /** A seat-private append-only episode stream. Rendered prompts may compact it, but authorized
- * clients can page the original accepted observations and decisions by stable cursor. */
+ * clients can page the authoritative logged observations and submitted decisions by stable cursor. */
 export class AgentContextStream {
   private readonly events: AgentContextEvent[];
+  private readonly sink: AgentContextSink | undefined;
+  private persisting = false;
 
-  constructor(initial: readonly AgentContextEvent[] = []) {
+  constructor(initial: readonly AgentContextEvent[] = [], sink?: AgentContextSink) {
     this.events = initial.map((event, index) => {
       const sequence = index + 1;
       const id = `ctx-${String(sequence).padStart(8, '0')}`;
       if (event.sequence !== sequence || event.id !== id) throw new Error(`non-contiguous context event ${event.id}`);
       return structuredClone(event);
     });
+    this.sink = sink;
   }
 
   append(kind: AgentContextKind, payload: JsonObject): AgentContextEvent {
+    if (this.persisting) throw new Error('context append already in progress');
     const sequence = this.events.length + 1;
     const event: AgentContextEvent = {
       id: `ctx-${String(sequence).padStart(8, '0')}`,
@@ -46,6 +54,14 @@ export class AgentContextStream {
       kind,
       payload: structuredClone(payload),
     };
+    if (this.sink) {
+      this.persisting = true;
+      try {
+        this.sink(structuredClone(event));
+      } finally {
+        this.persisting = false;
+      }
+    }
     this.events.push(event);
     return structuredClone(event);
   }

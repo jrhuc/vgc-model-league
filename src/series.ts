@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 import type { AgentContextEvent, AgentContextKind } from './agent-context.js';
 import type { DecisionLog, GameEnd, GameStart } from './battle-agent.js';
 import { RandomEngine } from './battle-agent.js';
@@ -11,7 +12,7 @@ import { reasoningForModel } from './providers.js';
 import { seededRng } from './random.js';
 import type { RecoveryGate } from './recovery.js';
 import { ShowdownReference } from './reference.js';
-import { loadShowdown } from './showdown.js';
+import { loadShowdown, showdownCommit } from './showdown.js';
 import { SimBattle } from './sim.js';
 import type { Team } from './teams.js';
 import { DEFAULT_TIMER_SCALE } from './timer.js';
@@ -324,6 +325,20 @@ export interface RecordedSeries {
   fields: RecordedSeriesFields;
 }
 
+interface DecisionFileHead extends JsonObject {
+  nonempty_row_count: number;
+  byte_length: number;
+  sha256: string;
+}
+
+interface DecisionProjectionEvidence {
+  decisionFileHead: DecisionFileHead;
+  activeRowIndexes: number[];
+  replayRowIndexes: number[];
+  abandonedRowIndexes: number[];
+  abandonedRowsSha256: string;
+}
+
 interface AdoptedSeries {
   seriesId: string;
   seriesDir: string;
@@ -332,9 +347,47 @@ interface AdoptedSeries {
   decisions: Record<Pid, JsonObject[]>;
   notebooks: Partial<Record<Pid, string>>;
   replay: Record<Pid, JsonObject[]>;
+  decisionProjection: Record<Pid, DecisionProjectionEvidence>;
 }
 
-function adoptSeriesDir(context: RecordedSeriesContext): AdoptedSeries | undefined {
+function optionalTextDigests(values: Partial<Record<Pid, string>> | undefined): Record<Pid, string | null> {
+  return Object.fromEntries(
+    (['p1', 'p2'] as const).map((pid) => [
+      pid,
+      values?.[pid] === undefined ? null : createHash('sha256').update(values[pid]).digest('hex'),
+    ]),
+  ) as Record<Pid, string | null>;
+}
+
+function recordedSeriesIdentity(context: RecordedSeriesContext): JsonObject {
+  const packedTeams = { p1: context.teams.p1.packed, p2: context.teams.p2.packed };
+  return {
+    players: context.players,
+    team_ids: { p1: context.teams.p1.id, p2: context.teams.p2.id },
+    packed_teams: packedTeams,
+    packed_team_digests: {
+      p1: createHash('sha256').update(packedTeams.p1).digest('hex'),
+      p2: createHash('sha256').update(packedTeams.p2).digest('hex'),
+    },
+    format: context.format,
+    game_seeds: context.gameSeeds,
+    series_index: context.seriesIndex ?? null,
+    engine_seeds: context.engineSeeds,
+    showdown_commit: showdownCommit(context.psDir),
+    scaffold: {
+      timer_scale: context.timerScale ?? DEFAULT_TIMER_SCALE,
+      require_winner: context.requireWinner ?? false,
+      closed_sheets: context.closedSheets ?? false,
+      reasoning: context.reasoning ?? null,
+      reasoning_by_model: context.reasoningByModel ?? null,
+      initial_notebook_digests: optionalTextDigests(context.initialNotebooks),
+      draft_roster_digests: optionalTextDigests(context.draftRosters),
+      briefing_digests: optionalTextDigests(context.briefings),
+    },
+  };
+}
+
+function adoptSeriesDir(context: RecordedSeriesContext, expectedIdentity: JsonObject): AdoptedSeries | undefined {
   const root = path.join(context.runDir, 'series');
   let entries: string[];
   try {
@@ -342,7 +395,7 @@ function adoptSeriesDir(context: RecordedSeriesContext): AdoptedSeries | undefin
   } catch {
     return undefined;
   }
-  let best: AdoptedSeries | undefined;
+  const candidates: AdoptedSeries[] = [];
   for (const seriesId of entries) {
     const seriesDir = path.join(root, seriesId);
     let meta: JsonObject;
@@ -351,17 +404,40 @@ function adoptSeriesDir(context: RecordedSeriesContext): AdoptedSeries | undefin
     } catch {
       continue;
     }
-    if (meta.series_index !== context.seriesIndex) continue;
+    const storedIdentity =
+      meta.identity && typeof meta.identity === 'object' && !Array.isArray(meta.identity)
+        ? (meta.identity as JsonObject)
+        : undefined;
+    const storedIndex = storedIdentity?.series_index ?? meta.series_index;
+    if (storedIndex !== context.seriesIndex) continue;
+    if (!storedIdentity || !isDeepStrictEqual(storedIdentity, expectedIdentity)) {
+      throw new Error(
+        `recorded series identity mismatch for schedule slot ${String(context.seriesIndex)} (${seriesId})`,
+      );
+    }
+    const storedPlayers = storedIdentity.players;
+    if (!storedPlayers || typeof storedPlayers !== 'object' || Array.isArray(storedPlayers)) {
+      throw new Error(`invalid recorded series identity for ${seriesId}`);
+    }
     const candidate = reconstructAdoptedSeries(
       context,
+      storedPlayers as Record<Pid, string>,
       seriesId,
       seriesDir,
       typeof meta.started === 'string' ? meta.started : undefined,
     );
-    if (!best || candidate.games.length > best.games.length) best = candidate;
+    candidates.push(candidate);
   }
-  if (best) pruneDecisionFiles(best);
-  return best;
+  if (!candidates.length) return undefined;
+  const completedGames = Math.max(...candidates.map((candidate) => candidate.games.length));
+  const best = candidates.filter((candidate) => candidate.games.length === completedGames);
+  if (best.length > 1) {
+    const ids = best.map(({ seriesId }) => seriesId).sort();
+    throw new Error(
+      `ambiguous recorded series adoption for schedule slot ${String(context.seriesIndex)} (${ids.join(', ')})`,
+    );
+  }
+  return best[0];
 }
 
 function gameCompletionMarkerPath(seriesDir: string, gameNumber: number): string {
@@ -397,6 +473,7 @@ function hasGameCompletionMarker(seriesDir: string, seriesId: string, gameNumber
  * interrupted game's decision rows become a replay queue for deterministic re-simulation. */
 function reconstructAdoptedSeries(
   context: RecordedSeriesContext,
+  storedPlayers: Record<Pid, string>,
   seriesId: string,
   seriesDir: string,
   started: string | undefined,
@@ -429,7 +506,7 @@ function reconstructAdoptedSeries(
     }
     games.push({
       number,
-      winner: winnerSide ? context.players[winnerSide] : null,
+      winner: winnerSide ? storedPlayers[winnerSide] : null,
       winner_side: winnerSide ?? null,
       turns,
       seed: context.gameSeeds[number - 1] ?? null,
@@ -444,27 +521,77 @@ function reconstructAdoptedSeries(
   }
   const decisions: Record<Pid, JsonObject[]> = { p1: [], p2: [] };
   const replay: Record<Pid, JsonObject[]> = { p1: [], p2: [] };
+  const completedSourceRows: Record<Pid, DecisionSourceRow[]> = { p1: [], p2: [] };
+  const replaySourceRows: Record<Pid, DecisionSourceRow[]> = { p1: [], p2: [] };
+  const sourceRows: Record<Pid, DecisionSourceRow[]> = { p1: [], p2: [] };
+  const decisionFileHeads: Record<Pid, DecisionFileHead> = {
+    p1: emptyDecisionFileHead(),
+    p2: emptyDecisionFileHead(),
+  };
   const notebooks: Partial<Record<Pid, string>> = {};
+  const priorBranch = latestDecisionBranch(seriesDir, seriesId);
   for (const pid of ['p1', 'p2'] as const) {
-    let raw: string;
+    const file = path.join(seriesDir, `${pid}-decisions.jsonl`);
+    let contents: Buffer;
     try {
-      raw = fs.readFileSync(path.join(seriesDir, `${pid}-decisions.jsonl`), 'utf8');
-    } catch {
-      continue;
+      contents = fs.readFileSync(file);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      contents = Buffer.alloc(0);
     }
-    for (const line of raw.split('\n')) {
-      if (!line.trim()) continue;
-      let row: JsonObject;
-      try {
-        row = JSON.parse(line) as JsonObject;
-      } catch {
-        continue;
+    const rows = contents
+      .toString('utf8')
+      .split('\n')
+      .map((line, index): DecisionSourceRow | undefined => {
+        if (!line.trim()) return undefined;
+        let row: JsonObject | undefined;
+        try {
+          const parsed = JSON.parse(line) as unknown;
+          if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) row = parsed as JsonObject;
+        } catch {}
+        return { index: index + 1, line, row };
+      })
+      .filter((row): row is DecisionSourceRow => row !== undefined);
+    sourceRows[pid] = rows;
+    decisionFileHeads[pid] = {
+      nonempty_row_count: rows.length,
+      byte_length: contents.byteLength,
+      sha256: createHash('sha256').update(contents).digest('hex'),
+    };
+    let eligibleIndexes = priorBranch
+      ? new Set(priorBranch.activeRowIndexes[pid])
+      : new Set(rows.map(({ index }) => index));
+    if (priorBranch) {
+      const currentAttemptRows = rows.filter(({ row }) => row?.attempt_id === priorBranch.attemptId);
+      const currentAttemptHasInflightDecision = currentAttemptRows.some(
+        ({ row }) => row?.kind === 'decision' && Number(row.game_number) > games.length,
+      );
+      if (currentAttemptHasInflightDecision) {
+        eligibleIndexes = new Set(
+          rows
+            .filter(
+              ({ index, row }) =>
+                (eligibleIndexes.has(index) && Number(row?.game_number) <= games.length) ||
+                row?.attempt_id === priorBranch.attemptId,
+            )
+            .map(({ index }) => index),
+        );
+      } else {
+        for (const { index } of currentAttemptRows) eligibleIndexes.add(index);
       }
+    }
+    for (const source of rows) {
+      const row = source.row;
+      if (!eligibleIndexes.has(source.index) || !row) continue;
       if (Number(row.game_number) > games.length) {
-        if (Number(row.game_number) === games.length + 1 && row.kind === 'decision') replay[pid].push(row);
+        if (Number(row.game_number) === games.length + 1 && row.kind === 'decision') {
+          replay[pid].push(row);
+          replaySourceRows[pid].push(source);
+        }
         continue;
       }
       decisions[pid].push(row);
+      completedSourceRows[pid].push(source);
       if ((row.kind === 'decision' || row.kind === 'game_reflection') && typeof row.notebook === 'string') {
         notebooks[pid] = row.notebook;
       }
@@ -474,26 +601,286 @@ function reconstructAdoptedSeries(
    * random seat's RNG cursor is not restored across attempts, and timer autodefaults answer
    * requests without logging a decision row, so those games start fresh instead. */
   const replayable =
-    context.players.p1 !== 'random' &&
-    context.players.p2 !== 'random' &&
+    storedPlayers.p1 !== 'random' &&
+    storedPlayers.p2 !== 'random' &&
     (['p1', 'p2'] as const).every((pid) => replay[pid].every((row) => !row.timer));
-  for (const pid of ['p1', 'p2'] as const) {
-    if (replayable) decisions[pid].push(...replay[pid]);
-    else replay[pid] = [];
-  }
-  return { seriesId, seriesDir, started, games, decisions, notebooks, replay };
+  const decisionProjection = Object.fromEntries(
+    (['p1', 'p2'] as const).map((pid) => {
+      const active = replayable ? [...completedSourceRows[pid], ...replaySourceRows[pid]] : completedSourceRows[pid];
+      const activeIndexes = new Set(active.map(({ index }) => index));
+      const abandoned = sourceRows[pid].filter(({ index }) => !activeIndexes.has(index));
+      const abandonedBytes = abandoned.length ? `${abandoned.map(({ line }) => line).join('\n')}\n` : '';
+      if (replayable) decisions[pid].push(...replay[pid]);
+      else replay[pid] = [];
+      return [
+        pid,
+        {
+          decisionFileHead: decisionFileHeads[pid],
+          activeRowIndexes: [...activeIndexes].sort((left, right) => left - right),
+          replayRowIndexes: replayable ? replaySourceRows[pid].map(({ index }) => index) : [],
+          abandonedRowIndexes: abandoned.map(({ index }) => index),
+          abandonedRowsSha256: createHash('sha256').update(abandonedBytes).digest('hex'),
+        },
+      ];
+    }),
+  ) as Record<Pid, DecisionProjectionEvidence>;
+  return { seriesId, seriesDir, started, games, decisions, notebooks, replay, decisionProjection };
 }
 
-function pruneDecisionFiles(adopted: AdoptedSeries): void {
-  for (const pid of ['p1', 'p2'] as const) {
-    const file = path.join(adopted.seriesDir, `${pid}-decisions.jsonl`);
-    const rows = adopted.decisions[pid];
-    if (!rows.length) {
-      fs.rmSync(file, { force: true });
+interface DecisionSourceRow {
+  index: number;
+  line: string;
+  row: JsonObject | undefined;
+}
+
+interface StoredDecisionBranch {
+  attemptId: string;
+  activeRowIndexes: Record<Pid, number[]>;
+}
+
+function emptyDecisionFileHead(): DecisionFileHead {
+  return {
+    nonempty_row_count: 0,
+    byte_length: 0,
+    sha256: createHash('sha256').update('').digest('hex'),
+  };
+}
+
+function latestDecisionBranch(seriesDir: string, seriesId: string): StoredDecisionBranch | undefined {
+  let raw: string;
+  try {
+    raw = fs.readFileSync(path.join(seriesDir, 'series-attempts.jsonl'), 'utf8');
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+    throw error;
+  }
+  let latest: StoredDecisionBranch | undefined;
+  for (const [index, line] of raw.split('\n').entries()) {
+    if (!line) continue;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(line) as unknown;
+    } catch (error) {
+      throw new Error(`invalid series attempt row ${index + 1}`, { cause: error });
+    }
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed))
+      throw new Error(`invalid series attempt row ${index + 1}`);
+    const row = parsed as JsonObject;
+    if (row.kind !== 'attempt_started' || row.series_id !== seriesId || typeof row.attempt_id !== 'string') continue;
+    const projection = row.decision_projection;
+    if (!projection || typeof projection !== 'object' || Array.isArray(projection)) continue;
+    const indexes = Object.fromEntries(
+      (['p1', 'p2'] as const).map((pid) => {
+        const seat = (projection as JsonObject)[pid];
+        if (!seat || typeof seat !== 'object' || Array.isArray(seat))
+          throw new Error(`invalid decision projection in series attempt row ${index + 1}`);
+        const active = (seat as JsonObject).active_row_indexes;
+        if (!Array.isArray(active) || !active.every((value) => Number.isInteger(value) && Number(value) > 0))
+          throw new Error(`invalid decision projection in series attempt row ${index + 1}`);
+        return [pid, active.map(Number)];
+      }),
+    ) as Record<Pid, number[]>;
+    latest = { attemptId: row.attempt_id, activeRowIndexes: indexes };
+  }
+  return latest;
+}
+
+interface ContextLedgerHead extends JsonObject {
+  context_id: string | null;
+  sequence: number;
+  byte_length: number;
+  sha256: string;
+}
+
+type ContextLedgerHeads = Record<Pid, ContextLedgerHead>;
+
+interface IncompleteAttempt {
+  attemptId: string;
+  adoptedCompletedGames: number;
+  contextStartHeads: ContextLedgerHeads;
+}
+
+const SERIES_ATTEMPTS_FILE = 'series-attempts.jsonl';
+
+function contextLedgerHead(seriesDir: string, pid: Pid): ContextLedgerHead {
+  const file = path.join(seriesDir, `${pid}-context.jsonl`);
+  let contents: Buffer;
+  try {
+    contents = fs.readFileSync(file);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    contents = Buffer.alloc(0);
+  }
+  let contextId: string | null = null;
+  let sequence = 0;
+  for (const line of contents.toString('utf8').split('\n')) {
+    if (!line) continue;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(line) as unknown;
+    } catch {
+      break;
+    }
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) break;
+    const row = parsed as JsonObject;
+    if (typeof row.context_id !== 'string' || typeof row.sequence !== 'number') break;
+    contextId = row.context_id;
+    sequence = row.sequence;
+  }
+  return {
+    context_id: contextId,
+    sequence,
+    byte_length: contents.byteLength,
+    sha256: createHash('sha256').update(contents).digest('hex'),
+  };
+}
+
+function contextLedgerHeads(seriesDir: string): ContextLedgerHeads {
+  return {
+    p1: contextLedgerHead(seriesDir, 'p1'),
+    p2: contextLedgerHead(seriesDir, 'p2'),
+  };
+}
+
+function attemptLedgerPath(seriesDir: string): string {
+  return path.join(seriesDir, SERIES_ATTEMPTS_FILE);
+}
+
+function appendAttemptRecord(seriesDir: string, record: JsonObject): void {
+  const file = attemptLedgerPath(seriesDir);
+  let existing: Buffer;
+  try {
+    existing = fs.readFileSync(file);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    existing = Buffer.alloc(0);
+  }
+  if (existing.length > 0 && existing.at(-1) !== 0x0a) throw new Error('invalid unterminated series attempt ledger');
+  fs.appendFileSync(file, `${JSON.stringify(record)}\n`, 'utf8');
+}
+
+function incompleteAttempts(seriesDir: string, seriesId: string): IncompleteAttempt[] {
+  const file = attemptLedgerPath(seriesDir);
+  let raw: string;
+  try {
+    raw = fs.readFileSync(file, 'utf8');
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
+    throw error;
+  }
+  const started = new Map<string, IncompleteAttempt>();
+  const terminal = new Set<string>();
+  for (const [index, line] of raw.split('\n').entries()) {
+    if (!line) continue;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(line) as unknown;
+    } catch (error) {
+      throw new Error(`invalid series attempt row ${index + 1}`, { cause: error });
+    }
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed))
+      throw new Error(`invalid series attempt row ${index + 1}`);
+    const row = parsed as JsonObject;
+    if (row.series_id !== seriesId || typeof row.attempt_id !== 'string') continue;
+    if (row.kind === 'attempt_started') {
+      const contextHeads = row.context_heads;
+      if (!contextHeads || typeof contextHeads !== 'object' || Array.isArray(contextHeads))
+        throw new Error(`invalid series attempt row ${index + 1}`);
+      const startHeads = (contextHeads as JsonObject).start;
+      if (!startHeads || typeof startHeads !== 'object' || Array.isArray(startHeads))
+        throw new Error(`invalid series attempt row ${index + 1}`);
+      started.set(row.attempt_id, {
+        attemptId: row.attempt_id,
+        adoptedCompletedGames: Number(row.adopted_completed_games) || 0,
+        contextStartHeads: startHeads as ContextLedgerHeads,
+      });
+    } else if (
+      row.kind === 'attempt_completed' ||
+      row.kind === 'attempt_aborted' ||
+      row.kind === 'attempt_superseded'
+    ) {
+      terminal.add(row.attempt_id);
+    }
+  }
+  return [...started.values()]
+    .filter((attempt) => !terminal.has(attempt.attemptId))
+    .sort((left, right) => (left.attemptId < right.attemptId ? -1 : left.attemptId > right.attemptId ? 1 : 0));
+}
+
+function attemptRecord(
+  kind: 'attempt_started' | 'attempt_superseded' | 'attempt_completed' | 'attempt_aborted',
+  attemptId: string,
+  seriesId: string,
+  adoptedCompletedGames: number,
+  startHeads: ContextLedgerHeads,
+  endHeads: ContextLedgerHeads,
+  extra: JsonObject = {},
+): JsonObject {
+  return {
+    kind,
+    schema_version: 1,
+    timestamp: new Date().toISOString(),
+    attempt_id: attemptId,
+    series_id: seriesId,
+    adopted_completed_games: adoptedCompletedGames,
+    context_heads: { start: startHeads, end: endHeads },
+    ...extra,
+  };
+}
+
+function projectedDecisionStats(rows: JsonObject[]): Record<string, number> {
+  const stats: Record<string, number> = {};
+  const add = (key: string, value = 1) => {
+    stats[key] = (stats[key] ?? 0) + value;
+  };
+  for (const row of rows) {
+    if (row.kind === 'game_reflection') {
+      add('reflections');
+      if (row.fallback === true) add('reflection_fallbacks');
+      if (typeof row.reasoning_tokens === 'number') add('reasoning_tokens', row.reasoning_tokens);
+      if (typeof row.cost === 'number') add('cost', row.cost);
       continue;
     }
-    fs.writeFileSync(file, `${rows.map((row) => JSON.stringify(row)).join('\n')}\n`, 'utf8');
+    if (row.kind !== 'decision') continue;
+    if (row.action === 'abandoned') {
+      add('abandoned_decisions');
+      continue;
+    }
+    if (row.automatic === true) continue;
+    add('decisions');
+    if (row.fallback === true) add('fallbacks');
+    if (Array.isArray(row.tool_lookups)) add('tool_lookups', row.tool_lookups.length);
+    if (typeof row.parse_failures === 'number') add('parse_failures', row.parse_failures);
+    if (typeof row.provider_retries === 'number') add('provider_retries', row.provider_retries);
+    if (typeof row.reasoning_tokens === 'number') add('reasoning_tokens', row.reasoning_tokens);
+    if (typeof row.cost === 'number') add('cost', row.cost);
+    if (row.requested_choices !== undefined) add('substituted_actions');
+    const action = typeof row.action === 'string' ? row.action : '';
+    const parts = action.split(',');
+    add('move_selections', parts.filter((part) => /(?:^|\s)move\s/.test(part)).length);
+    add('switch_selections', parts.filter((part) => /(?:^|\s)switch\s/.test(part)).length);
+    add('mega_selections', parts.filter((part) => part.trimEnd().endsWith(' mega')).length);
+    add('ally_target_selections', parts.filter((part) => / -[12](?:\s|$)/.test(part)).length);
+    if (row.phase === 'team_preview') add('team_previews');
+    if (Array.isArray(row.selection)) {
+      add('protect_selections', row.selection.filter((label) => /^Protect(?:\b|\s)/i.test(String(label))).length);
+      add(
+        'spread_move_selections',
+        row.selection.filter((label) => /\((?:both foes|your side|all adjacent|spread)/i.test(String(label))).length,
+      );
+    }
   }
+  return stats;
+}
+
+function combinedDecisionStats(
+  restored: Record<string, number>,
+  current: Record<string, number>,
+): Record<string, number> {
+  const combined = { ...current };
+  for (const [key, value] of Object.entries(restored)) combined[key] = (combined[key] ?? 0) + value;
+  if (combined.cost !== undefined) combined.cost = Math.round(combined.cost * 1e6) / 1e6;
+  return combined;
 }
 
 function loadAgentContext(seriesDir: string, seriesId: string, pid: Pid): AgentContextEvent[] {
@@ -547,122 +934,226 @@ function loadAgentContext(seriesDir: string, seriesId: string, pid: Pid): AgentC
 export async function playRecordedSeries(context: RecordedSeriesContext): Promise<RecordedSeries> {
   context.signal?.throwIfAborted();
   const timerScale = context.timerScale ?? DEFAULT_TIMER_SCALE;
-  const adopted = context.seriesIndex === undefined ? undefined : adoptSeriesDir(context);
+  const identity = recordedSeriesIdentity(context);
+  const adopted = context.seriesIndex === undefined ? undefined : adoptSeriesDir(context, identity);
   const seriesId = adopted?.seriesId ?? randomUUID().replaceAll('-', '').slice(0, 12);
   const seriesDir = adopted?.seriesDir ?? path.join(context.runDir, 'series', seriesId);
+  const adoptedCompletedGames = adopted?.games.length ?? 0;
   fs.mkdirSync(seriesDir, { recursive: true });
-  fs.writeFileSync(
-    path.join(seriesDir, 'series.json'),
-    `${JSON.stringify({
-      players: context.players,
-      packed_teams: { p1: context.teams.p1.packed, p2: context.teams.p2.packed },
-      started: adopted?.started ?? new Date().toISOString(),
-      ...(context.seriesIndex === undefined ? {} : { series_index: context.seriesIndex }),
-    })}\n`,
-    'utf8',
-  );
-  const names: Record<Pid, string> = { p1: `p1-${context.players.p1}`, p2: `p2-${context.players.p2}` };
-  const reference = Object.values(context.players).some((player) => player !== 'random')
-    ? new ShowdownReference(context.format, context.psDir)
-    : undefined;
-  const reasoning: Record<Pid, ReasoningLevel | undefined> = {
-    p1: reasoningForModel(context.players.p1, context),
-    p2: reasoningForModel(context.players.p2, context),
-  };
-  const decisionRows: Record<Pid, JsonObject[]> = {
-    p1: [...(adopted?.decisions.p1 ?? [])],
-    p2: [...(adopted?.decisions.p2 ?? [])],
-  };
-  const decisionSink = (pid: Pid): DecisionLog => {
-    const file = path.join(seriesDir, `${pid}-decisions.jsonl`);
-    return (row) => {
-      fs.appendFileSync(file, `${JSON.stringify(row)}\n`, 'utf8');
-      decisionRows[pid].push(row);
-      context.onDecision?.(pid, row);
-    };
-  };
-  const engines = Object.fromEntries(
-    (['p1', 'p2'] as const).map((pid) => [
-      pid,
-      makeEngine({
-        pid,
-        spec: context.players[pid],
-        seed: context.engineSeeds[pid],
-        decisionLog: decisionSink(pid),
-        traceLog: path.join(seriesDir, `${pid}-trace.jsonl`),
-        contextLog: path.join(seriesDir, `${pid}-context.jsonl`),
-        initialContext: adopted ? loadAgentContext(seriesDir, seriesId, pid) : [],
-        format: context.format,
-        psDir: context.psDir,
-        reasoning: reasoning[pid],
-        reference,
-        signal: context.signal,
-        apiKey: context.apiKeys?.[context.players[pid]],
-        recovery: context.recovery,
-        initialNotebook: adopted?.notebooks[pid] ?? context.initialNotebooks?.[pid],
-        draftRoster: context.draftRosters?.[pid],
-        briefing: context.briefings?.[pid],
-      }),
-    ]),
-  ) as Record<Pid, RandomEngine | LLMEngine>;
-  for (const pid of ['p1', 'p2'] as const) {
-    const engine = engines[pid];
-    if (adopted?.replay[pid].length && engine instanceof LLMEngine) engine.primeReplay(adopted.replay[pid]);
+  if (!adopted) {
+    fs.writeFileSync(
+      path.join(seriesDir, 'series.json'),
+      `${JSON.stringify({
+        schema_version: 2,
+        series_id: seriesId,
+        started: new Date().toISOString(),
+        ...identity,
+        identity,
+      })}\n`,
+      { encoding: 'utf8', flag: 'wx' },
+    );
   }
-  const battleFormat = context.closedSheets ? closedSheetsFormat(context.format, context.psDir) : context.format;
-  const { score, games, winnerSide } = await playBo3({
-    engines,
-    names,
-    players: context.players,
-    teams: context.teams,
-    gameSeeds: context.gameSeeds,
-    seriesId,
-    seriesDir,
-    format: battleFormat,
-    psDir: context.psDir,
-    ...(adopted?.games.length ? { completedGames: adopted.games } : {}),
-    ...(context.requireWinner === undefined ? {} : { requireWinner: context.requireWinner }),
-    timerScale,
-    ...(context.signal === undefined ? {} : { signal: context.signal }),
-    ...(context.onGameUpdate === undefined ? {} : { onGameUpdate: context.onGameUpdate }),
-    ...(context.onGameEnd === undefined ? {} : { onGameEnd: context.onGameEnd }),
-  });
-  writeTurnsFile(seriesDir, games, decisionRows);
-  const stats = Object.fromEntries(
-    (['p1', 'p2'] as const).map((pid) => [pid, engines[pid].decisionStats()]),
-  ) as JsonObject;
-  return {
-    coachNotes: Object.fromEntries((['p1', 'p2'] as const).map((pid) => [pid, engines[pid].coachingNote()])) as Record<
-      Pid,
-      string
-    >,
-    winnerSide,
-    fields: {
-      timestamp: new Date().toISOString(),
-      run_id: path.basename(context.runDir),
-      series_id: seriesId,
-      format: context.format,
-      players: context.players,
-      teams: { p1: context.teams.p1.id, p2: context.teams.p2.id },
-      packed_team_digests: {
-        p1: createHash('sha256').update(context.teams.p1.packed).digest('hex'),
-        p2: createHash('sha256').update(context.teams.p2.packed).digest('hex'),
-      },
-      winner: winnerSide ? context.players[winnerSide] : null,
-      winner_side: winnerSide ?? null,
-      score,
-      turns: games.reduce((sum, game) => sum + Number(game.turns), 0),
-      games,
-      engine_seeds: context.engineSeeds,
-      timer_scale: timerScale,
-      ...(context.closedSheets ? { closed_sheets: true } : {}),
-      reasoning: context.reasoning ?? null,
-      ...(context.reasoningByModel === undefined
-        ? {}
-        : { reasoning_by_player: { p1: reasoning.p1 ?? null, p2: reasoning.p2 ?? null } }),
-      decision_stats: stats,
-    },
+  const attemptId = randomUUID();
+  const startHeads = contextLedgerHeads(seriesDir);
+  const priorIncomplete = incompleteAttempts(seriesDir, seriesId);
+  const decisionProjection = {
+    decision_projection: Object.fromEntries(
+      (['p1', 'p2'] as const).map((pid) => {
+        const projection = adopted?.decisionProjection[pid] ?? {
+          decisionFileHead: emptyDecisionFileHead(),
+          activeRowIndexes: [],
+          replayRowIndexes: [],
+          abandonedRowIndexes: [],
+          abandonedRowsSha256: createHash('sha256').update('').digest('hex'),
+        };
+        return [
+          pid,
+          {
+            decision_file_head: projection.decisionFileHead,
+            active_row_indexes: projection.activeRowIndexes,
+            replay_row_indexes: projection.replayRowIndexes,
+            abandoned_row_indexes: projection.abandonedRowIndexes,
+            abandoned_row_count: projection.abandonedRowIndexes.length,
+            abandoned_rows_sha256: projection.abandonedRowsSha256,
+          },
+        ];
+      }),
+    ),
   };
+  appendAttemptRecord(
+    seriesDir,
+    attemptRecord(
+      'attempt_started',
+      attemptId,
+      seriesId,
+      adoptedCompletedGames,
+      startHeads,
+      startHeads,
+      decisionProjection,
+    ),
+  );
+
+  try {
+    for (const prior of priorIncomplete) {
+      appendAttemptRecord(
+        seriesDir,
+        attemptRecord(
+          'attempt_superseded',
+          prior.attemptId,
+          seriesId,
+          prior.adoptedCompletedGames,
+          prior.contextStartHeads,
+          startHeads,
+          { superseded_by: attemptId, ...decisionProjection },
+        ),
+      );
+    }
+    const names: Record<Pid, string> = { p1: `p1-${context.players.p1}`, p2: `p2-${context.players.p2}` };
+    const reference = Object.values(context.players).some((player) => player !== 'random')
+      ? new ShowdownReference(context.format, context.psDir)
+      : undefined;
+    const reasoning: Record<Pid, ReasoningLevel | undefined> = {
+      p1: reasoningForModel(context.players.p1, context),
+      p2: reasoningForModel(context.players.p2, context),
+    };
+    const decisionRows: Record<Pid, JsonObject[]> = {
+      p1: [...(adopted?.decisions.p1 ?? [])],
+      p2: [...(adopted?.decisions.p2 ?? [])],
+    };
+    const decisionSink = (pid: Pid): DecisionLog => {
+      const file = path.join(seriesDir, `${pid}-decisions.jsonl`);
+      let needsSeparator = false;
+      try {
+        const existing = fs.readFileSync(file);
+        needsSeparator = existing.length > 0 && existing.at(-1) !== 0x0a;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      }
+      return (row) => {
+        const recordedRow = { ...row, attempt_id: attemptId, branch_id: attemptId };
+        fs.appendFileSync(file, `${needsSeparator ? '\n' : ''}${JSON.stringify(recordedRow)}\n`, 'utf8');
+        needsSeparator = false;
+        decisionRows[pid].push(recordedRow);
+        context.onDecision?.(pid, recordedRow);
+      };
+    };
+    const engines = Object.fromEntries(
+      (['p1', 'p2'] as const).map((pid) => [
+        pid,
+        makeEngine({
+          pid,
+          spec: context.players[pid],
+          seed: context.engineSeeds[pid],
+          decisionLog: decisionSink(pid),
+          traceLog: path.join(seriesDir, `${pid}-trace.jsonl`),
+          contextLog: path.join(seriesDir, `${pid}-context.jsonl`),
+          initialContext: adopted ? loadAgentContext(seriesDir, seriesId, pid) : [],
+          format: context.format,
+          psDir: context.psDir,
+          reasoning: reasoning[pid],
+          reference,
+          signal: context.signal,
+          apiKey: context.apiKeys?.[context.players[pid]],
+          recovery: context.recovery,
+          initialNotebook: adopted?.notebooks[pid] ?? context.initialNotebooks?.[pid],
+          draftRoster: context.draftRosters?.[pid],
+          briefing: context.briefings?.[pid],
+        }),
+      ]),
+    ) as Record<Pid, RandomEngine | LLMEngine>;
+    for (const pid of ['p1', 'p2'] as const) {
+      const engine = engines[pid];
+      if (adopted?.replay[pid].length && engine instanceof LLMEngine) engine.primeReplay(adopted.replay[pid]);
+    }
+    const battleFormat = context.closedSheets ? closedSheetsFormat(context.format, context.psDir) : context.format;
+    const { score, games, winnerSide } = await playBo3({
+      engines,
+      names,
+      players: context.players,
+      teams: context.teams,
+      gameSeeds: context.gameSeeds,
+      seriesId,
+      seriesDir,
+      format: battleFormat,
+      psDir: context.psDir,
+      ...(adopted?.games.length ? { completedGames: adopted.games } : {}),
+      ...(context.requireWinner === undefined ? {} : { requireWinner: context.requireWinner }),
+      timerScale,
+      ...(context.signal === undefined ? {} : { signal: context.signal }),
+      ...(context.onGameUpdate === undefined ? {} : { onGameUpdate: context.onGameUpdate }),
+      ...(context.onGameEnd === undefined ? {} : { onGameEnd: context.onGameEnd }),
+    });
+    writeTurnsFile(seriesDir, games, decisionRows);
+    const stats = Object.fromEntries(
+      (['p1', 'p2'] as const).map((pid) => [
+        pid,
+        combinedDecisionStats(projectedDecisionStats(adopted?.decisions[pid] ?? []), engines[pid].decisionStats()),
+      ]),
+    ) as JsonObject;
+    const result: RecordedSeries = {
+      coachNotes: Object.fromEntries(
+        (['p1', 'p2'] as const).map((pid) => [pid, engines[pid].coachingNote()]),
+      ) as Record<Pid, string>,
+      winnerSide,
+      fields: {
+        timestamp: new Date().toISOString(),
+        run_id: path.basename(context.runDir),
+        series_id: seriesId,
+        format: context.format,
+        players: context.players,
+        teams: { p1: context.teams.p1.id, p2: context.teams.p2.id },
+        packed_team_digests: {
+          p1: createHash('sha256').update(context.teams.p1.packed).digest('hex'),
+          p2: createHash('sha256').update(context.teams.p2.packed).digest('hex'),
+        },
+        winner: winnerSide ? context.players[winnerSide] : null,
+        winner_side: winnerSide ?? null,
+        score,
+        turns: games.reduce((sum, game) => sum + Number(game.turns), 0),
+        games,
+        engine_seeds: context.engineSeeds,
+        timer_scale: timerScale,
+        ...(context.closedSheets ? { closed_sheets: true } : {}),
+        reasoning: context.reasoning ?? null,
+        ...(context.reasoningByModel === undefined
+          ? {}
+          : { reasoning_by_player: { p1: reasoning.p1 ?? null, p2: reasoning.p2 ?? null } }),
+        decision_stats: stats,
+      },
+    };
+    appendAttemptRecord(
+      seriesDir,
+      attemptRecord(
+        'attempt_completed',
+        attemptId,
+        seriesId,
+        adoptedCompletedGames,
+        startHeads,
+        contextLedgerHeads(seriesDir),
+        { completed_games: games.length },
+      ),
+    );
+    return result;
+  } catch (error) {
+    appendAttemptRecord(
+      seriesDir,
+      attemptRecord(
+        'attempt_aborted',
+        attemptId,
+        seriesId,
+        adoptedCompletedGames,
+        startHeads,
+        contextLedgerHeads(seriesDir),
+        {
+          error: {
+            name: error instanceof Error ? error.name : 'Error',
+            message: error instanceof Error ? error.message : String(error),
+          },
+        },
+      ),
+    );
+    throw error;
+  }
 }
 
 export function closedSheetsFormat(format: string, psDir: string): string {

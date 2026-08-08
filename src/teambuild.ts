@@ -2,7 +2,6 @@ import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { completeWithDexTools } from './dex-lookups.js';
-import type { DraftBoardMon } from './draft.js';
 import type { TeambuildSetView, TeambuildView } from './gui/api.js';
 import { defaultPsDir } from './paths.js';
 import type { ModelReasoningConfig, ReasoningLevel } from './providers.js';
@@ -17,21 +16,20 @@ import { type Rng, shuffle } from './random.js';
 import type { RecoveryGate } from './recovery.js';
 import { ShowdownReference } from './reference.js';
 import type { ShowdownApi } from './showdown.js';
-import { loadShowdown } from './showdown.js';
+import { loadShowdown, showdownCommit } from './showdown.js';
+import { normalizeStageEvidence, noStageEvidence, type StageEvidence } from './stage-evidence.js';
 import { normalizePackedTeam, validateTeam } from './teams.js';
 import type { JsonObject, Provider, ProviderFailure, ProviderMessage } from './types.js';
-import { clip } from './value.js';
 
 const TEAMBUILD_PROMPT_POLICY = {
   systemTemplate: [
     'You are {{model}}, a coach in a Pokémon VGC draft league, format {{format}}.',
     '',
     'You drafted a roster of {{picks}} Pokémon and keep it all season. Before every match you choose exactly 6 of them',
-    'and build each set from scratch. Your current private roster notebook is supplied below as revisable context, not a constraint.',
+    'and build each set from scratch. Your current private roster notebook is supplied as context, not a constraint.',
     '',
     'FORMAT RULES',
-    '- Doubles. Both coaches register 6 and bring 4 to each game; team sheets are open, so your opponent reads your',
-    '  moves, items, abilities, and natures — but not your exact EV spreads.',
+    '{{teamSheetRule}}',
     '- Every Pokémon is set to level 50.',
     '- EVs: {{evLimit}} points total across the team member, at most {{evMax}} in any one stat. IVs are fixed at maximum.',
     '  This is the Champions EV system, not the older 508/252 one. Points are whole numbers.',
@@ -74,8 +72,95 @@ const TEAMBUILD_PROMPT_POLICY = {
   maxCallsPerRound: 8,
 } as const;
 
-export function teambuildScaffoldRevision(): string {
-  return createHash('sha256').update(JSON.stringify(TEAMBUILD_PROMPT_POLICY)).digest('hex').slice(0, 12);
+const GENERAL_TEAMBUILD_PROMPT_POLICY = {
+  systemTemplate: [
+    'You are {{model}}, building a Pokémon VGC team for format {{format}}.',
+    '',
+    'Choose exactly {{teamSize}} entries from the explicit frozen candidate pool supplied below and build every set from scratch.',
+    'No particular opponent is specified. Build for robust play across the format; do not assume an opponent roster.',
+    'The current private notebook may be replaced with the optional response field; it is context, not a constraint.',
+    '',
+    'FORMAT RULES',
+    '{{teamSheetRule}}',
+    '- Every Pokémon is set to level 50.',
+    '- EVs: {{evLimit}} points total across the team member, at most {{evMax}} in any one stat. IVs are fixed at maximum.',
+    '  This is the Champions EV system, not the older 508/252 one. Points are whole numbers.',
+    '- Each move has at most 20 PP. There is no Terastallisation in this format.',
+    '- Item Clause: no two team members may hold the same item. Species Clause: no two may share a species.',
+    '- Use only these items:',
+    '{{items}}',
+    '- A candidate with a locked item must hold it. A candidate without one cannot hold a Mega Stone.',
+    '',
+    'You have the Showdown dex tools. Use them while you build: check legal moves, items, abilities, speed benchmarks,',
+    'and damage against representative threats. The tools compute from the simulator this task validates against.',
+    '',
+    'Reply with JSON only, in this shape:',
+    '{"team_plan": "<2-5 sentences on the team and its modes>",',
+    ' "sets": [{"id": "<candidate-id>", "item": "<item>", "ability": "<ability>", "nature": "<nature>",',
+    '           "moves": ["<up to 4 moves>"], "evs": {"hp": 0, "atk": 0, "def": 0, "spa": 0, "spd": 0, "spe": 0},',
+    '           "note": "<one line on this set\'s job>"}],',
+    ' "notebook": "<optional complete replacement private plan>"}',
+    'Exactly {{teamSize}} entries in "sets", each one a candidate id from the frozen pool below.',
+  ],
+  candidateHeading: 'FROZEN CANDIDATE POOL (id | name | types | base stats | abilities | legal moves):',
+  notebookHeading: 'CURRENT PRIVATE NOTEBOOK:',
+  briefHeading: 'TASK BRIEF:',
+} as const;
+
+const TEAMBUILD_RATIONALE_LIMIT = 2_000;
+const TEAMBUILD_NOTEBOOK_LIMIT = 4_000;
+
+const TEAMBUILD_RENDERER_PROTOCOL = {
+  version: 2,
+  responseShape: 'strict-json-v1',
+  candidateIdentity: 'frozen-id',
+  setPacking: 'showdown-teams-pack',
+  setNotes: true,
+  promptRenderer: 'ordered-template-replace-all-v1',
+  candidateRenderer: 'dex-roster-block-v1',
+  sheetRules: {
+    open:
+      '- Doubles. Both coaches register 6 and bring 4 to each game; team sheets are open, so your opponent reads your\n' +
+      '  moves, items, abilities, and natures — but not your exact EV spreads.',
+    closed:
+      '- Doubles. Both coaches register 6 and bring 4 to each game; team sheets are closed, so neither coach receives ' +
+      'the opposing moves, items, abilities, natures, or EV spreads before play.',
+  },
+  sheetPolicy: 'task-bound',
+  evidencePolicy: 'stage-evidence-v1',
+} as const;
+
+export type TeamBuildSheetPolicy = 'open' | 'closed';
+export type TeamBuildExecutionPolicy = 'league-resilient' | 'strict';
+
+export function teambuildScaffoldRevision(
+  sheetPolicy: TeamBuildSheetPolicy = 'open',
+  executionPolicy: TeamBuildExecutionPolicy = 'league-resilient',
+): string {
+  return createHash('sha256')
+    .update(JSON.stringify([TEAMBUILD_PROMPT_POLICY, TEAMBUILD_RENDERER_PROTOCOL, sheetPolicy, executionPolicy]))
+    .digest('hex')
+    .slice(0, 12);
+}
+
+export function teamBuildScaffoldRevision(
+  objective: TeamBuildObjective,
+  sheetPolicy: TeamBuildSheetPolicy,
+  executionPolicy: TeamBuildExecutionPolicy,
+): string {
+  if (objective.kind === 'matchup') return teambuildScaffoldRevision(sheetPolicy, executionPolicy);
+  return createHash('sha256')
+    .update(
+      JSON.stringify([
+        TEAMBUILD_PROMPT_POLICY,
+        GENERAL_TEAMBUILD_PROMPT_POLICY,
+        TEAMBUILD_RENDERER_PROTOCOL,
+        sheetPolicy,
+        executionPolicy,
+      ]),
+    )
+    .digest('hex')
+    .slice(0, 12);
 }
 
 interface RawSet {
@@ -91,12 +176,94 @@ interface RawSet {
 const STATS = ['hp', 'atk', 'def', 'spa', 'spd', 'spe'] as const;
 type Stat = (typeof STATS)[number];
 
+export interface TeamBuildCandidate {
+  id: string;
+  name: string;
+  species: string;
+  forme?: string;
+  item?: string;
+  base: string;
+  types: string[];
+}
+
+interface TeamBuildConstraintBase {
+  id: string;
+  teamSize: number;
+  candidates: readonly TeamBuildCandidate[];
+}
+
+export type TeamBuildConstraint =
+  | ({ kind: 'draft-picks' } & TeamBuildConstraintBase)
+  | ({ kind: 'frozen-candidate-pool' } & TeamBuildConstraintBase);
+
+export type TeamBuildObjective =
+  | {
+      kind: 'matchup';
+      stage: 'roundrobin' | 'playoff';
+      opponent: { model: string; candidates: readonly TeamBuildCandidate[] };
+      priorContext: readonly string[];
+    }
+  | { kind: 'general'; brief?: string };
+
+export interface TeamBuildTaskProvenance {
+  source: string;
+  seed?: string | number;
+  parentRunId?: string;
+  seriesIndex?: number;
+  entrant?: number;
+  opponent?: number;
+}
+
+export interface TeamBuildTask {
+  id: string;
+  model: string;
+  format: string;
+  sheetPolicy: TeamBuildSheetPolicy;
+  executionPolicy?: TeamBuildExecutionPolicy;
+  constraint: TeamBuildConstraint;
+  objective: TeamBuildObjective;
+  notebook: string;
+  provenance: TeamBuildTaskProvenance;
+}
+
+export interface TeamBuildAction {
+  selected: string[];
+  packed: string;
+  sets: TeambuildSetView[];
+}
+
+export interface TeamBuildArtifact {
+  schemaVersion: 1;
+  status: 'valid' | 'invalid';
+  task: TeamBuildTask;
+  executionPolicy: TeamBuildExecutionPolicy;
+  scaffold: string;
+  showdownCommit: string;
+  action: TeamBuildAction | null;
+  evidence: StageEvidence;
+  validation: {
+    showdown: boolean;
+    repaired: boolean;
+    repairs: string[];
+    problems: string[];
+  };
+  attempts: number;
+  fallback: boolean;
+  createdAt: string;
+}
+
+export interface TeamBuildResult {
+  packed: string | null;
+  artifact: TeamBuildArtifact;
+}
+
 export interface TeambuildResult {
   packed: string;
+  artifact: TeamBuildArtifact;
   view: TeambuildView;
 }
 
-export interface TeambuildOptions extends ModelReasoningConfig {
+export interface TeamBuildOptions extends ModelReasoningConfig {
   psDir?: string;
   apiKeys?: Readonly<Record<string, string>>;
   logDir: string;
@@ -106,6 +273,8 @@ export interface TeambuildOptions extends ModelReasoningConfig {
   makeTeambuildProvider?: (spec: string, apiKey: string | undefined, reasoning: ReasoningLevel | undefined) => Provider;
 }
 
+export type TeambuildOptions = TeamBuildOptions;
+
 export interface TeambuildRequest {
   seriesIndex: number;
   entrant: number;
@@ -114,11 +283,12 @@ export interface TeambuildRequest {
   model: string;
   opponentModel: string;
   franchiseName: string;
-  roster: DraftBoardMon[];
-  opponentRoster: DraftBoardMon[];
+  roster: TeamBuildCandidate[];
+  opponentRoster: TeamBuildCandidate[];
   draftNote: string;
   playoffContext: string[];
   format: string;
+  sheetPolicy?: TeamBuildSheetPolicy;
 }
 
 function slug(value: string): string {
@@ -133,7 +303,7 @@ function slug(value: string): string {
 
 type DexLike = ReturnType<ShowdownApi['Dex']['mod']>;
 
-function legalMoves(dex: DexLike, mon: DraftBoardMon): string[] {
+function legalMoves(dex: DexLike, mon: TeamBuildCandidate): string[] {
   const species = dex.species.get(mon.species);
   const pool = dex.species.getMovePool(species.id);
   const names: string[] = [];
@@ -146,7 +316,7 @@ function legalMoves(dex: DexLike, mon: DraftBoardMon): string[] {
   return names.sort();
 }
 
-function rosterBlock(dex: DexLike, roster: DraftBoardMon[], detailed: boolean): string[] {
+function rosterBlock(dex: DexLike, roster: TeamBuildCandidate[], detailed: boolean): string[] {
   const lines: string[] = [];
   for (const mon of roster) {
     const battleForme = dex.species.get(mon.forme ?? mon.species);
@@ -192,42 +362,66 @@ function legalItems(dex: DexLike): string[] {
   return names.sort();
 }
 
-function systemPrompt(request: TeambuildRequest, dex: DexLike, evLimit: number, evMax: number): string {
-  const values: Record<string, string> = {
-    model: request.model,
-    format: request.format,
-    picks: String(request.roster.length),
-    evLimit: String(evLimit),
-    evMax: String(evMax),
-    items: `  ${legalItems(dex).join(', ')}`,
-  };
-  return TEAMBUILD_PROMPT_POLICY.systemTemplate
+function renderPromptTemplate(lines: readonly string[], values: Readonly<Record<string, string>>): string {
+  return lines
     .map((line) =>
-      Object.entries(values).reduce(
-        (rendered, [name, value]) => rendered.replaceAll(`{{${name}}}`, value),
-        line as string,
-      ),
+      Object.entries(values).reduce((rendered, [name, value]) => rendered.replaceAll(`{{${name}}}`, value), line),
     )
     .join('\n');
 }
 
-function userPrompt(request: TeambuildRequest, dex: DexLike): string {
+function teamSheetRule(policy: TeamBuildSheetPolicy): string {
+  return TEAMBUILD_RENDERER_PROTOCOL.sheetRules[policy];
+}
+
+function systemPrompt(task: TeamBuildTask, dex: DexLike, evLimit: number, evMax: number): string {
+  const values: Record<string, string> = {
+    model: task.model,
+    format: task.format,
+    picks: String(task.constraint.candidates.length),
+    teamSize: String(task.constraint.teamSize),
+    evLimit: String(evLimit),
+    evMax: String(evMax),
+    items: `  ${legalItems(dex).join(', ')}`,
+    teamSheetRule: teamSheetRule(task.sheetPolicy),
+  };
+  return renderPromptTemplate(
+    task.objective.kind === 'matchup'
+      ? TEAMBUILD_PROMPT_POLICY.systemTemplate
+      : GENERAL_TEAMBUILD_PROMPT_POLICY.systemTemplate,
+    values,
+  );
+}
+
+function userPrompt(task: TeamBuildTask, dex: DexLike): string {
+  if (task.objective.kind === 'general') {
+    const lines: string[] = [GENERAL_TEAMBUILD_PROMPT_POLICY.candidateHeading];
+    lines.push(...rosterBlock(dex, [...task.constraint.candidates], true));
+    if (task.notebook) lines.push('', GENERAL_TEAMBUILD_PROMPT_POLICY.notebookHeading, task.notebook);
+    if (task.objective.brief) lines.push('', GENERAL_TEAMBUILD_PROMPT_POLICY.briefHeading, task.objective.brief);
+    return lines.join('\n');
+  }
   const lines: string[] = [TEAMBUILD_PROMPT_POLICY.rosterHeading];
-  lines.push(...rosterBlock(dex, request.roster, true));
-  if (request.draftNote) lines.push('', TEAMBUILD_PROMPT_POLICY.draftNoteHeading, request.draftNote);
-  lines.push('', TEAMBUILD_PROMPT_POLICY.opponentHeading.replace('{{model}}', request.opponentModel));
-  lines.push(...rosterBlock(dex, request.opponentRoster, false));
-  if (request.stage === 'playoff' && request.playoffContext.length) {
+  lines.push(...rosterBlock(dex, [...task.constraint.candidates], true));
+  if (task.notebook) lines.push('', TEAMBUILD_PROMPT_POLICY.draftNoteHeading, task.notebook);
+  lines.push('', TEAMBUILD_PROMPT_POLICY.opponentHeading.replace('{{model}}', task.objective.opponent.model));
+  lines.push(...rosterBlock(dex, [...task.objective.opponent.candidates], false));
+  if (task.objective.stage === 'playoff' && task.objective.priorContext.length) {
     lines.push(
       '',
       TEAMBUILD_PROMPT_POLICY.playoffContextHeading,
-      ...request.playoffContext.map((entry) => `- ${entry}`),
+      ...task.objective.priorContext.map((entry) => `- ${entry}`),
     );
   }
   return lines.join('\n');
 }
 
-function parseSets(response: string, roster: DraftBoardMon[]): { sets: RawSet[]; plan: string } | string {
+interface ParsedTeamBuild {
+  sets: RawSet[];
+  evidence: StageEvidence;
+}
+
+function parseSets(response: string, task: TeamBuildTask): ParsedTeamBuild | string {
   const match = /\{[\s\S]*\}/.exec(response);
   if (!match) return 'the reply contained no JSON object';
   let parsed: unknown;
@@ -236,40 +430,93 @@ function parseSets(response: string, roster: DraftBoardMon[]): { sets: RawSet[];
   } catch {
     return 'the JSON object did not parse';
   }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    return 'the reply must be one JSON object';
+  }
   const record = parsed as Record<string, unknown>;
-  const raw = Array.isArray(record.sets) ? record.sets : undefined;
-  if (!raw) return '"sets" must be an array';
-  if (raw.length !== 6) return `"sets" must hold exactly 6 entries, not ${raw.length}`;
-  const owned = new Map(roster.map((mon) => [mon.id, mon]));
+  if (record.team_plan !== undefined && typeof record.team_plan !== 'string') {
+    return '"team_plan" must be a string when supplied';
+  }
+  if (record.notebook !== undefined && typeof record.notebook !== 'string') {
+    return '"notebook" must be a string when supplied';
+  }
+  if (!Array.isArray(record.sets)) return '"sets" must be an array';
+  const raw = record.sets;
+  const teamSize = task.constraint.teamSize;
+  if (raw.length !== teamSize) return `"sets" must hold exactly ${teamSize} entries, not ${raw.length}`;
+  const owned = new Map(task.constraint.candidates.map((mon) => [mon.id, mon]));
   const sets: RawSet[] = [];
   const used = new Set<string>();
-  for (const entry of raw) {
+  for (const [index, entry] of raw.entries()) {
+    if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) {
+      return `set ${index + 1} must be an object`;
+    }
     const item = entry as Record<string, unknown>;
-    const id = String(item.id ?? '')
-      .trim()
-      .toLowerCase();
-    if (!owned.has(id)) return `"${id}" is not a board id on your roster`;
-    if (used.has(id)) return `"${id}" appears twice; bring six different Pokémon`;
+    if (typeof item.id !== 'string') return `set ${index + 1} "id" must be a string`;
+    if (typeof item.item !== 'string') return `set ${index + 1} "item" must be a string`;
+    if (typeof item.ability !== 'string') return `set ${index + 1} "ability" must be a string`;
+    if (typeof item.nature !== 'string') return `set ${index + 1} "nature" must be a string`;
+    if (!Array.isArray(item.moves)) return `set ${index + 1} "moves" must be an array`;
+    if (item.moves.some((move) => typeof move !== 'string' || !move.trim())) {
+      return `set ${index + 1} "moves" must contain only non-empty strings`;
+    }
+    if (item.note !== undefined && typeof item.note !== 'string') {
+      return `set ${index + 1} "note" must be a string when supplied`;
+    }
+    for (const [field, value] of [
+      ['id', item.id],
+      ['item', item.item],
+      ['ability', item.ability],
+      ['nature', item.nature],
+      ...item.moves.map((move, moveIndex) => [`moves[${moveIndex}]`, move]),
+    ] as Array<[string, string]>) {
+      if (value !== value.trim()) return `set ${index + 1} "${field}" must not have surrounding whitespace`;
+    }
+    if (typeof item.evs !== 'object' || item.evs === null || Array.isArray(item.evs)) {
+      return `set ${index + 1} "evs" must be an object`;
+    }
+    const id = item.id;
+    if (!owned.has(id)) {
+      return task.constraint.kind === 'draft-picks'
+        ? `"${id}" is not a board id on your roster`
+        : `"${id}" is not an id in the frozen candidate pool`;
+    }
+    if (used.has(id)) {
+      return teamSize === 6
+        ? `"${id}" appears twice; bring six different Pokémon`
+        : `"${id}" appears twice; choose ${teamSize} different Pokémon`;
+    }
     used.add(id);
+    const rawEvs = item.evs as Record<string, unknown>;
     const evs: Record<string, number> = {};
-    const rawEvs = (item.evs ?? {}) as Record<string, unknown>;
-    for (const stat of STATS) evs[stat] = Math.max(0, Math.trunc(Number(rawEvs[stat] ?? 0)) || 0);
+    for (const stat of STATS) {
+      const value = rawEvs[stat];
+      if (typeof value !== 'number' || !Number.isFinite(value) || !Number.isSafeInteger(value) || value < 0) {
+        return `set ${index + 1} "evs.${stat}" must be a finite, safe, non-negative integer`;
+      }
+      evs[stat] = value;
+    }
     sets.push({
       id,
-      item: String(item.item ?? '').trim(),
-      ability: String(item.ability ?? '').trim(),
-      nature: String(item.nature ?? '').trim(),
-      moves: Array.isArray(item.moves) ? item.moves.map((move) => String(move).trim()).filter(Boolean) : [],
+      item: item.item,
+      ability: item.ability,
+      nature: item.nature,
+      moves: item.moves as string[],
       evs,
-      note: String(item.note ?? '').trim(),
+      note: typeof item.note === 'string' ? item.note : '',
     });
   }
-  return { sets, plan: String(record.team_plan ?? '').trim() };
+  const evidence = normalizeStageEvidence(record.team_plan, record.notebook, {
+    currentNotebook: task.notebook,
+    rationaleLimit: TEAMBUILD_RATIONALE_LIMIT,
+    notebookLimit: TEAMBUILD_NOTEBOOK_LIMIT,
+  });
+  return { sets, evidence };
 }
 
 function repairSet(
   dex: DexLike,
-  mon: DraftBoardMon,
+  mon: TeamBuildCandidate,
   set: RawSet,
   evLimit: number,
   evMax: number,
@@ -296,6 +543,9 @@ function repairSet(
     repairs.push(`${itemName} removed: Item Clause, another of your six already holds it`);
     itemName = '';
   }
+  if (itemName && itemName !== set.item && repairs.length === 0) {
+    repairs.push(`item normalized from ${JSON.stringify(set.item)} to ${itemName}`);
+  }
   if (itemName) taken.add(itemName);
 
   const abilities = Object.values(base.abilities ?? {}).filter(Boolean) as string[];
@@ -303,12 +553,16 @@ function repairSet(
   if (!ability) {
     ability = abilities[0]!;
     repairs.push(`ability set to ${ability}, which ${base.name} can legally have`);
+  } else if (ability !== set.ability) {
+    repairs.push(`ability normalized from ${JSON.stringify(set.ability)} to ${ability}`);
   }
 
   let nature = dex.natures.get(set.nature);
   if (!nature?.exists) {
     nature = dex.natures.get('Serious');
     repairs.push(`unknown nature ${JSON.stringify(set.nature)} replaced with Serious`);
+  } else if (nature.name !== set.nature) {
+    repairs.push(`nature normalized from ${JSON.stringify(set.nature)} to ${nature.name}`);
   }
 
   const pool = legalMoves(dex, mon);
@@ -320,7 +574,12 @@ function repairSet(
       repairs.push(`${mon.name} cannot learn ${JSON.stringify(move)}; dropped`);
       continue;
     }
-    if (!moves.includes(resolved)) moves.push(resolved);
+    if (moves.includes(resolved)) {
+      repairs.push(`duplicate move ${resolved} dropped`);
+      continue;
+    }
+    if (resolved !== move) repairs.push(`move normalized from ${JSON.stringify(move)} to ${resolved}`);
+    moves.push(resolved);
   }
   if (!moves.length && pool.length) {
     const candidate = pool[Math.floor(rng() * pool.length)]!;
@@ -362,58 +621,107 @@ function repairSet(
   };
 }
 
-function packSet(dex: DexLike, mon: DraftBoardMon, set: RawSet): string {
-  const base = dex.species.get(mon.species);
-  const evs = STATS.map((stat) => (set.evs[stat] ? String(set.evs[stat]) : '')).join(',');
-  return [
-    base.name,
-    '',
-    set.item.replaceAll(' ', ''),
-    set.ability.replaceAll(' ', ''),
-    set.moves.map((move) => move.replaceAll(' ', '')).join(','),
-    set.nature,
-    evs,
-    '',
-    '',
-    '',
-    '50',
-    '',
-  ].join('|');
+type ShowdownSet = NonNullable<ReturnType<ShowdownApi['Teams']['unpack']>>[number];
+
+function packCandidateTeam(
+  dex: DexLike,
+  entries: readonly { mon: TeamBuildCandidate; set: RawSet }[],
+  psDir: string,
+): string {
+  const { Teams } = loadShowdown(psDir);
+  const sets: ShowdownSet[] = entries.map(({ mon, set }) => {
+    const base = dex.species.get(mon.species);
+    return {
+      name: base.name,
+      species: base.name,
+      item: set.item,
+      ability: set.ability,
+      moves: set.moves,
+      nature: set.nature,
+      gender: '',
+      evs: Object.fromEntries(STATS.map((stat) => [stat, set.evs[stat] ?? 0])) as ShowdownSet['evs'],
+      ivs: Object.fromEntries(STATS.map((stat) => [stat, 31])) as ShowdownSet['ivs'],
+      level: 50,
+    };
+  });
+  const packed = Teams.pack(sets);
+  if (!packed) throw new Error('Showdown produced an empty packed team');
+  return packed;
 }
 
-export async function runTeambuild(request: TeambuildRequest, options: TeambuildOptions): Promise<TeambuildResult> {
+function validateTeamBuildTask(task: TeamBuildTask): void {
+  const { candidates, teamSize } = task.constraint;
+  if (task.sheetPolicy !== 'open' && task.sheetPolicy !== 'closed') {
+    throw new Error('team-build sheetPolicy must be open or closed');
+  }
+  if (
+    task.executionPolicy !== undefined &&
+    task.executionPolicy !== 'league-resilient' &&
+    task.executionPolicy !== 'strict'
+  ) {
+    throw new Error('team-build executionPolicy must be league-resilient or strict');
+  }
+  if (!Number.isSafeInteger(teamSize) || teamSize < 1) {
+    throw new Error('team-build constraint teamSize must be a positive integer');
+  }
+  const ids = candidates.map((candidate) => candidate.id);
+  if (ids.some((id) => !id)) throw new Error('every team-build candidate needs a non-empty id');
+  if (new Set(ids).size !== ids.length) throw new Error('team-build candidate ids must be unique');
+  const distinct = new Set(candidates.map((candidate) => candidate.base)).size;
+  if (distinct < teamSize) {
+    throw new Error(
+      `team-build constraint ${JSON.stringify(task.constraint.id)} has ${distinct} distinct species, fewer than teamSize ${teamSize}`,
+    );
+  }
+}
+
+function attemptLogFile(task: TeamBuildTask, logDir: string): string {
+  if (task.provenance.seriesIndex !== undefined && task.provenance.entrant !== undefined) {
+    return path.join(
+      logDir,
+      `series-${task.provenance.seriesIndex + 1}-e${task.provenance.entrant}-${slug(task.model)}.jsonl`,
+    );
+  }
+  return path.join(logDir, `${slug(task.id)}-${slug(task.model)}.jsonl`);
+}
+
+function fallbackEvidence(rationale: string, notebook: string): StageEvidence {
+  return { ...noStageEvidence(notebook), rationale };
+}
+
+export async function runTeamBuild(task: TeamBuildTask, options: TeamBuildOptions): Promise<TeamBuildResult> {
+  validateTeamBuildTask(task);
+  const executionPolicy = task.executionPolicy ?? 'strict';
+  const canonicalTask: TeamBuildTask = { ...task, executionPolicy };
   const psDir = options.psDir ?? defaultPsDir();
   const { Dex } = loadShowdown(psDir);
-  const format = Dex.formats.get(request.format);
+  const format = Dex.formats.get(task.format);
   const dex = Dex.mod(format.mod || 'base') as unknown as DexLike;
   const ruleTable = Dex.formats.getRuleTable(format);
   const evLimit = ruleTable.evLimit ?? 508;
   const evMax = 32;
-  const reference = new ShowdownReference(request.format, psDir);
+  const reference = new ShowdownReference(task.format, psDir);
   fs.mkdirSync(options.logDir, { recursive: true });
-  const logFile = path.join(
-    options.logDir,
-    `series-${request.seriesIndex + 1}-e${request.entrant}-${slug(request.model)}.jsonl`,
-  );
+  const logFile = attemptLogFile(task, options.logDir);
 
-  const system = systemPrompt(request, dex, evLimit, evMax);
-  const messages: ProviderMessage[] = [{ role: 'user', content: userPrompt(request, dex) }];
-  const reasoning = reasoningForModel(request.model, options);
-  const resolvedModel = resolveSpecOverride(request.model);
+  const system = systemPrompt(task, dex, evLimit, evMax);
+  const messages: ProviderMessage[] = [{ role: 'user', content: userPrompt(task, dex) }];
+  const reasoning = reasoningForModel(task.model, options);
+  const resolvedModel = resolveSpecOverride(task.model);
   const provider =
-    request.model === 'random'
+    task.model === 'random'
       ? undefined
-      : (options.makeTeambuildProvider?.(request.model, options.apiKeys?.[request.model], reasoning) ??
+      : (options.makeTeambuildProvider?.(task.model, options.apiKeys?.[task.model], reasoning) ??
         makeProvider(parseSpec(resolvedModel), {
           ...(reasoning === undefined ? {} : { reasoning }),
-          ...(resolvedModel === request.model && options.apiKeys?.[request.model] !== undefined
-            ? { apiKey: options.apiKeys[request.model] }
+          ...(resolvedModel === task.model && options.apiKeys?.[task.model] !== undefined
+            ? { apiKey: options.apiKeys[task.model] }
             : {}),
         }));
 
-  const owned = new Map(request.roster.map((mon) => [mon.id, mon]));
-  let accepted: { sets: RawSet[]; plan: string } | undefined;
-  let lastParsed: { sets: RawSet[]; plan: string } | undefined;
+  const owned = new Map(task.constraint.candidates.map((mon) => [mon.id, mon]));
+  let accepted: ParsedTeamBuild | undefined;
+  let lastParsed: ParsedTeamBuild | undefined;
   let attemptsUsed = 0;
   let lastError = '';
 
@@ -432,7 +740,7 @@ export async function runTeambuild(request: TeambuildRequest, options: Teambuild
         provider,
         system,
         messages,
-        spec: request.model,
+        spec: task.model,
         reference,
         policy: TEAMBUILD_PROMPT_POLICY,
         ...(options.recovery === undefined ? {} : { recovery: options.recovery }),
@@ -443,15 +751,15 @@ export async function runTeambuild(request: TeambuildRequest, options: Teambuild
       usage = completion.usage;
       const truncated = completion.finishReason === 'length';
       if (!response.trim() && !truncated && completion.reasoning) {
-        const salvaged = parseSets(completion.reasoning, request.roster);
+        const salvaged = parseSets(completion.reasoning, task);
         if (typeof salvaged !== 'string') response = completion.reasoning;
       }
-      const parsed = parseSets(response, request.roster);
+      const parsed = parseSets(response, task);
       if (typeof parsed === 'string') {
         error = truncated ? 'the reply used its whole token budget before finishing the team' : parsed;
         lastError = error;
       } else {
-        const problems = validateCandidate(dex, request.format, parsed.sets, owned, psDir);
+        const problems = validateCandidate(dex, task.format, parsed.sets, owned, psDir);
         if (problems.length) {
           error = problems.join('\n');
           lastError = error;
@@ -475,18 +783,26 @@ export async function runTeambuild(request: TeambuildRequest, options: Teambuild
         });
       }
     } catch (cause) {
-      const failure = classifyProviderFailure(cause, request.model);
+      const failure = classifyProviderFailure(cause, task.model);
       error = failure.summary;
       lastError = error;
       if (failure.pausable && options.recovery) pauseFailure = failure;
       else terminalError = new Error(`${failure.summary} The teambuild cannot continue.`, { cause });
     }
+    const traceContext =
+      task.objective.kind === 'matchup' &&
+      task.provenance.seriesIndex !== undefined &&
+      task.provenance.entrant !== undefined
+        ? {
+            series: task.provenance.seriesIndex + 1,
+            entrant: task.provenance.entrant,
+            opponent: task.objective.opponent.model,
+          }
+        : { task_id: task.id, objective: task.objective.kind, constraint: task.constraint.id };
     fs.appendFileSync(
       logFile,
       `${JSON.stringify({
-        series: request.seriesIndex + 1,
-        entrant: request.entrant,
-        opponent: request.opponentModel,
+        ...traceContext,
         attempt,
         ...(attempt === 1 ? { system } : {}),
         user: promptForAttempt,
@@ -499,22 +815,51 @@ export async function runTeambuild(request: TeambuildRequest, options: Teambuild
     );
     if (terminalError) throw terminalError;
     if (pauseFailure) {
-      await options.recovery?.pause(request.model, pauseFailure, options.signal);
+      await options.recovery?.pause(task.model, pauseFailure, options.signal);
       attempt -= 1;
     }
   }
 
-  const chosen = accepted ??
-    lastParsed ?? {
-      sets: fallbackSets(request.roster, options.rng, evLimit, evMax),
-      plan: provider
-        ? `no parseable team after ${TEAMBUILD_PROMPT_POLICY.attempts} attempts (${lastError})`
-        : 'random baseline: six of the roster with repaired legal sets',
+  if (executionPolicy === 'strict' && !accepted) {
+    const problem =
+      lastError || (provider ? 'no valid team was returned' : 'strict team building has no provider action');
+    const artifact: TeamBuildArtifact = {
+      schemaVersion: 1,
+      status: 'invalid',
+      task: canonicalTask,
+      executionPolicy,
+      scaffold: teamBuildScaffoldRevision(task.objective, task.sheetPolicy, executionPolicy),
+      showdownCommit: showdownCommit(psDir),
+      action: null,
+      evidence: lastParsed?.evidence ?? noStageEvidence(task.notebook),
+      validation: {
+        showdown: false,
+        repaired: false,
+        repairs: [],
+        problems: [problem],
+      },
+      attempts: attemptsUsed,
+      fallback: false,
+      createdAt: new Date().toISOString(),
     };
+    return { packed: null, artifact };
+  }
+
+  const noParseRationale = provider
+    ? `no parseable team after ${TEAMBUILD_PROMPT_POLICY.attempts} attempts (${lastError})`
+    : task.objective.kind === 'matchup' && task.constraint.teamSize === 6
+      ? 'random baseline: six of the roster with repaired legal sets'
+      : `random baseline: ${task.constraint.teamSize} candidates with repaired legal sets`;
+  const chosen =
+    accepted ??
+    lastParsed ??
+    ({
+      sets: fallbackSets(task.constraint.candidates, task.constraint.teamSize, options.rng, evLimit, evMax),
+      evidence: fallbackEvidence(noParseRationale, task.notebook),
+    } satisfies ParsedTeamBuild);
   const taken = new Set<string>();
   const views: TeambuildSetView[] = [];
-  const packedSets: string[] = [];
-  let repaired: Array<{ mon: DraftBoardMon; set: RawSet; repairs: string[] }> = chosen.sets.map((raw) => {
+  let repaired: Array<{ mon: TeamBuildCandidate; set: RawSet; repairs: string[] }> = chosen.sets.map((raw) => {
     const mon = owned.get(raw.id)!;
     return accepted
       ? { mon, set: raw, repairs: [] }
@@ -523,21 +868,23 @@ export async function runTeambuild(request: TeambuildRequest, options: Teambuild
 
   const problems = validateCandidate(
     dex,
-    request.format,
+    task.format,
     repaired.map((entry) => entry.set),
     owned,
     psDir,
   );
   if (problems.length) {
     const fallbackTaken = new Set<string>();
-    repaired = fallbackSets(request.roster, options.rng, evLimit, evMax).map((raw) => {
-      const mon = owned.get(raw.id)!;
-      const rebuilt = repairSet(dex, mon, raw, evLimit, evMax, fallbackTaken, options.rng);
-      return { mon, set: rebuilt.set, repairs: [`rebuilt from scratch: ${problems.join('; ')}`, ...rebuilt.repairs] };
-    });
+    repaired = fallbackSets(task.constraint.candidates, task.constraint.teamSize, options.rng, evLimit, evMax).map(
+      (raw) => {
+        const mon = owned.get(raw.id)!;
+        const rebuilt = repairSet(dex, mon, raw, evLimit, evMax, fallbackTaken, options.rng);
+        return { mon, set: rebuilt.set, repairs: [`rebuilt from scratch: ${problems.join('; ')}`, ...rebuilt.repairs] };
+      },
+    );
     const fallbackProblems = validateCandidate(
       dex,
-      request.format,
+      task.format,
       repaired.map((entry) => entry.set),
       owned,
       psDir,
@@ -548,7 +895,6 @@ export async function runTeambuild(request: TeambuildRequest, options: Teambuild
   }
 
   for (const { mon, set, repairs } of repaired) {
-    packedSets.push(packSet(dex, mon, set));
     views.push({
       species: mon.name,
       spriteId: dex.species.get(mon.forme ?? mon.species).spriteid,
@@ -557,41 +903,120 @@ export async function runTeambuild(request: TeambuildRequest, options: Teambuild
       nature: set.nature,
       moves: set.moves,
       evs: set.evs,
+      note: set.note,
       repaired: repairs.length > 0,
       repairs,
     });
   }
 
-  const packed = normalizePackedTeam(packedSets.join(']'), psDir);
+  const packed = normalizePackedTeam(packCandidateTeam(dex, repaired, psDir), psDir);
+  validateTeam(packed, task.format, psDir);
+  const scaffold = teamBuildScaffoldRevision(task.objective, task.sheetPolicy, executionPolicy);
+  const createdAt = new Date().toISOString();
+  const allRepairs = repaired.flatMap((entry) => entry.repairs.map((repair) => `${entry.mon.id}: ${repair}`));
+  const artifact: TeamBuildArtifact = {
+    schemaVersion: 1,
+    status: 'valid',
+    task: canonicalTask,
+    executionPolicy,
+    scaffold,
+    showdownCommit: showdownCommit(psDir),
+    action: {
+      selected: repaired.map((entry) => entry.mon.id),
+      packed,
+      sets: views,
+    },
+    evidence: chosen.evidence,
+    validation: {
+      showdown: true,
+      repaired: allRepairs.length > 0,
+      repairs: allRepairs,
+      problems: [],
+    },
+    attempts: attemptsUsed,
+    fallback: accepted === undefined,
+    createdAt,
+  };
+  return { packed, artifact };
+}
+
+export async function runTeambuild(request: TeambuildRequest, options: TeambuildOptions): Promise<TeambuildResult> {
+  const task: TeamBuildTask = {
+    id: `draft-series-${request.seriesIndex + 1}-entrant-${request.entrant}`,
+    model: request.model,
+    format: request.format,
+    sheetPolicy: request.sheetPolicy ?? 'open',
+    executionPolicy: 'league-resilient',
+    constraint: {
+      kind: 'draft-picks',
+      id: `series-${request.seriesIndex + 1}-entrant-${request.entrant}-roster`,
+      teamSize: 6,
+      candidates: request.roster,
+    },
+    objective: {
+      kind: 'matchup',
+      stage: request.stage,
+      opponent: { model: request.opponentModel, candidates: request.opponentRoster },
+      priorContext: request.playoffContext,
+    },
+    notebook: request.draftNote,
+    provenance: {
+      source: 'draft-league',
+      seriesIndex: request.seriesIndex,
+      entrant: request.entrant,
+      opponent: request.opponent,
+    },
+  };
+  const result = await runTeamBuild(task, options);
+  const action = result.artifact.action;
+  if (!result.packed || !action || result.artifact.status !== 'valid') {
+    throw new Error('league-resilient team building ended without a valid team');
+  }
   const view: TeambuildView = {
     seriesIndex: request.seriesIndex,
     entrant: request.entrant,
     opponent: request.opponent,
-    brought: repaired.map((entry) => entry.mon.id),
-    sets: views,
-    rationale: clip(chosen.plan, 2_000),
-    attempts: attemptsUsed,
+    brought: action.selected,
+    sets: action.sets,
+    rationale: result.artifact.evidence.rationale,
+    attempts: result.artifact.attempts,
   };
   fs.appendFileSync(
     path.join(options.logDir, 'teambuild.jsonl'),
-    `${JSON.stringify({ model: request.model, team_name: request.franchiseName, ...view, packed, timestamp: new Date().toISOString() })}\n`,
+    `${JSON.stringify({
+      model: request.model,
+      team_name: request.franchiseName,
+      ...view,
+      packed: result.packed,
+      artifact: result.artifact,
+      timestamp: result.artifact.createdAt,
+    })}\n`,
     'utf8',
   );
-  return { packed, view };
+  return { packed: result.packed, artifact: result.artifact, view };
 }
 
 function validateCandidate(
   dex: DexLike,
   format: string,
   sets: RawSet[],
-  owned: Map<string, DraftBoardMon>,
+  owned: Map<string, TeamBuildCandidate>,
   psDir: string,
 ): string[] {
   const problems: string[] = [];
+  const entries: Array<{ mon: TeamBuildCandidate; set: RawSet }> = [];
   for (const set of sets) {
-    const mon = owned.get(set.id)!;
+    const mon = owned.get(set.id);
+    if (!mon) {
+      problems.push(`${set.id}: not present in the task constraint`);
+      continue;
+    }
+    entries.push({ mon, set });
     const label = `${mon.name}:`;
     const item = dex.items.get(set.item);
+    if (set.item && (!item?.exists || item.name !== set.item)) {
+      problems.push(`${label} item must use its canonical Showdown name`);
+    }
     if (mon.item) {
       if (!item?.exists || item.name !== dex.items.get(mon.item).name) {
         problems.push(`${label} drafted as a Mega, so it must hold ${dex.items.get(mon.item).name}`);
@@ -599,12 +1024,24 @@ function validateCandidate(
     } else if (item?.exists && item.megaStone) {
       problems.push(`${label} drafted as the base forme, so it can never hold ${item.name}`);
     }
+    const ability = dex.abilities.get(set.ability);
+    if (!ability?.exists || ability.name !== set.ability) {
+      problems.push(`${label} ability must use its canonical Showdown name`);
+    }
+    const nature = dex.natures.get(set.nature);
+    if (!nature?.exists || nature.name !== set.nature) {
+      problems.push(`${label} nature must use its canonical Showdown name`);
+    }
+    for (const moveName of set.moves) {
+      const move = dex.moves.get(moveName);
+      if (!move?.exists || move.name !== moveName) {
+        problems.push(`${label} move ${JSON.stringify(moveName)} must use its canonical Showdown name`);
+      }
+    }
   }
 
-  const { Teams } = loadShowdown(psDir);
-  const packed = sets.map((set) => packSet(dex, owned.get(set.id)!, set)).join(']');
-  const unpacked = Teams.unpack(packed);
-  if (!unpacked) return [...problems, 'the sets could not be assembled into a team'];
+  if (entries.length !== sets.length) return problems;
+  const packed = packCandidateTeam(dex, entries, psDir);
   try {
     validateTeam(packed, format, psDir);
   } catch (cause) {
@@ -613,7 +1050,7 @@ function validateCandidate(
   return problems;
 }
 
-function minimalSet(mon: DraftBoardMon, evLimit: number, evMax: number): RawSet {
+function minimalSet(mon: TeamBuildCandidate, evLimit: number, evMax: number): RawSet {
   const evs = Object.fromEntries(STATS.map((stat) => [stat, 0])) as Record<Stat, number>;
   let spent = 0;
   for (const stat of STATS) {
@@ -624,11 +1061,17 @@ function minimalSet(mon: DraftBoardMon, evLimit: number, evMax: number): RawSet 
   return { id: mon.id, item: mon.item ?? '', ability: '', nature: 'Hardy', moves: [], evs, note: '' };
 }
 
-function fallbackSets(roster: DraftBoardMon[], rng: Rng, evLimit: number, evMax: number): RawSet[] {
-  const chosen: DraftBoardMon[] = [];
+function fallbackSets(
+  candidates: readonly TeamBuildCandidate[],
+  teamSize: number,
+  rng: Rng,
+  evLimit: number,
+  evMax: number,
+): RawSet[] {
+  const chosen: TeamBuildCandidate[] = [];
   const bases = new Set<string>();
-  for (const mon of shuffle(roster, rng)) {
-    if (chosen.length >= 6 || bases.has(mon.base)) continue;
+  for (const mon of shuffle(candidates, rng)) {
+    if (chosen.length >= teamSize || bases.has(mon.base)) continue;
     bases.add(mon.base);
     chosen.push(mon);
   }

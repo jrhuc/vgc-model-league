@@ -89,6 +89,36 @@ test('a resumed stream continues prior stable cursors without mutating its sourc
   assert.throws(() => new AgentContextStream([{ ...saved[0]!, id: 'ctx-00000002' }]), /non-contiguous context event/);
 });
 
+test('a failed sink leaves the sequence uncommitted so retry reuses the stable cursor', () => {
+  const first = new AgentContextStream();
+  first.append('episode', { attempt_id: 'a' });
+  const persisted: string[] = [];
+  let fail = true;
+  const resumed = new AgentContextStream(first.read().events, (event) => {
+    if (fail) {
+      fail = false;
+      throw new Error('disk append failed');
+    }
+    persisted.push(event.id);
+  });
+
+  assert.throws(() => resumed.append('observation', { turn: 1 }), /disk append failed/);
+  assert.equal(resumed.cursor(), 'ctx-00000001');
+  assert.deepEqual(
+    resumed.read().events.map((event) => event.id),
+    ['ctx-00000001'],
+  );
+  const retried = resumed.append('observation', { turn: 1 });
+  const next = resumed.append('decision', { action: 'move 1' });
+  assert.equal(retried.id, 'ctx-00000002');
+  assert.equal(next.id, 'ctx-00000003');
+  assert.deepEqual(persisted, ['ctx-00000002', 'ctx-00000003']);
+  assert.deepEqual(
+    resumed.read().events.map((event) => event.id),
+    ['ctx-00000001', 'ctx-00000002', 'ctx-00000003'],
+  );
+});
+
 test('context cursors are validated and bounded', () => {
   const stream = new AgentContextStream();
   stream.append('episode', {});

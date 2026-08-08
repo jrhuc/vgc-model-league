@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -19,7 +19,32 @@ import { loadPool, validatePool } from './teams.js';
 import { DEFAULT_TIMER_SCALE } from './timer.js';
 import type { Pid } from './types.js';
 
-const EXHIBITION_PROTOCOL_VERSION = 2;
+const EXHIBITION_PROTOCOL_VERSION = 5;
+const EXTERNAL_ADAPTER_MODEL_VISIBLE_VERSION = 1;
+const EXTERNAL_ADAPTER_PROTOCOL = {
+  bridge_api: {
+    transport: 'localhost-http-post-json-bearer-v1',
+    routes: {
+      '/status': 'status-and-pending-exchange-id-v1',
+      '/poll': 'authorized-exchange-and-status-long-poll-v1',
+      '/messages': 'authorized-pending-exchange-messages-v1',
+      '/context': 'cursor-query-json-v1',
+      '/tools': 'decision-bound-tool-definitions-v1',
+      '/tool': 'decision-bound-lookup-v1',
+      '/submit': 'exchange-id-and-text-v1',
+    },
+  },
+  authorized_view: 'one-seat-only-v1',
+  context: 'cursor-addressable-authorized-series-stream-v1',
+  tools: 'live-decision-bound-lookups-v1',
+  limits: {
+    bridge_poll_wait_ms: 55_000,
+    client_poll_wait_ms: 25_000,
+    request_body_bytes: 1_000_000,
+    invalid_reply_corrections: 1,
+    battle_timer: 'disabled',
+  },
+} as const;
 
 export interface ExhibitionOptions {
   opponent: string;
@@ -70,15 +95,41 @@ export async function runExhibition(runDir: string, options: ExhibitionOptions):
   const executionHarnesses = {
     [seatSide]: {
       adapter: 'trusted-external-bridge',
-      version: 1,
+      version: 4,
       filesystem_isolation: false,
+      process_isolation: false,
+      network_isolation: false,
+      host_filesystem_access: 'unrestricted-unobserved',
+      host_process_access: 'unrestricted-unobserved',
+      arbitrary_network_access: 'unrestricted-unobserved',
+      workspace_policy: 'fresh-directory-0700-v1',
+      credential_policy: 'exclusive-artifacts-0600-v1',
       delegation: 'unrestricted-unobserved',
+      context: 'cursor-addressable-authorized-series-stream-v1',
+      tools: 'live-decision-bound-lookups-v1',
+      model_visible_adapter: {
+        version: EXTERNAL_ADAPTER_MODEL_VISIBLE_VERSION,
+        digest: externalAdapterDigest(),
+      },
+      evidence_log: {
+        version: 1,
+        collection: 'host-side-jsonl-v1',
+        artifacts: ['decisions', 'trace', 'context', 'bridge-tools'],
+        presented_through_adapter: false,
+      },
     },
     [oppSide]: {
       adapter: options.opponent === 'random' ? 'random-engine' : 'llm-engine',
-      version: 1,
-      filesystem_isolation: true,
+      version: 2,
+      filesystem_isolation: false,
+      process_isolation: false,
+      network_isolation: false,
+      host_filesystem_access: 'not-exposed-through-model-api',
+      host_process_access: 'not-exposed-through-model-api',
+      arbitrary_network_access: 'not-exposed-through-model-api',
       delegation: 'none',
+      context: options.opponent === 'random' ? 'none' : 'bounded-game-timeline-and-series-notebook-v1',
+      tools: options.opponent === 'random' ? 'none' : 'provider-tool-loop-v1',
     },
   };
   fs.writeFileSync(
@@ -161,6 +212,7 @@ export async function runExhibition(runDir: string, options: ExhibitionOptions):
         seed: engineSeed,
         decisionLog: path.join(seriesDir, `${oppSide}-decisions.jsonl`),
         traceLog: path.join(seriesDir, `${oppSide}-trace.jsonl`),
+        contextLog: path.join(seriesDir, `${oppSide}-context.jsonl`),
         format: pool.format,
         psDir,
         reasoning: options.reasoning,
@@ -225,14 +277,54 @@ export async function runExhibition(runDir: string, options: ExhibitionOptions):
 }
 
 function writeAgentWorkspace(agentDir: string, url: string, token: string, seatName: string): void {
-  fs.mkdirSync(agentDir, { recursive: true });
-  fs.writeFileSync(
+  fs.mkdirSync(path.dirname(agentDir), { recursive: true });
+  try {
+    fs.mkdirSync(agentDir, { mode: 0o700 });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'EEXIST') throw new Error('agent workspace must be freshly created');
+    throw error;
+  }
+
+  if (process.platform !== 'win32') {
+    const descriptor = fs.openSync(
+      agentDir,
+      fs.constants.O_RDONLY | fs.constants.O_DIRECTORY | fs.constants.O_NOFOLLOW,
+    );
+    try {
+      fs.fchmodSync(descriptor, 0o700);
+    } finally {
+      fs.closeSync(descriptor);
+    }
+  }
+
+  writePrivateArtifact(
     path.join(agentDir, 'seat.json'),
     `${JSON.stringify({ url, token, name: seatName }, null, 2)}\n`,
-    'utf8',
   );
-  fs.writeFileSync(path.join(agentDir, 'seat.mjs'), SEAT_CLIENT, 'utf8');
-  fs.writeFileSync(path.join(agentDir, 'SEAT.md'), SEAT_INSTRUCTIONS, 'utf8');
+  writePrivateArtifact(path.join(agentDir, 'seat.mjs'), SEAT_CLIENT);
+  writePrivateArtifact(path.join(agentDir, 'SEAT.md'), SEAT_INSTRUCTIONS);
+}
+
+function writePrivateArtifact(filePath: string, contents: string): void {
+  let descriptor: number;
+  try {
+    descriptor = fs.openSync(
+      filePath,
+      fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW,
+      0o600,
+    );
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === 'EEXIST' || code === 'ELOOP')
+      throw new Error(`agent workspace artifact must be freshly created: ${path.basename(filePath)}`);
+    throw error;
+  }
+  try {
+    if (process.platform !== 'win32') fs.fchmodSync(descriptor, 0o600);
+    fs.writeFileSync(descriptor, contents, 'utf8');
+  } finally {
+    fs.closeSync(descriptor);
+  }
 }
 
 const SEAT_CLIENT = `#!/usr/bin/env node
@@ -360,3 +452,16 @@ Notes:
 - \`node seat.mjs context '{"after":"ctx-00000010","limit":50}'\` retrieves authorized full-history events that the compact prompt may omit.
 - When the host process exits, requests fail with a connection error; the series is over.
 `;
+
+function externalAdapterDigest(): string {
+  return createHash('sha256')
+    .update(
+      JSON.stringify({
+        version: EXTERNAL_ADAPTER_MODEL_VISIBLE_VERSION,
+        seat_instructions: SEAT_INSTRUCTIONS,
+        seat_client: SEAT_CLIENT,
+        protocol: EXTERNAL_ADAPTER_PROTOCOL,
+      }),
+    )
+    .digest('hex');
+}

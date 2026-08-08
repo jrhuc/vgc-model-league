@@ -34,6 +34,12 @@ import {
 } from './providers.js';
 import type { RecoveryGate } from './recovery.js';
 import { DEX_TOOLS, ShowdownReference } from './reference.js';
+import {
+  evidenceSuppliedRecord,
+  normalizeStageEvidence,
+  noStageEvidence,
+  type StageEvidence,
+} from './stage-evidence.js';
 import { BattleState } from './state.js';
 import type {
   AgentContext,
@@ -53,6 +59,7 @@ interface ParsedDecision {
   choices: number[];
   rationale?: string;
   notebook?: string;
+  evidence: StageEvidence;
 }
 
 interface ToolTrace extends JsonObject {
@@ -72,8 +79,7 @@ class DecisionAbandonedError extends Error {
 interface PendingDecision extends JsonObject {
   prompt?: string;
   rawResponse?: string;
-  rationale?: string;
-  notebook?: string;
+  evidence?: StageEvidence;
   reasoning?: string;
   generation: number;
   usage?: Record<string, number>;
@@ -379,6 +385,62 @@ function decisionPolicy(): Record<string, unknown> {
   };
 }
 
+type DecisionPhase = 'team_preview' | 'forced_switch' | 'turn';
+
+const DECISION_REQUEST_DIGEST_VERSION = 'battle-decision-request-v1';
+
+function decisionPhase(request: BattleRequest): DecisionPhase {
+  return request.teamPreview ? 'team_preview' : request.forceSwitch ? 'forced_switch' : 'turn';
+}
+
+function decisionRequestProjection(request: BattleRequest): JsonObject {
+  return {
+    active: request.active ?? null,
+    force_switch: request.forceSwitch ?? null,
+    max_chosen_team_size: request.maxChosenTeamSize ?? null,
+    side: request.side ?? null,
+    team_preview: request.teamPreview ?? null,
+    timer: request.timer ?? null,
+    wait: request.wait ?? null,
+  };
+}
+
+function stableDecisionRequestJson(value: JsonObject): string {
+  return JSON.stringify(value, (_key, nested) => {
+    if (!isRecord(nested)) return nested;
+    return Object.fromEntries(
+      Object.entries(nested).sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0)),
+    );
+  });
+}
+
+function decisionRequestDigest(input: {
+  pid: Pid;
+  seriesId: string | undefined;
+  gameId: string;
+  gameNumber: number;
+  turn: number;
+  phase: DecisionPhase;
+  request: BattleRequest;
+  menus: SlotMenu[];
+}): string {
+  const projection = {
+    version: DECISION_REQUEST_DIGEST_VERSION,
+    pid: input.pid,
+    series_id: input.seriesId ?? null,
+    game_id: input.gameId,
+    game_number: input.gameNumber,
+    turn: input.turn,
+    phase: input.phase,
+    request: decisionRequestProjection(input.request),
+    menus: input.menus.map((menu) =>
+      menu.map((item) => ({ label: item.label, canonical_action: item.part, kind: item.kind })),
+    ),
+  };
+  const hash = createHash('sha256').update(stableDecisionRequestJson(projection)).digest('hex');
+  return `${DECISION_REQUEST_DIGEST_VERSION}:${hash}`;
+}
+
 function digest(value: unknown): string {
   return createHash('sha256').update(JSON.stringify(value)).digest('hex').slice(0, 12);
 }
@@ -494,7 +556,17 @@ export class LLMEngine extends BaseEngine {
     this.reference =
       options.reference ?? new ShowdownReference(options.format ?? 'gen9championsvgc2026regmbbo3', options.psDir);
     this.state = new BattleState(pid);
-    this.fullContext = new AgentContextStream(options.initialContext);
+    this.fullContext = new AgentContextStream(options.initialContext, (event) => {
+      this.writeLog(this.options.contextLog, {
+        kind: 'agent_context',
+        pid: this.pid,
+        series_id: this.seriesId ?? null,
+        context_id: event.id,
+        sequence: event.sequence,
+        context_kind: event.kind,
+        payload: event.payload,
+      });
+    });
     this.notebook = clip(options.initialNotebook?.trim() ?? '', DECISION_NOTE_LIMIT);
     this.gameId = spec;
   }
@@ -578,13 +650,32 @@ export class LLMEngine extends BaseEngine {
     this.replayQueue = [...rows];
   }
 
+  private requestDigest(request: BattleRequest, menus: SlotMenu[], phase: DecisionPhase): string {
+    return decisionRequestDigest({
+      pid: this.pid,
+      seriesId: this.seriesId,
+      gameId: this.gameId,
+      gameNumber: this.gameNumber,
+      turn: this.state.turn,
+      phase,
+      request,
+      menus,
+    });
+  }
+
   private replayAction(request: BattleRequest): string | undefined {
     const row = this.replayQueue.shift();
     if (!row) return undefined;
-    const phase = request.teamPreview ? 'team_preview' : request.forceSwitch ? 'forced_switch' : 'turn';
+    const phase = decisionPhase(request);
+    const menus = buildMenus(request, this.menuHints(request));
+    const requestDigest = this.requestDigest(request, menus, phase);
     if (
-      Number(row.game_number) !== this.gameNumber ||
-      Number(row.turn) !== this.state.turn ||
+      row.request_digest !== requestDigest ||
+      row.pid !== this.pid ||
+      row.series_id !== (this.seriesId ?? null) ||
+      row.game_id !== this.gameId ||
+      row.game_number !== this.gameNumber ||
+      row.turn !== this.state.turn ||
       row.phase !== phase ||
       typeof row.action !== 'string'
     ) {
@@ -607,7 +698,7 @@ export class LLMEngine extends BaseEngine {
       action: row.action,
       rationale: typeof row.rationale === 'string' ? row.rationale : '',
       notebook: this.notebook,
-      menus: this.contextMenus(buildMenus(request, this.menuHints(request))),
+      menus: this.contextMenus(menus),
       replayed: true,
     });
     return row.action;
@@ -645,7 +736,6 @@ export class LLMEngine extends BaseEngine {
     this.decisionController = controller;
     this.pending = {
       rawResponse: '',
-      notebook: this.notebook,
       generation,
       ...(request.timer ? { timer: request.timer } : {}),
     };
@@ -738,7 +828,8 @@ export class LLMEngine extends BaseEngine {
       this.rememberTurnDetail(
         `No choice submitted: ${failure.summary} ${stop ? 'The run cannot continue.' : 'The battle timer acts when time expires.'}`,
       );
-      const phase = request.teamPreview ? 'team_preview' : request.forceSwitch ? 'forced_switch' : 'turn';
+      const phase = decisionPhase(request);
+      const requestDigest = this.requestDigest(request, menus, phase);
       const timer = request.timer
         ? { turn_seconds: request.timer.turnSeconds ?? null, bank_seconds: request.timer.seconds ?? null }
         : null;
@@ -756,9 +847,11 @@ export class LLMEngine extends BaseEngine {
       this.writeLog(this.options.decisionLog, {
         kind: 'decision',
         ...base,
+        request_digest: requestDigest,
         selection: [],
         action: 'abandoned',
         rationale,
+        evidence_supplied: evidenceSuppliedRecord(noStageEvidence(this.notebook)),
         automatic: false,
         fallback: true,
         failure_kind: failure.kind,
@@ -919,7 +1012,7 @@ export class LLMEngine extends BaseEngine {
          * empty text field; the decision they wrote is salvaged rather than bought again on a retry. */
         if (!rawResponse && !completion.toolCalls.length && completion.reasoning) {
           try {
-            LLMEngine.extractChoices(completion.reasoning, menus);
+            LLMEngine.extractChoices(completion.reasoning, menus, this.notebook);
             rawResponse = completion.reasoning;
           } catch {}
         }
@@ -940,7 +1033,7 @@ export class LLMEngine extends BaseEngine {
         break;
       }
       try {
-        parsed = LLMEngine.extractChoices(rawResponse, menus);
+        parsed = LLMEngine.extractChoices(rawResponse, menus, this.notebook);
         BaseEngine.parts(menus, parsed.choices);
       } catch (caught) {
         parsed = undefined;
@@ -962,15 +1055,16 @@ export class LLMEngine extends BaseEngine {
       parsed ??
       ({
         choices: BaseEngine.defaults(menus)[0],
-        rationale: `No valid decision (${error}); defaulted to the first legal option for each slot.`,
-        notebook: this.notebook,
+        evidence: {
+          ...noStageEvidence(this.notebook),
+          rationale: `No valid decision (${error}); defaulted to the first legal option for each slot.`,
+        },
       } satisfies ParsedDecision);
     if (generation === this.generation && this.pending)
       Object.assign(this.pending, {
         prompt,
         rawResponse,
-        rationale: decision.rationale,
-        notebook: decision.notebook,
+        evidence: decision.evidence,
         reasoning: reasoningParts.join('\n\n').trim() || undefined,
         usage,
         ...(upstreamProviders.size ? { upstreamProviders: [...upstreamProviders] } : {}),
@@ -1081,13 +1175,14 @@ export class LLMEngine extends BaseEngine {
     const pending = this.pending;
     this.pending = undefined;
     if (!pending || pending.generation !== this.generation) return;
-    const notebook = pending.notebook ?? this.notebook;
+    const evidence = automatic ? noStageEvidence(this.notebook) : (pending.evidence ?? noStageEvidence(this.notebook));
     const rationale = automatic
       ? 'Automatic: only one legal joint action.'
-      : pending.rationale || 'No rationale supplied.';
+      : evidence.rationale || 'No rationale supplied.';
+    const evidenceSupplied = evidenceSuppliedRecord(evidence);
     if (!automatic) {
       if (!pending.fallback) this.consecutiveDecisionFailures = 0;
-      this.notebook = notebook;
+      this.notebook = evidence.notebook;
       this.decisions += 1;
       if (pending.fallback) this.fallbacks += 1;
       this.parseFailureCount += pending.parseFailures ?? 0;
@@ -1098,7 +1193,8 @@ export class LLMEngine extends BaseEngine {
     }
     const action = request.teamPreview ? `team ${parts.join('')}` : parts.join(', ');
     this.rememberTurnDetail(`Decision: ${action}`);
-    const phase = request.teamPreview ? 'team_preview' : request.forceSwitch ? 'forced_switch' : 'turn';
+    const phase = decisionPhase(request);
+    const requestDigest = this.requestDigest(request, menus, phase);
     const selection = choices.map((choice, slot) => menus[slot]?.[choice]?.label ?? parts[slot] ?? 'pass');
     if (!automatic) this.recordTendencies(phase, menus, choices, parts, action, pending.toolCalls ?? []);
     const timer = pending.timer
@@ -1117,10 +1213,7 @@ export class LLMEngine extends BaseEngine {
       rationale,
       notebook: this.notebook,
       menus: this.contextMenus(menus),
-      evidence_supplied: {
-        rationale: pending.rationale !== undefined,
-        notebook_update: pending.notebook !== undefined,
-      },
+      evidence_supplied: evidenceSupplied,
       automatic,
       fallback: pending.fallback ?? false,
     });
@@ -1132,13 +1225,11 @@ export class LLMEngine extends BaseEngine {
       turn: this.state.turn,
       pid: this.pid,
       phase,
+      request_digest: requestDigest,
       selection,
       action,
       rationale,
-      evidence_supplied: {
-        rationale: pending.rationale !== undefined,
-        notebook_update: pending.notebook !== undefined,
-      },
+      evidence_supplied: evidenceSupplied,
       ...this.notebookUpdate(),
       automatic,
       fallback: pending.fallback ?? false,
@@ -1302,13 +1393,13 @@ export class LLMEngine extends BaseEngine {
     };
   }
 
-  static extractChoices(response: string, menus: SlotMenu[]): ParsedDecision {
+  static extractChoices(response: string, menus: SlotMenu[], currentNotebook = ''): ParsedDecision {
     const objects = jsonObjects(response, true).filter((value) => 'choices' in value || 'choice' in value);
     if (!objects.length) throw new Error('no JSON object with a choices key');
     let failure: unknown;
     for (const object of objects.reverse()) {
       try {
-        return LLMEngine.parseDecision(object, menus);
+        return LLMEngine.parseDecision(object, menus, currentNotebook);
       } catch (caught) {
         failure ??= caught;
       }
@@ -1316,7 +1407,7 @@ export class LLMEngine extends BaseEngine {
     throw failure;
   }
 
-  private static parseDecision(object: JsonObject, menus: SlotMenu[]): ParsedDecision {
+  private static parseDecision(object: JsonObject, menus: SlotMenu[], currentNotebook: string): ParsedDecision {
     const rawChoices = object.choices ?? (menus.length === 1 ? [object.choice] : undefined);
     if (!Array.isArray(rawChoices) || rawChoices.length !== menus.length)
       throw new Error(`choices must be an array of exactly ${menus.length} integers`);
@@ -1327,13 +1418,16 @@ export class LLMEngine extends BaseEngine {
         throw new Error(`choice for slot ${slot + 1} must be between 0 and ${menus[slot]!.length - 1}`);
       return index;
     });
-    const rationale =
-      typeof object.rationale === 'string' ? clip(object.rationale, DECISION_RATIONALE_LIMIT) : undefined;
-    const notebook = typeof object.notebook === 'string' ? clip(object.notebook, DECISION_NOTE_LIMIT) : undefined;
+    const evidence = normalizeStageEvidence(object.rationale, object.notebook, {
+      currentNotebook,
+      rationaleLimit: DECISION_RATIONALE_LIMIT,
+      notebookLimit: DECISION_NOTE_LIMIT,
+    });
     return {
       choices,
-      ...(rationale === undefined ? {} : { rationale }),
-      ...(notebook === undefined ? {} : { notebook }),
+      ...(evidence.supplied.rationale ? { rationale: evidence.rationale } : {}),
+      ...(evidence.supplied.notebookUpdate ? { notebook: evidence.notebook } : {}),
+      evidence,
     };
   }
 
@@ -1561,16 +1655,7 @@ export class LLMEngine extends BaseEngine {
   }
 
   private appendContext(kind: AgentContextKind, payload: JsonObject): void {
-    const event = this.fullContext.append(kind, { ...payload, attempt_id: this.contextAttempt });
-    this.writeLog(this.options.contextLog, {
-      kind: 'agent_context',
-      pid: this.pid,
-      series_id: this.seriesId ?? null,
-      context_id: event.id,
-      sequence: event.sequence,
-      context_kind: event.kind,
-      payload: event.payload,
-    });
+    this.fullContext.append(kind, { ...payload, attempt_id: this.contextAttempt });
   }
 
   private scoreText(): string {

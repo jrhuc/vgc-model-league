@@ -29,7 +29,7 @@ import { loadRows } from '../src/records.js';
 import { RecoveryGate } from '../src/recovery.js';
 import { parseSeasonReview, readSeasonReviews, runSeasonReview, type SeasonReviewState } from '../src/season-review.js';
 import { loadShowdown } from '../src/showdown.js';
-import { runTeambuild, teambuildScaffoldRevision } from '../src/teambuild.js';
+import { runTeamBuild, runTeambuild, type TeamBuildTask, teambuildScaffoldRevision } from '../src/teambuild.js';
 import {
   applyTradeDecision,
   applyTradeOffer,
@@ -65,6 +65,8 @@ test('scaffold identities are distinct and stable', () => {
     assert.match(revision, /^[0-9a-f]{12}$/);
   }
   assert.equal(draftScaffoldRevision(), draftScaffoldRevision());
+  assert.equal(teambuildScaffoldRevision(), '581e7b665fa9', 'the renderer-bound open-sheet scaffold is pinned');
+  assert.equal(teambuildScaffoldRevision('closed'), '94afd7f6669c', 'the closed-sheet scaffold is distinct');
   assert.notEqual(draftScaffoldRevision(), scaffoldRevision());
   assert.notEqual(draftScaffoldRevision(), teambuildScaffoldRevision());
   assert.notEqual(tradeWindowScaffoldRevision(), draftScaffoldRevision());
@@ -283,11 +285,31 @@ test('coach trades validate both rosters and apply an accepted exchange atomical
     accept: true,
     reasoning: 'Worth it.',
     notebook: 'Plan around Charizard.',
+    evidence: {
+      rationale: 'Worth it.',
+      notebook: 'Plan around Charizard.',
+      supplied: { rationale: true, notebookUpdate: true },
+    },
   });
   assert.deepEqual(parseTradeResponse('{"accept":true}', 'Keep the old plan.'), {
     accept: true,
     reasoning: '',
     notebook: 'Keep the old plan.',
+    evidence: {
+      rationale: '',
+      notebook: 'Keep the old plan.',
+      supplied: { rationale: false, notebookUpdate: false },
+    },
+  });
+  assert.deepEqual(parseTradeResponse('{"accept":false,"notebook":""}', 'Clear this plan.'), {
+    accept: false,
+    reasoning: '',
+    notebook: '',
+    evidence: {
+      rationale: '',
+      notebook: '',
+      supplied: { rationale: false, notebookUpdate: true },
+    },
   });
   if (typeof parsed === 'string' || !parsed.offer) return;
   applyTradeOffer(state, {
@@ -694,6 +716,7 @@ test('a legal pick is not rejected when optional evidence is omitted', () => {
     assert.equal(parsed.mon.id, id);
     assert.equal(parsed.reasoning, '');
     assert.equal(parsed.notebook, undefined);
+    assert.deepEqual(parsed.evidence.supplied, { rationale: false, notebookUpdate: false });
   }
 });
 
@@ -1112,6 +1135,62 @@ test('a resumed draft replays its transcript and continues from the next pick', 
   assert.equal(transcript.length, 6, 'replayed picks are not rewritten to the transcript');
 });
 
+test('an explicit empty draft notebook survives transcript replay', async (t) => {
+  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-draft-empty-notebook-'));
+  t.after(() => fs.rmSync(logDir, { recursive: true, force: true }));
+  const replies: Record<string, string[]> = {
+    'fake:a': [
+      '{"pick":"garchomp","reasoning":"Start here.","notebook":"Keep this until the final pick."}',
+      '{"pick":"incineroar","reasoning":"Roster complete.","notebook":""}',
+      '{"team_name":"Empty Notes"}',
+    ],
+    'fake:b': [
+      '{"pick":"sinistcha","reasoning":"Support.","notebook":"Tea mode."}',
+      '{"pick":"farigiraf","reasoning":"Speed control.","notebook":"Room mode."}',
+      '{"team_name":"Room Notes"}',
+    ],
+  };
+  const calls = new Map<string, number>();
+  const first = await runDraft(
+    ['fake:a', 'fake:b'],
+    { ...BOARD, picks: 2 },
+    {
+      logDir,
+      rng: seededRng(12),
+      makeDraftProvider: (spec) => ({
+        complete(): Promise<Completion> {
+          const call = calls.get(spec) ?? 0;
+          calls.set(spec, call + 1);
+          return Promise.resolve({ text: replies[spec]![call]!, usage: {}, toolCalls: [] });
+        },
+      }),
+    },
+  );
+  assert.equal(first.notebooks[0], '');
+  const transcript = loadRows(path.join(logDir, 'draft.jsonl'));
+  const cleared = transcript.find((row) => row.model === 'fake:a' && row.mon === 'incineroar')!;
+  assert.equal(cleared.notebook, '');
+  assert.deepEqual(cleared.evidence_supplied, { rationale: true, notebook_update: true });
+
+  let replayCalls = 0;
+  const replayed = await runDraft(
+    ['fake:a', 'fake:b'],
+    { ...BOARD, picks: 2 },
+    {
+      logDir,
+      rng: seededRng(12),
+      makeDraftProvider: () => ({
+        complete(): Promise<Completion> {
+          replayCalls += 1;
+          throw new Error('completed draft must replay without provider calls');
+        },
+      }),
+    },
+  );
+  assert.equal(replayCalls, 0);
+  assert.equal(replayed.notebooks[0], '', 'replay must not resurrect the earlier non-empty notebook');
+});
+
 const TEAMBUILD_ROSTER = [
   'garchomp',
   'incineroar',
@@ -1197,6 +1276,149 @@ const GOOD_TEAM = JSON.stringify({
   ],
 });
 
+function generalTeamBuildTask(overrides: Partial<TeamBuildTask> = {}): TeamBuildTask {
+  return {
+    id: 'frozen-regmb-foundation',
+    model: 'fake:model',
+    format: BOARD.format,
+    sheetPolicy: 'open',
+    constraint: {
+      kind: 'frozen-candidate-pool',
+      id: 'explicit-test-snapshot',
+      teamSize: 6,
+      candidates: TEAMBUILD_ROSTER,
+    },
+    objective: { kind: 'general', brief: 'Prefer several coherent modes over one matchup-specific lure.' },
+    notebook: 'Start from balanced speed control.',
+    provenance: { source: 'test-fixture', seed: 17 },
+    ...overrides,
+  };
+}
+
+test('the shared team-build core supports a general objective without opponent leakage', async (t) => {
+  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-teambuild-general-'));
+  t.after(() => fs.rmSync(logDir, { recursive: true, force: true }));
+  let prompt = '';
+  const response = JSON.parse(GOOD_TEAM) as Record<string, unknown>;
+  response.notebook = '';
+  const result = await runTeamBuild(generalTeamBuildTask(), {
+    logDir,
+    rng: seededRng(17),
+    makeTeambuildProvider: () => ({
+      complete(system, messages): Promise<Completion> {
+        prompt = `${system}\n${messages[0]!.content ?? ''}`;
+        return Promise.resolve({ text: JSON.stringify(response), usage: {}, toolCalls: [] });
+      },
+    }),
+  });
+
+  assert.match(prompt, /FROZEN CANDIDATE POOL/);
+  assert.match(prompt, /No particular opponent is specified/);
+  assert.doesNotMatch(prompt, /fake:rival|OPPONENT ROSTER|specific opponent/);
+  assert.equal(result.artifact.schemaVersion, 1);
+  assert.equal(result.artifact.status, 'valid');
+  assert.equal(result.artifact.executionPolicy, 'strict');
+  assert.equal(result.artifact.task.constraint.kind, 'frozen-candidate-pool');
+  assert.deepEqual(result.artifact.evidence.supplied, { rationale: true, notebookUpdate: true });
+  assert.equal(result.artifact.evidence.notebook, '', 'an explicit empty notebook clears the prior context');
+  assert.equal(result.artifact.validation.showdown, true);
+  assert.ok(result.artifact.action);
+  assert.equal(result.artifact.action.selected.length, 6);
+  assert.equal(result.artifact.action.packed, result.packed);
+});
+
+test('team-build constraints fail before a provider call when they cannot supply the team size', async (t) => {
+  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-teambuild-preflight-'));
+  t.after(() => fs.rmSync(logDir, { recursive: true, force: true }));
+  let calls = 0;
+  const task = generalTeamBuildTask({
+    constraint: {
+      kind: 'frozen-candidate-pool',
+      id: 'too-small',
+      teamSize: 6,
+      candidates: TEAMBUILD_ROSTER.slice(0, 5),
+    },
+  });
+  await assert.rejects(
+    runTeamBuild(task, {
+      logDir,
+      rng: seededRng(1),
+      makeTeambuildProvider: () => {
+        calls += 1;
+        return scriptedProvider([GOOD_TEAM]);
+      },
+    }),
+    /fewer than teamSize 6/,
+  );
+  assert.equal(calls, 0);
+});
+
+test('strict team building returns invalid instead of repairing or replacing an exhausted action', async (t) => {
+  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-teambuild-strict-invalid-'));
+  t.after(() => fs.rmSync(logDir, { recursive: true, force: true }));
+  const invalid = JSON.parse(GOOD_TEAM) as { sets: Array<{ evs: Record<string, unknown> }> };
+  invalid.sets[0]!.evs.hp = '2';
+  const result = await runTeamBuild(generalTeamBuildTask(), {
+    logDir,
+    rng: seededRng(18),
+    makeTeambuildProvider: () => scriptedProvider([JSON.stringify(invalid)]),
+  });
+
+  assert.equal(result.packed, null);
+  assert.equal(result.artifact.status, 'invalid');
+  assert.equal(result.artifact.action, null);
+  assert.equal(result.artifact.executionPolicy, 'strict');
+  assert.equal(result.artifact.validation.showdown, false);
+  assert.equal(result.artifact.validation.repaired, false);
+  assert.deepEqual(result.artifact.validation.repairs, []);
+  assert.match(result.artifact.validation.problems[0]!, /finite, safe, non-negative integer/);
+  assert.equal(result.artifact.attempts, 5);
+});
+
+test('malformed set shapes and EV values are compliance rejections before a canonical noted team', async (t) => {
+  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-teambuild-compliance-'));
+  t.after(() => fs.rmSync(logDir, { recursive: true, force: true }));
+  const malformed = JSON.parse(GOOD_TEAM) as { sets: unknown[] };
+  malformed.sets[0] = null;
+  const stringEv = JSON.parse(GOOD_TEAM) as { sets: Array<{ evs: Record<string, unknown> }> };
+  stringEv.sets[0]!.evs.hp = '2';
+  const floatEv = JSON.parse(GOOD_TEAM) as { sets: Array<{ evs: Record<string, unknown> }> };
+  floatEv.sets[0]!.evs.atk = 1.5;
+  const negativeEv = JSON.parse(GOOD_TEAM) as { sets: Array<{ evs: Record<string, unknown> }> };
+  negativeEv.sets[0]!.evs.def = -1;
+  const noted = JSON.parse(GOOD_TEAM) as { sets: Array<Record<string, unknown>> };
+  noted.sets[0]!.note = 'Fast Ground pressure and spread damage.';
+
+  const result = await runTeambuild(teambuildRequest(), {
+    logDir,
+    rng: seededRng(19),
+    makeTeambuildProvider: () =>
+      scriptedProvider([
+        JSON.stringify(malformed),
+        JSON.stringify(stringEv),
+        JSON.stringify(floatEv),
+        JSON.stringify(negativeEv),
+        JSON.stringify(noted),
+      ]),
+  });
+
+  assert.equal(result.view.attempts, 5);
+  assert.equal(result.view.sets[0]!.note, 'Fast Ground pressure and spread damage.');
+  assert.ok(result.view.sets.every((set) => !set.repaired));
+  assert.equal(result.artifact.validation.repaired, false);
+  assert.equal(result.artifact.action?.sets[0]?.note, 'Fast Ground pressure and spread damage.');
+  const attempts = loadRows(path.join(logDir, 'series-1-e0-fake-model.jsonl'));
+  assert.equal(attempts.length, 5);
+  assert.match(String(attempts[0]!.error), /set 1 must be an object/);
+  for (const attempt of attempts.slice(1, 4)) {
+    assert.match(String(attempt.error), /finite, safe, non-negative integer/);
+  }
+  const stored = loadRows(path.join(logDir, 'teambuild.jsonl'))[0]!;
+  const artifact = stored.artifact as Record<string, unknown>;
+  const action = artifact.action as Record<string, unknown>;
+  assert.equal(action.packed, stored.packed);
+});
+
 test('a legal teambuild is accepted as written and packs the base forme', async (t) => {
   const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-teambuild-'));
   t.after(() => fs.rmSync(logDir, { recursive: true, force: true }));
@@ -1218,6 +1440,20 @@ test('a legal teambuild is accepted as written and packs the base forme', async 
 
   const { Teams } = loadShowdown();
   assert.equal((Teams.unpack(packed) ?? []).length, 6);
+});
+
+test('canonical packing delegates punctuation handling to Showdown Teams.pack', async (t) => {
+  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-teambuild-showdown-pack-'));
+  t.after(() => fs.rmSync(logDir, { recursive: true, force: true }));
+  const team = JSON.parse(GOOD_TEAM) as { sets: Array<{ moves: string[] }> };
+  const { packed } = await runTeambuild(teambuildRequest(), {
+    logDir,
+    rng: seededRng(21),
+    makeTeambuildProvider: () => scriptedProvider([JSON.stringify(team)]),
+  });
+
+  assert.match(packed, /LifeOrb/);
+  assert.doesNotMatch(packed, /Life Orb/);
 });
 
 test('an accepted teambuild preserves fewer than four legal moves', async (t) => {
@@ -1248,6 +1484,7 @@ test('the teambuild prompt uses coach identities and never franchise names', asy
       },
     }),
   });
+  assert.match(prompt, /team sheets are open/, 'the prompt states the configured open-sheet policy');
   assert.ok(prompt.includes('YOUR ROSTER'), 'the model sees its roster');
   assert.ok(prompt.includes('fake:rival'), 'and which coach it is playing');
   assert.doesNotMatch(prompt, /Test Tauros|Rival Rotoms/);
@@ -1261,6 +1498,28 @@ test('the teambuild prompt uses coach identities and never franchise names', asy
   );
   assert.ok(prompt.includes('cannot hold a Mega Stone'), 'and so is its inverse');
   assert.ok(!/moves:.*\bBounce\b/.test(prompt), 'the movepool must not offer moves the validator rejects');
+});
+
+test('closed-sheet teambuilding states and binds the hidden-information policy', async (t) => {
+  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-teambuild-closed-sheets-'));
+  t.after(() => fs.rmSync(logDir, { recursive: true, force: true }));
+  let system = '';
+  const result = await runTeambuild(teambuildRequest({ sheetPolicy: 'closed' }), {
+    logDir,
+    rng: seededRng(20),
+    makeTeambuildProvider: () => ({
+      complete(prompt): Promise<Completion> {
+        system = prompt;
+        return Promise.resolve({ text: GOOD_TEAM, usage: {}, toolCalls: [] });
+      },
+    }),
+  });
+
+  assert.match(system, /team sheets are closed/);
+  assert.doesNotMatch(system, /team sheets are open/);
+  assert.equal(result.artifact.task.sheetPolicy, 'closed');
+  assert.equal(result.artifact.scaffold, teambuildScaffoldRevision('closed'));
+  assert.notEqual(teambuildScaffoldRevision('closed'), teambuildScaffoldRevision('open'));
 });
 
 test('round-robin teambuilds do not receive other round-robin match context', async (t) => {
@@ -1463,7 +1722,15 @@ test('a full draft league drafts, plays weekly rounds, and crowns a champion', a
     .split('\n')
     .map((line) => JSON.parse(line) as Record<string, unknown>);
   assert.equal(teambuilds.length, rows.length * 2, 'both coaches build before every series');
-  for (const build of teambuilds) assert.equal((build.brought as string[]).length, 6);
+  for (const build of teambuilds) {
+    assert.equal((build.brought as string[]).length, 6);
+    const artifact = build.artifact as Record<string, unknown>;
+    const action = artifact.action as Record<string, unknown>;
+    assert.equal(artifact.status, 'valid');
+    assert.equal(action.packed, build.packed);
+    assert.deepEqual(action.selected, build.brought);
+    assert.deepEqual(action.sets, build.sets);
+  }
   const coaching = fs
     .readFileSync(path.join(directory, 'coaching.jsonl'), 'utf8')
     .trim()
@@ -1507,12 +1774,17 @@ test('a draft league checkpoints after a week and resumes to a champion', async 
     .trim()
     .split('\n')
     .map((line) => JSON.parse(line) as Record<string, unknown>);
+  const invalidEntrant = roundRobinWeeks(4)[1]![0]![0];
   for (let entrant = 0; entrant < 4; entrant += 1) {
     const donor = storedBuilds.find((row) => row.entrant === entrant)!;
-    fs.appendFileSync(
-      teambuildLog,
-      `${JSON.stringify({ ...donor, seriesIndex: 2, opponent: (entrant + 1) % 4, rationale: 'prebuilt before the crash' })}\n`,
-    );
+    const { artifact: _artifact, ...legacyDonor } = donor;
+    const prebuilt = {
+      ...(entrant === invalidEntrant ? donor : legacyDonor),
+      seriesIndex: 2,
+      opponent: (entrant + 1) % 4,
+      rationale: 'prebuilt before the crash',
+    };
+    fs.appendFileSync(teambuildLog, `${JSON.stringify(prebuilt)}\n`);
   }
 
   const resumed = await runDraftLeague(models, directory, {
@@ -1536,8 +1808,18 @@ test('a draft league checkpoints after a week and resumes to a champion', async 
     .map((line) => JSON.parse(line) as Record<string, unknown>);
   assert.equal(
     buildsAfter.filter((row) => row.seriesIndex === 2).length,
-    4,
-    'series with stored teambuilds reuse them instead of rebuilding',
+    5,
+    'old rows are reusable, while an artifact whose linkage was tampered is rebuilt',
+  );
+  const rebuilt = buildsAfter.filter((row) => row.seriesIndex === 2 && row.entrant === invalidEntrant);
+  assert.equal(rebuilt.length, 2, 'the mismatched artifact row remains as evidence beside its canonical replacement');
+  assert.ok(
+    rebuilt.some((row) => {
+      const artifact = row.artifact as Record<string, unknown> | undefined;
+      const task = artifact?.task as Record<string, unknown> | undefined;
+      const provenance = task?.provenance as Record<string, unknown> | undefined;
+      return provenance?.seriesIndex === 2;
+    }),
   );
 });
 
@@ -1564,6 +1846,13 @@ test('a two-coach league plays one week and a single final', async (t) => {
     'short leagues clamp the default to their final week',
   );
   for (const row of rows) assert.equal(row.closed_sheets, true, 'series records carry the sheet rule');
+  const builds = loadRows(path.join(directory, 'teambuild', 'teambuild.jsonl'));
+  for (const build of builds) {
+    const artifact = build.artifact as Record<string, unknown>;
+    const task = artifact.task as Record<string, unknown>;
+    assert.equal(task.sheetPolicy, 'closed');
+    assert.equal(artifact.scaffold, teambuildScaffoldRevision('closed'));
+  }
   const gameLog = fs.readFileSync(path.join(directory, 'series', String(rows[0]!.series_id), 'game-1.log'), 'utf8');
   assert.ok(!gameLog.includes('|showteam|'), 'closed-sheet games publish no team sheets');
 });

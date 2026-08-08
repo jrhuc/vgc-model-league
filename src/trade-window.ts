@@ -17,6 +17,12 @@ import {
 } from './providers.js';
 import type { RecoveryGate } from './recovery.js';
 import { ShowdownReference } from './reference.js';
+import {
+  type EvidenceSupplied,
+  normalizeStageEvidence,
+  noStageEvidence,
+  type StageEvidence,
+} from './stage-evidence.js';
 import type { JsonObject, Provider, ProviderFailure, ProviderMessage } from './types.js';
 import { clip } from './value.js';
 
@@ -119,6 +125,8 @@ export interface TradeOffer {
   accepted: boolean | null;
   offerReasoning: string;
   responseReasoning: string;
+  offerEvidenceSupplied?: EvidenceSupplied;
+  responseEvidenceSupplied?: EvidenceSupplied;
 }
 
 export interface TradeSwap {
@@ -132,6 +140,7 @@ export interface TradeWindowDecision {
   swaps: TradeSwap[];
   reasoning: string;
   notebook: string;
+  evidenceSupplied?: EvidenceSupplied;
   fallback: boolean;
 }
 
@@ -189,18 +198,21 @@ interface ParsedTradeDecision {
   swaps: TradeSwap[];
   reasoning: string;
   notebook: string;
+  evidence: StageEvidence;
 }
 
 interface ParsedTradeOffer {
   offer: { to: number; give: string; get: string; message: string } | null;
   reasoning: string;
   notebook: string;
+  evidence: StageEvidence;
 }
 
 interface ParsedTradeResponse {
   accept: boolean;
   reasoning: string;
   notebook: string;
+  evidence: StageEvidence;
 }
 
 interface TradeSeatLog {
@@ -304,13 +316,16 @@ export function parseTradeDecision(
   if (spent > state.board.budget) {
     return `the resulting roster costs ${spent} points, above the ${state.board.budget}-point budget`;
   }
+  const evidence = normalizeStageEvidence(record.reasoning, record.notebook, {
+    currentNotebook: state.notebooks[entrant] ?? '',
+    rationaleLimit: TRADE_WINDOW_PROMPT_POLICY.rationaleLimit,
+    notebookLimit: TRADE_WINDOW_PROMPT_POLICY.notebookLimit,
+  });
   return {
     swaps,
-    reasoning: clip(String(record.reasoning ?? '').trim(), TRADE_WINDOW_PROMPT_POLICY.rationaleLimit),
-    notebook:
-      typeof record.notebook === 'string'
-        ? clip(record.notebook.trim(), TRADE_WINDOW_PROMPT_POLICY.notebookLimit)
-        : (state.notebooks[entrant] ?? ''),
+    reasoning: evidence.rationale,
+    notebook: evidence.notebook,
+    evidence,
   };
 }
 
@@ -368,12 +383,14 @@ function validateOfferTerms(
 export function parseTradeOffer(response: string, state: TradeWindowState, entrant: number): ParsedTradeOffer | string {
   const record = parsedRecord(response);
   if (typeof record === 'string') return record;
-  const reasoning = clip(String(record.reasoning ?? '').trim(), TRADE_OFFER_PROMPT_POLICY.rationaleLimit);
-  const notebook =
-    typeof record.notebook === 'string'
-      ? clip(record.notebook.trim(), TRADE_OFFER_PROMPT_POLICY.notebookLimit)
-      : (state.notebooks[entrant] ?? '');
-  if (record.offer === null) return { offer: null, reasoning, notebook };
+  const evidence = normalizeStageEvidence(record.reasoning, record.notebook, {
+    currentNotebook: state.notebooks[entrant] ?? '',
+    rationaleLimit: TRADE_OFFER_PROMPT_POLICY.rationaleLimit,
+    notebookLimit: TRADE_OFFER_PROMPT_POLICY.notebookLimit,
+  });
+  const reasoning = evidence.rationale;
+  const notebook = evidence.notebook;
+  if (record.offer === null) return { offer: null, reasoning, notebook, evidence };
   if (typeof record.offer !== 'object' || Array.isArray(record.offer)) {
     return '"offer" must be an object or null';
   }
@@ -388,20 +405,23 @@ export function parseTradeOffer(response: string, state: TradeWindowState, entra
   if (!give || !get) return 'the offer must name both "give" and "get" board ids';
   if (!message) return 'the offer "message" must be a non-empty string';
   const offer = { to, give, get, message };
-  return validateOfferTerms(state, entrant, offer) ?? { offer, reasoning, notebook };
+  return validateOfferTerms(state, entrant, offer) ?? { offer, reasoning, notebook, evidence };
 }
 
 export function parseTradeResponse(response: string, previousNotebook = ''): ParsedTradeResponse | string {
   const record = parsedRecord(response);
   if (typeof record === 'string') return record;
   if (typeof record.accept !== 'boolean') return '"accept" must be true or false';
+  const evidence = normalizeStageEvidence(record.reasoning, record.notebook, {
+    currentNotebook: previousNotebook,
+    rationaleLimit: TRADE_OFFER_PROMPT_POLICY.rationaleLimit,
+    notebookLimit: TRADE_OFFER_PROMPT_POLICY.notebookLimit,
+  });
   return {
     accept: record.accept,
-    reasoning: clip(String(record.reasoning ?? '').trim(), TRADE_OFFER_PROMPT_POLICY.rationaleLimit),
-    notebook:
-      typeof record.notebook === 'string'
-        ? clip(record.notebook.trim(), TRADE_OFFER_PROMPT_POLICY.notebookLimit)
-        : previousNotebook,
+    reasoning: evidence.rationale,
+    notebook: evidence.notebook,
+    evidence,
   };
 }
 
@@ -847,6 +867,7 @@ export async function runTradeWindow(
               ? `made no offer after ${TRADE_OFFER_PROMPT_POLICY.attempts} rejected replies (${lastError})`
               : 'random baseline made no offer',
             notebook: state.notebooks[entrant]!,
+            evidence: noStageEvidence(state.notebooks[entrant]!),
           };
         }
         state.notebooks[entrant] = parsed.notebook;
@@ -872,12 +893,14 @@ export async function runTradeWindow(
               accept: false,
               reasoning: `rejected after ${TRADE_OFFER_PROMPT_POLICY.attempts} unusable replies (${completed.lastError})`,
               notebook: state.notebooks[responder]!,
+              evidence: noStageEvidence(state.notebooks[responder]!),
             };
           } else {
             response = {
               accept: false,
               reasoning: 'random baseline rejected the offer',
               notebook: state.notebooks[responder]!,
+              evidence: noStageEvidence(state.notebooks[responder]!),
             };
           }
           state.notebooks[responder] = response.notebook;
@@ -891,6 +914,8 @@ export async function runTradeWindow(
           accepted: response?.accept ?? null,
           offerReasoning: parsed.reasoning,
           responseReasoning: response?.reasoning ?? '',
+          offerEvidenceSupplied: parsed.evidence.supplied,
+          ...(response ? { responseEvidenceSupplied: response.evidence.supplied } : {}),
         };
         applyTradeOffer(state, offer);
         offers.push(offer);
@@ -1003,6 +1028,7 @@ export async function runTradeWindow(
           ? `kept the roster after ${TRADE_WINDOW_PROMPT_POLICY.attempts} rejected replies (${lastError})`
           : 'random baseline kept its drafted roster',
         notebook: state.notebooks[entrant]!,
+        evidence: noStageEvidence(state.notebooks[entrant]!),
       };
       fallback = Boolean(provider);
     }
@@ -1013,6 +1039,7 @@ export async function runTradeWindow(
       swaps: parsed.swaps,
       reasoning: parsed.reasoning,
       notebook: parsed.notebook,
+      evidenceSupplied: parsed.evidence.supplied,
       fallback,
     };
     decisions.push(decision);

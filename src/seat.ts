@@ -116,11 +116,16 @@ export class SeatBridge {
 
   private waitForExchange(ms: number): Promise<void> {
     const { promise, resolve } = Promise.withResolvers<void>();
-    const timer = setTimeout(resolve, ms);
-    this.pollWaiters.push(() => {
+    const wake = () => {
       clearTimeout(timer);
       resolve();
-    });
+    };
+    const timer = setTimeout(() => {
+      const index = this.pollWaiters.indexOf(wake);
+      if (index !== -1) this.pollWaiters.splice(index, 1);
+      resolve();
+    }, ms);
+    this.pollWaiters.push(wake);
     return promise;
   }
 
@@ -147,11 +152,21 @@ export class SeatBridge {
     };
     if (!this.authorized(request)) return send(401, { error: 'bad or missing seat token' });
     const route = new URL(request.url ?? '/', 'http://127.0.0.1').pathname;
+    if (request.method !== 'POST') {
+      response.setHeader('allow', 'POST');
+      return send(405, { error: 'method must be POST' });
+    }
+    const contentType = String(request.headers['content-type'] ?? '')
+      .split(';', 1)[0]!
+      .trim()
+      .toLowerCase();
+    if (contentType !== 'application/json') return send(415, { error: 'content-type must be application/json' });
     let body: JsonObject;
     try {
-      body = request.method === 'POST' ? await readJson(request) : {};
+      body = await readJson(request);
     } catch (error) {
-      return send(400, { error: error instanceof Error ? error.message : 'invalid request body' });
+      const status = error instanceof SeatHttpError ? error.status : 400;
+      return send(status, { error: error instanceof Error ? error.message : 'invalid request body' });
     }
 
     if (route === '/status') return send(200, { status: this.status, exchange: this.exchange?.id ?? null });
@@ -185,7 +200,9 @@ export class SeatBridge {
     if (route === '/submit') {
       const exchange = this.exchange;
       if (!exchange) return send(409, { error: 'no pending exchange' });
-      if (body.id !== undefined && body.id !== exchange.id)
+      if (typeof body.id !== 'number' || !Number.isSafeInteger(body.id))
+        return send(400, { error: 'id must be a safe integer' });
+      if (body.id !== exchange.id)
         return send(409, { error: `stale exchange; the pending exchange is ${exchange.id}` });
       const submitted = body.text;
       if (typeof submitted !== 'string' || !submitted.trim())
@@ -198,15 +215,29 @@ export class SeatBridge {
   }
 }
 
+class SeatHttpError extends Error {
+  constructor(
+    readonly status: number,
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
 async function readJson(request: IncomingMessage): Promise<JsonObject> {
   const chunks: Buffer[] = [];
   let size = 0;
   for await (const chunk of request as AsyncIterable<Buffer>) {
     size += chunk.length;
-    if (size > BODY_LIMIT_BYTES) throw new Error('request body too large');
+    if (size > BODY_LIMIT_BYTES) throw new SeatHttpError(413, 'request body too large');
     chunks.push(chunk);
   }
-  if (!size) return {};
-  const value: unknown = JSON.parse(Buffer.concat(chunks).toString('utf8'));
-  return isRecord(value) ? value : {};
+  let value: unknown;
+  try {
+    value = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+  } catch {
+    throw new SeatHttpError(400, 'request body must be JSON');
+  }
+  if (!isRecord(value)) throw new SeatHttpError(400, 'request body must be a JSON object');
+  return value;
 }

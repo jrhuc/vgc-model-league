@@ -107,25 +107,65 @@ test('a decision written only in the reasoning channel is salvaged without a ret
   assert.equal(decisions[0]!.rationale, 'salvaged from reasoning');
 });
 
-test('primed replay rows answer requests without the provider until the recording diverges', async () => {
+test('primed replay requires an exact request digest and seat provenance', async () => {
+  const game = { gameId: 'game-1', gameNumber: 1, seriesId: 'series-1' };
+  const recorded: Record<string, unknown>[] = [];
+  const source = new LLMEngine('p1', 'scripted', {
+    provider: new ScriptedProvider([decision([0], 'recorded choice', 'carried plan')]),
+    decisionLog: recorded,
+  });
+  source.beginGame(game);
+  assert.equal(await source.act(request(), { povLines: ['|turn|1'] }), 'move 1');
+  const row = structuredClone(recorded[0]!);
+  assert.match(String(row.request_digest), /^battle-decision-request-v1:[a-f0-9]{64}$/);
+
   const provider = new ScriptedProvider([decision([1], 'live again')]);
   const decisions: Record<string, unknown>[] = [];
   const engine = new LLMEngine('p1', 'scripted', { provider, decisionLog: decisions });
-  engine.primeReplay([
-    { kind: 'decision', game_number: 1, turn: 1, phase: 'turn', action: 'move 1', notebook: 'carried plan' },
-    { kind: 'decision', game_number: 1, turn: 99, phase: 'turn', action: 'move 1' },
-  ]);
+  engine.beginGame(game);
+  engine.primeReplay([row]);
   assert.equal(await engine.act(request(), { povLines: ['|turn|1'] }), 'move 1');
-  assert.equal(provider.calls.length, 0, 'a replayed decision costs no provider call');
+  assert.equal(provider.calls.length, 0, 'an exactly matching replay costs no provider call');
   assert.equal(decisions.length, 0, 'a replayed decision is not logged again');
   assert.equal(engine.coachingNote(), 'carried plan');
   assert.equal(await engine.act(request(), { povLines: ['|turn|2'] }), 'move 2');
-  assert.equal(provider.calls.length, 1, 'a divergent row abandons the queue and decides live');
-  assert.match(
-    provider.calls[0]!.messages[0]!.content as string,
-    /Decision: move 1/,
-    'the live prompt transcript includes the replayed decision',
-  );
+  assert.equal(provider.calls.length, 1);
+  assert.match(provider.calls[0]!.messages[0]!.content as string, /Decision: move 1/);
+
+  const expectLiveDecision = async (
+    label: string,
+    replayRow: Record<string, unknown>,
+    battleRequest = request(),
+    liveChoice = 1,
+  ) => {
+    const liveProvider = new ScriptedProvider([decision([liveChoice], 'bound live')]);
+    const liveEngine = new LLMEngine('p1', 'scripted', { provider: liveProvider, decisionLog: [] });
+    liveEngine.beginGame(game);
+    liveEngine.primeReplay([replayRow]);
+    assert.equal(await liveEngine.act(battleRequest, { povLines: ['|turn|1'] }), 'move 2', label);
+    assert.equal(liveProvider.calls.length, 1, label);
+  };
+
+  await expectLiveDecision('wrong pid', { ...row, pid: 'p2' });
+  await expectLiveDecision('wrong series', { ...row, series_id: 'series-2' });
+  await expectLiveDecision('wrong game number', { ...row, game_number: 2 });
+  await expectLiveDecision('wrong turn', { ...row, turn: 2 });
+  await expectLiveDecision('wrong phase', { ...row, phase: 'forced_switch' });
+
+  const changed = request();
+  changed.active = [
+    {
+      moves: [
+        { move: 'First', id: 'first', pp: 9, maxpp: 10, target: 'self', disabled: false },
+        { move: 'Second', id: 'second', pp: 10, maxpp: 10, target: 'self', disabled: false },
+      ],
+    },
+  ];
+  await expectLiveDecision('same-turn request and menu changed', row, changed, 1);
+
+  const legacy = { ...row };
+  delete legacy.request_digest;
+  await expectLiveDecision('legacy row without a digest', legacy);
 });
 
 test('reasoning with no parseable decision still follows the empty-response retry path', async () => {
@@ -171,6 +211,89 @@ test('LLM choices parse prose, retry, and record fallbacks', async () => {
   }
 });
 
+test('battle evidence flags follow model field presence rather than harness summaries', async () => {
+  const cases: Array<{
+    name: string;
+    responses: string[];
+    expectedEvidence: { rationale: boolean; notebook_update: boolean };
+    expectedNotebook: string;
+    expectedRationale: string | RegExp;
+    fallback?: boolean;
+  }> = [
+    {
+      name: 'rationale only',
+      responses: [JSON.stringify({ choices: [1], rationale: '  model reason  ' })],
+      expectedEvidence: { rationale: true, notebook_update: false },
+      expectedNotebook: 'Keep the current plan.',
+      expectedRationale: 'model reason',
+    },
+    {
+      name: 'notebook only',
+      responses: [JSON.stringify({ choices: [1], notebook: '  Revised plan.  ' })],
+      expectedEvidence: { rationale: false, notebook_update: true },
+      expectedNotebook: 'Revised plan.',
+      expectedRationale: 'No rationale supplied.',
+    },
+    {
+      name: 'explicit empty strings',
+      responses: [JSON.stringify({ choices: [1], rationale: '   ', notebook: '   ' })],
+      expectedEvidence: { rationale: true, notebook_update: true },
+      expectedNotebook: '',
+      expectedRationale: 'No rationale supplied.',
+    },
+    {
+      name: 'absent non-string evidence',
+      responses: [JSON.stringify({ choices: [1], rationale: null, notebook: false })],
+      expectedEvidence: { rationale: false, notebook_update: false },
+      expectedNotebook: 'Keep the current plan.',
+      expectedRationale: 'No rationale supplied.',
+    },
+    {
+      name: 'parse fallback',
+      responses: ['invalid', 'invalid', 'invalid', 'invalid'],
+      expectedEvidence: { rationale: false, notebook_update: false },
+      expectedNotebook: 'Keep the current plan.',
+      expectedRationale: /defaulted to the first legal option/,
+      fallback: true,
+    },
+  ];
+
+  for (const item of cases) {
+    const logs: Record<string, unknown>[] = [];
+    const engine = new LLMEngine('p1', 'scripted', {
+      provider: new ScriptedProvider(item.responses),
+      decisionLog: logs,
+      initialNotebook: 'Keep the current plan.',
+    });
+    await engine.act(request(), { povLines: ['|turn|1'] });
+
+    assert.deepEqual(logs[0]!.evidence_supplied, item.expectedEvidence, item.name);
+    assert.equal(engine.coachingNote(), item.expectedNotebook, item.name);
+    if (typeof item.expectedRationale === 'string') assert.equal(logs[0]!.rationale, item.expectedRationale, item.name);
+    else assert.match(String(logs[0]!.rationale), item.expectedRationale, item.name);
+    assert.equal(logs[0]!.fallback, item.fallback ?? false, item.name);
+  }
+
+  const logs: Record<string, unknown>[] = [];
+  const provider = new ScriptedProvider([]);
+  const engine = new LLMEngine('p1', 'scripted', {
+    provider,
+    decisionLog: logs,
+    initialNotebook: 'Keep the current plan.',
+  });
+  const automatic = request();
+  automatic.active = [
+    {
+      moves: [{ move: 'First', id: 'first', pp: 10, maxpp: 10, target: 'self', disabled: false }],
+    },
+  ];
+  assert.equal(await engine.act(automatic, { povLines: ['|turn|1'] }), 'move 1');
+  assert.equal(provider.calls.length, 0);
+  assert.equal(logs[0]!.rationale, 'Automatic: only one legal joint action.');
+  assert.deepEqual(logs[0]!.evidence_supplied, { rationale: false, notebook_update: false });
+  assert.equal(engine.coachingNote(), 'Keep the current plan.');
+});
+
 test('full seat context retains request snapshots and complete accepted decision menus', async () => {
   const provider = new ScriptedProvider(['{"choices":[1]}']);
   const contextRows: Record<string, unknown>[] = [];
@@ -210,6 +333,36 @@ test('full seat context retains request snapshots and complete accepted decision
       { context_id: 'ctx-00000003', pid: 'p1', series_id: 'series-1' },
       { context_id: 'ctx-00000004', pid: 'p1', series_id: 'series-1' },
     ],
+  );
+});
+
+test('a context log failure does not expose an unpersisted cursor and retry reuses it', () => {
+  const contextRows: Record<string, unknown>[] = [];
+  let fail = true;
+  const engine = new LLMEngine('p1', 'scripted', {
+    provider: new ScriptedProvider([]),
+    contextLog: (row) => {
+      if (fail) {
+        fail = false;
+        throw new Error('disk append failed');
+      }
+      contextRows.push(row);
+    },
+  });
+  const game = { gameId: 'game-1', gameNumber: 1, seriesId: 'series-1' };
+
+  assert.throws(() => engine.beginGame(game), /disk append failed/);
+  assert.equal(engine.readContext().headCursor, null);
+  assert.deepEqual(engine.readContext().events, []);
+  engine.beginGame(game);
+  assert.equal(engine.readContext().headCursor, 'ctx-00000001');
+  assert.deepEqual(
+    engine.readContext().events.map((event) => event.id),
+    ['ctx-00000001'],
+  );
+  assert.deepEqual(
+    contextRows.map((row) => row.context_id),
+    ['ctx-00000001'],
   );
 });
 
@@ -456,6 +609,7 @@ test('transient provider failures with a live timer leave the choice to the batt
   assert.equal(resolved, false, 'the engine waits for the battle timer instead of throwing');
   assert.equal(decisions[0]!.action, 'abandoned');
   assert.equal(decisions[0]!.fallback, true);
+  assert.deepEqual(decisions[0]!.evidence_supplied, { rationale: false, notebook_update: false });
   assert.equal(decisions[0]!.error_summary, 'Dead API is temporarily unavailable (503).');
   assert.deepEqual(engine.decisionStats(), { ...emptyStats, abandoned_decisions: 1 });
   engine.abandonDecision();
@@ -602,6 +756,7 @@ test('reasoning truncation without time to retry yields to the battle timer with
   await logged.promise;
   assert.equal(decisions[0]!.action, 'abandoned');
   assert.equal(decisions[0]!.failure_kind, 'truncation');
+  assert.deepEqual(decisions[0]!.evidence_supplied, { rationale: false, notebook_update: false });
   assert.equal(decisions[0]!.error, 'reasoning exhausted the 1024-token response budget');
   assert.equal(
     decisions[0]!.error_summary,
@@ -623,6 +778,7 @@ test('untimed truncation records a legal fallback with the truncation summary', 
     'the untimed wall clock must outlast a full-budget reply at 20 tokens per second, or it shapes play',
   );
   assert.equal(decisions[0]!.fallback, true);
+  assert.deepEqual(decisions[0]!.evidence_supplied, { rationale: false, notebook_update: false });
   assert.equal(decisions[0]!.error, `reasoning exhausted the ${DECISION_MAX_TOKENS_CEILING}-token response budget`);
   assert.equal(
     decisions[0]!.error_summary,

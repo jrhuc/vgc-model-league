@@ -14,7 +14,13 @@ import { runSeasonReview, seasonReviewScaffoldRevision } from './season-review.j
 import type { ExperimentOptions } from './series.js';
 import { mapLimit, playRecordedSeries } from './series.js';
 import { showdownCommit } from './showdown.js';
-import { runTeambuild, teambuildScaffoldRevision } from './teambuild.js';
+import {
+  runTeambuild,
+  type TeamBuildArtifact,
+  type TeamBuildSheetPolicy,
+  teamBuildScaffoldRevision,
+  teambuildScaffoldRevision,
+} from './teambuild.js';
 import { validateTeam } from './teams.js';
 import { DEFAULT_TIMER_SCALE } from './timer.js';
 import type { TournamentEvent } from './tournament.js';
@@ -30,7 +36,7 @@ import {
 import type { Pid } from './types.js';
 import { ordinal } from './value.js';
 
-export const DRAFT_PROTOCOL_VERSION = 7;
+export const DRAFT_PROTOCOL_VERSION = 8;
 
 export type DraftLeagueEvent = TournamentEvent | { type: 'draft'; draft: DraftView };
 
@@ -81,7 +87,7 @@ function draftRosterSummary(roster: readonly DraftBoardMon[], build: TeambuildVi
  * from the transcript; seats are recovered from the snake order rather than the logged model name, which
  * repeats when the same model holds two seats. */
 function loadStoredPicks(runDir: string, entrants: number, board: DraftBoard): DraftPickView[] {
-  const rows = loadRows(path.join(runDir, 'draft', 'draft.jsonl')).sort((a, b) => Number(a.pick) - Number(b.pick));
+  const rows = [...loadRows(path.join(runDir, 'draft', 'draft.jsonl'))].sort((a, b) => Number(a.pick) - Number(b.pick));
   const order = snakeOrder(entrants, board.picks);
   return rows.flatMap((row, index) => {
     const entrant = order[index];
@@ -139,12 +145,13 @@ export async function runDraftLeague(
   }
   const seed = resolveSeed(options.seed);
   const timerScale = options.timerScale ?? DEFAULT_TIMER_SCALE;
+  const sheetPolicy: TeamBuildSheetPolicy = options.closedSheets === true ? 'closed' : 'open';
   const random = seededRng(seed);
   const scaffold = scaffoldRevision();
   const scaffoldParts = scaffoldComponents();
   const openRouterRouting = parseRoutingPreferences();
   const draftScaffold = draftScaffoldRevision();
-  const teambuildScaffold = teambuildScaffoldRevision();
+  const teambuildScaffold = teambuildScaffoldRevision(sheetPolicy);
   const windowScaffold = tradeWindowScaffoldRevision();
   const seasonScaffold = seasonReviewScaffoldRevision();
 
@@ -422,7 +429,9 @@ export async function runDraftLeague(
   phase = 'roundrobin';
   options.onEvent?.({ type: 'draft', draft: draftView(true) });
 
-  const storedTeambuilds = stored ? loadStoredTeambuilds(path.join(runDir, 'teambuild'), entrants) : new Map();
+  const storedTeambuilds = stored
+    ? loadStoredTeambuilds(path.join(runDir, 'teambuild'), entrants, board.format, sheetPolicy, showdownCommit(psDir))
+    : new Map();
   const teambuildFor = async (plan: SeriesPlanned, entrant: number, opponent: number, signal: AbortSignal) => {
     const reused = storedTeambuilds.get(`${plan.index}:${entrant}`);
     if (reused) {
@@ -450,6 +459,7 @@ export async function runDraftLeague(
             ? [...playoffContext[entrant]!.entries()].sort(([a], [b]) => a - b).map(([, context]) => context)
             : [],
         format: board.format,
+        sheetPolicy,
       },
       {
         psDir,
@@ -874,19 +884,121 @@ interface StoredLeague {
 /** A resume re-buys nothing a prior attempt already built: completed teambuilds are replayed from the
  * teambuild log, keyed to the schedule slot and guarded by the seat's current model so a swapped seat
  * still builds its own team. */
+function linkedStoredArtifact(
+  value: unknown,
+  context: {
+    model: unknown;
+    packed: unknown;
+    legacyView: Record<string, unknown>;
+    entrants: readonly string[];
+    format: string;
+    sheetPolicy: TeamBuildSheetPolicy;
+    showdownCommit: string;
+  },
+): { packed: string; view: TeambuildView } | undefined {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined;
+  const artifact = value as TeamBuildArtifact;
+  const task = artifact.task;
+  const action = artifact.action;
+  if (
+    artifact.schemaVersion !== 1 ||
+    artifact.status !== 'valid' ||
+    artifact.executionPolicy !== 'league-resilient' ||
+    artifact.showdownCommit !== context.showdownCommit ||
+    artifact.validation?.showdown !== true ||
+    !task ||
+    task.model !== context.model ||
+    task.format !== context.format ||
+    task.sheetPolicy !== context.sheetPolicy ||
+    task.executionPolicy !== artifact.executionPolicy ||
+    task.objective?.kind !== 'matchup' ||
+    !Array.isArray(task.constraint?.candidates) ||
+    task.constraint.candidates.some(
+      (candidate) => typeof candidate !== 'object' || candidate === null || typeof candidate.id !== 'string',
+    ) ||
+    !action ||
+    typeof action.packed !== 'string' ||
+    action.packed !== context.packed ||
+    !Array.isArray(action.selected) ||
+    action.selected.some((id) => typeof id !== 'string') ||
+    !Array.isArray(action.sets) ||
+    typeof artifact.evidence?.rationale !== 'string' ||
+    !Number.isInteger(artifact.attempts)
+  ) {
+    return undefined;
+  }
+  if (
+    action.selected.length !== task.constraint.teamSize ||
+    action.sets.length !== task.constraint.teamSize ||
+    new Set(action.selected).size !== action.selected.length
+  ) {
+    return undefined;
+  }
+  const candidates = new Map(task.constraint.candidates.map((candidate) => [candidate.id, candidate]));
+  for (const [index, id] of action.selected.entries()) {
+    const set = action.sets[index] as Record<string, unknown> | undefined;
+    if (!set || set.species !== candidates.get(id)?.name) return undefined;
+  }
+  const entrant = Number(task.provenance?.entrant);
+  const opponent = Number(task.provenance?.opponent);
+  const seriesIndex = Number(task.provenance?.seriesIndex);
+  if (
+    !Number.isInteger(entrant) ||
+    !Number.isInteger(opponent) ||
+    !Number.isInteger(seriesIndex) ||
+    task.objective.opponent.model !== context.entrants[opponent] ||
+    artifact.scaffold !== teamBuildScaffoldRevision(task.objective, context.sheetPolicy, artifact.executionPolicy)
+  ) {
+    return undefined;
+  }
+  const view: TeambuildView = {
+    seriesIndex,
+    entrant,
+    opponent,
+    brought: action.selected,
+    sets: action.sets,
+    rationale: artifact.evidence.rationale,
+    attempts: artifact.attempts,
+  };
+  for (const [key, expected] of Object.entries(view)) {
+    if (JSON.stringify(context.legacyView[key]) !== JSON.stringify(expected)) return undefined;
+  }
+  return { packed: action.packed, view };
+}
+
 function loadStoredTeambuilds(
   teambuildDir: string,
   entrants: readonly string[],
+  format: string,
+  sheetPolicy: TeamBuildSheetPolicy,
+  currentShowdownCommit: string,
 ): Map<string, { packed: string; view: TeambuildView }> {
   const reusable = new Map<string, { packed: string; view: TeambuildView }>();
   for (const row of loadRows(path.join(teambuildDir, 'teambuild.jsonl'))) {
-    const { model, team_name: _teamName, packed, timestamp: _timestamp, ...view } = row;
-    const entrant = Number(view.entrant);
-    const seriesIndex = Number(view.seriesIndex);
+    const { model, team_name: _teamName, packed, artifact, timestamp: _timestamp, ...legacyView } = row;
+    const entrant = Number(legacyView.entrant);
+    const seriesIndex = Number(legacyView.seriesIndex);
     if (!Number.isInteger(entrant) || !Number.isInteger(seriesIndex)) continue;
     if (typeof packed !== 'string' || !packed) continue;
     if (model !== entrants[entrant]) continue;
-    reusable.set(`${seriesIndex}:${entrant}`, { packed, view: view as unknown as TeambuildView });
+    if (artifact !== undefined) {
+      const linked = linkedStoredArtifact(artifact, {
+        model,
+        packed,
+        legacyView,
+        entrants,
+        format,
+        sheetPolicy,
+        showdownCommit: currentShowdownCommit,
+      });
+      if (!linked) continue;
+      reusable.set(`${seriesIndex}:${entrant}`, linked);
+      continue;
+    }
+    reusable.set(`${seriesIndex}:${entrant}`, {
+      packed,
+      view: legacyView as unknown as TeambuildView,
+    });
   }
   return reusable;
 }
