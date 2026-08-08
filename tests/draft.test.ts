@@ -864,7 +864,7 @@ test('a pick cut off by its token budget is told so, not blamed for formatting',
     .trim()
     .split('\n')
     .map((line) => JSON.parse(line) as Record<string, unknown>);
-  assert.match(String(rows[0]!.error), /whole token budget before naming a pick/);
+  assert.match(String(rows[0]!.error), /whole 65536-token budget before naming a pick/);
 });
 
 test('a teambuild cut off by its token budget is told so', async (t) => {
@@ -952,12 +952,17 @@ test('transient upstream failures never spend a compliance attempt', async (t) =
   const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-draft-transient-'));
   t.after(() => fs.rmSync(logDir, { recursive: true, force: true }));
   let calls = 0;
+  const backoffs: number[] = [];
   const outcome = await runDraft(
     ['fake:model', 'random'],
     { ...BOARD, picks: 4 },
     {
       logDir,
       rng: seededRng(5),
+      sleep: (ms) => {
+        backoffs.push(ms);
+        return Promise.resolve();
+      },
       makeDraftProvider: () => ({
         complete(): Promise<Completion> {
           calls += 1;
@@ -973,6 +978,7 @@ test('transient upstream failures never spend a compliance attempt', async (t) =
   );
   assert.equal(outcome.picks[0]!.fallback, false, 'three 503s must not exhaust the model’s three attempts');
   assert.equal(outcome.rosters[0]![0]!.id, 'garchomp');
+  assert.deepEqual(backoffs, [2_000, 4_000, 8_000]);
 });
 
 test('a pick written only in the reasoning channel is salvaged without another attempt', async (t) => {

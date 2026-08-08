@@ -1,8 +1,12 @@
 import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import type { Battle, Dex } from 'pokemon-showdown';
 import { defaultPsDir } from './paths.js';
 import { loadShowdown, type ShowdownApi, showdownCommit } from './showdown.js';
 import type { ToolDefinition } from './types.js';
+
+const REFERENCE_RENDER_DIGEST_PROTOCOL = 'showdown-reference-render-v1';
 
 type FormatDataKind = 'move' | 'item';
 
@@ -196,7 +200,7 @@ export const DEX_TOOLS: ToolDefinition[] = [
       is_spread_hit: {
         type: 'boolean',
         description:
-          'True when a spread move hits more than one Pokémon (0.75x in doubles). Default true for allAdjacent moves.',
+          'True when the move hits more than one Pokémon (0.75x in doubles). Defaults false outside a live battle because no second target is known; the live harness derives this from the board.',
       },
     },
     ['attacker', 'defender', 'move'],
@@ -630,49 +634,16 @@ export class ShowdownReference {
     return abilities.length === 1 ? abilities[0] : undefined;
   }
 
+  moveTarget(name: string): string | undefined {
+    const move = this.dex.moves.get(name);
+    return move.exists ? move.target : undefined;
+  }
+
   static renderRevision(): string {
-    const prototype = ShowdownReference.prototype as unknown as Record<string, unknown>;
-    const surfaces = [
-      Object.getOwnPropertyDescriptor(ShowdownReference.prototype, 'revision')?.get,
-      ShowdownReference.prototype.renderCompact,
-      ShowdownReference.prototype.describeCompact,
-      ShowdownReference.prototype.speedProfile,
-      ShowdownReference.prototype.movePriority,
-      ShowdownReference.prototype.renderActiveMatchups,
-      ShowdownReference.prototype.render,
-      ShowdownReference.prototype.lookup,
-      prototype.lookupSpecies,
-      prototype.lookupLearnset,
-      prototype.lookupOne,
-      prototype.formatLegalityError,
-      prototype.lookupMatchup,
-      prototype.estimateDamage,
-      id,
-      canonicalWeather,
-      uniqueNames,
-      cleanDescription,
-      baseStats,
-      statRange,
-      hpRange,
-      investmentLimits,
-      statSet,
-      effectivenessLabel,
-      effectivenessDetail,
-      typeModifier,
-      asFinite,
-      weatherBallOverride,
-      speciesMoveType,
-      prototype.scratchDamage,
-      JSON.stringify(RAGING_BULL_TYPE),
-      JSON.stringify(WEATHER_BALL_TYPE),
-      JSON.stringify(SPEED_HALVING_ITEMS),
-      JSON.stringify(WEATHER_IDS),
-      JSON.stringify(TERRAIN_IDS),
-      JSON.stringify(STATUS_IDS),
-      JSON.stringify(SCREEN_IDS),
-    ];
     return createHash('sha256')
-      .update(surfaces.map((surface) => String(surface)).join('\n'))
+      .update(REFERENCE_RENDER_DIGEST_PROTOCOL)
+      .update('\0')
+      .update(readFileSync(fileURLToPath(import.meta.url)))
       .digest('hex')
       .slice(0, 12);
   }
@@ -1292,8 +1263,7 @@ export class ShowdownReference {
     const suppliedHpPercent = asFinite(args.defender_hp_percent);
     const hpPercent = suppliedHpPercent === undefined ? undefined : Math.max(0, Math.min(100, suppliedHpPercent));
 
-    const spreadDefault = ['allAdjacent', 'allAdjacentFoes', 'all'].includes(move.target);
-    const isSpread = typeof args.is_spread_hit === 'boolean' ? args.is_spread_hit : spreadDefault;
+    const isSpread = args.is_spread_hit === true;
     const crit = args.is_critical_hit === true;
     const helpingHand = args.helping_hand === true;
     const faintedAllies = Math.max(0, Math.trunc(asFinite(args.attacker_fainted_allies) ?? 0));

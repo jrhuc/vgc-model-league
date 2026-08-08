@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
+import { createHash, randomUUID } from 'node:crypto';
+import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { REPO_ROOT } from '../src/paths.js';
 import { DEX_TOOLS, ShowdownReference } from '../src/reference.js';
@@ -154,7 +157,29 @@ test('lookup tools return one entry and reject missing data', () => {
 
 test('default Showdown checkout matches the pinned revision', () => {
   assert.equal(showdownCommit(), SHOWDOWN_LOCK.commit);
-  assert.match(ShowdownReference.renderRevision(), /^[0-9a-f]{12}$/);
+});
+
+test('reference render revision binds the versioned executed module bytes', async () => {
+  const modulePath = fileURLToPath(new URL('../src/reference.js', import.meta.url));
+  const expected = createHash('sha256')
+    .update('showdown-reference-render-v1')
+    .update('\0')
+    .update(fs.readFileSync(modulePath))
+    .digest('hex')
+    .slice(0, 12);
+  const revision = ShowdownReference.renderRevision();
+  assert.match(revision, /^[0-9a-f]{12}$/);
+  assert.equal(revision, expected);
+
+  const copyPath = path.join(path.dirname(modulePath), `reference-revision-${randomUUID()}.js`);
+  try {
+    fs.copyFileSync(modulePath, copyPath);
+    fs.appendFileSync(copyPath, "\nvoid 'modified reference revision fixture';\n");
+    const copied = (await import(pathToFileURL(copyPath).href)) as typeof import('../src/reference.js');
+    assert.notEqual(copied.ShowdownReference.renderRevision(), revision);
+  } finally {
+    fs.rmSync(copyPath, { force: true });
+  }
 });
 
 test('missing Showdown checkout fails immediately', () => {
@@ -185,6 +210,33 @@ test('matchup and damage tools stay within open information', () => {
   assert.doesNotMatch(damage, /exact foe|hidden (iv|ev)s?/i);
   assert.ok(DEX_TOOLS.some((tool) => tool.name === 'lookup_matchup'));
   assert.ok(DEX_TOOLS.some((tool) => tool.name === 'estimate_damage'));
+});
+
+test('offline damage defaults to a single hit and honors an explicit spread flag', () => {
+  const reference = new ShowdownReference('gen9championsvgc2026regmb');
+  const args = {
+    attacker: 'Garchomp',
+    defender: 'Incineroar',
+    move: 'Earthquake',
+    attacker_stats: { atk: 182 },
+    defender_stats: { hp: 202, def: 121 },
+  };
+  const single = reference.lookup('estimate_damage', args);
+  const explicitSingle = reference.lookup('estimate_damage', { ...args, is_spread_hit: false });
+  const spread = reference.lookup('estimate_damage', { ...args, is_spread_hit: true });
+  assert.equal(single, explicitSingle);
+  assert.doesNotMatch(single, /spread \(0\.75x\)/);
+  assert.match(spread, /spread \(0\.75x\)/);
+  assert.notEqual(spread, single);
+  assert.match(
+    (
+      DEX_TOOLS.find((entry) => entry.name === 'estimate_damage')!.parameters.properties as Record<
+        string,
+        { description: string }
+      >
+    ).is_spread_hit!.description,
+    /Defaults false outside a live battle/,
+  );
 });
 
 test('effectiveness shows the per-type factors behind the combined multiplier', () => {

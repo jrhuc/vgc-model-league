@@ -32,7 +32,7 @@ function switches(request: BattleRequest, reviving = false): SlotMenu {
   const menu: SlotMenu = [];
   for (const [index, pokemon] of (request.side?.pokemon ?? []).entries()) {
     const fainted = text(pokemon.condition).endsWith(' fnt');
-    if (pokemon.active || fainted !== reviving) continue;
+    if ((!reviving && pokemon.active) || fainted !== reviving) continue;
     menu.push({ label: `Switch to ${pokemonSpecies(pokemon)}`, part: `switch ${index + 1}`, kind: 'switch' });
   }
   return menu;

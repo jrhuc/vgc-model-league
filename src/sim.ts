@@ -23,19 +23,18 @@ export function routeUpdateLines(lines: string[], state: RouteState): void {
   for (let index = 0; index < lines.length; ) {
     const line = lines[index]!;
     if (line.startsWith('|split|')) {
+      const owner = line.split('|', 3)[2];
+      if (owner !== 'p1' && owner !== 'p2') throw new Error(`unknown split owner: ${owner ?? '(missing)'}`);
       if (index + 2 >= lines.length) {
         state.pendingSplit.push(...lines.slice(index));
         return;
       }
-      const owner = line.split('|', 3)[2] as Pid;
       const secret = lines[index + 1]!;
       const publicLine = lines[index + 2]!;
-      if (owner === 'p1' || owner === 'p2') {
-        state.pov[owner].push(secret);
-        state.log.push(secret);
-        if (publicLine) state.publicLog.push(publicLine);
-        if (publicLine) state.pov[owner === 'p1' ? 'p2' : 'p1'].push(publicLine);
-      }
+      state.pov[owner].push(secret);
+      state.log.push(secret);
+      if (publicLine) state.publicLog.push(publicLine);
+      if (publicLine) state.pov[owner === 'p1' ? 'p2' : 'p1'].push(publicLine);
       index += 3;
       continue;
     }
@@ -47,6 +46,12 @@ export function routeUpdateLines(lines: string[], state: RouteState): void {
     else if (line.startsWith('|win|')) state.winner = line.slice(5);
     else if (line === '|tie') state.winner = null;
     index += 1;
+  }
+}
+
+export function finishUpdateRouting(state: RouteState): void {
+  if (state.pendingSplit.length) {
+    throw new Error(`simulator ended with an incomplete split triple (${state.pendingSplit.length} of 3 lines)`);
   }
 }
 
@@ -82,6 +87,7 @@ export class SimBattle {
     seed?: number | [number, number, number, number],
     psDir = defaultPsDir(),
     private readonly timerScale: TimerScale = DEFAULT_TIMER_SCALE,
+    private readonly now: () => number = () => performance.now(),
   ) {
     this.psDir = psDir;
     if (Array.isArray(seed)) {
@@ -161,7 +167,17 @@ export class SimBattle {
     for (const pid of ['p1', 'p2'] as const) stream.write(`>player ${pid} ${JSON.stringify(this.players[pid])}`);
     const timer = new TimerAdapter(this.format, stream, timerEvent, this.psDir, this.timerScale);
     for (const pid of ['p1', 'p2'] as const) timer.setPlayer(pid, this.players[pid].name);
+    let recoveryPausedAt: number | undefined;
     const recoveryChanged = (paused: boolean) => {
+      const changedAt = this.now();
+      if (paused) {
+        recoveryPausedAt ??= changedAt;
+      } else if (recoveryPausedAt !== undefined) {
+        for (const pid of ['p1', 'p2'] as const) {
+          if (lastRequest[pid]) requestAt[pid] += changedAt - Math.max(recoveryPausedAt, requestAt[pid]);
+        }
+        recoveryPausedAt = undefined;
+      }
       const lines = paused ? timer.pauseForRecovery() : timer.resumeAfterRecovery();
       if (lines.length) onUpdate?.(lines, lines);
     };
@@ -170,7 +186,7 @@ export class SimBattle {
 
     const schedule = (pid: Pid, request: BattleRequest, error?: string) => {
       if (pending.has(pid)) throw new Error(`received another request while ${pid} is still deciding`);
-      const elapsed = error && request.timer ? (performance.now() - requestAt[pid]) / 1000 : 0;
+      const elapsed = error && request.timer ? (this.now() - requestAt[pid]) / 1000 : 0;
       const currentRequest =
         request.timer && elapsed > 0
           ? {
@@ -232,7 +248,7 @@ export class SimBattle {
           if (!payload) continue;
           const request = JSON.parse(payload) as BattleRequest;
           lastRequest[pid] = request;
-          requestAt[pid] = performance.now();
+          requestAt[pid] = this.now();
           if (suppressRequest[pid]) {
             suppressRequest[pid] = false;
             continue;
@@ -272,13 +288,17 @@ export class SimBattle {
           onUpdate?.([stopLine], [stopLine]);
           continue;
         }
-        if (event.message === null) throw new Error('simulator produced no output for 60 seconds');
+        if (event.message === null) {
+          finishUpdateRouting(state);
+          throw new Error('simulator produced no output for 60 seconds');
+        }
         nextStream = streamEvent(stream);
         const message = timer.receive(event.message);
         const lines = message.split('\n');
         if (lines[0] === 'update') route(lines.slice(1));
         else if (lines[0] === 'sideupdate') handleSideUpdate(lines.slice(1));
         else if (lines[0] === 'end') {
+          finishUpdateRouting(state);
           if (lines[1]) {
             const data = JSON.parse(lines.slice(1).join('\n')) as { winner?: string; turns?: number };
             state.winner = data.winner || state.winner;

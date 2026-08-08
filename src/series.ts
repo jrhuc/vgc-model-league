@@ -96,15 +96,15 @@ export function makeEngine(setup: EngineSetup): RandomEngine | LLMEngine {
   });
 }
 
-export interface GameLuck {
+export interface ChanceEventCounts {
   misses: number;
   crits_taken: number;
   flinched_turns: number;
   full_paralysis: number;
 }
 
-export function gameLuck(log: string[]): Record<Pid, GameLuck> {
-  const luck: Record<Pid, GameLuck> = {
+export function chanceEventCounts(log: string[]): Record<Pid, ChanceEventCounts> {
+  const counts: Record<Pid, ChanceEventCounts> = {
     p1: { misses: 0, crits_taken: 0, flinched_turns: 0, full_paralysis: 0 },
     p2: { misses: 0, crits_taken: 0, flinched_turns: 0, full_paralysis: 0 },
   };
@@ -113,12 +113,12 @@ export function gameLuck(log: string[]): Record<Pid, GameLuck> {
     const [, kind = '', ...args] = line.split('|');
     const pid = args[0]?.startsWith('p1') ? 'p1' : args[0]?.startsWith('p2') ? 'p2' : undefined;
     if (!pid) continue;
-    if (kind === '-miss') luck[pid].misses += 1;
-    else if (kind === '-crit') luck[pid].crits_taken += 1;
-    else if (kind === 'cant' && args[1] === 'flinch') luck[pid].flinched_turns += 1;
-    else if (kind === 'cant' && args[1] === 'par') luck[pid].full_paralysis += 1;
+    if (kind === '-miss') counts[pid].misses += 1;
+    else if (kind === '-crit') counts[pid].crits_taken += 1;
+    else if (kind === 'cant' && args[1] === 'flinch') counts[pid].flinched_turns += 1;
+    else if (kind === 'cant' && args[1] === 'par') counts[pid].full_paralysis += 1;
   }
-  return luck;
+  return counts;
 }
 
 export interface Bo3Context {
@@ -256,7 +256,7 @@ export async function playBo3(context: Bo3Context): Promise<Bo3Result> {
       model_choice_fallbacks: modelChoiceFallbacks,
       simulator_substitutions: outcome.simulatorSubstitutions,
       timer_autodefaults: outcome.timerAutodefaults,
-      luck: gameLuck(outcome.log),
+      chance_events: chanceEventCounts(outcome.log),
       log: relative(logPath),
     });
     context.onGameEnd?.(gameNumber, winnerSide ? context.players[winnerSide] : null, outcome.turns, { ...score });
@@ -514,7 +514,7 @@ function reconstructAdoptedSeries(
       model_choice_fallbacks: { p1: 0, p2: 0 },
       simulator_substitutions: { p1: 0, p2: 0 },
       timer_autodefaults: { p1: 0, p2: 0 },
-      luck: gameLuck(lines),
+      chance_events: chanceEventCounts(lines),
       log: relative(logPath),
       resumed: true,
     });

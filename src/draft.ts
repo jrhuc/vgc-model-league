@@ -334,6 +334,7 @@ export interface RunDraftOptions extends ModelReasoningConfig {
   rng: Rng;
   signal?: AbortSignal;
   recovery?: RecoveryGate;
+  sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
   rosterPolicy?: string;
   onPick?: (view: DraftPickView, state: DraftState) => void;
   onName?: (entrant: number, teamName: string, state: DraftState) => void;
@@ -813,30 +814,37 @@ export async function runDraft(models: string[], board: DraftBoard, options: Run
             policy: DRAFT_PROMPT_POLICY,
             ...(options.recovery === undefined ? {} : { recovery: options.recovery }),
             ...(options.signal === undefined ? {} : { signal: options.signal }),
+            ...(options.sleep === undefined ? {} : { sleep: options.sleep }),
             onLookup: (call) => lookups.push(call),
           });
           response = completion.text;
           usage = completion.usage;
-          const truncated = completion.finishReason === 'length';
-          if (!response.trim() && !truncated && completion.reasoning) {
+          const truncated = completion.outputLimitReached;
+          const stoppedEarly = completion.finishReason === 'length' && !truncated;
+          if (!response.trim() && !truncated && !stoppedEarly && completion.reasoning) {
             const salvaged = parsePick(completion.reasoning, legal, state, drafter, models, notebooks[drafter]!);
             if (typeof salvaged !== 'string') response = completion.reasoning;
           }
           const parsed = parsePick(response, legal, state, drafter, models, notebooks[drafter]!);
           if (typeof parsed === 'string') {
-            error = truncated ? `the reply used its whole token budget before naming a pick` : parsed;
+            error = truncated
+              ? `the reply used its whole ${DRAFT_PROMPT_POLICY.maxTokens}-token budget before naming a pick`
+              : stoppedEarly
+                ? `the provider stopped the reply for length before reaching the requested ${DRAFT_PROMPT_POLICY.maxTokens}-token cap`
+                : parsed;
             lastError = error;
             messages.push({
               role: 'assistant',
-              content: truncated
-                ? '[reply cut off before a pick]'
-                : response || '[the reply contained no visible text]',
+              content:
+                truncated || stoppedEarly
+                  ? '[reply cut off before a pick]'
+                  : response || '[the reply contained no visible text]',
             });
             messages.push({
               role: 'user',
               content: truncated
                 ? DRAFT_PROMPT_POLICY.truncatedTemplate.replace('{{budget}}', String(DRAFT_PROMPT_POLICY.maxTokens))
-                : DRAFT_PROMPT_POLICY.rejectionTemplate.replace('{{error}}', parsed),
+                : DRAFT_PROMPT_POLICY.rejectionTemplate.replace('{{error}}', error),
             });
           } else {
             chosen = parsed.mon;

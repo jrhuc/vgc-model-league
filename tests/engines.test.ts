@@ -73,15 +73,18 @@ const emptyStats = {
 };
 const oneMoveStats = { ...emptyStats, decisions: 1, move_selections: 1 };
 
+type ScriptedResponse = string | Completion | Error | ((options: CompleteOptions) => string | Completion | Error);
+
 class ScriptedProvider implements Provider {
   readonly calls: Array<{ system: string; messages: ProviderMessage[]; options: CompleteOptions }> = [];
   private index = 0;
 
-  constructor(private readonly responses: Array<string | Completion | Error>) {}
+  constructor(private readonly responses: ScriptedResponse[]) {}
 
   async complete(system: string, messages: ProviderMessage[], options: CompleteOptions = {}): Promise<Completion> {
     this.calls.push({ system, messages: structuredClone(messages), options: structuredClone(options) });
-    const response = this.responses[this.index++];
+    const scripted = this.responses[this.index++];
+    const response = typeof scripted === 'function' ? scripted(options) : scripted;
     if (response instanceof Error) throw response;
     if (typeof response === 'string')
       return { text: response, usage: { input_tokens: 10, output_tokens: 2 }, toolCalls: [] };
@@ -89,6 +92,8 @@ class ScriptedProvider implements Provider {
     return response;
   }
 }
+
+const noSleep = (): Promise<void> => Promise.resolve();
 
 test('a decision written only in the reasoning channel is salvaged without a retry', async () => {
   const provider = new ScriptedProvider([
@@ -476,7 +481,7 @@ test('provider failures abort and persistent empty responses fail after retries'
   assert.deepEqual(broken.decisionStats(), emptyStats);
 
   const provider = new ScriptedProvider(['', '', '']);
-  const empty = new LLMEngine('p1', 'empty', { provider, decisionLog: [] });
+  const empty = new LLMEngine('p1', 'empty', { provider, decisionLog: [], sleep: noSleep });
   await assert.rejects(empty.act(request(), { povLines: [] }), /empty response/);
   assert.equal(provider.calls.length, 3, 'empty responses are retried before failing');
 });
@@ -492,6 +497,36 @@ test('DSML tool-call markup gets a reprompt naming the problem', async () => {
   assert.equal(decisions[0]!.fallback, false);
   const reprompt = String(provider.calls[1]!.messages.at(-1)?.content);
   assert.match(reprompt, /tool-call markup as plain text/);
+});
+
+test('unoffered native tools are recorded, refused, and reprompted without dispatch', async () => {
+  const provider = new ScriptedProvider([
+    {
+      text: '',
+      usage: { output_tokens: 3 },
+      toolCalls: [
+        { id: 'unoffered-1', name: 'search_board', arguments: { type: 'Water' } },
+        { id: 'unknown-1', name: 'change_battle_result', arguments: { winner: 'p1' } },
+      ],
+    },
+    decision([1], 'The researched choice remains mine.', 'preserve the plan'),
+  ]);
+  const decisions: Record<string, unknown>[] = [];
+  const traces: Record<string, unknown>[] = [];
+  const engine = new LLMEngine('p1', 'scripted', { provider, decisionLog: decisions, traceLog: traces });
+  assert.equal(await engine.act(request(), { povLines: [] }), 'move 2');
+  const refusals = provider.calls[1]!.messages.filter((message) => message.role === 'tool');
+  assert.match(String(refusals[0]?.content), /Not executed: tool "search_board" was not offered for this decision/);
+  assert.match(
+    String(refusals[1]?.content),
+    /Not executed: tool "change_battle_result" was not offered for this decision/,
+  );
+  const toolTrace = traces[0]!.tool_calls as Array<Record<string, unknown>>;
+  assert.equal(toolTrace.length, 2);
+  assert.ok(toolTrace.every((entry) => /Not executed/.test(String(entry.result))));
+  assert.equal(decisions[0]!.rationale, 'The researched choice remains mine.');
+  assert.deepEqual(decisions[0]!.evidence_supplied, { rationale: true, notebook_update: true });
+  assert.equal(engine.decisionStats().tool_lookups, 2, 'refused requests remain visible in audit counts');
 });
 
 test('a tool-call-only final answer is retried untimed instead of defaulting', async () => {
@@ -632,7 +667,11 @@ test('empty responses with a live timer fail the run with a clear summary', asyn
 
 test('empty responses retry within a healthy timer before failing the run', async () => {
   const provider = new ScriptedProvider(['', '', '']);
-  const engine = new LLMEngine('p1', 'opencode-go:deepseek-v4-flash', { provider, decisionLog: [] });
+  const engine = new LLMEngine('p1', 'opencode-go:deepseek-v4-flash', {
+    provider,
+    decisionLog: [],
+    sleep: noSleep,
+  });
   const timed = request();
   timed.timer = { turnSeconds: 55, seconds: 420 };
   await assert.rejects(engine.act(timed, { povLines: [] }), /returned no usable response.*cannot continue/);
@@ -642,7 +681,11 @@ test('empty responses retry within a healthy timer before failing the run', asyn
 test('empty reflections fail the run after retries', async () => {
   const provider = new ScriptedProvider(['', '', '']);
   const decisions: Record<string, unknown>[] = [];
-  const engine = new LLMEngine('p1', 'opencode-go:deepseek-v4-flash', { provider, decisionLog: decisions });
+  const engine = new LLMEngine('p1', 'opencode-go:deepseek-v4-flash', {
+    provider,
+    decisionLog: decisions,
+    sleep: noSleep,
+  });
   await assert.rejects(
     engine.endGame({
       gameNumber: 1,
@@ -686,9 +729,9 @@ test('a draft roster switches only the series-final reflection to the prep-revie
   assert.equal(constructedFinal.calls[0]!.system, SERIES_REFLECTION_SYSTEM);
 });
 
-const lengthTruncated = (): Completion => ({
+const lengthTruncated = (options: CompleteOptions): Completion => ({
   text: '',
-  usage: { input_tokens: 10, output_tokens: 4096 },
+  usage: { input_tokens: 10, output_tokens: options.maxTokens ?? 0 },
   toolCalls: [],
   finishReason: 'length',
 });
@@ -744,7 +787,7 @@ test('reasoning truncation without time to retry yields to the battle timer with
   const decisions: Record<string, unknown>[] = [];
   const logged = Promise.withResolvers<void>();
   const engine = new LLMEngine('p1', 'opencode-go:glm-5.2', {
-    provider: new ScriptedProvider([lengthTruncated()]),
+    provider: new ScriptedProvider([lengthTruncated]),
     decisionLog: (row) => {
       decisions.push(row);
       logged.resolve();
@@ -766,8 +809,38 @@ test('reasoning truncation without time to retry yields to the battle timer with
   assert.equal(await pending, '');
 });
 
+test('an early provider length stop is truncation, not requested-budget exhaustion', async () => {
+  const decisions: Record<string, unknown>[] = [];
+  const logged = Promise.withResolvers<void>();
+  const engine = new LLMEngine('p1', 'opencode-go:glm-5.2', {
+    provider: new ScriptedProvider([
+      { text: '', usage: { input_tokens: 10, output_tokens: 512 }, toolCalls: [], finishReason: 'length' },
+    ]),
+    decisionLog: (row) => {
+      decisions.push(row);
+      logged.resolve();
+    },
+  });
+  const timed = request();
+  timed.timer = { turnSeconds: 10, seconds: 420 };
+  const pending = engine.act(timed, { povLines: [] });
+  await logged.promise;
+  assert.equal(decisions[0]!.failure_kind, 'truncation');
+  assert.equal(
+    decisions[0]!.error,
+    'provider stopped the response for length after 512 output tokens, below the requested 1024-token cap',
+  );
+  assert.equal(
+    decisions[0]!.error_summary,
+    'OpenCode Go API stopped the response for length below the requested output cap.',
+  );
+  assert.doesNotMatch(String(decisions[0]!.error), /exhausted|whole response budget/);
+  engine.abandonDecision();
+  assert.equal(await pending, '');
+});
+
 test('untimed truncation records a legal fallback with the truncation summary', async () => {
-  const provider = new ScriptedProvider([lengthTruncated(), lengthTruncated(), lengthTruncated(), lengthTruncated()]);
+  const provider = new ScriptedProvider([lengthTruncated, lengthTruncated, lengthTruncated, lengthTruncated]);
   const decisions: Record<string, unknown>[] = [];
   const engine = new LLMEngine('p1', 'opencode-go:deepseek-v4-flash', { provider, decisionLog: decisions });
   assert.equal(await engine.act(request(), { povLines: [] }), 'move 1');
@@ -789,14 +862,14 @@ test('untimed truncation records a legal fallback with the truncation summary', 
 test('a decision cut off mid-reasoning blames the budget, not the model formatting', async () => {
   /** What an over-reasoning model actually returns: pages of deliberation, no closing JSON, and a provider
    * that never sets finishReason: 'length'. */
-  const rambled = (): Completion => ({
+  const rambled = (options: CompleteOptions): Completion => ({
     text: 'Turn 6. I need to weigh Garchomp and Whimsicott. "choices" will follow once I finish',
-    usage: { input_tokens: 10, output_tokens: DECISION_MAX_TOKENS_CEILING },
+    usage: { input_tokens: 10, output_tokens: options.maxTokens ?? 0 },
     toolCalls: [],
   });
   const decisions: Record<string, unknown>[] = [];
   const engine = new LLMEngine('p1', 'openrouter:qwen/qwen3.5-flash-02-23', {
-    provider: new ScriptedProvider([rambled(), rambled(), rambled(), rambled()]),
+    provider: new ScriptedProvider([rambled, rambled, rambled, rambled]),
     decisionLog: decisions,
   });
 
@@ -811,12 +884,12 @@ test('a decision cut off mid-reasoning blames the budget, not the model formatti
 
 test('a truncated retry is not fed its own overrun reasoning', async () => {
   const long = 'x'.repeat(5_000);
-  const rambled = (): Completion => ({
+  const rambled = (options: CompleteOptions): Completion => ({
     text: `Turn 6 deliberation ${long}`,
-    usage: { input_tokens: 10, output_tokens: DECISION_MAX_TOKENS_CEILING },
+    usage: { input_tokens: 10, output_tokens: options.maxTokens ?? 0 },
     toolCalls: [],
   });
-  const provider = new ScriptedProvider([rambled(), rambled(), rambled(), rambled()]);
+  const provider = new ScriptedProvider([rambled, rambled, rambled, rambled]);
   const engine = new LLMEngine('p1', 'fake:model', { provider, decisionLog: [] });
   await engine.act(request(), { povLines: [] });
 
@@ -825,6 +898,29 @@ test('a truncated retry is not fed its own overrun reasoning', async () => {
   assert.ok(!replayed.includes(long), 'the overrun reasoning must not be replayed into the retry');
   assert.match(replayed, /cut off before a choice was submitted/);
   assert.match(replayed, /ran past its \d+-token budget/, 'the retry names the real problem');
+});
+
+test('an early length-stopped ramble is summarized before the model is reprompted', async () => {
+  const long = 'q'.repeat(5_000);
+  const provider = new ScriptedProvider([
+    {
+      text: `unfinished reasoning ${long}`,
+      usage: { input_tokens: 10, output_tokens: 4096 },
+      toolCalls: [],
+      finishReason: 'length',
+    },
+    decision([1], 'I still choose the second move.', 'keep the plan'),
+  ]);
+  const decisions: Record<string, unknown>[] = [];
+  const engine = new LLMEngine('p1', 'fake:model', { provider, decisionLog: decisions });
+  assert.equal(await engine.act(request(), { povLines: [] }), 'move 2');
+  const replayed = provider.calls[1]!.messages.map((message) => String(message.content ?? '')).join('\n');
+  assert.ok(!replayed.includes(long));
+  assert.match(replayed, /stopped your previous response for length after 4096 output tokens/);
+  assert.match(replayed, new RegExp(`below the requested ${DECISION_MAX_TOKENS_CEILING}-token cap`));
+  assert.doesNotMatch(replayed, /ran past its .*token budget/);
+  assert.equal(decisions[0]!.rationale, 'I still choose the second move.');
+  assert.deepEqual(decisions[0]!.evidence_supplied, { rationale: true, notebook_update: true });
 });
 
 test('a genuine format failure is still reported as one', async () => {
@@ -903,13 +999,19 @@ test('three consecutive timed decision failures stop the run while success reset
   assert.match(String(decisions.at(-1)!.rationale), /run cannot continue/i);
 });
 
-test('transient API errors retry before falling back', async () => {
+test('transient API errors request exponential backoff without wall-clock sleeps', async () => {
   const decisions: Record<string, unknown>[] = [];
+  const flakyBackoffs: number[] = [];
   const flaky = new LLMEngine('p1', 'flaky', {
     provider: new ScriptedProvider([new ApiError(503, 'overloaded'), decision([1])]),
     decisionLog: decisions,
+    sleep: (ms) => {
+      flakyBackoffs.push(ms);
+      return Promise.resolve();
+    },
   });
   assert.equal(await flaky.act(request(), { povLines: [] }), 'move 2');
+  assert.deepEqual(flakyBackoffs, [400]);
   assert.deepEqual(flaky.decisionStats(), { ...oneMoveStats, provider_retries: 1 });
 
   const persistentProvider = new ScriptedProvider([
@@ -917,12 +1019,40 @@ test('transient API errors retry before falling back', async () => {
     new ApiError(503, 'overloaded'),
     new ApiError(503, 'overloaded'),
   ]);
+  const persistentBackoffs: number[] = [];
   const persistent = new LLMEngine('p1', 'persistent', {
     provider: persistentProvider,
     decisionLog: [],
+    sleep: (ms) => {
+      persistentBackoffs.push(ms);
+      return Promise.resolve();
+    },
   });
   await assert.rejects(persistent.act(request(), { povLines: [] }), /overloaded/);
   assert.equal(persistentProvider.calls.length, 3);
+  assert.deepEqual(persistentBackoffs, [400, 800]);
+});
+
+test('tool calls returned after toolChoice none never execute or count', async () => {
+  const provider = new ScriptedProvider([
+    {
+      text: decision([1], 'Commit without more research.', 'final plan'),
+      usage: { output_tokens: 8 },
+      toolCalls: [{ id: 'late-1', name: 'lookup_move', arguments: { name: 'Protect' } }],
+    },
+  ]);
+  const decisions: Record<string, unknown>[] = [];
+  const traces: Record<string, unknown>[] = [];
+  const engine = new LLMEngine('p1', 'scripted', { provider, decisionLog: decisions, traceLog: traces });
+  const timed = request();
+  timed.timer = { turnSeconds: 10, seconds: 420 };
+  assert.equal(await engine.act(timed, { povLines: [] }), 'move 2');
+  assert.equal(provider.calls[0]!.options.toolChoice, 'none');
+  assert.deepEqual(traces[0]!.tool_calls, []);
+  assert.deepEqual(decisions[0]!.tool_lookups, []);
+  assert.equal(engine.decisionStats().tool_lookups, 0);
+  assert.equal(decisions[0]!.rationale, 'Commit without more research.');
+  assert.deepEqual(decisions[0]!.evidence_supplied, { rationale: true, notebook_update: true });
 });
 
 test('untimed tool batches allow wide verification across many rounds', async () => {

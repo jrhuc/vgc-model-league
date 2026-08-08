@@ -321,6 +321,17 @@ export function classifyProviderFailure(error: unknown, spec = 'provider'): Prov
       terminal: false,
     };
   }
+  if (
+    /^provider stopped the response for length after \d+ output tokens, below the requested \d+-token cap(?: before a choice was submitted)?$/i.test(
+      message.trim(),
+    )
+  ) {
+    return {
+      kind: 'truncation',
+      summary: `${label} API stopped the response for length below the requested output cap.`,
+      terminal: false,
+    };
+  }
   if (status === 0 && /^empty response$/i.test(message.trim())) {
     return {
       kind: 'upstream',

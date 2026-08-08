@@ -26,7 +26,7 @@ function asButton(node: unknown): TestButton {
 async function waitFor(predicate: () => boolean, ms = 5000): Promise<void> {
   const deadline = Date.now() + ms;
   while (!predicate()) {
-    if (Date.now() > deadline) return;
+    if (Date.now() > deadline) throw new Error('DOM condition was not reached before the test deadline');
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
 }

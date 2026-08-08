@@ -424,8 +424,8 @@ test('gui requires browser credentials and never exposes server keys', async () 
     assert.doesNotMatch(JSON.stringify(state.data), /browser-run-secret|server-secret/);
   } finally {
     gui.close();
-    if (previous === undefined) delete process.env.ANTHROPIC_API_KEY;
-    else process.env.ANTHROPIC_API_KEY = previous;
+    if (previous === undefined) delete process.env.OPENAI_API_KEY;
+    else process.env.OPENAI_API_KEY = previous;
   }
 });
 

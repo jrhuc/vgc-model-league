@@ -115,6 +115,8 @@ export interface LLMEngineOptions {
    * reflection to the draft variant that also reviews the registration itself. */
   draftRoster?: string;
   briefing?: string;
+  /** Test seam for provider retry backoff; production uses abort-aware wall-clock delay. */
+  sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
 }
 
 const RETRY_ATTEMPTS = 3;
@@ -497,6 +499,9 @@ function isRetryableError(error: unknown): boolean {
   return failure.retryable ?? !failure.terminal;
 }
 
+const retrySleep = (ms: number, signal?: AbortSignal): Promise<void> =>
+  signal ? delay(ms, undefined, { signal }) : delay(ms);
+
 export class LLMEngine extends BaseEngine {
   provider: Provider;
   private resolvedSpec: string;
@@ -768,6 +773,7 @@ export class LLMEngine extends BaseEngine {
     const pace = () => this.observedTokensPerSecond ?? ASSUMED_TOKENS_PER_SECOND;
     let maxTokens = Math.max(tokenFloor, decisionTokenBudget(remainingMs(), pace()));
     let truncatedBudget = 0;
+    let earlyLengthStop: { outputTokens: number; requestedMaxTokens: number } | undefined;
     const generation = this.generation;
     const decisionSignal = this.decisionController?.signal;
     const renderedState = this.state.render(request, (mon) => this.reference.describeCompact(mon));
@@ -812,6 +818,7 @@ export class LLMEngine extends BaseEngine {
     let toolRounds = 0;
     this.callRetries = 0;
     const toolCalls: ToolTrace[] = [];
+    const offeredToolNames = new Set(DECISION_TOOLS.map((tool) => tool.name));
     const seenToolResults = new Map<string, string>();
     const failedAttempts: { response: string; error: string }[] = [];
     const reasoningParts: string[] = [];
@@ -905,23 +912,26 @@ export class LLMEngine extends BaseEngine {
     let emptyRetries = 0;
     while (!parsed && parseFailures < parseAttempts) {
       if (generation !== this.generation) throw new DecisionAbandonedError();
-      if (parseFailures && (rawResponse || truncatedBudget)) {
-        /** Replaying a truncated ramble verbatim spends the retry's input budget on the reasoning that
-         * already overran, making the retry likelier to overrun too. Summarise it instead and ask for the
-         * answer first. */
+      if (parseFailures && (rawResponse || truncatedBudget || earlyLengthStop)) {
+        /** Replaying a cut-off ramble verbatim spends the retry's input budget on reasoning that cannot
+         * contain the missing ending. Summarise it instead and ask for the answer first. */
         messages.push({
           role: 'assistant',
-          content: truncatedBudget ? '[response cut off before a choice was submitted]' : rawResponse,
+          content:
+            truncatedBudget || earlyLengthStop ? '[response cut off before a choice was submitted]' : rawResponse,
         });
         messages.push({
           role: 'user',
           content: truncatedBudget
             ? `Your previous response ran past its ${truncatedBudget}-token budget before submitting a choice. Reply with the required JSON immediately, keeping reasoning brief enough to finish inside the budget.`
-            : `Your previous response was invalid. Error: ${error}. Reply again following the required JSON format.`,
+            : earlyLengthStop
+              ? `The provider stopped your previous response for length after ${earlyLengthStop.outputTokens} output tokens, below the requested ${earlyLengthStop.requestedMaxTokens}-token cap. Reply with the required JSON immediately.`
+              : `Your previous response was invalid. Error: ${error}. Reply again following the required JSON format.`,
         });
       }
       rawResponse = '';
       truncatedBudget = 0;
+      earlyLengthStop = undefined;
       const maxToolRounds = deadline === undefined ? UNTIMED_MAX_TOOL_ROUNDS : DECISION_MAX_TOOL_ROUNDS;
       let cutoffAnnounced = false;
       for (let round = 0; round <= maxToolRounds; round += 1) {
@@ -988,7 +998,9 @@ export class LLMEngine extends BaseEngine {
             const result =
               cached !== undefined
                 ? `[identical to an earlier call this decision] ${cached}`
-                : this.lookupDecisionTool(call.name, call.arguments);
+                : !offeredToolNames.has(call.name)
+                  ? `Not executed: tool ${JSON.stringify(call.name)} was not offered for this decision.`
+                  : this.lookupDecisionTool(call.name, call.arguments);
             if (cached === undefined) seenToolResults.set(seenKey, result);
             toolCalls.push({ name: call.name, arguments: call.arguments, result });
             messages.push(toolResultMessage(call.id, result));
@@ -1000,12 +1012,12 @@ export class LLMEngine extends BaseEngine {
           }
           continue;
         }
-        /** A model cut off mid-reasoning still returns text, so finishReason alone misses it and the run
-         * blames the model's formatting for a budget it never got to spend. Token count is the signal
-         * providers agree on. */
-        if (completion.finishReason === 'length' || (completion.usage.output_tokens ?? 0) >= maxTokens) {
-          truncatedBudget = maxTokens;
-        }
+        /** Reported output reaching this call's requested cap is budget exhaustion even when a provider
+         * omits finishReason. A length stop below that cap is still truncation, but not budget exhaustion. */
+        const outputTokens = Math.trunc(completion.usage.output_tokens ?? 0);
+        if (outputTokens >= maxTokens) truncatedBudget = maxTokens;
+        else if (completion.finishReason === 'length')
+          earlyLengthStop = { outputTokens, requestedMaxTokens: maxTokens };
         if (!completion.text && !completion.toolCalls.length && truncatedBudget) break;
         rawResponse = completion.text;
         /** Some reasoning models via gateways finish with every token in the reasoning channel and an
@@ -1019,7 +1031,11 @@ export class LLMEngine extends BaseEngine {
         break;
       }
       if (!rawResponse) {
-        error = truncatedBudget ? `reasoning exhausted the ${truncatedBudget}-token response budget` : 'empty response';
+        error = truncatedBudget
+          ? `reasoning exhausted the ${truncatedBudget}-token response budget`
+          : earlyLengthStop
+            ? `provider stopped the response for length after ${earlyLengthStop.outputTokens} output tokens, below the requested ${earlyLengthStop.requestedMaxTokens}-token cap`
+            : 'empty response';
         failedAttempts.push({ response: '', error });
         if (request.timer) return failDecision(new Error(error));
         if (truncatedBudget) {
@@ -1039,9 +1055,11 @@ export class LLMEngine extends BaseEngine {
         parsed = undefined;
         error = truncatedBudget
           ? `reasoning exhausted the ${truncatedBudget}-token response budget before a choice was submitted`
-          : caught instanceof Error
-            ? caught.message
-            : String(caught);
+          : earlyLengthStop
+            ? `provider stopped the response for length after ${earlyLengthStop.outputTokens} output tokens, below the requested ${earlyLengthStop.requestedMaxTokens}-token cap before a choice was submitted`
+            : caught instanceof Error
+              ? caught.message
+              : String(caught);
         if (!truncatedBudget && /[|｜]\s*DSML\s*[|｜]/.test(rawResponse)) {
           error =
             'the response wrote tool-call markup as plain text, which nothing executes. Call tools through the API tool interface or reply with the required JSON object';
@@ -1071,7 +1089,9 @@ export class LLMEngine extends BaseEngine {
         fallback,
         error: fallback ? error : undefined,
         errorSummary:
-          fallback && truncatedBudget ? classifyProviderFailure(new Error(error), this.spec).summary : undefined,
+          fallback && (truncatedBudget || earlyLengthStop)
+            ? classifyProviderFailure(new Error(error), this.spec).summary
+            : undefined,
         latencyMs: performance.now() - started,
         toolCalls,
         ...(failedAttempts.length ? { failedAttempts } : {}),
@@ -1157,8 +1177,7 @@ export class LLMEngine extends BaseEngine {
         )
           throw error;
         this.callRetries += 1;
-        if (signal) await delay(RETRY_BASE_MS * 2 ** attempt, undefined, { signal });
-        else await delay(RETRY_BASE_MS * 2 ** attempt);
+        await (this.options.sleep ?? retrySleep)(RETRY_BASE_MS * 2 ** attempt, signal);
       }
     }
   }

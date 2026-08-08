@@ -8,10 +8,11 @@ import type { BattleStream } from 'pokemon-showdown';
 import { RandomEngine } from '../src/battle-agent.js';
 import { buildMenus, type SlotMenu } from '../src/choices.js';
 import { defaultPsDir } from '../src/paths.js';
+import { RecoveryGate } from '../src/recovery.js';
 import { runRotation } from '../src/rotation.js';
 import { closedSheetsFormat } from '../src/series.js';
 import type { RoomBattleTimerSettings } from '../src/showdown.js';
-import { routeUpdateLines, SimBattle } from '../src/sim.js';
+import { finishUpdateRouting, routeUpdateLines, SimBattle } from '../src/sim.js';
 import { BattleState } from '../src/state.js';
 import { loadPool } from '../src/teams.js';
 import { parseTimerScale, TimerAdapter } from '../src/timer.js';
@@ -81,6 +82,37 @@ test('seeded random VGC battle completes untimed by default without protocol err
   state.feed(outcome.pov.p1);
   assert.equal(state.turn, outcome.turns);
   assert.match(state.render({}), /Opponent side/);
+});
+
+test('three rejected simulator commands cause one simulator substitution and no model fallback', async () => {
+  const pool = loadPool();
+  class RejectedCommandAgent extends RandomEngine {
+    calls = 0;
+
+    override act(): Promise<string> {
+      this.calls += 1;
+      return Promise.resolve(this.calls <= 3 ? 'invalid' : 'forfeit');
+    }
+
+    override decisionStats(): Record<string, number> {
+      return { fallbacks: 0 };
+    }
+  }
+  const rejecting = new RejectedCommandAgent('p1', 1);
+  const outcome = await new SimBattle(
+    pool.format,
+    {
+      p1: { name: 'A-rejected', team: pool.teams[0]!.packed },
+      p2: { name: 'B-deterministic', team: pool.teams[1]!.packed },
+    },
+    [31, 32, 33, 34],
+  ).run({ p1: rejecting, p2: new RandomEngine('p2', 2) });
+
+  assert.equal(rejecting.calls, 4);
+  assert.equal(outcome.winner, 'B-deterministic');
+  assert.deepEqual(outcome.errors, { p1: 3, p2: 0 });
+  assert.deepEqual(outcome.simulatorSubstitutions, { p1: 1, p2: 0 });
+  assert.equal(rejecting.decisionStats().fallbacks, 0);
 });
 
 test('closed sheets strip the open-team-sheet rules while the stock format keeps them', async () => {
@@ -189,6 +221,59 @@ test('recovery restores a timed request to its turn-start clock', () => {
   adapter.end();
 });
 
+test('recovery pause time is not charged to an invalid-choice retry', async () => {
+  const pool = loadPool();
+  const firstChoice = Promise.withResolvers<string>();
+  const firstRequestStarted = Promise.withResolvers<void>();
+  const retryReceived = Promise.withResolvers<void>();
+  let firstTimer: BattleRequest['timer'];
+  let retryTimer: BattleRequest['timer'];
+  class PausedInvalidAgent extends RandomEngine {
+    private calls = 0;
+
+    override act(request: BattleRequest): Promise<string> {
+      this.calls += 1;
+      if (this.calls === 1) {
+        firstTimer = request.timer;
+        firstRequestStarted.resolve();
+        return firstChoice.promise;
+      }
+      retryTimer = request.timer;
+      retryReceived.resolve();
+      return Promise.resolve('forfeit');
+    }
+  }
+  let clock = 1_000;
+  const recovery = new RecoveryGate();
+  const battle = new SimBattle(
+    `${pool.format}@@@!!timermaxfirstturn=60,!!timermaxperturn=60`,
+    {
+      p1: { name: 'A-paused', team: pool.teams[0]!.packed },
+      p2: { name: 'B-deterministic', team: pool.teams[1]!.packed },
+    },
+    [41, 42, 43, 44],
+    undefined,
+    1,
+    () => clock,
+  ).run({ p1: new PausedInvalidAgent('p1', 1), p2: new RandomEngine('p2', 2) }, undefined, undefined, recovery);
+
+  await firstRequestStarted.promise;
+  clock += 4_000;
+  const paused = recovery.pause('fake:paused', { kind: 'rate_limit', summary: 'controlled pause' });
+  clock += 3_600_000;
+  assert.equal(recovery.resume(), true);
+  await paused;
+  clock += 3_000;
+  firstChoice.resolve('invalid');
+  await retryReceived.promise;
+  await battle;
+
+  assert.ok(firstTimer?.seconds !== undefined && firstTimer.turnSeconds !== undefined);
+  assert.ok(retryTimer?.seconds !== undefined && retryTimer.turnSeconds !== undefined);
+  assert.equal(retryTimer.seconds, firstTimer.seconds - 7);
+  assert.equal(retryTimer.turnSeconds, firstTimer.turnSeconds - 7);
+});
+
 test('parseTimerScale accepts multipliers and off, rejects everything else', () => {
   assert.equal(parseTimerScale(undefined), undefined);
   assert.equal(parseTimerScale(''), undefined);
@@ -282,9 +367,41 @@ test('split messages route secrets and buffer incomplete triples', () => {
   routeUpdateLines(['|split|p1', '|secret'], buffered);
   assert.deepEqual(buffered.pendingSplit, ['|split|p1', '|secret']);
   routeUpdateLines(['|public', '|after'], buffered);
+  finishUpdateRouting(buffered);
   assert.deepEqual(buffered.pov.p1, ['|secret', '|after']);
   assert.deepEqual(buffered.pov.p2, ['|public', '|after']);
   assert.deepEqual(buffered.publicLog, ['|public', '|after']);
+});
+
+test('split messages reject an unknown owner without routing either payload', () => {
+  const state = {
+    pov: { p1: [] as string[], p2: [] as string[] },
+    log: [] as string[],
+    publicLog: [] as string[],
+    pendingSplit: [] as string[],
+    winner: null,
+    turns: 0,
+  };
+  assert.throws(() => routeUpdateLines(['|split|p3', '|secret', '|public'], state), /unknown split owner: p3/);
+  assert.deepEqual(state.pov, { p1: [], p2: [] });
+  assert.deepEqual(state.log, []);
+  assert.deepEqual(state.publicLog, []);
+});
+
+test('stream termination rejects an incomplete split triple', () => {
+  const state = {
+    pov: { p1: [] as string[], p2: [] as string[] },
+    log: [] as string[],
+    publicLog: [] as string[],
+    pendingSplit: [] as string[],
+    winner: null,
+    turns: 0,
+  };
+  routeUpdateLines(['|split|p2', '|secret'], state);
+  assert.throws(() => finishUpdateRouting(state), /incomplete split triple \(2 of 3 lines\)/);
+  assert.deepEqual(state.pov, { p1: [], p2: [] });
+  assert.deepEqual(state.log, []);
+  assert.deepEqual(state.publicLog, []);
 });
 
 test('Rotation writes one completed best-of-three record', async (t) => {

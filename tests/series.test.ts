@@ -6,11 +6,11 @@ import path from 'node:path';
 import test from 'node:test';
 
 import type { Bo3Context, RecordedSeriesContext } from '../src/series.js';
-import { gameLuck, playBo3, SINGLE_ELIMINATION_GAME_LIMIT } from '../src/series.js';
+import { chanceEventCounts, playBo3, SINGLE_ELIMINATION_GAME_LIMIT } from '../src/series.js';
 import { showdownCommit } from '../src/showdown.js';
 
-test('game luck tallies chance events per side from the full log', () => {
-  const luck = gameLuck([
+test('chance-event counts retain uninterpreted protocol facts per side', () => {
+  const counts = chanceEventCounts([
     '|move|p2a: Aerodactyl|Rock Slide|p1a: Politoed|[spread] p1a,p1b',
     '|-miss|p2a: Aerodactyl|p1b: Gengar',
     '|-crit|p1a: Politoed',
@@ -20,8 +20,8 @@ test('game luck tallies chance events per side from the full log', () => {
     '|-damage|p1a: Politoed|100/196',
     'garbage line without pipe',
   ]);
-  assert.deepEqual(luck.p1, { misses: 0, crits_taken: 1, flinched_turns: 2, full_paralysis: 0 });
-  assert.deepEqual(luck.p2, { misses: 1, crits_taken: 0, flinched_turns: 0, full_paralysis: 1 });
+  assert.deepEqual(counts.p1, { misses: 0, crits_taken: 1, flinched_turns: 2, full_paralysis: 0 });
+  assert.deepEqual(counts.p2, { misses: 1, crits_taken: 0, flinched_turns: 0, full_paralysis: 1 });
 });
 
 function fakeEngines(): Bo3Context['engines'] {
