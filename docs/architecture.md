@@ -128,62 +128,73 @@ the release gates in [Evaluation plan](evaluation-plan.md).
 
 TypeScript and the pinned Showdown bundle remain the domain and referee layer.
 They validate teams and actions, advance state, reconstruct battles, calculate
-reference rewards, and emit canonical evidence. Python must not duplicate those
-rules.
+reference rewards, and emit canonical evidence. TypeScript itself does not run
+models, and Python must not duplicate its domain rules.
 
-No public verifiers package exists yet. The planned static
-`vgc-positions-v1` package is a thin native-v1 Python `Taskset`: TypeScript
-exports frozen tables; Python strictly parses one action and performs a
-deterministic lookup. It needs no Node service at rollout time.
+Keep three package boundaries distinct:
 
-The later dynamic `vgc-draft-circuit-v1` will be a Python `Env` adapter over the
-same TypeScript referee. Verifiers will own model calls, agents, runtimes,
-traces, evaluation, and training integration; in that adapter it replaces the
-local `LLMEngine` and top-level comparative orchestration, not Showdown, replay,
-or the domain referee. A verifiers `Agent` is neither a Prime Agent nor an RLM
-subagent.
+- The planned public `vgc-positions-v1` package is a static native-v1 Python
+  `Taskset`. TypeScript will export frozen tables; Python will strictly parse one
+  action and perform a deterministic lookup, with no Node service at rollout
+  time. It is not implemented or released.
+- The implemented `vgc-frozen-matchday-v0` package is internal and unpublished.
+  Its native-v1 `Taskset` plus `Env` adapts only the already accepted
+  strict-construction-to-Bo3 matchday slice.
+- The future `vgc-draft-circuit-v1` is a connected multi-seat `Env` spanning the
+  draft, schedule, regular season, playoffs, and a frozen circuit return. Those
+  connections and semantics are absent from the internal matchday package.
 
-The concise target path is:
+In a dynamic adapter, verifiers owns model calls, agents, runtimes, traces, and
+episode control. It replaces the local `LLMEngine` and top-level orchestration,
+not Showdown, replay, or the TypeScript referee. A verifiers `Agent` is neither a
+Prime Agent nor an RLM subagent. The path is:
 
 ```text
 verifiers Env -> provisioned runtime -> versioned JSON-lines referee
                                       -> TypeScript domain -> Pokémon Showdown
 ```
 
-The adapter provisions each role through the verified `Agent.provision(task)`
-boundary and starts the compiled TypeScript referee with
-`Runtime.open_process`. The runtime image must contain Node and the pinned
-bundle. HTTP is only an optional runtime transport; MCP is only for model-facing
-mechanics tools. Local source verification does not substitute for separate
-Docker, Hub, and hosted compatibility smokes.
+The frozen wire tuple is exactly JSONL protocol 1, matchday protocol 2, and
+battle protocol 2. `src/frozen-battle-referee.ts` is the single-game authority.
+`src/frozen-matchday-referee.ts` accepts two strict construction artifacts,
+rejects noncanonical or illegal registrations, and runs up to three seeded
+native Champions games. The registered six stay fixed for the Bo3 while native
+team preview supplies a fresh bring four and lead two each game.
 
-`src/frozen-battle-referee.ts` remains the single-game authority. The
-`src/frozen-matchday-referee.ts` layer accepts two already accepted strict
-construction artifacts, rejects noncanonical or illegal registrations, and
-runs up to three seeded native Champions games. The same registered six are
-used throughout; native team preview supplies a fresh bring-four and lead choice
-each game, and the pinned format supplies forced open team sheets. An explicit
-private notebook replacement is available after each nonterminal game. Replacing
-it does not directly mutate referee or Showdown state or reward; a future adapter
-may reinject it as authorized next-game seat context that can influence later
-submitted actions.
+Matchday-v2 observations have seat-specific top-level `povLines` queues. When a
+game ends, each seat's unread final native POV delta enters its own queue; an
+observation drains only that seat's queue, so one seat cannot consume the
+other's final lines. Snapshot restoration replays completed games, validates
+that each stored completed-game POV cursor was an observable cursor, and checks
+the remaining per-seat queues against valid native suffixes. Nested battle
+observations continue to carry the live game's seat-specific deltas.
 
 `src/frozen-matchday-protocol.ts` and `tools/frozen-matchday-referee.ts` expose
-that matchday as JSON lines over stdio, with a 32 MiB limit per request line. The
-protocol binds `episodeId`, an opaque caller-supplied `conditionDigest`, the
-JSON-lines, matchday, and battle protocol versions, the Showdown SHA, and a
-`configDigest` that commits to the format, game seeds, seat names, and
-construction and team digests. The JSON-lines session is a trusted referee
-interface, not seat authentication. The future adapter will mediate role access;
-snapshots remain sealed referee state and private evidence remains seat-private.
-Snapshots restore the nested native battle and replay completed games to validate
-their terminal evidence. Process tests drive both the single-game and matchday
-binaries over stdio. This slice still does not draft, run a model, compute
-circuit reward, or provide a verifiers package.
+the matchday as JSON lines over stdio. The binding covers `episodeId`, an opaque
+caller-supplied `conditionDigest`, all three protocol versions, the Showdown SHA,
+and a `configDigest` committing to format, game seeds, seats, constructions, and
+teams. The session is a trusted referee interface rather than seat
+authentication; snapshots remain sealed referee state and private evidence stays
+seat-private.
 
-The three named, non-comparable rollout profiles and their isolation rules are
-canonical in [Measurement](measurement.md). None is implemented as a published
-Draft Circuit today.
+The internal Python adapter provisions entrant, opponent, and referee roles with
+three distinct nonempty live runtime IDs and one homogeneous runtime type. It
+forces all roles nontrainable, opens the compiled TypeScript referee in the
+referee role through `Runtime.open_process`, and uses a fresh one-turn
+interaction for every requested action and between-game notebook opportunity.
+Authorized POV history and the referee-retained current notebook are explicitly
+reinserted into each fresh seat prompt; the notebook can mediate later choices
+but never directly changes referee state, legality, RNG, score, or outcome.
+Python produces only matchday traces, joins, and the descriptive terminal
+`matchday_outcome_v0`; it implements no draft, connected circuit, circuit return,
+or training policy.
+
+See the [internal package README](../environments/vgc_frozen_matchday_v0/README.md)
+for its detailed construction, runtime, failure, and evidence contracts. Local
+source and subprocess verification do not establish isolated-image, provider,
+Docker, Hub, hosted, or training support. The three named, non-comparable rollout
+profiles and their isolation rules remain canonical in
+[Measurement](measurement.md).
 
 ## State, evidence, and trust
 

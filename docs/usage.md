@@ -24,6 +24,28 @@ pnpm run update:showdown
 The update command builds and tests the candidate and restores the old revision
 on failure.
 
+## Check the internal matchday package
+
+For internal contributor validation, build and test both the root TypeScript
+fixture at `dist/tests/fixtures/frozen-matchday.js` and the isolated
+`dist-matchday` bundle before entering the Python package workflow. Run these
+commands in order:
+
+```sh
+pnpm test
+pnpm run test:frozen-matchday-package
+pnpm run build:frozen-matchday-package
+```
+
+`pnpm test` builds both required artifacts. The package test requires their
+compiled smoke, and the final command performs a clear wheel build.
+`vgc-frozen-matchday-v0` is an unpublished matchday-only package, not the Draft
+Circuit. These commands test local source and the compiled package suite and
+build its wheel; they do not run a real provider/model, isolated deployment, or
+hosted evaluation. See the
+[package README](../environments/vgc_frozen_matchday_v0/README.md) for its
+package-specific development and runtime contract.
+
 ## Run an experiment
 
 A model spec is `<provider>:<model-id>`; `random` is the legal-action baseline.
@@ -149,10 +171,12 @@ and sample size; they never merge aliases or calculate an aggregate order.
 Within-run standings and brackets remain descriptions of that run.
 
 The GUI **Overview** describes program status. **Position Lab** displays public
-artifacts and gates. **Draft Circuit** currently opens the exploratory draft
-archive, not a runnable environment. The GUI is a viewer: Showdown and the
-versioned offline evaluator remain authorities, and private scores, opponent
-requests, snapshots, and sealed panels are offline-only.
+artifacts and gates. **Draft leagues** currently opens the exploratory draft
+archive; the GUI has no runnable full Draft Circuit. The internal unpublished
+matchday-only package is separate from the GUI and is not a circuit substitute.
+The GUI is a viewer: Showdown and the versioned offline evaluator remain
+authorities, and private scores, opponent requests, snapshots, and sealed panels
+are offline-only.
 
 Decision/context logs record authorized observations and submitted model
 evidence. They do not prove Showdown accepted a transition; join game/referee

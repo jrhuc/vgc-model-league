@@ -17,6 +17,11 @@ boards/sources/
 .claude/settings.local.json
 
 .venv/
+__pycache__/
+*.py[cod]
+environments/vgc_frozen_matchday_v0/.pytest_cache/
+environments/vgc_frozen_matchday_v0/build/
+environments/vgc_frozen_matchday_v0/dist/
 
 .DS_Store
 .idea/

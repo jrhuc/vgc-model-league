@@ -9,7 +9,8 @@ order. [Measurement](measurement.md) defines what their results may mean.
 | --- | --- | --- |
 | `vgc-positions-v1` | one battle choice | TypeScript replay/fork/export prototype exists; Python package and model runner do not |
 | `vgc-whole-reg-build-v0` | one complete team build | internal vertical-slice proposal only |
-| `vgc-draft-circuit-v1` | one shared multi-seat circuit episode | strict-construction-to-Bo3 referee and JSONL bridge exist; draft linkage, reward, and verifiers `Env` do not |
+| `vgc-frozen-matchday-v0` | one strict-construction-to-Bo3 matchday | internal, unpublished matchday-only native-v1 `Taskset` + `Env`; exact `verifiers==0.3.0` local source suite, compiled package suite with the real referee on v0.3 `SubprocessRuntime`, exact local wheel build, and clean Python import/plugin smoke passed; GitHub CI steps are configured and await their first green run; it is not the whole-reg build or Draft Circuit; real provider/model, isolated image, Docker, Prime runtime, Hub, Hosted, and training are unsupported |
+| `vgc-draft-circuit-v1` | one shared multi-seat circuit episode | referee and internal matchday adapter exist; full connected circuit `Env`, draft, schedule, playoffs, and circuit return are absent |
 | local league | exploratory full runs | working |
 
 The public program deliberately separates an inexpensive controlled choice from
@@ -21,9 +22,9 @@ construction and battle interfaces.
 The current branch can replay a game from its format, Showdown revision, seed,
 teams, and actions; refuse mismatched logs; reopen snapshots; enumerate legal
 joint actions; run bounded counterfactual panels; and select seeded stratified
-positions. It does **not** run new models on frozen tasks, provide a verifiers
-package, define a calibrated public reward, or constitute a validated benchmark.
-All `grade-positions` output is exploratory.
+positions. It does **not** provide a public verifiers package, a supported
+real-provider frozen evaluation, a calibrated public reward, or a validated
+benchmark. All `grade-positions` output is exploratory.
 
 ## `vgc-positions-v1`
 
@@ -143,6 +144,27 @@ controller coverage is complete. Public or reconstructed teams are not evidence
 of de novo construction; an official stream without spreads is not an exact
 pack.
 
+## Internal `vgc-frozen-matchday-v0`
+
+This implemented native-v1 `Taskset` plus `Env` is an unpublished control-flow
+adapter for one strict-construction-to-Bo3 matchday. One Episode provisions the
+entrant, opponent, and non-agent referee roles, runs the exact JSONL 1 / matchday
+2 / battle 2 TypeScript protocol, and records a descriptive seat outcome only
+after its within-matchday action and notebook joins are complete. It does not
+construct a whole-regulation team, draft, schedule a season, run playoffs, define
+a circuit return, or implement training.
+
+The exact `verifiers==0.3.0` local source suite, the locally run compiled
+package suite (including the real referee on v0.3 `SubprocessRuntime`), the exact
+local wheel build, and its clean Python import/plugin smoke have passed. The
+GitHub CI workflow and package steps are configured but pending their first
+green GitHub run. Subprocess mode is debug evidence, not role isolation. No
+real provider/model or isolated runtime image has been tested, and Docker,
+Prime runtime, Environment Hub, Hosted Evaluation, Hosted Training, and
+training use remain unsupported. See the [package README](../environments/vgc_frozen_matchday_v0/README.md)
+for the detailed adapter contract and the compatibility table below for the
+canonical support status.
+
 ## `vgc-draft-circuit-v1`
 
 The unit will be one shared multi-seat circuit episode: one contested board and
@@ -172,12 +194,14 @@ causal per-pick credit. Comparisons will counterbalance or mirror boards, seats,
 schedules, battle sides, and seeds, and uncertainty will use the whole circuit
 as its block.
 
-The connected draft, schedule, reward, and native Prime/verifiers `Env` remain
-unimplemented. The strict-construction-to-Bo3 referee and JSONL bridge are the
-existing slice. Comparative rollouts will use one named profile from
-[Measurement](measurement.md), and hosted evaluation will precede training.
-Multi-agent training will remain a self-managed `prime-rl` experiment until its
-role configuration and advantage methods are demonstrated.
+The full connected circuit `Env`, draft, schedule, qualification-dependent
+playoffs, and circuit return remain unimplemented. The
+strict-construction-to-Bo3 referee, JSONL bridge, and internal matchday-only
+adapter are the existing slice; they cannot stand in for a whole circuit.
+Comparative circuit rollouts will use one named profile from
+[Measurement](measurement.md), and an actual hosted evaluation gate will precede
+any training claim. Multi-agent training will remain a self-managed `prime-rl`
+experiment until its role configuration and advantage methods are demonstrated.
 
 ### Draft Circuit release gates
 
@@ -194,11 +218,16 @@ result until all these gates pass:
 7. run enough independent whole-circuit blocks for circuit-level uncertainty;
 8. derive no model rank from a natural standing or championship result.
 
-### Stage-linked trace analysis (planned, unimplemented)
+### Stage-linked trace analysis
 
-A replayable, complete join from each analyzed Prime/verifiers `Trace` to the
-authoritative TypeScript referee evidence is a release gate. Architecture owns
-the [Showdown authority](architecture.md#pokémon-showdown-authority) and
+The internal matchday adapter implements complete joins from action Traces to
+accepted referee actions and from notebook Traces to referee receipts before it
+records an outcome. Draft-to-construction-to-battle joins, their mechanical
+projection, and the connected circuit semantics remain planned and are release
+gates for the Draft Circuit.
+
+Architecture owns the
+[Showdown authority](architecture.md#pokémon-showdown-authority) and
 [state/evidence boundary](architecture.md#state-evidence-and-trust);
 [Measurement](measurement.md#cross-stage-evidence) owns cross-stage evidence and
 [long-horizon interpretation](measurement.md#long-horizon-claims). Mechanical
@@ -224,39 +253,36 @@ Release of any contingency, adaptation, or anticipation claim must pass
 
 ## Verifiers boundary and target architecture
 
-The planned native-v1 packages use `import verifiers.v1 as vf`. Verifiers owns
-task loading, configured agents/harnesses, runtimes, traces, rollout retries,
-evaluation output, episode control, and `prime-rl` integration. In the published
-adapter only, it replaces local provider routing, retries, `LLMEngine`, and
-comparative orchestration. TypeScript and Showdown remain authoritative for
-candidate generation, native action acceptance, state, battle reconstruction, and reward.
+The internal matchday package and planned native-v1 packages use
+`import verifiers.v1 as vf` against exact `verifiers==0.3.0`. Verifiers owns task
+loading, configured agents and harnesses, runtimes, traces, evaluation output,
+and episode control. TypeScript and Showdown remain authoritative for candidate
+generation, native action acceptance, state, battle reconstruction, and domain
+outcomes.
 
-`vgc-positions-v1` is a static `Taskset`. The dynamic Draft Circuit will be an
-`Env` whose control flow is programmed in `Env.run(task, agents)`. Each role is
-provisioned through `Agent.provision(task)`, and its runtime launches the
-versioned JSONL TypeScript referee with `Runtime.open_process`. The image
-must include Node and the compiled pinned bundle. Clients fail closed on
-protocol and every digest implemented by the relevant referee slice. These APIs
-are verified against `verifiers==0.3.0`; Docker, Hub, and hosted compatibility
-remain separate smokes. See [Architecture](architecture.md) for the component
-boundary.
+`vgc-positions-v1` remains a planned static `Taskset`.
+`vgc-frozen-matchday-v0` is an implemented internal matchday-only `Taskset` plus
+`Env`. The future Draft Circuit will be a different connected `Env`; it must add
+draft, schedule, playoff, and circuit-return control flow rather than treating
+the internal matchday as a complete circuit. See
+[Architecture](architecture.md) for the component boundary.
 
-Seats are separate roles, not one policy. Per-role `AgentConfig` keeps reference
-roles non-trainable and gives each competing seat an isolated runtime. The
-measurement profiles and comparison limits are canonical in
-[Measurement](measurement.md).
+Compatibility is evidence, not assumption. This is the current support table for
+`vgc-frozen-matchday-v0`:
 
-Compatibility is evidence, not assumption:
-
-| Path | Evidence required before support is claimed |
+| Path | Current evidence and status |
 | --- | --- |
-| local native-v1 | clean install and small local evaluation |
-| Environment Hub | clean Hub Action for the exact wheel |
-| Hosted Evaluation | actual hosted smoke run |
-| Hosted Training, positions | reward diversity and a small supported-model run |
-| multi-agent training | self-managed `prime-rl` run with the declared baseline |
-
-Publishing a wheel does not grant evaluation credits or imply funding.
+| local source suite | Passed locally against exact `verifiers==0.3.0` |
+| compiled package suite | Passed locally, including the real compiled referee through v0.3 `SubprocessRuntime`; debug-only, with no isolation or provider claim |
+| local wheel build and clean Python smoke | Exact local wheel build plus clean-environment Python import and native plugin registry discovery passed |
+| GitHub CI | Workflow and package steps are configured; pending the first green GitHub run |
+| real provider/model | Not run; unsupported |
+| isolated runtime image | Not built or tested; unsupported |
+| Docker | Not tested; unsupported |
+| Prime runtime | Not tested; unsupported |
+| Environment Hub | Unpublished and not tested; unsupported |
+| Hosted Evaluation | Not tested; unsupported |
+| Hosted Training or other training use | Nontrainable and not tested; unsupported |
 
 ## Work order
 
@@ -266,19 +292,27 @@ Publishing a wheel does not grant evaluation credits or imply funding.
    leakage tests, and a tool-less/null harness.
 3. Run a controlled pilot over one frozen split; publish samples, uncertainty,
    cost, and full configuration rather than a leaderboard alone.
-4. Package the frozen matchday bridge in the runtime image and wrap it in a
-   native-v1 multi-agent `Env` with isolated roles.
-5. Connect the existing draft and strict-construction artifacts to that `Env`,
-   then preregister and freeze the controlled terminal return and failure
+4. Obtain the first green GitHub CI run for the configured Python package
+   suite, wheel build, and clean import/plugin smoke; their exact local
+   equivalents already pass.
+5. Build an isolated runtime image containing the compiled pinned referee, then
+   run the internal matchday package with a real provider and model. Local
+   `SubprocessRuntime` evidence does not pass this gate.
+6. Run separate Docker, Prime runtime, Environment Hub, and Hosted Evaluation
+   smokes for the exact wheel and image. Keep Hosted Training unsupported while
+   the package is matchday-only and nontrainable.
+7. Only after those package gates, connect the existing draft and
+   strict-construction artifacts into a full circuit `Env`, add schedule and
+   playoff flow, and preregister and freeze terminal circuit-return and failure
    semantics before comparison or training.
-6. Export the mechanical stage projection and pass its end-to-end replay and
-   join-completeness gate.
-7. Run the semantic-label pilot and preregistered controlled forks as separate
+8. Export the mechanical draft-to-battle projection and pass its end-to-end
+   replay and join-completeness gate.
+9. Run the semantic-label pilot and preregistered controlled forks as separate
    parallel or later analyses; neither is conditional on the other.
-8. Calibrate the human-control machinery on NAIC Reg M-A and collect Worlds only
-   after the applicable source and rights gates pass.
-9. Add GUI reporting last and only from versioned evaluation outputs; it must not
-   invent scores from natural league games.
+10. Calibrate the human-control machinery on NAIC Reg M-A and collect Worlds only
+    after the applicable source and rights gates pass.
+11. Add GUI reporting last and only from versioned evaluation outputs; it must
+    not invent scores from natural league games.
 
 Do not add another generic Showdown client, copy external baselines, derive a
 natural-corpus ranking, label predictability as exploitability, infer belief or

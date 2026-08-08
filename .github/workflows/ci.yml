@@ -27,6 +27,46 @@ jobs:
           node-version: 24.18.1
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
+      - id: python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: 3.13.15
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9
+        with:
+          version: 0.12.3
+          enable-cache: true
+          cache-dependency-glob: |
+            environments/vgc_frozen_matchday_v0/pyproject.toml
+            environments/vgc_frozen_matchday_v0/uv.lock
       - run: pnpm install --frozen-lockfile
       - run: pnpm run setup:showdown
       - run: pnpm run ci
+      - run: uv sync --locked --group test
+        working-directory: environments/vgc_frozen_matchday_v0
+      - run: uv run --locked --group test pytest
+        working-directory: environments/vgc_frozen_matchday_v0
+        env:
+          VGC_REQUIRE_COMPILED_SMOKE: "1"
+      - run: uv build --clear
+        working-directory: environments/vgc_frozen_matchday_v0
+      - name: Smoke test the clean wheel
+        shell: bash
+        run: |
+          set -euo pipefail
+          wheels=(environments/vgc_frozen_matchday_v0/dist/*.whl)
+          test "${#wheels[@]}" -eq 1
+          clean_venv="${RUNNER_TEMP}/vgc-frozen-matchday-wheel"
+          uv venv --python "${{ steps.python.outputs.python-path }}" "$clean_venv"
+          uv pip install --python "$clean_venv/bin/python" "${wheels[0]}"
+          "$clean_venv/bin/python" - <<'PY'
+          import vgc_frozen_matchday_v0 as package
+          from verifiers import v1 as vf
+          from vgc_frozen_matchday_v0.env import FrozenMatchdayEnvConfig
+          from vgc_frozen_matchday_v0.taskset import FrozenMatchdayTasksetConfig
+
+          module = vf.import_taskset("vgc_frozen_matchday_v0")
+          assert module is package
+          assert vf.taskset_config_type("vgc_frozen_matchday_v0") is FrozenMatchdayTasksetConfig
+          assert vf.environment_class("vgc_frozen_matchday_v0") is package.FrozenMatchdayEnv
+          assert vf.env_config_type("vgc_frozen_matchday_v0") is FrozenMatchdayEnvConfig
+          PY

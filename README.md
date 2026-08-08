@@ -30,9 +30,11 @@ The project separates two questions:
 The working local league already produces exploratory trajectories and the
 TypeScript prototype can replay, fork, and export position panels. No public
 position package, validated benchmark, whole-regulation build comparison, or
-multi-agent Draft Circuit environment has been released. The current artifact
-status and mandatory release gates live in the
-[evaluation plan](docs/evaluation-plan.md).
+connected multi-agent Draft Circuit environment has been released. An
+[internal, unpublished matchday-only adapter](environments/vgc_frozen_matchday_v0/README.md)
+implements the strict-construction-to-Bo3 slice; it is neither the connected
+circuit nor a public benchmark. The current artifact status and mandatory
+release gates live in the [evaluation plan](docs/evaluation-plan.md).
 
 ## Contribution boundary
 
@@ -48,9 +50,10 @@ external baselines rather than copying generic clients or policies. See
 The planned controlled release path uses
 [Prime Intellect verifiers](https://github.com/PrimeIntellect-ai/verifiers).
 For static positions, TypeScript exports frozen public tasks and private value
-tables; a thin Python `Taskset` will parse one choice and look up its score. A
-later dynamic `Env` will drive the same TypeScript/Showdown referee through a
-versioned protocol. Verifiers owns model calls, runtimes, traces, evaluation,
+tables; a thin Python `Taskset` will parse one choice and look up its score. The
+internal matchday-only adapter already drives the strict-construction-to-Bo3
+referee through a versioned protocol; a later dynamic `Env` will connect the
+whole Draft Circuit. Verifiers owns model calls, runtimes, traces, evaluation,
 and training integration; it never becomes the VGC rules or scoring authority.
 
 ## Run locally
@@ -73,6 +76,7 @@ must be reported as such. See [Usage](docs/usage.md) for commands.
 - [Evaluation plan](docs/evaluation-plan.md)
 - [Architecture](docs/architecture.md)
 - [Usage](docs/usage.md)
+- [Internal frozen matchday package](environments/vgc_frozen_matchday_v0/README.md)
 - [Deployment](docs/deployment.md)
 - [Trade window](docs/trade-window.md)
 - [Season review](docs/season-review.md)

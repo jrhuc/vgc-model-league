@@ -51,10 +51,12 @@ Commands:
       [--pool <name>] [--seed <n>] [--concurrency <n>] [--reasoning <level>] [--timer-scale <n|off>]
       [--nitro] [--provenance <disclosed|blind>] [--resume <run-dir>]
       a pool that seeds its teams keeps the real bracket order instead of drawing positions at random
-      --provenance disclosed (default) names the event and both teams' finishes; blind withholds both
-      --resume continues a stopped bracket: finished series stand, the interrupted one replays its
-      recorded games and decisions at no provider cost (models, pool, seed, and provenance come from
-      the run's config, so a seat rewired there plays on under its new spec)
+      --provenance disclosed (default) may name the event and teams; placements/finishes stay withheld
+      blind withholds the event context too
+      --resume continues a stopped bracket: finished series stand; only an eligible interrupted series
+      with matching native requests replays recorded decisions without provider calls. Random-seat,
+      timer-autodefault, and other ineligible cases may restart or continue live (models, pool, seed,
+      and provenance come from the run's config, so a seat rewired there plays on under its new spec)
   draft --models <spec> <spec>...     snake-draft rosters from a board, then a weekly round robin and playoffs
       each coach drafts 10 within a 100-point budget, then picks 6 and builds every set before each match
       [--board <name>] [--seed <n>] [--concurrency <n>] [--reasoning <level>] [--timer-scale <n|off>]
@@ -65,7 +67,8 @@ Commands:
       round-robin series run concurrently with blind teambuilds; --sequential-weeks restores
       week-by-week play (implied by --through-week); --closed-sheets hides opposing team sheets
       the free-agent window defaults to week 3 (or the last week in shorter leagues); pass off for locked rosters
-      (models, board, seed, and trade window come from the run's config on resume)
+      (models, board, and seed come from the run's config; the trade window does too only after season
+      settings were fixed—draft-only resumes choose and fix it when season play begins)
   exhibition --opponent <spec>        host one bo3 where a terminal agent plays a seat over a local bridge
       [--seat p1|p2] [--name <label>] [--pool <name>] [--seed <n>] [--port <n>] [--reasoning <level>]
       [--agent-dir <path>]
@@ -93,9 +96,9 @@ publish needs VGC_LEAGUE_PUBLISH_ORIGIN (or --to) and VGC_LEAGUE_IMPORT_TOKEN, w
 match the token the deployment runs with. It is idempotent: series the deployment already
 holds are reported and skipped.
 
-Without --pool, standings and report cover every pool except the disposable "test" pool
-and keep only rotation rows; pass --pool <name> to inspect everything in one pool.
-Draft, exhibition, and tournament rows record their mode and never rate the rotation ladder.`;
+Without --pool, outcomes and report retain all rows except the disposable "test" pool;
+pass --pool <name> to inspect every row in one pool. All modes remain contextual rows
+and are never aggregated into a ranking.`;
 
 function positiveInteger(name: string, value: string): number {
   const parsed = Number(value);

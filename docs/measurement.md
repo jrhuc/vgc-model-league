@@ -60,14 +60,19 @@ The three named profiles are deliberately non-comparable:
   retaining seat isolation. It is not comparable with either controlled
   profile. A verifiers `Agent` is not a Prime Agent or RLM subagent.
 
-The future matchday adapter will give each seat one bounded full-replacement
-notebook submission after each nonterminal game. Omission will retain that
-seat's current notebook; an empty replacement will clear it. The notebook is
-optional generated evidence, not a hidden belief. Replacing it will have no
-direct effect on the referee, legality, Showdown state, RNG, score, or public
-observations. When the adapter reinjects it, however, it will be authorized
-next-game seat context and may affect later submitted choices. Its elicitation
-and reinjection prompts will be part of the frozen scaffold identity.
+The internal matchday adapter gives each seat one bounded full-replacement
+notebook submission after each nonterminal game. Omission retains that seat's
+current notebook; an empty replacement clears it. Malformed returned notebook
+evidence is diagnosed and treated as omission, with the referee-retained value
+verified; a provider or runtime failure during the notebook interaction instead
+fails the Episode because v0.3 retains the failed Trace. Report diagnosed
+retention and failed Episodes separately.
+
+The notebook is optional generated evidence, not a hidden belief. Replacing it
+has no direct effect on the referee, legality, Showdown state, RNG, score, or
+public observations. The adapter reinjects the retained current value into fresh
+authorized seat prompts, where it may mediate later submitted choices. Its
+elicitation and reinjection prompts are part of the scaffold identity.
 
 Do not rank profiles against one another. Prime Agent capabilities are fine for
 offline development or operator orchestration but may enter a comparative
