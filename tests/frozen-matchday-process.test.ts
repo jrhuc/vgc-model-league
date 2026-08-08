@@ -93,7 +93,7 @@ test('the isolated matchday artifact runs strict construction through a native C
   assert.deepEqual(ready, {
     kind: 'ready',
     protocolVersion: 1,
-    matchdayProtocolVersion: 1,
+    matchdayProtocolVersion: 2,
     battleProtocolVersion: 2,
     showdownRevision: SHOWDOWN_REVISION,
   });
@@ -110,14 +110,29 @@ test('the isolated matchday artifact runs strict construction through a native C
   );
 
   let id = 10;
+  let completedGames = 0;
   for (let step = 0; step < 100; step += 1) {
     const terminal = ok(await referee.call(id++, 'terminal'));
     if (terminal) {
       const evidence = terminal as JsonObject;
-      assert.equal(evidence.protocolVersion, 1);
+      const finalP1 = okObject(await referee.call(id++, 'observe', { pid: 'p1' }));
+      const finalP2 = okObject(await referee.call(id++, 'observe', { pid: 'p2' }));
+      assert.equal(finalP1.phase, 'terminal');
+      assert.equal(finalP2.phase, 'terminal');
+      assert.equal(finalP1.gameNumber, 3);
+      assert.equal(finalP2.gameNumber, 3);
+      assert.equal(finalP1.battle, null);
+      assert.equal(finalP2.battle, null);
+      assert.ok((finalP1.povLines as string[]).some((line) => line.startsWith('|win|')));
+      assert.ok((finalP2.povLines as string[]).some((line) => line.startsWith('|win|')));
+      assert.deepEqual(okObject(await referee.call(id++, 'observe', { pid: 'p1' })).povLines, []);
+      assert.deepEqual(okObject(await referee.call(id++, 'observe', { pid: 'p2' })).povLines, []);
+      assert.equal(evidence.protocolVersion, 2);
       assert.equal(evidence.battleProtocolVersion, 2);
       assert.equal(evidence.showdownRevision, SHOWDOWN_REVISION);
       assert.equal(evidence.format, 'gen9championsvgc2026regmbbo3');
+      assert.equal(Object.hasOwn(evidence, 'povLines'), false);
+      assert.doesNotMatch(JSON.stringify(evidence), /pendingPovLines|completedGamePovCursors|povCursors/);
       assert.ok([2, 3].includes((evidence.games as unknown[]).length));
       assert.equal(referee.stderr.join(''), '');
       return;
@@ -129,13 +144,19 @@ test('the isolated matchday artifact runs strict construction through a native C
     const phase = observations.p1.phase;
     assert.equal(observations.p2.phase, phase);
     if (phase === 'between-games') {
+      completedGames += 1;
+      assert.equal(observations.p1.gameNumber, completedGames + 1);
+      assert.equal(observations.p2.gameNumber, completedGames + 1);
+      assert.ok((observations.p1.povLines as string[]).some((line) => line.startsWith('|win|')));
+      assert.ok((observations.p2.povLines as string[]).some((line) => line.startsWith('|win|')));
       for (const pid of ['p1', 'p2'] as const) {
-        const observation = observations[pid];
+        const consumed = okObject(await referee.call(id++, 'observe', { pid }));
+        assert.deepEqual(consumed.povLines, []);
         okObject(
           await referee.call(id++, 'ready_next_game', {
             pid,
-            expectedRevision: observation.revision,
-            expectedStateHash: observation.stateHash,
+            expectedRevision: consumed.revision,
+            expectedStateHash: consumed.stateHash,
           }),
         );
       }

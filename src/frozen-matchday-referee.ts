@@ -13,7 +13,7 @@ import { loadShowdown, showdownCommit } from './showdown.js';
 import { type TeamBuildSubmissionValidation, validateTeamBuildSubmission } from './teambuild.js';
 import type { Pid } from './types.js';
 
-export const FROZEN_MATCHDAY_REFEREE_PROTOCOL_VERSION = 1 as const;
+export const FROZEN_MATCHDAY_REFEREE_PROTOCOL_VERSION = 2 as const;
 export const FROZEN_MATCHDAY_FORMAT = 'gen9championsvgc2026regmbbo3' as const;
 export const FROZEN_MATCHDAY_NOTEBOOK_LIMIT = 20_000;
 
@@ -49,6 +49,7 @@ export interface FrozenMatchdayObservation {
   score: FrozenMatchdayScore;
   revision: number;
   stateHash: string;
+  povLines: string[];
   battle: FrozenBattleObservation | null;
   terminal: boolean;
 }
@@ -136,7 +137,9 @@ interface FrozenMatchdaySnapshotBody {
   phase: FrozenMatchdayPhase;
   score: FrozenMatchdayScore;
   completedGames: FrozenBattleTerminalEvidence[];
+  completedGamePovCursors: Array<Record<Pid, number>>;
   activeBattle: FrozenBattleSnapshot | null;
+  pendingPovLines: Record<Pid, string[]>;
   ready: Partial<Record<Pid, FrozenReadyState>>;
   notebooks: Record<Pid, string>;
   privateEvidence: Record<Pid, FrozenBetweenGamePrivateRecord[]>;
@@ -357,7 +360,9 @@ export class FrozenMatchdayReferee {
   private revision = 0;
   private score: FrozenMatchdayScore = { p1: 0, p2: 0, ties: 0 };
   private completedGames: FrozenBattleTerminalEvidence[] = [];
+  private completedGamePovCursors: Array<Record<Pid, number>> = [];
   private battle: FrozenBattleReferee | null;
+  private pendingPovLines: Record<Pid, string[]> = { p1: [], p2: [] };
   private ready: Partial<Record<Pid, FrozenReadyState>> = {};
   private notebooks: Record<Pid, string>;
   private privateEvidence: Record<Pid, FrozenBetweenGamePrivateRecord[]> = { p1: [], p2: [] };
@@ -414,15 +419,22 @@ export class FrozenMatchdayReferee {
       throw new FrozenMatchdayRefereeError('snapshot-protocol', 'snapshot revision or game count is invalid');
     }
     const completedGames = structuredClone(snapshot.completedGames);
+    const completedPovValidations: Array<{
+      povLines: Record<Pid, string[]>;
+      observablePovLengths: Record<Pid, Set<number>>;
+    }> = [];
     let completedRevisions = 0;
     let score: FrozenMatchdayScore = { p1: 0, p2: 0, ties: 0 };
     for (const [index, game] of completedGames.entries()) {
       if (matchEnded(score, index)) {
         throw new FrozenMatchdayRefereeError('snapshot-protocol', 'snapshot contains a game after the match ended');
       }
-      completedRevisions += referee.assertCompletedGame(game, index);
+      const validation = referee.assertCompletedGame(game, index);
+      completedRevisions += validation.revision;
+      completedPovValidations.push(validation);
       score = foldScore(completedGames.slice(0, index + 1));
     }
+    referee.assertPendingPovSnapshot(snapshot, completedPovValidations);
     if (JSON.stringify(score) !== JSON.stringify(snapshot.score)) {
       throw new FrozenMatchdayRefereeError('snapshot-protocol', 'snapshot score does not match its games');
     }
@@ -478,7 +490,9 @@ export class FrozenMatchdayReferee {
     referee.phase = snapshot.phase;
     referee.score = score;
     referee.completedGames = completedGames;
+    referee.completedGamePovCursors = structuredClone(snapshot.completedGamePovCursors);
     referee.battle = battle;
+    referee.pendingPovLines = structuredClone(snapshot.pendingPovLines);
     referee.ready = ready;
     referee.notebooks = structuredClone(snapshot.notebooks);
     referee.privateEvidence = structuredClone(snapshot.privateEvidence);
@@ -490,6 +504,8 @@ export class FrozenMatchdayReferee {
 
   observe(pid: Pid): FrozenMatchdayObservation {
     this.requireSeat(pid);
+    const povLines = [...this.pendingPovLines[pid]];
+    this.pendingPovLines[pid] = [];
     return {
       protocolVersion: FROZEN_MATCHDAY_REFEREE_PROTOCOL_VERSION,
       battleProtocolVersion: FROZEN_BATTLE_REFEREE_PROTOCOL_VERSION,
@@ -499,6 +515,7 @@ export class FrozenMatchdayReferee {
       score: copyScore(this.score),
       revision: this.revision,
       stateHash: this.stateHash(),
+      povLines,
       battle: this.phase === 'playing' ? this.requireBattle().observe(pid) : null,
       terminal: this.phase === 'terminal',
     };
@@ -604,7 +621,9 @@ export class FrozenMatchdayReferee {
       phase: this.phase,
       score: copyScore(this.score),
       completedGames: structuredClone(this.completedGames),
+      completedGamePovCursors: structuredClone(this.completedGamePovCursors),
       activeBattle: this.battle?.snapshot() ?? null,
+      pendingPovLines: structuredClone(this.pendingPovLines),
       ready: structuredClone(this.ready),
       notebooks: structuredClone(this.notebooks),
       privateEvidence: structuredClone(this.privateEvidence),
@@ -641,15 +660,18 @@ export class FrozenMatchdayReferee {
   private replayActions(
     actions: ReadonlyArray<FrozenBattleTerminalEvidence['submittedActions'][number]>,
     index: number,
+    onObservableBoundary?: (replay: FrozenBattleReferee) => void,
   ): FrozenBattleReferee {
     const replay = this.newBattle(index);
     try {
+      onObservableBoundary?.(replay);
       for (const action of actions) {
         const state = replay.snapshot();
         if (action.decisionRevision !== state.revision || action.stateHash !== state.stateHash) {
           throw new Error('action provenance is invalid');
         }
-        replay.submit(action.pid, action.command, state.revision, state.stateHash);
+        const result = replay.submit(action.pid, action.command, state.revision, state.stateHash);
+        if (!result.terminal) onObservableBoundary?.(replay);
       }
     } catch (error) {
       throw new FrozenMatchdayRefereeError(
@@ -660,13 +682,95 @@ export class FrozenMatchdayReferee {
     return replay;
   }
 
-  private assertCompletedGame(evidence: FrozenBattleTerminalEvidence, index: number): number {
-    const replay = this.replayActions(evidence.submittedActions, index);
+  private assertCompletedGame(
+    evidence: FrozenBattleTerminalEvidence,
+    index: number,
+  ): {
+    revision: number;
+    povLines: Record<Pid, string[]>;
+    observablePovLengths: Record<Pid, Set<number>>;
+  } {
+    const observablePovLengths: Record<Pid, Set<number>> = { p1: new Set([0]), p2: new Set([0]) };
+    const replay = this.replayActions(evidence.submittedActions, index, (boundary) => {
+      const native = this.nativePovObservation(boundary);
+      observablePovLengths.p1.add(native.lengths.p1);
+      observablePovLengths.p2.add(native.lengths.p2);
+    });
     const reproduced = replay.terminalEvidence();
     if (!reproduced || JSON.stringify(reproduced) !== JSON.stringify(evidence)) {
       throw new FrozenMatchdayRefereeError('snapshot-protocol', `game ${index + 1} does not replay to its evidence`);
     }
-    return replay.snapshot().revision;
+    const terminal = this.nativePovObservation(replay);
+    return {
+      revision: replay.snapshot().revision,
+      povLines: terminal.lines,
+      observablePovLengths,
+    };
+  }
+
+  private nativePovObservation(referee: FrozenBattleReferee): {
+    lines: Record<Pid, string[]>;
+    lengths: Record<Pid, number>;
+  } {
+    const clone = FrozenBattleReferee.restore(structuredClone(referee.snapshot()));
+    const lines = {
+      p1: clone.observe('p1').povLines,
+      p2: clone.observe('p2').povLines,
+    };
+    const observed = clone.snapshot();
+    return { lines, lengths: { ...observed.routing.povCursors } };
+  }
+
+  private assertPendingPovSnapshot(
+    snapshot: FrozenMatchdaySnapshot,
+    completedPovValidations: ReadonlyArray<{
+      povLines: Record<Pid, string[]>;
+      observablePovLengths: Record<Pid, Set<number>>;
+    }>,
+  ): void {
+    const cursors = snapshot.completedGamePovCursors;
+    if (!Array.isArray(cursors) || cursors.length !== completedPovValidations.length) {
+      throw new FrozenMatchdayRefereeError('snapshot-protocol', 'snapshot completed-game POV cursors are invalid');
+    }
+    const terminalDeltas = cursors.map((gameCursors, gameIndex): Record<Pid, string[]> => {
+      if (!gameCursors || JSON.stringify(Object.keys(gameCursors).sort()) !== JSON.stringify(['p1', 'p2'])) {
+        throw new FrozenMatchdayRefereeError('snapshot-protocol', 'snapshot completed-game POV cursors are invalid');
+      }
+      const validation = completedPovValidations[gameIndex]!;
+      for (const pid of ['p1', 'p2'] as const) {
+        const cursor = gameCursors[pid];
+        if (!Number.isSafeInteger(cursor) || !validation.observablePovLengths[pid].has(cursor)) {
+          throw new FrozenMatchdayRefereeError('snapshot-protocol', 'snapshot completed-game POV cursors are invalid');
+        }
+      }
+      return {
+        p1: validation.povLines.p1.slice(gameCursors.p1),
+        p2: validation.povLines.p2.slice(gameCursors.p2),
+      };
+    });
+
+    const pending = snapshot.pendingPovLines;
+    if (!pending || JSON.stringify(Object.keys(pending).sort()) !== JSON.stringify(['p1', 'p2'])) {
+      throw new FrozenMatchdayRefereeError('snapshot-protocol', 'snapshot pending POV queues are invalid');
+    }
+    for (const pid of ['p1', 'p2'] as const) {
+      const lines = pending[pid];
+      if (!Array.isArray(lines) || lines.some((line) => typeof line !== 'string')) {
+        throw new FrozenMatchdayRefereeError('snapshot-protocol', 'snapshot pending POV queues are invalid');
+      }
+      const possible =
+        lines.length === 0 ||
+        terminalDeltas.some(
+          (_game, start) =>
+            JSON.stringify(terminalDeltas.slice(start).flatMap((game) => game[pid])) === JSON.stringify(lines),
+        );
+      if (!possible) {
+        throw new FrozenMatchdayRefereeError(
+          'snapshot-protocol',
+          `snapshot pending POV queue for ${pid} does not match completed native observations`,
+        );
+      }
+    }
   }
 
   private assertActiveBattle(snapshot: FrozenBattleSnapshot, index: number, restored: FrozenBattleReferee): number {
@@ -764,6 +868,13 @@ export class FrozenMatchdayReferee {
   }
 
   private archiveGame(evidence: FrozenBattleTerminalEvidence): void {
+    const battle = this.requireBattle();
+    const terminalSnapshot = battle.snapshot();
+    this.completedGamePovCursors.push({ ...terminalSnapshot.routing.povCursors });
+    for (const pid of ['p1', 'p2'] as const) {
+      const observation = battle.observe(pid);
+      this.pendingPovLines[pid].push(...observation.povLines);
+    }
     this.completedGames.push(structuredClone(evidence));
     this.score = foldScore(this.completedGames);
     this.battle = null;

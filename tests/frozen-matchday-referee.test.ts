@@ -5,6 +5,7 @@ import test from 'node:test';
 import { canonicalJsonDigest } from '../src/eval/serialization.js';
 import { FrozenBattleReferee } from '../src/frozen-battle-referee.js';
 import {
+  FROZEN_MATCHDAY_REFEREE_PROTOCOL_VERSION,
   FrozenMatchdayReferee,
   FrozenMatchdayRefereeError,
   type FrozenMatchdaySubmissionResult,
@@ -98,6 +99,33 @@ function finishGame(referee: FrozenMatchdayReferee): FrozenMatchdaySubmissionRes
   throw new Error('fixture game did not terminate');
 }
 
+function finishGameWithoutObserving(
+  referee: FrozenMatchdayReferee,
+  p2UsesLastAction = false,
+): FrozenMatchdaySubmissionResult {
+  for (let decisions = 0; decisions < 30; decisions += 1) {
+    for (const pid of ['p1', 'p2'] as const) {
+      const legal = referee.legalActions(pid);
+      const selected = pid === 'p2' && p2UsesLastAction ? legal.actions.at(-1) : legal.actions[0];
+      if (!selected) continue;
+      const result = referee.submit(pid, selected.command, legal.revision, legal.stateHash);
+      if (result.phase !== 'playing') return result;
+    }
+  }
+  throw new Error('fixture game did not terminate');
+}
+
+function startNextGameWithoutObserving(
+  referee: FrozenMatchdayReferee,
+  transition: FrozenMatchdaySubmissionResult,
+): FrozenMatchdaySubmissionResult {
+  const first = referee.readyNextGame('p1', {}, transition.revision, transition.stateHash);
+  assert.equal(first.advanced, false);
+  const second = referee.readyNextGame('p2', {}, transition.revision, transition.stateHash);
+  assert.equal(second.advanced, true);
+  return second;
+}
+
 function startNextGame(
   referee: FrozenMatchdayReferee,
   p1: { notebookReplacement?: string } = {},
@@ -118,6 +146,10 @@ function assertMatchdayError(code: FrozenMatchdayRefereeError['code']): (error: 
 test('strict construction starts native Champions open-sheet bring-four preview', () => {
   const referee = new FrozenMatchdayReferee(options());
   const observation = referee.observe('p1');
+  assert.equal(FROZEN_MATCHDAY_REFEREE_PROTOCOL_VERSION, 2);
+  assert.equal(observation.protocolVersion, 2);
+  assert.equal(observation.battleProtocolVersion, 2);
+  assert.equal(referee.snapshot().protocolVersion, 2);
   assert.equal(observation.phase, 'playing');
   assert.equal(observation.gameNumber, 1);
   assert.equal(observation.battle?.request?.teamPreview, true);
@@ -144,6 +176,168 @@ test('strict construction starts native Champions open-sheet bring-four preview'
   }
 });
 
+test('Game 1 final POV is seat isolated, exactly once, and survives interval readiness without both observations', () => {
+  const referee = new FrozenMatchdayReferee(options());
+  const game1 = finishGame(referee);
+  assert.equal(game1.phase, 'between-games');
+  assert.equal(game1.gameNumber, 2);
+
+  const queued = referee.snapshot().pendingPovLines;
+  assert.ok(queued.p1.some((line) => line.startsWith('|win|')));
+  assert.ok(queued.p2.some((line) => line.startsWith('|win|')));
+  const p1Private = queued.p1.find((line) => line.startsWith('|-damage|p1b: Swampert|'));
+  const p2View = queued.p2.find((line) => line.startsWith('|-damage|p1b: Swampert|'));
+  assert.ok(p1Private);
+  assert.ok(p2View);
+  assert.notEqual(p1Private, p2View);
+  assert.ok(!queued.p2.includes(p1Private));
+  assert.ok(!queued.p1.includes(p2View));
+
+  const p1Ready = referee.readyNextGame('p1', { notebookReplacement: 'Game 1 plan' }, game1.revision, game1.stateHash);
+  assert.equal(p1Ready.advanced, false);
+  const p2Ready = referee.readyNextGame('p2', {}, game1.revision, game1.stateHash);
+  assert.equal(p2Ready.advanced, true);
+  assert.equal(p2Ready.gameNumber, 2);
+  assert.deepEqual(
+    referee.seatPrivateEvidence('p1').intervals.map((receipt) => receipt.gameNumber),
+    [1],
+  );
+
+  const p1 = referee.observe('p1');
+  assert.equal(p1.phase, 'playing');
+  assert.equal(p1.gameNumber, 2);
+  assert.deepEqual(p1.povLines, queued.p1);
+  assert.equal(p1.battle?.request?.teamPreview, true);
+  assert.deepEqual(referee.observe('p1').povLines, []);
+  assert.deepEqual(referee.observe('p2').povLines, queued.p2);
+  assert.deepEqual(referee.observe('p2').povLines, []);
+});
+
+test('pending terminal POV queues restore before consumption and remain consumed afterward', () => {
+  const referee = new FrozenMatchdayReferee(options());
+  assert.equal(finishGame(referee).phase, 'between-games');
+  const before = referee.snapshot();
+  const restoredBefore = FrozenMatchdayReferee.restore(structuredClone(before));
+
+  const originalP1 = referee.observe('p1');
+  assert.deepEqual(restoredBefore.observe('p1'), originalP1);
+  assert.deepEqual(restoredBefore.observe('p1').povLines, []);
+  assert.deepEqual(restoredBefore.observe('p2').povLines, before.pendingPovLines.p2);
+
+  const after = referee.snapshot();
+  assert.deepEqual(after.pendingPovLines.p1, []);
+  assert.deepEqual(after.pendingPovLines.p2, before.pendingPovLines.p2);
+  const restoredAfter = FrozenMatchdayReferee.restore(structuredClone(after));
+  assert.deepEqual(restoredAfter.observe('p1').povLines, []);
+  assert.deepEqual(restoredAfter.observe('p2').povLines, before.pendingPovLines.p2);
+
+  const mixedSeats = structuredClone(before);
+  mixedSeats.pendingPovLines.p2 = [...mixedSeats.pendingPovLines.p1];
+  resignSnapshot(mixedSeats);
+  assert.throws(() => FrozenMatchdayReferee.restore(mixedSeats), assertMatchdayError('snapshot-protocol'));
+
+  const shortened = structuredClone(before);
+  shortened.pendingPovLines.p1 = shortened.pendingPovLines.p1.slice(1);
+  resignSnapshot(shortened);
+  assert.throws(() => FrozenMatchdayReferee.restore(shortened), assertMatchdayError('snapshot-protocol'));
+});
+
+test('completed-game POV cursors reject native-impossible terminal and intra-update positions', () => {
+  const referee = new FrozenMatchdayReferee(options());
+  assert.equal(finishGameWithoutObserving(referee).phase, 'between-games');
+  const snapshot = referee.snapshot();
+  assert.deepEqual(snapshot.completedGamePovCursors, [{ p1: 0, p2: 0 }]);
+  assert.equal(snapshot.pendingPovLines.p1.length, 289);
+  assert.match(snapshot.pendingPovLines.p1.at(-1) ?? '', /^\|win\|/);
+  assert.doesNotThrow(() => FrozenMatchdayReferee.restore(structuredClone(snapshot)));
+
+  const insideTerminalUpdate = structuredClone(snapshot);
+  insideTerminalUpdate.completedGamePovCursors[0]!.p1 = 288;
+  insideTerminalUpdate.pendingPovLines.p1 = insideTerminalUpdate.pendingPovLines.p1.slice(288);
+  assert.equal(insideTerminalUpdate.pendingPovLines.p1.length, 1);
+  assert.match(insideTerminalUpdate.pendingPovLines.p1[0]!, /^\|win\|/);
+  resignSnapshot(insideTerminalUpdate);
+  assert.throws(() => FrozenMatchdayReferee.restore(insideTerminalUpdate), assertMatchdayError('snapshot-protocol'));
+
+  const afterTerminalObserve = structuredClone(snapshot);
+  afterTerminalObserve.completedGamePovCursors[0]!.p1 = 289;
+  afterTerminalObserve.pendingPovLines.p1 = [];
+  resignSnapshot(afterTerminalObserve);
+  assert.throws(() => FrozenMatchdayReferee.restore(afterTerminalObserve), assertMatchdayError('snapshot-protocol'));
+});
+
+test('completed-game POV delivery accumulates across games and restores after one-seat consumption', () => {
+  const referee = new FrozenMatchdayReferee(options());
+  const game1 = finishGameWithoutObserving(referee);
+  assert.equal(game1.phase, 'between-games');
+  const game1Lines = structuredClone(referee.snapshot().pendingPovLines);
+  const game2Start = startNextGameWithoutObserving(referee, game1);
+  assert.equal(game2Start.gameNumber, 2);
+  const game2 = finishGameWithoutObserving(referee);
+  assert.equal(game2.phase, 'between-games');
+  assert.equal(game2.gameNumber, 3);
+
+  const accumulated = referee.snapshot();
+  assert.equal(accumulated.completedGames.length, 2);
+  assert.deepEqual(accumulated.completedGamePovCursors, [
+    { p1: 0, p2: 0 },
+    { p1: 0, p2: 0 },
+  ]);
+  assert.ok(accumulated.pendingPovLines.p1.length > game1Lines.p1.length);
+  assert.ok(accumulated.pendingPovLines.p2.length > game1Lines.p2.length);
+  assert.deepEqual(accumulated.pendingPovLines.p1.slice(0, game1Lines.p1.length), game1Lines.p1);
+  assert.deepEqual(accumulated.pendingPovLines.p2.slice(0, game1Lines.p2.length), game1Lines.p2);
+
+  const delivered = referee.observe('p1');
+  assert.deepEqual(delivered.povLines, accumulated.pendingPovLines.p1);
+  assert.equal(delivered.revision, accumulated.revision);
+  assert.equal(delivered.stateHash, accumulated.stateHash);
+  const partiallyDelivered = referee.snapshot();
+  assert.equal(partiallyDelivered.revision, accumulated.revision);
+  assert.equal(partiallyDelivered.stateHash, accumulated.stateHash);
+  assert.notEqual(partiallyDelivered.sha256, accumulated.sha256);
+  assert.deepEqual(partiallyDelivered.pendingPovLines.p1, []);
+  assert.deepEqual(partiallyDelivered.pendingPovLines.p2, accumulated.pendingPovLines.p2);
+
+  const restored = FrozenMatchdayReferee.restore(structuredClone(partiallyDelivered));
+  assert.deepEqual(restored.observe('p1').povLines, []);
+  assert.deepEqual(restored.observe('p2').povLines, accumulated.pendingPovLines.p2);
+});
+
+test('a 2-0 terminal caps outer gameNumber at 3 while final POV is delivered without snapshot state', () => {
+  const referee = new FrozenMatchdayReferee(options());
+  const game1 = finishGameWithoutObserving(referee, true);
+  assert.equal(game1.phase, 'between-games');
+  assert.deepEqual(game1.score, { p1: 1, p2: 0, ties: 0 });
+  startNextGameWithoutObserving(referee, game1);
+  const game2 = finishGameWithoutObserving(referee, true);
+  assert.equal(game2.phase, 'terminal');
+  assert.equal(game2.gameNumber, 3);
+  assert.deepEqual(game2.score, { p1: 2, p2: 0, ties: 0 });
+
+  const p1 = referee.observe('p1');
+  const p2 = referee.observe('p2');
+  assert.equal(p1.gameNumber, 3);
+  assert.equal(p2.gameNumber, 3);
+  assert.ok(p1.povLines.some((line) => line.startsWith('|win|')));
+  assert.ok(p2.povLines.some((line) => line.startsWith('|win|')));
+  const terminal = referee.terminalEvidence();
+  assert.ok(terminal);
+  assert.equal(terminal.protocolVersion, 2);
+  assert.equal(terminal.battleProtocolVersion, 2);
+  assert.equal(terminal.games.length, 2);
+
+  const forbiddenDeliveryKeys = new Set(['pendingPovLines', 'completedGamePovCursors', 'povCursors']);
+  const containsForbiddenDeliveryState = (value: unknown): boolean => {
+    if (!value || typeof value !== 'object') return false;
+    if (Array.isArray(value)) return value.some(containsForbiddenDeliveryState);
+    return Object.entries(value).some(
+      ([key, nested]) => forbiddenDeliveryKeys.has(key) || containsForbiddenDeliveryState(nested),
+    );
+  };
+  assert.equal(containsForbiddenDeliveryState(terminal), false);
+});
+
 test('same registered six start a fresh preview each game through a deterministic Bo3', () => {
   const referee = new FrozenMatchdayReferee(options());
   const game1 = finishGame(referee);
@@ -167,8 +361,21 @@ test('same registered six start a fresh preview each game through a deterministi
   assert.equal(game3Preview.battle?.request?.teamPreview, true);
   const game3 = finishGame(referee);
   assert.equal(game3.phase, 'terminal');
+  const terminalQueues = referee.snapshot().pendingPovLines;
+  const terminalP1 = referee.observe('p1');
+  const terminalP2 = referee.observe('p2');
+  assert.equal(terminalP1.gameNumber, 3);
+  assert.equal(terminalP1.terminal, true);
+  assert.equal(terminalP1.battle, null);
+  assert.deepEqual(terminalP1.povLines, terminalQueues.p1);
+  assert.deepEqual(terminalP2.povLines, terminalQueues.p2);
+  assert.ok(terminalP1.povLines.some((line) => line.startsWith('|win|')));
+  assert.ok(terminalP2.povLines.some((line) => line.startsWith('|win|')));
+  assert.deepEqual(referee.observe('p1').povLines, []);
+  assert.deepEqual(referee.observe('p2').povLines, []);
   const terminal = referee.terminalEvidence();
   assert.ok(terminal);
+  assert.equal(Object.hasOwn(terminal, 'povLines'), false);
   assert.equal(terminal.games.length, 3);
   assert.equal(terminal.result.type, 'win');
   assert.deepEqual(
@@ -231,6 +438,18 @@ test('snapshot restore preserves a private staged acknowledgement and rejects se
   const { sha256: _old, ...body } = tampered;
   tampered.sha256 = canonicalJsonDigest(body);
   assert.throws(() => FrozenMatchdayReferee.restore(tampered), assertMatchdayError('snapshot-protocol'));
+});
+
+test('snapshot restore rejects a re-signed matchday protocol v1 snapshot', () => {
+  const stale = structuredClone(new FrozenMatchdayReferee(options()).snapshot()) as unknown as {
+    protocolVersion: number;
+  };
+  stale.protocolVersion = 1;
+  resignSnapshot(stale as ReturnType<FrozenMatchdayReferee['snapshot']>);
+  assert.throws(
+    () => FrozenMatchdayReferee.restore(stale as ReturnType<FrozenMatchdayReferee['snapshot']>),
+    assertMatchdayError('snapshot-protocol'),
+  );
 });
 
 test('snapshot restore replays active history and rejects impossible outer revisions or terminal active games', () => {
