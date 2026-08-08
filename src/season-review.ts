@@ -5,6 +5,7 @@ import path from 'node:path';
 import { completeWithDexTools } from './dex-lookups.js';
 import type { DraftBoard, DraftBoardMon } from './draft.js';
 import type { DraftPickView, DraftTableRow } from './gui/api.js';
+import { appendJsonlObject, readJsonlObjects } from './jsonl.js';
 import type { ModelReasoningConfig, ReasoningLevel } from './providers.js';
 import {
   classifyProviderFailure,
@@ -258,19 +259,22 @@ function userPrompt(state: SeasonReviewState, entrant: number, outcome: string):
 /** Reviews already written are replayed rather than re-bought, so a resumed league never pays twice for a
  * retrospective whose season is already closed. */
 function replayReviews(file: string): SeasonReview[] {
-  let raw: string;
-  try {
-    raw = fs.readFileSync(file, 'utf8');
-  } catch {
-    return [];
-  }
-  const rows: SeasonReview[] = [];
-  for (const line of raw.split('\n')) {
-    if (!line.trim()) continue;
-    const { timestamp: _timestamp, ...review } = JSON.parse(line) as SeasonReview & { timestamp?: string };
-    rows.push(review as SeasonReview);
-  }
-  return rows;
+  return readJsonlObjects(file).map((row, index) => {
+    const { timestamp, ...review } = row;
+    const valid =
+      Number.isSafeInteger(review.entrant) &&
+      Number(review.entrant) >= 0 &&
+      typeof review.model === 'string' &&
+      typeof review.outcome === 'string' &&
+      typeof review.summary === 'string' &&
+      typeof review.did_well === 'string' &&
+      typeof review.did_poorly === 'string' &&
+      typeof review.would_change === 'string' &&
+      typeof review.fallback === 'boolean' &&
+      (timestamp === undefined || typeof timestamp === 'string');
+    if (!valid) throw new Error(`invalid season review row ${index + 1} in ${file}`);
+    return review as unknown as SeasonReview;
+  });
 }
 
 export async function runSeasonReview(
@@ -388,7 +392,7 @@ export async function runSeasonReview(
         fallback = Boolean(provider);
       }
       const review: SeasonReview = { entrant, model, outcome, ...parsed, fallback };
-      fs.appendFileSync(transcript, `${JSON.stringify({ ...review, timestamp: new Date().toISOString() })}\n`, 'utf8');
+      appendJsonlObject(transcript, { ...review, timestamp: new Date().toISOString() });
       options.onReview?.(review);
       return review;
     },

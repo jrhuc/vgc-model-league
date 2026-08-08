@@ -5,6 +5,7 @@ import { isDeepStrictEqual } from 'node:util';
 import type { AgentContextEvent, AgentContextKind } from './agent-context.js';
 import type { DecisionLog, GameEnd, GameStart } from './battle-agent.js';
 import { RandomEngine } from './battle-agent.js';
+import { appendJsonlObject, readJsonlObjects } from './jsonl.js';
 import { LLMEngine } from './llm-engine.js';
 import { REPO_ROOT } from './paths.js';
 import type { ModelReasoningConfig, ReasoningLevel } from './providers.js';
@@ -638,6 +639,27 @@ interface StoredDecisionBranch {
   activeRowIndexes: Record<Pid, number[]>;
 }
 
+const ATTEMPT_KINDS = new Set(['attempt_started', 'attempt_superseded', 'attempt_completed', 'attempt_aborted']);
+
+function attemptLedgerRows(file: string): JsonObject[] {
+  return readJsonlObjects(file).map((row, index) => {
+    const valid =
+      row.schema_version === 1 &&
+      typeof row.timestamp === 'string' &&
+      typeof row.attempt_id === 'string' &&
+      typeof row.series_id === 'string' &&
+      Number.isSafeInteger(row.adopted_completed_games) &&
+      Number(row.adopted_completed_games) >= 0 &&
+      typeof row.kind === 'string' &&
+      ATTEMPT_KINDS.has(row.kind) &&
+      typeof row.context_heads === 'object' &&
+      row.context_heads !== null &&
+      !Array.isArray(row.context_heads);
+    if (!valid) throw new Error(`invalid series attempt row ${index + 1}`);
+    return row;
+  });
+}
+
 function emptyDecisionFileHead(): DecisionFileHead {
   return {
     nonempty_row_count: 0,
@@ -647,26 +669,9 @@ function emptyDecisionFileHead(): DecisionFileHead {
 }
 
 function latestDecisionBranch(seriesDir: string, seriesId: string): StoredDecisionBranch | undefined {
-  let raw: string;
-  try {
-    raw = fs.readFileSync(path.join(seriesDir, 'series-attempts.jsonl'), 'utf8');
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
-    throw error;
-  }
   let latest: StoredDecisionBranch | undefined;
-  for (const [index, line] of raw.split('\n').entries()) {
-    if (!line) continue;
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(line) as unknown;
-    } catch (error) {
-      throw new Error(`invalid series attempt row ${index + 1}`, { cause: error });
-    }
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed))
-      throw new Error(`invalid series attempt row ${index + 1}`);
-    const row = parsed as JsonObject;
-    if (row.kind !== 'attempt_started' || row.series_id !== seriesId || typeof row.attempt_id !== 'string') continue;
+  for (const [index, row] of attemptLedgerRows(path.join(seriesDir, 'series-attempts.jsonl')).entries()) {
+    if (row.kind !== 'attempt_started' || row.series_id !== seriesId) continue;
     const projection = row.decision_projection;
     if (!projection || typeof projection !== 'object' || Array.isArray(projection)) continue;
     const indexes = Object.fromEntries(
@@ -680,7 +685,7 @@ function latestDecisionBranch(seriesDir: string, seriesId: string): StoredDecisi
         return [pid, active.map(Number)];
       }),
     ) as Record<Pid, number[]>;
-    latest = { attemptId: row.attempt_id, activeRowIndexes: indexes };
+    latest = { attemptId: row.attempt_id as string, activeRowIndexes: indexes };
   }
   return latest;
 }
@@ -748,50 +753,24 @@ function attemptLedgerPath(seriesDir: string): string {
 
 function appendAttemptRecord(seriesDir: string, record: JsonObject): void {
   const file = attemptLedgerPath(seriesDir);
-  let existing: Buffer;
-  try {
-    existing = fs.readFileSync(file);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-    existing = Buffer.alloc(0);
-  }
-  if (existing.length > 0 && existing.at(-1) !== 0x0a) throw new Error('invalid unterminated series attempt ledger');
-  fs.appendFileSync(file, `${JSON.stringify(record)}\n`, 'utf8');
+  attemptLedgerRows(file);
+  appendJsonlObject(file, record);
 }
 
 function incompleteAttempts(seriesDir: string, seriesId: string): IncompleteAttempt[] {
-  const file = attemptLedgerPath(seriesDir);
-  let raw: string;
-  try {
-    raw = fs.readFileSync(file, 'utf8');
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
-    throw error;
-  }
   const started = new Map<string, IncompleteAttempt>();
   const terminal = new Set<string>();
-  for (const [index, line] of raw.split('\n').entries()) {
-    if (!line) continue;
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(line) as unknown;
-    } catch (error) {
-      throw new Error(`invalid series attempt row ${index + 1}`, { cause: error });
-    }
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed))
-      throw new Error(`invalid series attempt row ${index + 1}`);
-    const row = parsed as JsonObject;
-    if (row.series_id !== seriesId || typeof row.attempt_id !== 'string') continue;
+  for (const [index, row] of attemptLedgerRows(attemptLedgerPath(seriesDir)).entries()) {
+    if (row.series_id !== seriesId) continue;
+    const attemptId = row.attempt_id as string;
     if (row.kind === 'attempt_started') {
-      const contextHeads = row.context_heads;
-      if (!contextHeads || typeof contextHeads !== 'object' || Array.isArray(contextHeads))
-        throw new Error(`invalid series attempt row ${index + 1}`);
-      const startHeads = (contextHeads as JsonObject).start;
+      const contextHeads = row.context_heads as JsonObject;
+      const startHeads = contextHeads.start;
       if (!startHeads || typeof startHeads !== 'object' || Array.isArray(startHeads))
         throw new Error(`invalid series attempt row ${index + 1}`);
-      started.set(row.attempt_id, {
-        attemptId: row.attempt_id,
-        adoptedCompletedGames: Number(row.adopted_completed_games) || 0,
+      started.set(attemptId, {
+        attemptId,
+        adoptedCompletedGames: Number(row.adopted_completed_games),
         contextStartHeads: startHeads as ContextLedgerHeads,
       });
     } else if (
@@ -799,7 +778,7 @@ function incompleteAttempts(seriesDir: string, seriesId: string): IncompleteAtte
       row.kind === 'attempt_aborted' ||
       row.kind === 'attempt_superseded'
     ) {
-      terminal.add(row.attempt_id);
+      terminal.add(attemptId);
     }
   }
   return [...started.values()]

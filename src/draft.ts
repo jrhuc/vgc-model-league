@@ -5,6 +5,7 @@ import path from 'node:path';
 import { boardRow, createBoardSearch } from './board-search.js';
 import { completeWithDexTools } from './dex-lookups.js';
 import type { BoardInfo, DraftBoardMonView, DraftPickView } from './gui/api.js';
+import { appendJsonlObject, readJsonlObjects } from './jsonl.js';
 import { BOARDS_DIR, defaultPsDir } from './paths.js';
 import type { ModelReasoningConfig, ReasoningLevel } from './providers.js';
 import {
@@ -353,16 +354,7 @@ function replayTranscript(
     onPick?: (view: DraftPickView, state: DraftState) => void;
   },
 ): number {
-  let raw: string;
-  try {
-    raw = fs.readFileSync(file, 'utf8');
-  } catch {
-    return 0;
-  }
-  const rows = raw
-    .split('\n')
-    .filter((line) => line.trim())
-    .map((line) => JSON.parse(line) as Record<string, unknown>);
+  const rows = readJsonlObjects(file) as Record<string, unknown>[];
   for (const [index, row] of rows.entries()) {
     const drafter = context.order[index];
     if (drafter === undefined) throw new Error(`${file} holds more picks than the draft has slots`);
@@ -916,24 +908,20 @@ export async function runDraft(models: string[], board: DraftBoard, options: Run
       fallback,
     };
     picks.push(view);
-    fs.appendFileSync(
-      transcript,
-      `${JSON.stringify({
-        pick: pickNumber + 1,
-        model: models[drafter],
-        mon: chosen.id,
-        name: chosen.name,
-        cost: chosen.cost,
-        budget_left: state.budgets[drafter],
-        action: { pick: chosen.id },
-        rationale: reasoning,
-        evidence_supplied: evidenceSuppliedRecord(evidence),
-        ...(evidence.supplied.notebookUpdate || notebooks[drafter] ? { notebook: notebooks[drafter] } : {}),
-        fallback,
-        timestamp: new Date().toISOString(),
-      })}\n`,
-      'utf8',
-    );
+    appendJsonlObject(transcript, {
+      pick: pickNumber + 1,
+      model: models[drafter],
+      mon: chosen.id,
+      name: chosen.name,
+      cost: chosen.cost,
+      budget_left: state.budgets[drafter],
+      action: { pick: chosen.id },
+      rationale: reasoning,
+      evidence_supplied: evidenceSuppliedRecord(evidence),
+      ...(evidence.supplied.notebookUpdate || notebooks[drafter] ? { notebook: notebooks[drafter] } : {}),
+      fallback,
+      timestamp: new Date().toISOString(),
+    });
     options.onPick?.(view, state);
   }
 

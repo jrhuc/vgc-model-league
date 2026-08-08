@@ -1118,7 +1118,7 @@ test('a resumed draft replays its transcript and continues from the next pick', 
   ];
   fs.writeFileSync(
     path.join(logDir, 'draft.jsonl'),
-    `${stored.map((row) => JSON.stringify(row)).join('\n')}\n`,
+    `${stored.map((row) => JSON.stringify(row)).join('\n')}\n{"pick":`,
     'utf8',
   );
   let calls = 0;
@@ -2153,23 +2153,31 @@ test('season reviews are written once per coach and replayed on resume', async (
     did_poorly: 'The mega slot was idle.',
     would_change: 'Buy the backup mega.',
   });
+  const reviewOptions = {
+    runDir: directory,
+    psDir: defaultPsDir(),
+    makeReviewProvider: (spec: string) => ({
+      complete(system: string, messages: ProviderMessage[]): Promise<Completion> {
+        prompts.set(spec, `${system}\n${messages[0]?.content ?? ''}`);
+        return Promise.resolve({ text: reply, usage: {}, toolCalls: [] });
+      },
+    }),
+  };
+  const initial = await runSeasonReview([{ entrant: 1, outcome: 'You missed the playoffs.' }], state, reviewOptions);
+  assert.deepEqual(
+    initial.map((review) => review.entrant),
+    [1],
+  );
+  fs.appendFileSync(path.join(directory, 'season.jsonl'), '{"entrant":');
   const reviews = await runSeasonReview(
     [
       { entrant: 1, outcome: 'You missed the playoffs.' },
       { entrant: 0, outcome: 'You won the final.' },
     ],
     state,
-    {
-      runDir: directory,
-      psDir: defaultPsDir(),
-      makeReviewProvider: (spec) => ({
-        complete(system: string, messages: ProviderMessage[]): Promise<Completion> {
-          prompts.set(spec, `${system}\n${messages[0]?.content ?? ''}`);
-          return Promise.resolve({ text: reply, usage: {}, toolCalls: [] });
-        },
-      }),
-    },
+    reviewOptions,
   );
+
   assert.deepEqual(
     reviews.map((review) => review.entrant),
     [1, 0],

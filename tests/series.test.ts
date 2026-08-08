@@ -514,7 +514,7 @@ test('a resumed attempt supersedes a crashed attempt and completes under one sta
       series_id: seriesId,
       adopted_completed_games: 1,
       context_heads: { start: { p1: emptyHead, p2: emptyHead }, end: { p1: emptyHead, p2: emptyHead } },
-    })}\n`,
+    })}\n{"kind":`,
   );
 
   await playRecordedSeries(options);
