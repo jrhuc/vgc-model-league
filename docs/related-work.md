@@ -1,8 +1,9 @@
 # Related work
 
-This page scopes the contribution and identifies components to reuse. It was
-reviewed against the linked papers and repositories in August 2026. “To our
-knowledge” claims are limited to this comparison set.
+This page scopes the contribution and identifies components to reuse. Its public
+comparison set is the papers, repositories, and services named and linked below,
+reviewed in August 2026. “We did not identify” and “to our knowledge” claims are
+limited to that dated set.
 
 ## Pokémon battle environments and benchmarks
 
@@ -26,27 +27,56 @@ authoritative and `Battle.toJSON/fromJSON` can produce matched restorable forks.
 That is an implementation boundary, not a claim that client-based projects could
 not add equivalent state access.
 
+A proposed official-event control pipeline would preserve source provenance and
+rights, use two independent annotations of public Top 8 broadcasts with
+missingness, distinguish `public-transition-reproduced` from
+`counterfactual-fork eligible`, and freeze identity-stripped tasks before
+outcome joins. Source actions and consented human entrants would remain
+contextual controls; [Human controls](human-controls.md) specifies the planned
+admission and release gates.
+
 ## Cross-stage Pokémon systems
 
 The stages above battle are also not empty prior art.
 
+- At the pinned revision, Pokémon Showdown's
+  [formats](https://github.com/smogon/pokemon-showdown/blob/6a1836dd71c0718e923206f3d089e61074410868/config/formats.ts)
+  include Champions Draft legality formats and VGC team preview/Bo3;
+  [BestOfGame](https://github.com/smogon/pokemon-showdown/blob/6a1836dd71c0718e923206f3d089e61074410868/server/room-battle-bestof.ts)
+  manages the set's games and between-game readiness interval. Those formats do
+  not provide persistent exclusive budget roster allocation, trades, or
+  roster-bound construction.
+- As reviewed in August 2026, [DraftDex](https://draftdex.net/)'s public site
+  described shared drafts and budgets, transactions, matchup planning, results,
+  standings, playoffs, and replay links. Its
+  [terms](https://draftdex.net/terms) state that it does not host or simulate
+  gameplay.
 - The [VGC AI Competition framework](https://doi.org/10.1109/CoG52621.2021.9618985)
-  ([code](https://gitlab.com/DracoStriker/pokemon-vgc-engine)) connects team
-  selection, team construction, battle, and metagame balance in a simplified
-  Pokémon engine. Its
+  ([code](https://gitlab.com/DracoStriker/pokemon-vgc-engine)) connects simplified
+  team selection and construction to battle. Its
   [follow-on work](https://doi.org/10.1109/TG.2023.3273157) studies automated team
-  construction.
-- [A Multi-Agent Pokémon Tournament for Evaluating Strategic Reasoning of
-  LLMs](https://arxiv.org/abs/2508.01623) asks models to select teams from a
-  shared pool, explain choices, battle in a simplified singles simulator, and
-  analyzes reasoning/action alignment. Its pool is not an exclusive budgeted
-  draft, but team-selection-to-battle LLM evaluation is prior art.
+  construction; that construction-to-battle combination is prior art.
+- [*A Multi-Agent Pokemon Tournament for Evaluating Strategic Reasoning of
+  Large Language Models*](https://arxiv.org/abs/2508.01623) (LLM Pokémon League):
+  each agent independently selects six Pokémon from the same curated pool and
+  provides a rationale before battling in a simplified single-elimination
+  bracket. It is not an exclusive, persistent Showdown VGC circuit.
 
-The pivot is therefore the protocol combination: a contested public budgeted
-draft and trade season, legal VGC doubles construction, bring and lead choices,
-played battles, and explicit links from plans to later actions. The battle layer
-reuses Showdown and compatible external baselines rather than claiming another
-general Pokémon environment.
+In that August 2026 named public comparison set, we did not identify an
+environment combining the intended circuit's contested exclusive budget draft
+to ten; public later-opponent and playoff context; matchup-specific six-from-ten
+construction; same-six, seeded Reg M-B Bo3 play with fresh bring and lead choices
+before each game; authorized between-game context; and a regular season followed
+by playoffs for qualified seats. Optional transactions may be included, but are
+not required to distinguish the first slice. This is a bounded comparison, not
+an exhaustive priority claim.
+
+Only later actions accepted by Showdown would be simulator-authoritative; the
+context itself would not be. Mechanical roster-membership and accepted-transition
+joins are distinct from audited semantic plan fidelity. The current battle layer
+uses Showdown, while compatible external baselines are planned. The connected
+circuit remains an intended target, not current behavior; see [program
+status](evaluation-plan.md#program-status).
 
 ## Standalone construction ablation
 
@@ -54,13 +84,15 @@ general Pokémon environment.
 claim. Automated team construction is prior art; the arm is useful because it
 removes drafting while exercising the same `TeamBuildTask`, `StageEvidence`,
 Showdown, preview-controller, battle-controller, and evidence path needed by the
-flagship circuit. It adds no separate reflection scaffold.
+planned connected circuit. It adds no separate reflection scaffold.
 
-Public teams may be memorized. A current human reference requires licensed exact
-packs with provenance; an official stream that omits exact spreads is evidence
-of a team concept, not an exact pack. Until frozen disjoint opponent and human
-suites and the complete controller cross-product exist, the arm supports only
-vertical-slice engineering, not a public Regulation MB comparison or ranking.
+Public teams may be memorized. Any human-build comparison would require licensed
+exact packs with provenance and would be a descriptive contextual control, not
+an optimality threshold; an official stream that omits exact spreads is
+evidence of a team concept, not an exact pack. Until frozen disjoint opponent
+and human suites and the complete controller cross-product exist, the
+arm supports only vertical-slice engineering, not a public Reg M-B comparison or
+ranking.
 
 ## Drafting, seasons, and negotiation outside Pokémon
 
@@ -112,21 +144,30 @@ provides tasksets, harnesses, runtimes, traces, judges, multi-agent `Env` contro
 flow, evaluation, and `prime-rl` integration. Its native package is the planned
 controlled evaluation path for the static positions and later circuit; the local
 league remains trajectory generation and inspection. This infrastructure is
-adopted, not claimed as a repository contribution. Harbor and NeMo adapters are
-added only if a real consumer cannot use the native verifiers package.
+adopted, not claimed as a repository contribution. Native Prime/verifiers is the
+target stack; Harbor and NeMo packaging is outside this plan.
+
+LangChain’s [*Towards Automating Eval
+Engineering*](https://www.langchain.com/blog/towards-automating-eval-engineering)
+describes human review of traces and promotion of observed failure modes into
+controlled tasks. Planned VGC analysis applies those steps to native
+Prime/verifiers artifacts.
 
 ## Claim boundary
 
-The intended contribution, once implemented and validated, is the combined
-circuit: a shared budgeted multi-agent draft and trade season carried through
-legal VGC construction, bring, lead, played battle, and auditable
-plan-to-execution links. The static position package is its controlled native
-evaluation artifact, not a claim to invent battle environments or simulator
-action values. This is a target claim, not a claim about the current branch.
+The intended contribution, once implemented and validated, is persistent
+league-state-to-battle protocol integration and linked upstream/downstream
+evidence: a contested exclusive budget draft and optional transactions carried
+through legal VGC construction, bring, lead, played regular-season matches,
+playoffs for qualified seats, and auditable plan-to-execution links. The static
+position package is its controlled native evaluation artifact, not a claim to
+invent battle environments or simulator action values. This is a target claim,
+not a claim about the current branch.
 
 The narrower pieces are not claimed as novel: Pokémon agents, doubles
-multi-agent play, teambuilding, team preview, simulator search, draft mechanisms,
-negotiation, reasoning logs, ratings, or multi-agent RL infrastructure. The work
-complements poke-env and VGC-Bench by reusing their applicable baselines and
-battle artifacts while evaluating the linked circuit they do not implement; it
-makes no priority claim over those projects.
+multi-agent play, draft formats or mechanisms, construction, team preview, Bo3,
+negotiation, simulator search, reasoning logs, ratings, league management, or
+multi-agent RL infrastructure. The planned circuit is intended to complement
+poke-env, VGC-Bench, and the other prior work above through compatible baselines
+and battle artifacts. The circuit is not implemented and makes no priority claim
+over those projects.

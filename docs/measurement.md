@@ -61,11 +61,13 @@ The three named profiles are deliberately non-comparable:
   profile. A verifiers `Agent` is not a Prime Agent or RLM subagent.
 
 The future matchday adapter will give each seat one bounded full-replacement
-notebook submission after each nonterminal game. Omission retains that seat's
-current notebook; an empty replacement clears it. The notebook is optional
-noncausal evidence: it cannot change legality, Showdown state, RNG, score, or
-public observations. Its elicitation and reinjection prompts are part of the
-frozen scaffold identity.
+notebook submission after each nonterminal game. Omission will retain that
+seat's current notebook; an empty replacement will clear it. The notebook is
+optional generated evidence, not a hidden belief. Replacing it will have no
+direct effect on the referee, legality, Showdown state, RNG, score, or public
+observations. When the adapter reinjects it, however, it will be authorized
+next-game seat context and may affect later submitted choices. Its elicitation
+and reinjection prompts will be part of the frozen scaffold identity.
 
 Do not rank profiles against one another. Prime Agent capabilities are fine for
 offline development or operator orchestration but may enter a comparative
@@ -153,19 +155,51 @@ only with a verified complete manifest. Candidate artifacts remain
 
 Temporal adjacency is not causality. A submitted action is not an accepted
 transition; join seat logs to referee evidence for legality, repair,
-substitution, or outcome claims. Deterministic measures include:
+substitution, or outcome claims. Deterministic mechanical measures include:
 
 - drafted-to-built and built-to-brought membership;
 - declared versus submitted bring;
-- whether a named canonical move/interaction occurred;
+- whether a named canonical move or interaction occurred;
 - legality, repair, and substitution rates.
 
-Semantic plan fidelity or review quality requires a written observable rubric,
+Mechanical links and audited semantic statement consistency are separate
+evidence products. Semantic analysis requires a written observable rubric,
 identity-stripped traces, multiple blinded labels, agreement estimates, and
-periodic human audit. Report not-applicable separately and divide rates by
-eligible opportunities. Requiring a rationale changes the task, so compare only
-runs with the same requirement.
+periodic human audit. Human- or LLM-produced labels are diagnostic only and
+never affect task inclusion, legality, action acceptance, seat context, reward,
+`Env.finalize`, or training. Report not-applicable separately and divide rates
+by eligible opportunities. Requiring a rationale changes the task, so compare
+only runs with the same requirement.
+
+Recorded human choices are reference actions, not answer keys. Analyze action
+agreement separately from the paired reference-value difference between the
+human and model actions on the identical frozen action-value matrix. Use the
+already canonical term **reference-relative opportunity loss** for the
+value-derived loss; do not introduce a new `R`-relative term. Join event outcomes
+only after position selection and scoring are frozen. Outcomes are context, not
+optimality evidence.
 
 When recreating a real event, preserve its rules and data vintage and disclose
 deviations. Open team sheets, for example, do not reveal hidden stat points; a
 reconstruction must state where exact spreads came from.
+
+### Long-horizon claims
+
+Keep three claims distinct:
+
+1. **Episode linkage** establishes replay and join completeness. It does not by
+   itself establish behavioral adaptation or benefit.
+2. **Behavioral responsiveness or adaptation** requires a randomized or
+   counterbalanced condition assignment, or a disclosed observational context,
+   plus a preregistered action contrast.
+3. **Beneficial or causal anticipation** requires a crossed intervention or fork
+   over the future condition and the upstream choice or policy, with fixed
+   downstream controllers and common draws. It also requires placebo and
+   cross-phase controls, uncertainty clustered by whole-circuit block, and
+   replication across circuit blocks.
+
+An endogenous model choice × condition association is not causal. Changes to a
+public schedule may create whole-circuit interference. Wins, standings, and plan
+prose are insufficient for any of these stronger claims. A backup Mega is only
+an example of a preregistered diagnostic motif, not required behavior or evidence
+by itself.

@@ -76,4 +76,6 @@ must be reported as such. See [Usage](docs/usage.md) for commands.
 - [Deployment](docs/deployment.md)
 - [Trade window](docs/trade-window.md)
 - [Season review](docs/season-review.md)
+- [Human controls](docs/human-controls.md) (planned official-event source,
+  reconstruction, and release protocol)
 - [Related work](docs/related-work.md)

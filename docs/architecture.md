@@ -163,7 +163,10 @@ construction artifacts, rejects noncanonical or illegal registrations, and
 runs up to three seeded native Champions games. The same registered six are
 used throughout; native team preview supplies a fresh bring-four and lead choice
 each game, and the pinned format supplies forced open team sheets. An explicit
-private notebook replacement is available between games as evidence only.
+private notebook replacement is available after each nonterminal game. Replacing
+it does not directly mutate referee or Showdown state or reward; a future adapter
+may reinject it as authorized next-game seat context that can influence later
+submitted actions.
 
 `src/frozen-matchday-protocol.ts` and `tools/frozen-matchday-referee.ts` expose
 that matchday as JSON lines over stdio, with a 32 MiB limit per request line. The

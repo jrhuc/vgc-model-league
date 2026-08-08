@@ -9,12 +9,12 @@ order. [Measurement](measurement.md) defines what their results may mean.
 | --- | --- | --- |
 | `vgc-positions-v1` | one battle choice | TypeScript replay/fork/export prototype exists; Python package and model runner do not |
 | `vgc-whole-reg-build-v0` | one complete team build | internal vertical-slice proposal only |
-| `vgc-draft-circuit-v1` | draft through played matches | strict-construction-to-Bo3 referee and JSONL bridge exist; draft linkage, reward, and verifiers `Env` do not |
+| `vgc-draft-circuit-v1` | one shared multi-seat circuit episode | strict-construction-to-Bo3 referee and JSONL bridge exist; draft linkage, reward, and verifiers `Env` do not |
 | local league | exploratory full runs | working |
 
 The public program deliberately separates an inexpensive controlled choice from
-the delayed draft-to-battle problem. Positions come first. The eventual flagship
-is the connected Draft Circuit, not a draft-only task with an invented roster
+the delayed draft-to-battle problem. Positions come first. The connected Draft
+Circuit is the long-horizon target, not a draft-only task with an invented roster
 reward. The whole-regulation build arm is only an internal exercise of shared
 construction and battle interfaces.
 
@@ -124,7 +124,7 @@ packaging, or hosted gates by itself.
 ## Internal `vgc-whole-reg-build-v0`
 
 This proposed ablation removes drafting and asks for exactly one complete legal
-Regulation MB team of six. It must reuse the Draft Circuit's `TeamBuildTask`,
+Regulation M-B team of six. It must reuse the Draft Circuit's `TeamBuildTask`,
 `StageEvidence`, Showdown validation, preview adapter, battle adapter, and
 evidence schema. It adds no separate builder, repair/default path, or reflection.
 An invalid or incomplete comparative build remains invalid.
@@ -137,7 +137,7 @@ cells; uncertainty clusters by build episode. Meta-judges may label diagnostic
 style or failure modes but never determine reward or inclusion.
 
 Build only the vertical slice needed to verify the shared contracts. Do not
-publish a Regulation MB comparison until exact current human packs have usable
+publish a Regulation M-B comparison until exact current human packs have usable
 licences and provenance, opponent and human suites are frozen and disjoint, and
 controller coverage is complete. Public or reconstructed teams are not evidence
 of de novo construction; an official stream without spreads is not an exact
@@ -145,36 +145,82 @@ pack.
 
 ## `vgc-draft-circuit-v1`
 
-A legal draft pick has no cheap quality oracle. The proposed environment must
-therefore keep the delayed episode intact:
+The unit will be one shared multi-seat circuit episode: one contested board and
+draft, the complete public schedule and regular season, and
+qualification-dependent playoffs across all seats. Replication and statistical
+blocking will use the whole circuit, never a pick, draft turn, battle game, or
+seat. Draft-only execution may smoke test control flow or gather traces, but it
+will not support roster-quality claims.
 
-1. anonymous seats draft one shared board in snake order under a budget;
-2. each seat converts its roster into complete legal matchup teams;
-3. seats choose bring and lead;
-4. teams play recorded battles;
-5. terminal battle/season return attaches to the episode without pretending to
-   be a causal per-pick label.
+The full-circuit environment will make the public schedule and playoff format
+available to each seat. A private notebook channel will be available after each
+nonterminal game for possible next-game use. Each matchup will register one
+legal six from the seat's roster; the same registered matchup six will be used
+throughout its Bo3, with a fresh bring four and lead two every game. Playoffs
+will run only for seats that qualify. A backup Mega is only an example of a
+preregistered diagnostic motif; it will never be prompt advice, required
+behavior, a checklist item, or reward.
 
-Trades and reviews are optional stages for the first slice. Draft-only may smoke
-test control flow or gather traces but may not advertise roster quality.
-Deterministic signals include drafted-to-built, built-to-brought,
-declared-to-submitted bring, named-interaction execution, legality, repair, and
-substitution. Semantic plan fidelity needs the rubric and audit rules in
-[Measurement](measurement.md).
+The circuit reward is currently undefined. Before any comparison or training,
+the project will freeze a preregistered controlled terminal battle-return
+functional emitted by the TypeScript referee. It will specify per-seat returns;
+ties, byes, and nonqualifiers; invalid, defaulted, and aborted episodes; schedule
+aggregation; and multi-agent credit. It will provide no intermediate shaping or
+LLM-judge or semantic-label reward, and it will never turn a natural standing or
+championship result into reward. A delayed return will not be interpreted as
+causal per-pick credit. Comparisons will counterbalance or mirror boards, seats,
+schedules, battle sides, and seeds, and uncertainty will use the whole circuit
+as its block.
 
-The environment needs canonical append-only submitted-model and
-referee-accepted event streams, each with actor, visibility, input/output state
-hashes, RNG, and protocol identity. Rejections and substitutions are distinct.
-Resume reconstructs state; it never rewrites evidence or assumes a persistent
-provider process. A fork creates a new episode with parent, sequence,
-intervention, and changed scaffold identities.
+The connected draft, schedule, reward, and native Prime/verifiers `Env` remain
+unimplemented. The strict-construction-to-Bo3 referee and JSONL bridge are the
+existing slice. Comparative rollouts will use one named profile from
+[Measurement](measurement.md), and hosted evaluation will precede training.
+Multi-agent training will remain a self-managed `prime-rl` experiment until its
+role configuration and advantage methods are demonstrated.
 
-Comparative rollouts use exactly one of the three non-comparable profiles defined
-in [Measurement](measurement.md): primary `controlled-explicit-state`, separate
-`controlled-episodic`, or the `prime-agent-capable` ablation. Hosted evaluation
-precedes training. Multi-agent training remains a self-managed `prime-rl`
-experiment until role configuration and advantage methods are demonstrated; do
-not imply hosted product support beforehand.
+### Draft Circuit release gates
+
+Do not release a Draft Circuit comparison, training recipe, or long-horizon
+result until all these gates pass:
+
+1. freeze terminal-return and failure semantics before rollout;
+2. prove end-to-end replay and complete stage joins;
+3. counterbalance boards, schedules, seats, battle sides, and seeds;
+4. validate role isolation and prevent future or private-information leakage;
+5. validate same-six Bo3 registration and fresh preview choices every game;
+6. preregister the intervention and estimand for each claimed contingency or
+   adaptation effect;
+7. run enough independent whole-circuit blocks for circuit-level uncertainty;
+8. derive no model rank from a natural standing or championship result.
+
+### Stage-linked trace analysis (planned, unimplemented)
+
+A replayable, complete join from each analyzed Prime/verifiers `Trace` to the
+authoritative TypeScript referee evidence is a release gate. Architecture owns
+the [Showdown authority](architecture.md#pokémon-showdown-authority) and
+[state/evidence boundary](architecture.md#state-evidence-and-trust);
+[Measurement](measurement.md#cross-stage-evidence) owns cross-stage evidence and
+[long-horizon interpretation](measurement.md#long-horizon-claims). Mechanical
+projection export, a semantic-label pilot, and preregistered controlled forks
+are separate analyses. Semantic labeling is not a prerequisite for controlled
+forks.
+
+### Official-event human controls (planned, gated)
+
+No human corpus has been ingested. The bounded inventory in
+[Human controls](human-controls.md) identified no official Reg M-B match corpus
+through 2026-08-08; that document owns the dated source inventory,
+reconstruction and admission, human-reference treatment, and rights and release
+gates. Worlds is a prospective official-event source and can be assigned to
+Reg M-B only after an official Worlds-specific rules source is retained. NAIC
+Reg M-A may calibrate annotation and reconstruction machinery only; it does not
+validate Reg M-B.
+
+### Long-horizon interpretation gate
+
+Release of any contingency, adaptation, or anticipation claim must pass
+[Measurement's long-horizon claim rules](measurement.md#long-horizon-claims).
 
 ## Verifiers boundary and target architecture
 
@@ -188,7 +234,7 @@ candidate generation, native action acceptance, state, battle reconstruction, an
 `vgc-positions-v1` is a static `Taskset`. The dynamic Draft Circuit will be an
 `Env` whose control flow is programmed in `Env.run(task, agents)`. Each role is
 provisioned through `Agent.provision(task)`, and its runtime launches the
-versioned JSON-lines TypeScript referee with `Runtime.open_process`. The image
+versioned JSONL TypeScript referee with `Runtime.open_process`. The image
 must include Node and the compiled pinned bundle. Clients fail closed on
 protocol and every digest implemented by the relevant referee slice. These APIs
 are verified against `verifiers==0.3.0`; Docker, Hub, and hosted compatibility
@@ -222,10 +268,17 @@ Publishing a wheel does not grant evaluation credits or imply funding.
    cost, and full configuration rather than a leaderboard alone.
 4. Package the frozen matchday bridge in the runtime image and wrap it in a
    native-v1 multi-agent `Env` with isolated roles.
-5. Connect the existing draft and strict construction artifacts to that Env,
-   then define the circuit reward before scaling or training.
-6. Add reports only from versioned evaluation outputs; the GUI must not invent
-   scores from natural league games.
+5. Connect the existing draft and strict-construction artifacts to that `Env`,
+   then preregister and freeze the controlled terminal return and failure
+   semantics before comparison or training.
+6. Export the mechanical stage projection and pass its end-to-end replay and
+   join-completeness gate.
+7. Run the semantic-label pilot and preregistered controlled forks as separate
+   parallel or later analyses; neither is conditional on the other.
+8. Calibrate the human-control machinery on NAIC Reg M-A and collect Worlds only
+   after the applicable source and rights gates pass.
+9. Add GUI reporting last and only from versioned evaluation outputs; it must not
+   invent scores from natural league games.
 
 Do not add another generic Showdown client, copy external baselines, derive a
 natural-corpus ranking, label predictability as exploitability, infer belief or
