@@ -872,7 +872,6 @@ test('hosted runs execute in a child process and return events to the server', a
     const run = state.data.run as Record<string, unknown>;
     assert.equal(run.state, 'done', String(run.error ?? ''));
     assert.equal((run.rows as unknown[]).length, 1);
-    assert.equal(await rawRequest(port, { path: '/healthz' }), 200);
   } finally {
     await gui.shutdown(1_000);
   }

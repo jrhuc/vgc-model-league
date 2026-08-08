@@ -121,7 +121,6 @@ test('strict referee agrees byte-for-byte with a scripted strict run', async (t)
   });
   assert.deepEqual(result.artifact, pure.artifact);
   assert.equal(result.packed, pure.packed);
-  assert.deepEqual(result.artifact.action, pure.artifact.action);
 });
 
 test('strict referee rejects malformed and illegal submissions without mutating its task', () => {

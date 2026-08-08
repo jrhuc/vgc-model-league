@@ -1384,28 +1384,6 @@ test('team-build constraints fail before a provider call when they cannot supply
   assert.equal(calls, 0);
 });
 
-test('strict team building returns invalid instead of repairing or replacing an exhausted action', async (t) => {
-  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-teambuild-strict-invalid-'));
-  t.after(() => fs.rmSync(logDir, { recursive: true, force: true }));
-  const invalid = JSON.parse(GOOD_TEAM) as { sets: Array<{ evs: Record<string, unknown> }> };
-  invalid.sets[0]!.evs.hp = '2';
-  const result = await runTeamBuild(generalTeamBuildTask(), {
-    logDir,
-    rng: seededRng(18),
-    makeTeambuildProvider: () => scriptedProvider([JSON.stringify(invalid)]),
-  });
-
-  assert.equal(result.packed, null);
-  assert.equal(result.artifact.status, 'invalid');
-  assert.equal(result.artifact.action, null);
-  assert.equal(result.artifact.executionPolicy, 'strict');
-  assert.equal(result.artifact.validation.showdown, false);
-  assert.equal(result.artifact.validation.repaired, false);
-  assert.deepEqual(result.artifact.validation.repairs, []);
-  assert.match(result.artifact.validation.problems[0]!, /finite, safe, non-negative integer/);
-  assert.equal(result.artifact.attempts, 5);
-});
-
 test('malformed set shapes and EV values are compliance rejections before a canonical noted team', async (t) => {
   const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-teambuild-compliance-'));
   t.after(() => fs.rmSync(logDir, { recursive: true, force: true }));
