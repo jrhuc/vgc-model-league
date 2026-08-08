@@ -85,6 +85,28 @@ test('record append preserves a valid unterminated object with a separator', (t)
   assert.deepEqual(loadRows(records), [first, second]);
 });
 
+test('record append rejects committed malformed rows without changing the journal', (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-model-league-records-'));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const records = path.join(directory, 'results.jsonl');
+  const malformed = `${JSON.stringify(row('a', 'b', 'a'))}\n{"players":\n`;
+  fs.writeFileSync(records, malformed);
+
+  assert.throws(() => appendRow(records, row('c', 'd', 'c')), /invalid JSONL line 2/);
+  assert.equal(fs.readFileSync(records, 'utf8'), malformed);
+});
+
+test('record append rejects malformed interior rows without changing the journal', (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-model-league-records-'));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const records = path.join(directory, 'results.jsonl');
+  const malformed = `${JSON.stringify(row('a', 'b', 'a'))}\n{"players":\n${JSON.stringify(row('c', 'd', 'c'))}`;
+  fs.writeFileSync(records, malformed);
+
+  assert.throws(() => appendRow(records, row('e', 'f', 'e')), /invalid JSONL line 2/);
+  assert.equal(fs.readFileSync(records, 'utf8'), malformed);
+});
+
 test('record append refuses a semantic-invalid unterminated tail', (t) => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-model-league-records-'));
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }));

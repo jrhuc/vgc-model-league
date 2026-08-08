@@ -4,14 +4,7 @@ import path from 'node:path';
 import type { JsonObject } from './types.js';
 import { isRecord } from './value.js';
 
-export function readJsonlObjects(file: string): JsonObject[] {
-  let contents: string;
-  try {
-    contents = fs.readFileSync(file, 'utf8');
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
-    throw error;
-  }
+function parseJsonlObjects(file: string, contents: string): JsonObject[] {
   const lines = contents.split('\n');
   const hasUnterminatedTail = !contents.endsWith('\n');
   let lastNonempty = -1;
@@ -35,6 +28,17 @@ export function readJsonlObjects(file: string): JsonObject[] {
   return rows;
 }
 
+export function readJsonlObjects(file: string): JsonObject[] {
+  let contents: string;
+  try {
+    contents = fs.readFileSync(file, 'utf8');
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
+    throw error;
+  }
+  return parseJsonlObjects(file, contents);
+}
+
 function appendSeparator(file: string): string {
   let contents: string;
   try {
@@ -43,8 +47,14 @@ function appendSeparator(file: string): string {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return '';
     throw error;
   }
-  if (!contents || contents.endsWith('\n')) return '';
+  if (!contents) return '';
+  if (contents.endsWith('\n')) {
+    parseJsonlObjects(file, contents);
+    return '';
+  }
   const tailStart = contents.lastIndexOf('\n') + 1;
+  const committedPrefix = contents.slice(0, tailStart);
+  if (committedPrefix) parseJsonlObjects(file, committedPrefix);
   const tail = contents.slice(tailStart);
   if (tail.trim()) {
     let parsed: unknown;
