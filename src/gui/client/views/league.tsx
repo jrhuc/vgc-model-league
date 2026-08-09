@@ -12,6 +12,7 @@ import type {
 import { BoardBrowser, STAT_ORDER, useBoard } from '../components/boardbrowser';
 import { Mark } from '../components/mark';
 import { Sprite } from '../components/sprite';
+import { modelName } from '../lib/labels';
 
 const PHASE_LABELS: Record<DraftView['phase'], string> = {
   draft: 'Drafting',
@@ -22,7 +23,8 @@ const PHASE_LABELS: Record<DraftView['phase'], string> = {
 };
 
 function coachLabel(draft: DraftView | PublicDraftView, entrant: number): string {
-  return draft.teamNames[entrant] || draft.entrants[entrant] || `Coach ${entrant + 1}`;
+  const model = draft.entrants[entrant];
+  return draft.teamNames[entrant] || (model ? modelName(model) : `Coach ${entrant + 1}`);
 }
 
 function isPrivateSet(set: PublicTeamSheetSetView): set is TeambuildSetView {

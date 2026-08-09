@@ -267,6 +267,8 @@ export interface SelectedTraceQuoteView {
 export interface SelectedTraceView {
   traceId: string;
   seatAlias: string;
+  /** Publication-time identity of the anonymized seat; seats stay anonymous in play. */
+  seatModel: string;
   format: string;
   eventCount: number;
   draftQuotes: Array<SelectedTraceQuoteView & { pick: number }>;

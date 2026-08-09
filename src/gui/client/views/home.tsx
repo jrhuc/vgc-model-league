@@ -156,11 +156,13 @@ function WorkedExampleTrace({ trace }: { trace: SelectedTraceView }) {
       <header class="worked-trace-header">
         <div>
           <p class="eyebrow">Selected recorded trace</p>
-          <h2 id="worked-trace-title">A sand plan across {trace.eventCount} selected stage events</h2>
+          <h2 id="worked-trace-title">
+            {trace.seatModel}’s sand plan across {trace.eventCount} selected stage events
+          </h2>
           <p class="lede">
-            This is selected evidence from a recorded {trace.seatAlias} run: two mid-draft picks, matchup construction,
-            preview, the first submitted battle action, transactions, and a terminal review output. It is not a full
-            season record or complete replay.
+            This is selected evidence from a recorded {trace.seatModel} run — the seat played anonymously as{' '}
+            {trace.seatAlias}: two mid-draft picks, matchup construction, preview, the first submitted battle action,
+            transactions, and a terminal review output. It is not a full season record or complete replay.
           </p>
         </div>
         <ul class="trace-verification" aria-label="Selected trace contents">
@@ -324,7 +326,11 @@ export function HomeView({ trace, onOpenMethod, onOpenDocs }: HomeViewProps) {
         <header class="editorial-section-heading">
           <p class="eyebrow">Research shape</p>
           <h2 id="horizons-title">Two scales, two kinds of evidence</h2>
-          <p>Action comparisons diagnose one reproduced choice. Linked events show how commitments meet later play.</p>
+          <p>
+            Action comparisons diagnose one reproduced choice. Linked events show how commitments meet later play. An
+            internal frozen matchday environment bridges them: one construction-to-Bo3 tie replayed under isolated
+            seats.
+          </p>
         </header>
         <div class="horizons-grid">
           <ChoiceMicroscopeDiagram />

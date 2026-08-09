@@ -80,6 +80,22 @@ function ConstructBoundary() {
           </p>
         </article>
       </div>
+      <aside class="construct-bridge">
+        <span>Bridge · internal infrastructure</span>
+        <p>
+          A frozen matchday environment connects the two scales: one strict-construction-to-Bo3 tie replayed as a native
+          episode of Prime Intellect’s verifiers library, with isolated entrant, opponent, and referee roles, fresh
+          one-turn interactions, a between-game notebook channel, and the entrant’s terminal outcome as the only native
+          metric. It is unpublished infrastructure with recorded support evidence, not an evaluation.
+        </p>
+        <a
+          href={`${REPOSITORY_ROOT}/blob/main/docs/evaluation-plan.md#verifiers-boundary-and-target-architecture`}
+          target="_blank"
+          rel="noreferrer"
+        >
+          Support table <span aria-hidden="true">↗</span>
+        </a>
+      </aside>
       <div class="construct-boundary" role="note">
         Joined records establish what was visible, returned, submitted, and accepted. They do not reveal private
         beliefs, make generated rationales causal, or establish transfer beyond the tested environment.
@@ -164,7 +180,9 @@ function RecordedTurn({ trace }: { trace: SelectedTraceView }) {
       <figure class="turn-evidence-figure">
         <figcaption>
           <div>
-            <p class="eyebrow">Selected {trace.seatAlias} trace</p>
+            <p class="eyebrow">
+              Selected {trace.seatModel} trace · {trace.seatAlias} in play
+            </p>
             <h3>Seat input → model submission → replay check</h3>
           </div>
           <a href={TRACE_ARTIFACT} target="_blank" rel="noreferrer">

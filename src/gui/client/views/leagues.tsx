@@ -17,7 +17,14 @@ import { MatchMenu, MatchMenuRow } from '../components/matchmenu';
 import { SetCard } from '../components/setcard';
 import { Sprite } from '../components/sprite';
 import { api, apiFresh } from '../http';
-import { displaySpec, when } from '../lib/labels';
+import { displaySpec, modelName, when } from '../lib/labels';
+
+/** Franchise names are display flavor; the model identity is never hidden behind them. */
+function franchiseLabel(league: LeagueResponse, entrant: number): string {
+  const franchise = league.franchises[entrant];
+  if (!franchise) return `Coach ${entrant + 1}`;
+  return franchise.teamName || modelName(franchise.model);
+}
 
 export function teamSlug(name: string): string {
   return (
@@ -202,7 +209,7 @@ function ScheduleTable({
   onOpenTeam: (entrant: number, seriesIndex?: number) => void;
   onOpenGame: (seriesIndex: number, game: number) => void;
 }) {
-  const name = (entrant: number) => league.franchises[entrant]?.teamName ?? `Coach ${entrant + 1}`;
+  const name = (entrant: number) => franchiseLabel(league, entrant);
   return (
     <div class="table-scroll">
       <table class="data-table schedule-table">
@@ -365,7 +372,7 @@ function GamePage({
       onOpenGame={(number) => onOpenGame(seriesIndex, number)}
       actions={view.sides.map((entrant) => (
         <button key={entrant} type="button" class="text-link" onClick={() => onOpenTeam(entrant)}>
-          {league.franchises[entrant]?.teamName ?? `Coach ${entrant + 1}`} →
+          {franchiseLabel(league, entrant)} →
         </button>
       ))}
     />
@@ -536,7 +543,7 @@ function TeamPage({
     .sort((a, b) => a.seriesIndex - b.seriesIndex);
   const bySeries = new Map(league.series.map((series) => [series.seriesIndex, series] as const));
   const picks = [...franchise.draftRoster].sort((a, b) => (a.pick ?? 99) - (b.pick ?? 99));
-  const name = (entrant: number) => league.franchises[entrant]?.teamName ?? `Coach ${entrant + 1}`;
+  const name = (entrant: number) => franchiseLabel(league, entrant);
   const liveSeries = league.liveSeries.filter((entry) => entry.sides?.includes(franchise.entrant));
   const windowDecision = league.tradeWindow?.decisions.find((entry) => entry.entrant === franchise.entrant);
   const tradeOffers = (league.tradeWindow?.offers ?? []).filter(
@@ -1106,7 +1113,7 @@ function LeaguePage({
             board={board.mons}
             owners={owners}
             picks={pickNumbers}
-            coach={(entrant) => league.franchises[entrant]?.teamName ?? `Coach ${entrant + 1}`}
+            coach={(entrant) => franchiseLabel(league, entrant)}
           />
         </section>
       ) : null}

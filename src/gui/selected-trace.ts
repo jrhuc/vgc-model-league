@@ -7,6 +7,13 @@ import type { SelectedTraceQuoteView, SelectedTraceView } from './api.js';
 
 const BUNDLE_DIRECTORY = path.join(REPO_ROOT, 'artifacts', 'public', 'landing', 'circuit-trace-v1');
 
+/** Publication-time seat identity, disclosed like Olam's arena reveals: anonymous during
+ * play, named in the published view. The immutable bundle keeps only its alias, so this
+ * mapping is a separate GUI provenance fact — coach-c-sand-pivot is entrant 2
+ * (openrouter:z-ai/glm-5.2) of run 20260805T175336.037000Z-0f155186, matched on the
+ * recorded sand-core roster note. A bundle without a recorded disclosure fails to load. */
+const SEAT_MODELS: Record<string, string> = { 'coach-c-sand-pivot': 'GLM-5.2' };
+
 function record(value: unknown, label: string): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(`${label} must be an object`);
   return value as Record<string, unknown>;
@@ -291,6 +298,7 @@ export function loadSelectedTrace(directory = BUNDLE_DIRECTORY): { view: Selecte
   const view: SelectedTraceView = {
     traceId: text(curated.traceId, 'curated.traceId'),
     seatAlias: text(curated.seatAlias, 'curated.seatAlias'),
+    seatModel: text(SEAT_MODELS[text(curated.traceId, 'curated.traceId')], 'seat model disclosure'),
     format: text(curated.format, 'curated.format'),
     eventCount: events.length,
     draftQuotes,

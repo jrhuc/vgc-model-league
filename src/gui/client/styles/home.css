@@ -113,6 +113,10 @@
 .construct-grid article > span { display: block; margin-bottom: 26px; color: var(--blue-dark); font: 800 8px/1 var(--mono); letter-spacing: .09em; text-transform: uppercase; }
 .construct-grid h3 { margin-bottom: 11px; font-size: 20px; }
 .construct-grid p { margin: 0; color: var(--muted); line-height: 1.65; }
+.construct-bridge { display: flex; flex-wrap: wrap; gap: 10px 20px; padding: 17px 22px; align-items: baseline; background: var(--slate-soft); border-left: 4px solid var(--blue-dark); }
+.construct-bridge > span { color: var(--blue-dark); font: 800 8px/1 var(--mono); letter-spacing: .09em; text-transform: uppercase; white-space: nowrap; }
+.construct-bridge p { flex: 1 1 46ch; max-width: 96ch; margin: 0; color: var(--muted); font-size: 13px; line-height: 1.6; }
+.construct-bridge a { color: var(--blue-dark); font: 800 9px/1.3 var(--mono); text-transform: uppercase; white-space: nowrap; text-underline-offset: 3px; }
 .construct-boundary,.episode-boundary { padding: 16px 19px; color: #594108; background: #fff5d5; border: 1px solid #d9b43d; border-left: 5px solid var(--yellow); font: 700 10px/1.6 var(--mono); }
 .method-steps { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 1px; margin: 0; padding: 1px; background: var(--line-strong); list-style: none; }
 .method-steps li { display: grid; grid-template-columns: 54px minmax(0,1fr); gap: 20px; min-height: 160px; padding: 26px; background: #fff; }
