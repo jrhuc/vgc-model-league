@@ -156,6 +156,8 @@ def parse_between_games_reply(text: str) -> BetweenGamesReply:
             return BetweenGamesReply(False)
         if len(values) != 1 or not isinstance(values[0], str):
             raise ScaffoldError("notebook must be one string")
+        if len(values[0]) > NOTEBOOK_REPLACEMENT_LIMIT:
+            raise ScaffoldError("notebook replacement exceeds the native limit")
         return BetweenGamesReply(True, values[0])
     except ScaffoldError:
         return BetweenGamesReply(False, diagnostic=NOTEBOOK_EVIDENCE_DIAGNOSTIC)

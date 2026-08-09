@@ -58,13 +58,17 @@ The serialized task config binds the absolute path and raw-byte SHA-256. Public
 `TaskData` contains the row index and public fields only. `task.options()`
 reloads the file, checks the SHA and every public field at that index, and
 returns a newly parsed private object. There is no process registry or options
-cache.
+cache. An unbound taskset config (no `source`) is constructible so the native
+CLI can narrow the plugin config before `--env.taskset.source` binds it;
+loading tasks without a bound source fails.
 
 ## Protocol
 
 `FrozenMatchdayProtocolClient` is the only process client. It enforces the ready
 envelope, encoded-line cap, strict UTF-8 JSONL framing across arbitrary chunks,
-monotonic request ids, exact episode binding on every response, a bounded stderr
+monotonic request ids, exact episode binding on every response, a bounded
+per-request timeout so a live but silent referee poisons the client instead of
+hanging the episode, a bounded stderr
 tail, and poison after an ambiguous/cancelled write. EOF or process exit before
 controller close fails the episode, as do queued unsolicited records. With
 cooperative runtime process operations, cleanup completes despite caller
@@ -80,8 +84,9 @@ Every entrant/opponent trace has one `info["matchday_v0"]` object containing its
 pid, decision kind, referee binding, transport label, three runtime ids, and one
 accepted join. Notebook traces may carry the fixed malformed-evidence
 diagnostic. Remote playing replies fail closed unless they contain exactly one
-valid menu choice. Malformed optional notebook evidence is retained as an
-omission and diagnosed.
+valid menu choice. Malformed or over-limit optional notebook evidence is model
+output and is retained as an omission and diagnosed rather than failing the
+episode.
 
 Exactly one action trace per seat is a reward carrier. Only those two traces
 receive the common allowlisted terminal summary and their own seat's allowlisted
@@ -94,7 +99,13 @@ Finalization validates every trace and both complete role partitions, then
 requires exact `Counter` equality between trace joins and TypeScript terminal
 joins. No reward or metric call occurs before all validation succeeds. The two
 carriers then receive `matchday_outcome_v0`, `matchday_games_v0`, and
-`matchday_result_v0`; every other trace remains unscored.
+`matchday_result_v0`; every other trace remains unscored. Finally the entrant
+carrier alone is marked trainable as the evaluation policy view: v0.3
+aggregates rewards over trainable traces and falls back to all traces when
+none are, so one flagged trace per episode makes the native run metric the
+entrant's outcome, weighted per episode, while the opponent's mirrored outcome
+stays retained, headline-excluded evidence. The flag is an aggregation label;
+every role remains nontrainable and the package remains evaluation-only.
 
 ## Development
 
@@ -108,7 +119,7 @@ uv run --locked --group test pytest
 uv build --clear
 ```
 
-The nine boundary tests include one required three-game full smoke:
+The boundary tests include one required three-game full smoke:
 freezer -> real v0.3 `EnvServer` -> three runtimes -> scripted OpenAI-compatible
 provider -> compiled TypeScript referee -> rewarded episode -> process/runtime
 cleanup. Missing root build artifacts fail that test rather than skip it. A

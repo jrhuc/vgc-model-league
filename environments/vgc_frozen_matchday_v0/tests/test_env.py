@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -8,7 +9,12 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from pydantic_config import cli as parse_cli
+from pydantic_config.cli import ConfigFileError
 from verifiers import v1 as vf
+from verifiers.v1.cli.resolve import narrow_config, with_positional_taskset
+from verifiers.v1.configs.cli.eval import EvalConfig
+from verifiers.v1.utils.platform import _run_metrics
 
 import vgc_frozen_matchday_v0.env as env_module
 from vgc_frozen_matchday_v0.env import FrozenMatchdayEnv, FrozenMatchdayEnvConfig
@@ -489,6 +495,19 @@ async def test_phase_loop_fresh_private_turns_terminal_allowlist_joins_and_rewar
             "matchday_games_v0": 2.0,
             "matchday_result_v0": expected,
         }
+    entrant_carrier = next(
+        trace for trace in carriers if trace.info["matchday_v0"]["pid"] == "p1"
+    )
+    assert [trace for trace in episode.traces if trace.agent.trainable] == [
+        entrant_carrier
+    ]
+    aggregate = _run_metrics([episode], episode.traces)
+    assert aggregate["avg_reward"] == 1.0
+    assert aggregate["avg_metrics"] == {
+        "matchday_outcome_v0": 1.0,
+        "matchday_games_v0": 2.0,
+        "matchday_result_v0": 1.0,
+    }
     for trace in episode.traces:
         evidence = trace.info["matchday_v0"]
         assert evidence["runtime_ids"] == {
@@ -649,3 +668,54 @@ async def test_v03_policy_peer_failure_cleanup_and_counter_join_validate_before_
         agents.opponent,
         agents.referee,
     ))
+
+
+def test_native_cli_dotted_overrides_bind_source_and_enforce_opponent_policy(
+    tmp_path: Path,
+) -> None:
+    source = str(_source(tmp_path).source)
+    pinned = with_positional_taskset(
+        [
+            "vgc_frozen_matchday_v0",
+            "--env.taskset.source",
+            source,
+            "--env.opponent_condition",
+            "pinned_opponent",
+            "--env.opponent.model",
+            "pinned/model",
+            "--env.opponent.client.type",
+            "eval",
+            "--env.opponent.client.base_url",
+            "https://pinned.invalid/v1",
+            "--env.opponent.client.api_key_var",
+            "PINNED_KEY",
+        ]
+    )
+    config = parse_cli(narrow_config(EvalConfig, pinned), args=pinned, plain=True)
+    assert isinstance(config.env, FrozenMatchdayEnvConfig)
+    assert config.env.opponent_condition == "pinned_opponent"
+    assert config.env.opponent.model == "pinned/model"
+    assert isinstance(config.env.opponent.client, vf.EvalClientConfig)
+    assert config.env.opponent.client.base_url == "https://pinned.invalid/v1"
+    assert config.env.taskset.source == Path(source)
+    assert config.env.taskset.task.source_sha256 == hashlib.sha256(
+        Path(source).read_bytes()
+    ).hexdigest()
+
+    for overrides, message in (
+        (
+            [
+                "--env.opponent_condition",
+                "pinned_opponent",
+                "--env.opponent.model",
+                "pinned/model",
+            ],
+            "explicit model and client",
+        ),
+        (["--env.opponent.model", "sneaky/override"], "must inherit"),
+    ):
+        argv = with_positional_taskset(
+            ["vgc_frozen_matchday_v0", "--env.taskset.source", source, *overrides]
+        )
+        with pytest.raises(ConfigFileError, match=message):
+            parse_cli(narrow_config(EvalConfig, argv), args=argv, plain=True)

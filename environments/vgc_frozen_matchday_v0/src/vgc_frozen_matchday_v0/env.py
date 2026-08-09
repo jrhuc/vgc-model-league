@@ -15,6 +15,7 @@ from verifiers import v1 as vf
 
 from .protocol import (
     DEFAULT_REFEREE_EXECUTABLE,
+    DEFAULT_REQUEST_TIMEOUT,
     DEFAULT_STDERR_TAIL_BYTES,
     FrozenMatchdayProtocolClient,
     ProtocolBinding,
@@ -54,6 +55,7 @@ class FrozenMatchdayEnvConfig(vf.EnvConfig):
     referee_executable: str = DEFAULT_REFEREE_EXECUTABLE
     referee_stderr_tail_bytes: int = Field(DEFAULT_STDERR_TAIL_BYTES, ge=0)
     referee_shutdown_timeout: float = Field(5.0, gt=0)
+    referee_request_timeout: float = Field(DEFAULT_REQUEST_TIMEOUT, gt=0)
     debug_allow_subprocess: bool = False
 
     @model_validator(mode="after")
@@ -123,6 +125,7 @@ class FrozenMatchdayEnv(vf.Env[FrozenMatchdayEnvConfig]):
                 battle_protocol_version=task.data.battle_protocol_version,
                 stderr_tail_bytes=self.config.referee_stderr_tail_bytes,
                 shutdown_timeout=self.config.referee_shutdown_timeout,
+                request_timeout=self.config.referee_request_timeout,
             )
             await stack.enter_async_context(client)
             started = _object(
@@ -552,6 +555,11 @@ class FrozenMatchdayEnv(vf.Env[FrozenMatchdayEnvConfig]):
             trace.record_reward("matchday_outcome_v0", score)
             trace.record_metric("matchday_games_v0", common_terminal["games"])
             trace.record_metric("matchday_result_v0", score)
+        """The entrant carrier is the evaluation policy view: v0.3 aggregates
+        rewards over trainable traces and falls back to all traces when none
+        are, so exactly one flagged trace per episode keeps the native run
+        metric the entrant's outcome instead of a two-seat cancellation."""
+        carriers["p1"][0].agent.trainable = True
 
 
 

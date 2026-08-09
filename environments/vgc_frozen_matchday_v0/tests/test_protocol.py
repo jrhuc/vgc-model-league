@@ -433,3 +433,35 @@ async def test_terminate_timeout_kills_and_cancelled_close_still_completes() -> 
     await client.aclose(check_protocol=False)
 
     assert MAX_ENCODED_LINE_BYTES == 32 * 1024 * 1024
+
+
+@pytest.mark.asyncio
+async def test_request_timeout_poisons_a_live_but_silent_referee() -> None:
+    with pytest.raises(ValueError, match="request_timeout"):
+        await FrozenMatchdayProtocolClient.launch(
+            FakeRuntime(FakeProcess()), executable="referee", request_timeout=0.0
+        )
+
+    silent = FakeProcess([_encoded(_READY)])
+    client = await FrozenMatchdayProtocolClient.launch(
+        FakeRuntime(silent),
+        executable="referee",
+        shutdown_timeout=0.05,
+        request_timeout=0.05,
+    )
+    with pytest.raises(ProtocolError, match="did not produce response 1"):
+        await _start(client)
+    with pytest.raises(ProtocolError, match="poisoned"):
+        await _start(client)
+    await client.aclose(check_protocol=False)
+    assert silent.terminate_calls == 1
+
+    mute_at_launch = FakeProcess()
+    with pytest.raises(ProtocolError, match="did not produce ready envelope"):
+        await FrozenMatchdayProtocolClient.launch(
+            FakeRuntime(mute_at_launch),
+            executable="referee",
+            shutdown_timeout=0.05,
+            request_timeout=0.05,
+        )
+    assert mute_at_launch.terminate_calls == 1

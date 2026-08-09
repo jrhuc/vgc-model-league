@@ -102,17 +102,18 @@ def test_seat_prompt_projections_and_remote_reply_parsers() -> None:
     omitted = parse_between_games_reply("{}")
     cleared = parse_between_games_reply('{"notebook":""}')
     replaced = parse_between_games_reply(
-        json.dumps({"notebook": "x" * (NOTEBOOK_REPLACEMENT_LIMIT + 1)})
+        json.dumps({"notebook": "x" * NOTEBOOK_REPLACEMENT_LIMIT})
     )
     assert omitted.notebook_supplied is False and omitted.diagnostic is None
     assert cleared.notebook_supplied is True and cleared.notebook == ""
-    assert replaced.notebook == "x" * (NOTEBOOK_REPLACEMENT_LIMIT + 1)
+    assert replaced.notebook == "x" * NOTEBOOK_REPLACEMENT_LIMIT
     for invalid in (
         "not json",
         "[]",
         '{"notebook":1}',
         '{"notebook":"a","notebook":"b"}',
         '{"notebook":"a","extra":true}',
+        json.dumps({"notebook": "x" * (NOTEBOOK_REPLACEMENT_LIMIT + 1)}),
         "[" * 2000,
     ):
         parsed = parse_between_games_reply(invalid)

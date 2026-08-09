@@ -17,6 +17,7 @@ FROZEN_MATCHDAY_FORMAT: Final = "gen9championsvgc2026regmbbo3"
 DEFAULT_REFEREE_EXECUTABLE: Final = "/usr/local/bin/vgc-frozen-matchday-referee"
 MAX_ENCODED_LINE_BYTES: Final = 32 * 1024 * 1024
 DEFAULT_STDERR_TAIL_BYTES: Final = 64 * 1024
+DEFAULT_REQUEST_TIMEOUT: Final = 600.0
 
 _ALLOWED_METHODS = {
     "observe",
@@ -63,12 +64,14 @@ class FrozenMatchdayProtocolClient:
         line_limit: int,
         stderr_tail_bytes: int,
         shutdown_timeout: float,
+        request_timeout: float,
     ) -> None:
         self.process = process
         self.ready = dict(ready)
         self.line_limit = line_limit
         self.stderr_tail_bytes = stderr_tail_bytes
         self.shutdown_timeout = shutdown_timeout
+        self.request_timeout = request_timeout
         self.binding: ProtocolBinding | None = None
         self._responses: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=1)
         self._stderr = bytearray()
@@ -97,6 +100,7 @@ class FrozenMatchdayProtocolClient:
         line_limit: int = MAX_ENCODED_LINE_BYTES,
         stderr_tail_bytes: int = DEFAULT_STDERR_TAIL_BYTES,
         shutdown_timeout: float = 5.0,
+        request_timeout: float = DEFAULT_REQUEST_TIMEOUT,
     ) -> FrozenMatchdayProtocolClient:
         if not executable:
             raise ValueError("referee executable must be nonempty")
@@ -104,6 +108,8 @@ class FrozenMatchdayProtocolClient:
             raise ValueError("invalid referee output limits")
         if shutdown_timeout <= 0 or not math.isfinite(shutdown_timeout):
             raise ValueError("shutdown_timeout must be positive and finite")
+        if request_timeout <= 0 or not math.isfinite(request_timeout):
+            raise ValueError("request_timeout must be positive and finite")
         if not runtime.supports_live_processes:
             raise ProtocolError("referee runtime does not support live processes")
         process = await runtime.open_process([executable], {})
@@ -119,10 +125,11 @@ class FrozenMatchdayProtocolClient:
             line_limit=line_limit,
             stderr_tail_bytes=stderr_tail_bytes,
             shutdown_timeout=shutdown_timeout,
+            request_timeout=request_timeout,
         )
         try:
             if not _exact_mapping(
-                await client._receive("ready envelope"), client.ready
+                await client._receive_bounded("ready envelope"), client.ready
             ):
                 raise client._poison_with("referee ready envelope mismatch")
         except BaseException as primary:
@@ -245,6 +252,16 @@ class FrozenMatchdayProtocolClient:
                     get.cancel()
                 await asyncio.gather(get, return_exceptions=True)
 
+    async def _receive_bounded(self, expected: str) -> dict[str, Any]:
+        try:
+            return await asyncio.wait_for(
+                self._receive(expected), timeout=self.request_timeout
+            )
+        except TimeoutError as exc:
+            raise self._poison_with(
+                f"referee did not produce {expected} within {self.request_timeout} seconds"
+            ) from exc
+
     def _available(self) -> None:
         if self._closed or self._closing:
             raise ProtocolError("referee client is closed")
@@ -288,7 +305,7 @@ class FrozenMatchdayProtocolClient:
             except BaseException as exc:
                 raise self._poison_with("referee request write failed", exc) from exc
             try:
-                response = await self._receive(f"response {request_id}")
+                response = await self._receive_bounded(f"response {request_id}")
             except asyncio.CancelledError:
                 self._poison_with("referee request was cancelled after write")
                 raise

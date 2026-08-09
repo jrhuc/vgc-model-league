@@ -97,10 +97,13 @@ class FrozenMatchdayTask(
 
 
 class FrozenMatchdayTasksetConfig(vf.TasksetConfig):
+    """`source` is optional only so the native CLI can default-construct the
+    plugin config while narrowing; loading tasks without a bound source fails."""
+
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     task: SerializeAsAny[FrozenMatchdayTaskConfig] = FrozenMatchdayTaskConfig()
-    source: Path
+    source: Path | None = None
     system_prompt: None = None
 
     @model_validator(mode="before")

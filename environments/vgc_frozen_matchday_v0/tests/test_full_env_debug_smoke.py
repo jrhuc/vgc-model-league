@@ -341,7 +341,7 @@ def _assert_episode(
     assert episode.traces and len(provider_requests) == len(episode.traces)
     assert set(trace.agent.name for trace in episode.traces) == {"entrant", "opponent"}
     assert all(trace.ok and trace.num_turns == 1 for trace in episode.traces)
-    assert all(trace.agent.trainable is False for trace in episode.traces)
+    trainable = [trace for trace in episode.traces if trace.agent.trainable]
     public = task.data.model_dump(mode="json")
     assert "options" not in public
     assert "PRIVATE_SOURCE_PROVENANCE" not in _json(public)
@@ -351,6 +351,9 @@ def _assert_episode(
     ]
     assert len(carriers) == 2
     assert {trace.agent.name for trace in carriers} == {"entrant", "opponent"}
+    assert trainable == [
+        trace for trace in carriers if trace.agent.name == "entrant"
+    ]
     terminal = carriers[0].info["matchday_v0"]["terminal"]
     assert terminal == carriers[1].info["matchday_v0"]["terminal"]
     assert terminal["games"] == 3
