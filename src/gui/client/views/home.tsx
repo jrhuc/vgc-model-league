@@ -333,8 +333,8 @@ function WorkedExampleTrace({ trace }: { trace: SelectedTraceView }) {
             </div>
           </dl>
           <p class="trace-replay-note">
-            Replaying it today, the pinned simulator {trace.turn.replayAccepted ? 'accepted' : 'rejected'} the
-            recorded command.
+            Replaying it today, the pinned simulator {trace.turn.replayAccepted ? 'accepted' : 'rejected'} the recorded
+            command.
           </p>
         </section>
 
