@@ -11,46 +11,69 @@ const TRACE_ARTIFACT = '/api/selected-trace/full.json';
 const POSITION_STEPS = [
   {
     index: '01',
-    title: 'Reproduce',
-    body: 'Replay the pinned format, Showdown revision, seed, teams, and submitted actions. Reject any state mismatch.',
+    title: 'Rebuild the position',
+    body: 'Load the recorded turn exactly — pinned format, simulator revision, seed, teams, and every action so far. A single mismatch rejects the task.',
   },
   {
     index: '02',
-    title: 'Fork accepted actions',
-    body: 'Enumerate joint actions from the tested seat’s request and retain only commands accepted by native Showdown.',
+    title: 'Fork every legal action',
+    body: 'Branch the simulator down each action the rules accept for the tested seat.',
   },
   {
     index: '03',
-    title: 'Measure on held-out draws',
-    body: 'Use independent common-draw qualification and measurement panels. Report uncertainty and the named reference.',
+    title: 'Replay under shared luck',
+    body: 'Play every branch out with identical random draws, then score each action against a named baseline, with error bars.',
   },
   {
     index: '04',
-    title: 'Separate artifacts',
-    body: 'Keep model-visible tasks apart from scores, snapshots, opponent-private requests, draws, and sealed matrices.',
+    title: 'Wall off the answers',
+    body: 'Scores, scoring draws, and the opponent’s private view live in sealed artifacts, away from anything a model can read.',
   },
 ] as const;
 
 const EPISODE_STEPS = [
   {
     index: '01',
-    title: 'Commit scarce resources',
-    body: 'Seats draft exclusive, budgeted rosters against the same board and public schedule.',
+    title: 'Draft under a budget',
+    body: 'Every seat spends the same points on ten exclusive Pokémon from a shared board.',
   },
   {
     index: '02',
-    title: 'Prepare for an opponent',
-    body: 'Each seat records a plan and registers one legal six from its drafted ten for the matchup.',
+    title: 'Commit to a plan',
+    body: 'Before each series, the seat writes its plan and registers six of its ten for the matchup.',
   },
   {
     index: '03',
-    title: 'Choose and play',
-    body: 'Fresh bring-four and lead-two choices precede every game; Showdown resolves simultaneous actions and variance.',
+    title: 'Play it out',
+    body: 'Bring four, lead two, best of three. The simulator resolves both sides at once, luck included.',
   },
   {
     index: '04',
-    title: 'Join later evidence',
-    body: 'Authorized handoffs, later builds, accepted actions, transactions, and reviews remain bound to the same seat.',
+    title: 'Keep the trail joined',
+    body: 'Picks, builds, trades, battle actions, reflections, and the season review stay attached to the same seat, in order.',
+  },
+] as const;
+
+const SEAT_ACCESS = [
+  {
+    label: 'The tested seat sees',
+    tone: 'visible',
+    items: [
+      'Anonymized public battle history',
+      'Its own request for this turn',
+      'The numbered legal actions',
+      'The answer format',
+    ],
+  },
+  {
+    label: 'Held back',
+    tone: 'hidden',
+    items: [
+      'Which model faced this position, and what it chose',
+      'Scores and the draws behind them',
+      'The opponent’s private view',
+      'Rationales and notebooks from the source run',
+    ],
   },
 ] as const;
 
@@ -59,34 +82,35 @@ function ConstructBoundary() {
     <section class="method-section" aria-labelledby="construct-title">
       <header class="editorial-section-heading">
         <p class="eyebrow">Construct</p>
-        <h2 id="construct-title">Decisions, not standings</h2>
-        <p>One protocol compares a battle choice; another links commitments across a draft season.</p>
+        <h2 id="construct-title">The unit is the decision</h2>
+        <p>A critical hit can flip a match, so results alone say little. Two protocols grade the choices themselves.</p>
       </header>
       <div class="construct-grid">
         <article>
           <span>Battle position</span>
-          <h3>Reference-relative choice quality</h3>
+          <h3>Was this move good?</h3>
           <p>
-            A forkable simulator can compare accepted actions from one reproduced state under shared draws. The result
-            is conditional on that state, horizon, opponent-action distribution, and continuation policy.
+            Rewind to any recorded turn and fork the simulator down every legal action, replaying each branch under the
+            same luck. The chosen move gets a score relative to its alternatives — specific to that position, that
+            opponent, and the horizon searched.
           </p>
         </article>
         <article>
           <span>Connected episode</span>
-          <h3>Commitment and later execution</h3>
+          <h3>Did the plan hold up?</h3>
           <p>
-            A contested draft, opponent-specific construction, preview, and play place earlier recorded plans and
-            resource commitments beside later choices inside this protocol.
+            A draft season forces early commitments: budget spent on ten Pokémon, a written plan for each opponent. The
+            season record shows whether later builds, trades, and battle turns actually used them.
           </p>
         </article>
       </div>
       <aside class="construct-bridge">
         <span>Bridge · internal infrastructure</span>
         <p>
-          A frozen matchday environment connects the two scales: one strict-construction-to-Bo3 tie replayed as a native
-          episode of Prime Intellect’s verifiers library, with isolated entrant, opponent, and referee roles, fresh
-          one-turn interactions, a between-game notebook channel, and the entrant’s terminal outcome as the only native
-          metric. It is unpublished infrastructure with recorded support evidence, not an evaluation.
+          Between the two sits a frozen matchday: one team-registration-to-best-of-three tie, replayed as a single
+          episode inside Prime Intellect’s verifiers library. The playing seat, its opponent, and the referee run
+          isolated from one another, and a private notebook is all that carries between games. Today it is internal
+          infrastructure; the support table records what has been verified.
         </p>
         <a
           href={`${REPOSITORY_ROOT}/blob/main/docs/evaluation-plan.md#verifiers-boundary-and-target-architecture`}
@@ -97,8 +121,8 @@ function ConstructBoundary() {
         </a>
       </aside>
       <div class="construct-boundary" role="note">
-        Joined records establish what was visible, returned, submitted, and accepted. They do not reveal private
-        beliefs, make generated rationales causal, or establish transfer beyond the tested environment.
+        The record shows what each seat saw, said, and submitted — and what the simulator accepted. It cannot show what
+        a model privately believed, prove a written rationale caused the move, or predict behavior outside this game.
       </div>
     </section>
   );
@@ -110,7 +134,7 @@ function StaticPositionMethod() {
       <header class="editorial-section-heading">
         <p class="eyebrow">Static positions</p>
         <h2 id="position-method-title">Reproduce, fork, then measure</h2>
-        <p>The model selects one numbered complete joint action; no strategy or reasoning procedure is prescribed.</p>
+        <p>The model sees a position and picks one numbered action. How it reasons is its own business.</p>
       </header>
       <ol class="method-steps">
         {POSITION_STEPS.map((step) => (
@@ -123,11 +147,20 @@ function StaticPositionMethod() {
           </li>
         ))}
       </ol>
+      <div class="access-ledger">
+        {SEAT_ACCESS.map((column) => (
+          <section class={`access-col access-${column.tone}`} key={column.label}>
+            <h3>{column.label}</h3>
+            <ul>
+              {column.items.map((item) => (
+                <li key={item}>{item}</li>
+              ))}
+            </ul>
+          </section>
+        ))}
+      </div>
       <aside class="method-status">
-        <p>
-          The tested seat sees anonymized public history, its own request, accepted candidates, and the output schema.
-          Source identity and action, rationales, notebooks, private requests, snapshots, and grader state stay hidden.
-        </p>
+        <p>Task packages ship only after these separations are verified.</p>
         <a
           href={`${REPOSITORY_ROOT}/blob/main/docs/evaluation-plan.md#vgc-positions-v1`}
           target="_blank"
@@ -145,8 +178,8 @@ function ConnectedEpisodeMethod() {
     <section class="method-section" aria-labelledby="episode-method-title">
       <header class="editorial-section-heading">
         <p class="eyebrow">Connected episode</p>
-        <h2 id="episode-method-title">Keep the whole circuit as the unit</h2>
-        <p>A pick, game, or seat is not an independent replication of a shared multi-seat season.</p>
+        <h2 id="episode-method-title">The season is one long episode</h2>
+        <p>Picks, games, and seats inside a season are connected, so the whole circuit reads as a single record.</p>
       </header>
       <ol class="method-steps">
         {EPISODE_STEPS.map((step) => (
@@ -160,9 +193,9 @@ function ConnectedEpisodeMethod() {
         ))}
       </ol>
       <div class="episode-boundary" role="note">
-        Mechanical joins can test drafted-to-built, built-to-brought, and submitted-to-accepted links. Claims about
-        adaptation, memory use, or plan fidelity additionally require complete handoffs, controlled interventions or an
-        audited rubric, and circuit-level uncertainty. Natural standings remain descriptive.
+        The joins are mechanical: drafted to built, built to brought, submitted to accepted. Claims about adaptation or
+        plan-following need more evidence — complete records, controlled comparisons, and season-level error bars.
+        Standings describe a season; the decisions inside it are what get measured.
       </div>
     </section>
   );
@@ -174,8 +207,8 @@ function RecordedTurn({ trace }: { trace: SelectedTraceView }) {
     <section class="method-section" aria-labelledby="recorded-turn-title">
       <header class="editorial-section-heading compact">
         <p class="eyebrow">Artifact-backed demonstration</p>
-        <h2 id="recorded-turn-title">One recorded turn, with facts kept distinct</h2>
-        <p>Game 1, Turn 1 comes from the same hash-checked selected-trace endpoint used on Home.</p>
+        <h2 id="recorded-turn-title">One recorded turn, fact by fact</h2>
+        <p>Game 1, Turn 1 of a recorded series, pulled from the same published artifact as the home page.</p>
       </header>
       <figure class="turn-evidence-figure">
         <figcaption>
@@ -213,16 +246,17 @@ function RecordedTurn({ trace }: { trace: SelectedTraceView }) {
             <span class="turn-access-label access-referee">Release-time check</span>
             <h4>Recorded command replay</h4>
             <p>
-              The pinned referee {evidence.replayAccepted ? 'accepted' : 'did not accept'} choice index{' '}
-              {evidence.choiceIndex}. The source record and release-time reconstruction remain separate facts.
+              Replaying the recorded command today, the pinned referee{' '}
+              {evidence.replayAccepted ? 'accepted' : 'rejected'} choice index {evidence.choiceIndex}. The replay is
+              stored beside the original record as a separate fact.
             </p>
           </article>
           <article>
             <span class="turn-access-label access-gap">Artifact boundary</span>
-            <h4>No later handoff is demonstrated</h4>
+            <h4>Where the excerpt ends</h4>
             <p>
-              The excerpt ends after the first action. It has no terminal-game event, between-game reflection, or
-              next-game prompt, and the legacy source lacks the exact historical battle system prompt and app revision.
+              The excerpt stops after the first action — later turns, the between-game reflection, and the next game sit
+              outside it. The source run also predates our records of the exact battle prompt and app revision.
             </p>
           </article>
         </div>
@@ -237,28 +271,28 @@ function ValidityLimits() {
       <header class="editorial-section-heading compact">
         <p class="eyebrow">Validity limits</p>
         <h2 id="limits-title">Different evidence answers different questions</h2>
-        <p>Action values, linked traces, and outcomes cannot substitute for one another.</p>
+        <p>Each protocol answers a narrow question. Here is what each one leaves open.</p>
       </header>
       <div class="method-gap-grid">
         <article>
-          <h3>Reference dependence</h3>
+          <h3>The yardstick has limits</h3>
           <p>
-            Short-horizon material value under sampled accepted opponent actions and random continuations can miss
-            setup, information, positioning, and long-term team value. It evaluates the realized hidden state.
+            Short-horizon value under sampled opponent responses can miss setup moves, information plays, and long-term
+            positioning. Every score is relative to its baseline.
           </p>
         </article>
         <article>
-          <h3>Confounding and variance</h3>
+          <h3>Luck and confounds</h3>
           <p>
-            Model, provider, scaffold, board, schedule, opponents, and battle luck may change together. A result or
-            comeback does not identify which decision caused it.
+            Model, provider, scaffold, board, schedule, and battle luck move together. A comeback win by itself leaves
+            open which decision earned it.
           </p>
         </article>
         <article>
-          <h3>Scope and interpretation</h3>
+          <h3>What text can show</h3>
           <p>
-            Generated text is observable output, not a belief report. Stronger claims need frozen treatments, matched
-            conditions, complete provenance, larger samples, uncertainty, and domain-specific validation.
+            A written rationale is recorded output. Claims about belief or understanding need controlled comparisons,
+            larger samples, and validation beyond this game.
           </p>
         </article>
       </div>
@@ -272,7 +306,7 @@ function Sources({ onOpenDocs }: { onOpenDocs: () => void }) {
       <header class="editorial-section-heading compact">
         <p class="eyebrow">Sources</p>
         <h2 id="sources-title">Canonical contracts and prior work</h2>
-        <p>Project documents own the details; the related-work page keeps external comparisons bounded.</p>
+        <p>The project documents carry the details; the related-work page sets the context.</p>
       </header>
       <nav class="canonical-links" aria-label="Method sources">
         <a href={`${REPOSITORY_ROOT}/blob/main/docs/measurement.md`} target="_blank" rel="noreferrer">
@@ -304,8 +338,9 @@ export function MethodView({ trace, onOpenDocs }: MethodViewProps) {
           <h1>How the evaluation works</h1>
         </div>
         <p class="public-page-intro">
-          Compare one replayable battle choice or follow linked decisions across a draft-season episode. In both cases,
-          keep recorded facts, simulator checks, measurements, and interpretation separate.
+          Language models play a competitive Pokémon draft league: they draft on a budget, build for specific opponents,
+          trade, and battle. Two protocols turn that record into evidence — one grades a single turn, the other follows
+          the whole season.
         </p>
       </header>
       <ConstructBoundary />

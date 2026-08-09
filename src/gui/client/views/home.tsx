@@ -21,8 +21,11 @@ function ChoiceMicroscopeDiagram() {
     <figure class="horizon-card" aria-labelledby="choice-horizon-heading">
       <div class="horizon-card-copy">
         <p class="eyebrow">Battle turn</p>
-        <h3 id="choice-horizon-heading">Compare actions from one recorded position</h3>
-        <p>Reproduce the state, fork each accepted action, and measure candidates with the same reference.</p>
+        <h3 id="choice-horizon-heading">Replay one turn, fork every legal action</h3>
+        <p>
+          The simulator rewinds to the recorded state, branches down each legal action, and scores the branches under
+          the same luck.
+        </p>
       </div>
       <div class="choice-diagram-scroll" ref={viewport}>
         <svg
@@ -98,20 +101,20 @@ function ChoiceMicroscopeDiagram() {
         </button>
       </fieldset>
       <figcaption>
-        <b>Evidence:</b> a reference-relative comparison for one reproduced choice, not a match or season score.
+        <b>Evidence:</b> a score for the chosen action relative to its alternatives, in this one position.
       </figcaption>
     </figure>
   );
 }
 
 const COMPACT_SEASON_STAGES = [
-  ['Draft 10 Pokémon', 'exclusive points board'],
+  ['Draft 10 Pokémon', 'shared board, fixed budget'],
   ['Build six for an opponent', 'from the drafted ten'],
   ['Fresh bring, lead, and Bo3', 'ordinary VGC game loop'],
-  ['Transaction barrier', 'after configured weeks'],
-  ['Finish the round robin', 'repeat opponent loop'],
-  ['Playoffs', 'qualification dependent'],
-  ['Season review', 'recorded after the season'],
+  ['Trade window', 'offers and free agents mid-season'],
+  ['Finish the round robin', 'every seat plays every seat'],
+  ['Playoffs', 'top seeds advance'],
+  ['Season review', 'written self-assessment'],
 ] as const;
 
 function WholeCircuitDiagram({ onOpenMethod }: { onOpenMethod: () => void }) {
@@ -119,8 +122,8 @@ function WholeCircuitDiagram({ onOpenMethod }: { onOpenMethod: () => void }) {
     <figure class="horizon-card circuit-horizon" aria-labelledby="circuit-horizon-heading">
       <div class="horizon-card-copy">
         <p class="eyebrow">Draft season</p>
-        <h3 id="circuit-horizon-heading">Follow commitments across opponents</h3>
-        <p>Each matchup turns a drafted ten into a fresh six, bring, lead, and best-of-three.</p>
+        <h3 id="circuit-horizon-heading">One season, one paper trail</h3>
+        <p>Each matchup turns a drafted ten into a fresh six, a bring of four, and a best-of-three.</p>
       </div>
       <div class="compact-season-route">
         <svg class="compact-season-flow" viewBox="0 0 40 700" preserveAspectRatio="none" aria-hidden="true">
@@ -141,12 +144,123 @@ function WholeCircuitDiagram({ onOpenMethod }: { onOpenMethod: () => void }) {
         </ol>
       </div>
       <figcaption>
-        <b>Evidence:</b> linked decisions across time, not a complete causal account.{' '}
+        <b>Evidence:</b> one seat’s decisions, linked in order across the season.{' '}
         <button type="button" class="text-link" onClick={onOpenMethod}>
           See the season protocol →
         </button>
       </figcaption>
     </figure>
+  );
+}
+
+const RECORD_KINDS = [
+  ['written', 'Model-written'],
+  ['commit', 'Binding commitment'],
+  ['check', 'Harness-measured'],
+] as const;
+
+type RecordKind = (typeof RECORD_KINDS)[number][0];
+
+const RECORD_STAGES: ReadonlyArray<{
+  stage: string;
+  detail: string;
+  artifacts: ReadonlyArray<readonly [RecordKind, string]>;
+}> = [
+  {
+    stage: 'Draft',
+    detail: 'Ten exclusive picks from a shared points board.',
+    artifacts: [
+      ['written', 'rationale for every pick'],
+      ['commit', 'pick + price paid'],
+      ['check', 'flag when the harness picked instead'],
+    ],
+  },
+  {
+    stage: 'Teambuild',
+    detail: 'Six of the ten get full sets for the coming opponent.',
+    artifacts: [
+      ['written', 'build plan'],
+      ['commit', 'six sets — moves, items, EVs'],
+      ['check', 'attempts + auto-repair log'],
+    ],
+  },
+  {
+    stage: 'Battle',
+    detail: 'Bring four, lead two, then turn-by-turn play.',
+    artifacts: [
+      ['written', 'rationale each turn'],
+      ['commit', 'submitted command'],
+      ['check', 'simulator accept / reject'],
+      ['check', 'latency + token spend'],
+    ],
+  },
+  {
+    stage: 'Between games',
+    detail: 'A short reflection after every game of the set.',
+    artifacts: [
+      ['written', 'result summary'],
+      ['written', 'planned adjustment'],
+      ['commit', 'notebook carried into the next game'],
+    ],
+  },
+  {
+    stage: 'Trade window',
+    detail: 'Mid-season offers and free agency.',
+    artifacts: [
+      ['written', 'offer message + both sides’ reasoning'],
+      ['commit', 'accepted / declined'],
+      ['commit', 'add–drop swaps'],
+    ],
+  },
+  {
+    stage: 'Season review',
+    detail: 'A final written self-assessment.',
+    artifacts: [
+      ['written', 'did well / did poorly / would change'],
+      ['commit', 'final standing'],
+    ],
+  },
+];
+
+function RecordLedger() {
+  return (
+    <section class="home-section" aria-labelledby="record-title">
+      <header class="editorial-section-heading">
+        <p class="eyebrow">The record</p>
+        <h2 id="record-title">What gets written down</h2>
+        <p>
+          Every stage leaves artifacts. Text the model writes is kept verbatim, commitments bind its later play, and the
+          harness measures the rest. All of it ships with the season archive.
+        </p>
+      </header>
+      <div class="record-ledger">
+        {RECORD_STAGES.map((row, index) => (
+          <div class="record-row" key={row.stage}>
+            <span class="record-index" aria-hidden="true">
+              0{index + 1}
+            </span>
+            <div class="record-copy">
+              <h3>{row.stage}</h3>
+              <p>{row.detail}</p>
+            </div>
+            <ul class="record-chips" aria-label={`Artifacts recorded during ${row.stage.toLowerCase()}`}>
+              {row.artifacts.map(([kind, label]) => (
+                <li class={`record-chip-${kind}`} key={label}>
+                  {label}
+                </li>
+              ))}
+            </ul>
+          </div>
+        ))}
+      </div>
+      <p class="record-legend" aria-hidden="true">
+        {RECORD_KINDS.map(([kind, label]) => (
+          <span class={`record-chip-${kind}`} key={kind}>
+            {label}
+          </span>
+        ))}
+      </p>
+    </section>
   );
 }
 
@@ -157,16 +271,16 @@ function WorkedExampleTrace({ trace }: { trace: SelectedTraceView }) {
         <div>
           <p class="eyebrow">Selected recorded trace</p>
           <h2 id="worked-trace-title">
-            {trace.seatModel}’s sand plan across {trace.eventCount} selected stage events
+            {trace.seatModel}’s sand plan, in {trace.eventCount} recorded moments
           </h2>
           <p class="lede">
-            This is selected evidence from a recorded {trace.seatModel} run — the seat played anonymously as{' '}
-            {trace.seatAlias}: two mid-draft picks, matchup construction, preview, the first submitted battle action,
-            transactions, and a terminal review output. It is not a full season record or complete replay.
+            Eight moments from a recorded {trace.seatModel} season — the seat played anonymously as {trace.seatAlias}:
+            two mid-draft picks, a matchup build, the preview, the first submitted battle action, trade-window
+            decisions, and the closing review. The complete artifact is linked below.
           </p>
         </div>
         <ul class="trace-verification" aria-label="Selected trace contents">
-          {[`${trace.eventCount} selected stage events`, 'Recorded source outputs', 'Release-time replay facts'].map(
+          {[`${trace.eventCount} recorded moments`, 'Model outputs kept verbatim', 'Commands replay-checked'].map(
             (status) => (
               <li key={status}>{status}</li>
             ),
@@ -219,8 +333,8 @@ function WorkedExampleTrace({ trace }: { trace: SelectedTraceView }) {
             </div>
           </dl>
           <p class="trace-replay-note">
-            Release-time replay {trace.turn.replayAccepted ? 'accepted' : 'did not accept'} the recorded command under
-            the pinned referee.
+            Replaying it today, the pinned simulator {trace.turn.replayAccepted ? 'accepted' : 'rejected'} the
+            recorded command.
           </p>
         </section>
 
@@ -247,7 +361,7 @@ function WorkedExampleTrace({ trace }: { trace: SelectedTraceView }) {
           <span class="trace-stage-number" aria-hidden="true">
             08 / {trace.eventCount}
           </span>
-          <h3 id="trace-review-title">Selected terminal output</h3>
+          <h3 id="trace-review-title">Closing review</h3>
           <blockquote>
             <span class="trace-quote-label">{trace.terminalQuote.stage} · recorded model output</span>
             <p>“{trace.terminalQuote.text}”</p>
@@ -260,8 +374,8 @@ function WorkedExampleTrace({ trace }: { trace: SelectedTraceView }) {
           ↗
         </span>
         <p>
-          The selected artifact contains {trace.eventCount} stage events and stops its battle excerpt after the first
-          submitted action. Recorded-source and release-time replay facts remain distinct.{' '}
+          The artifact holds {trace.eventCount} stage events; its battle excerpt stops after the first submitted action.
+          What the original run recorded and what our replay verified are stored as separate fields.{' '}
           <a href={TRACE_ARTIFACT} target="_blank" rel="noreferrer">
             Open the complete selected evidence artifact <span aria-hidden="true">↗</span>
           </a>
@@ -272,8 +386,10 @@ function WorkedExampleTrace({ trace }: { trace: SelectedTraceView }) {
 }
 
 const TRUTH_ITEMS = [
-  ['Format', 'Pokémon Champions VGC 2026 · Regulation M-B · best-of-three doubles'],
+  ['Format', 'Pokémon Champions VGC 2026 · Reg M-B · Bo3 doubles'],
   ['Simulator', 'Pinned Pokémon Showdown revision'],
+  ['Record', 'Every decision + its written rationale'],
+  ['Identity', 'Anonymous in play · named at publication'],
 ] as const;
 
 export function HomeView({ trace, onOpenMethod, onOpenDocs }: HomeViewProps) {
@@ -285,7 +401,8 @@ export function HomeView({ trace, onOpenMethod, onOpenDocs }: HomeViewProps) {
           <p class="eyebrow">Language models play competitive Pokémon</p>
           <h1 id="home-title">How well does a language model decide when the game is VGC?</h1>
           <p class="public-hero-lede">
-            We study decisions at two scales: one replayable battle choice and a linked draft-season horizon.
+            Model seats draft on a budget, write plans, trade, and battle through full seasons. Every decision is
+            recorded with the reasoning behind it — and any turn can be replayed against the moves not taken.
           </p>
           <div class="public-hero-actions">
             <button type="button" class="button primary" onClick={onOpenMethod}>
@@ -327,9 +444,8 @@ export function HomeView({ trace, onOpenMethod, onOpenDocs }: HomeViewProps) {
           <p class="eyebrow">Research shape</p>
           <h2 id="horizons-title">Two scales, two kinds of evidence</h2>
           <p>
-            Action comparisons diagnose one reproduced choice. Linked events show how commitments meet later play. An
-            internal frozen matchday environment bridges them: one construction-to-Bo3 tie replayed under isolated
-            seats.
+            One lens replays a single turn and compares the chosen action with every legal alternative. The other
+            follows a whole season and asks whether early commitments showed up in later play.
           </p>
         </header>
         <div class="horizons-grid">
@@ -337,6 +453,8 @@ export function HomeView({ trace, onOpenMethod, onOpenDocs }: HomeViewProps) {
           <WholeCircuitDiagram onOpenMethod={onOpenMethod} />
         </div>
       </section>
+
+      <RecordLedger />
 
       <WorkedExampleTrace trace={trace} />
 
