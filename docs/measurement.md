@@ -69,11 +69,19 @@ The three named profiles are deliberately non-comparable:
 
 The internal matchday adapter gives each seat one bounded full-replacement
 notebook submission after each nonterminal game. Omission retains that seat's
-current notebook; an empty replacement clears it. Malformed returned notebook
-evidence is diagnosed and treated as omission, with the referee-retained value
-verified; a provider or runtime failure during the notebook interaction instead
-fails the Episode because v0.3 retains the failed Trace. Report diagnosed
-retention and failed Episodes separately.
+current notebook; an empty replacement clears it. Malformed or over-limit
+returned notebook evidence is model output, so it is diagnosed and treated as
+omission, with the referee-retained value verified; a provider or runtime
+failure during the notebook interaction instead fails the Episode because v0.3
+retains the failed Trace. Report diagnosed retention and failed Episodes
+separately.
+
+The adapter's native run metric is the entrant seat's terminal outcome: the
+entrant's single reward carrier is the evaluation policy view, and the
+opponent's mirrored outcome is retained evidence, never a second measurement. A
+self-play matchday validates machinery — its expected outcome is even by
+construction — so strength or comparison claims require a pinned or declared
+baseline opponent condition.
 
 The notebook is optional generated evidence, not a hidden belief. Replacing it
 has no direct effect on the referee, legality, Showdown state, RNG, score, or
@@ -162,7 +170,12 @@ action encoding, tools, sampling policy, and scoring reference. Selection is
 seeded, stratified by phase/state, and capped per source game. Source-series and
 near-duplicate groups cannot cross calibration, candidate, and held-out corpora. The first source is
 VGCML-generated play, not representative human VGC without an external holdout
-and coverage argument.
+and coverage argument. Record the generating models for every position: a model
+evaluated on positions arising from its own play holds a distribution
+advantage, so cross-model comparison prefers leave-own-games-out splits.
+Report accuracy as a function of the measured opportunity span alongside any
+scalar mean; below the provider sampling noise floor, model disagreement on
+near-tied positions is not evidence.
 
 A public task contains the tested seat's public history, own request, and legal
 actions. It excludes source identity/action/rationale/notebook, opponent-private

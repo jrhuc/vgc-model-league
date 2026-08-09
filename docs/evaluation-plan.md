@@ -42,10 +42,13 @@ protocol and write exactly two physically separated roots:
 - one private root for score vectors, qualification evidence, snapshots, draw
   identities, and rectangular action-value matrices.
 
+Public loaders must verify the complete manifest and reject the private root;
+that standalone reader is work-order material, not an existing component.
+
 The current candidate manifest and artifact rows use schema v1. The manifest
 binds the full Showdown SHA, format, scaffold/reference versions, sampling seeds,
 source corpus, action encoding, executed evaluator, canonical bytes, and
-checksums. Public loaders reject the private root.
+checksums.
 
 Two independent common-draw qualification panels decide eligibility. A third,
 untouched common-draw measurement panel supplies final rewards. A failed matrix
@@ -122,9 +125,13 @@ This implemented native-v1 `Taskset` plus `Env` is an unpublished control-flow
 adapter for one strict-construction-to-Bo3 matchday. One Episode provisions the
 entrant, opponent, and non-agent referee roles, runs the exact JSONL 1 / matchday
 1 / battle 1 TypeScript protocol, and records a descriptive seat outcome only
-after its within-matchday action and notebook joins are complete. It does not
-draft, schedule a season, run playoffs, define a circuit return, or implement
-training.
+after its within-matchday action and notebook joins are complete. Finalization
+marks the entrant's single reward carrier as the evaluation policy view so
+native verifiers aggregation reads one entrant outcome per episode instead of
+cancelling the two seats; the opponent's mirrored outcome stays retained
+evidence. That flag is an aggregation label, not a training path. The adapter
+does not draft, schedule a season, run playoffs, define a circuit return, or
+implement training.
 
 The private TypeScript task-source freezer is implemented and tested. It derives
 referee-accepted cases into `task-source.jsonl` plus a manifest. It assumes a
@@ -245,42 +252,59 @@ Compatibility is evidence, not assumption. This is the current support table for
 | local source suite | Passed locally against exact `verifiers==0.3.0` |
 | compiled package suite | Passed locally, including private-source freezing and one deterministic three-game full-Episode lifecycle through a real v0.3 `EnvServer`, scripted local OpenAI-compatible endpoint, real compiled referee, and debug-labeled runtime objects; no real provider/model or isolation claim |
 | local wheel build and clean Python smoke | Exact local wheel build plus clean-environment Python import and native plugin registry discovery passed |
+| native CLI config resolution | Positional taskset id plus dotted `--env.*` overrides parse, bind the source, and enforce the pinned-opponent pairing in the local suite; no real run |
 | GitHub CI | Workflow and package steps are configured; pending the first green GitHub run |
-| real provider/model | Not run; unsupported |
+| real provider/model | Not run; unsupported. The first real run must use a pinned or declared baseline opponent condition — a self-play outcome validates machinery only |
 | isolated runtime image | Not built or tested; unsupported |
 | Docker | Not tested; unsupported |
 | Prime runtime | Not tested; unsupported |
 | Environment Hub | Unpublished and not tested; unsupported |
 | Hosted Evaluation | Not tested; unsupported |
-| Hosted Training or other training use | Nontrainable and not tested; unsupported |
+| Hosted Training or other training use | All roles nontrainable; the entrant carrier's policy-view flag is evaluation aggregation only. Not tested; unsupported |
 
 ## Work order
 
-1. Use the existing grader and exporter to produce candidate artifacts, establish
-   separate calibration evidence, review the eligibility policy, and pass the
-   remaining gates.
-2. Build the small native-v1 static `Taskset` with strict parsing, lookup reward,
-   leakage tests, and a tool-less/null harness.
-3. Run a controlled pilot over one held-out candidate corpus; publish samples, uncertainty,
-   cost, and full configuration rather than a leaderboard alone.
-4. Obtain the first green GitHub CI run for the configured Python package
+1. Obtain the first green GitHub CI run for the configured Python package
    suite, wheel build, and clean import/plugin smoke; their exact local
    equivalents already pass.
-5. Build an isolated runtime image containing the compiled pinned referee, then
-   run the internal matchday package with a real provider and model. Local
+2. Harden the position pipeline before any corpus exists: wire the runtime
+   producer-authority binding (`src/eval/producer.ts`) into the grader and
+   exporter in place of their hand-rolled evaluator digests, collapse grading
+   to the exhaustive-panel estimator (deleting the screen/shortlist search
+   path and its unequal-sample drop), and implement the public-root reader
+   that verifies manifests and digests and rejects the private root.
+3. Write the corpus sizing memo before generating games: games required,
+   eligible positions after stratification caps, panel compute per position,
+   and provider cost. Record generating models per position so
+   leave-own-games-out splits stay available, and consider side-mirrored
+   freezer row pairs so counterbalance is a corpus property.
+4. Use the hardened grader and exporter to produce candidate artifacts,
+   establish separate calibration evidence, review the eligibility policy, and
+   pass the remaining gates.
+5. Build the small native-v1 static `Taskset` with strict parsing, lookup reward,
+   leakage tests, and a tool-less/null harness.
+6. Run a controlled pilot over one held-out candidate corpus; publish samples, uncertainty,
+   cost, and full configuration rather than a leaderboard alone.
+7. Build an isolated runtime image containing the compiled pinned referee, then
+   run the internal matchday package with a real provider and model under a
+   pinned or declared baseline opponent condition, never self-play. Local
    debug-runtime evidence does not pass this gate.
-6. Run separate Docker, Prime runtime, Environment Hub, and Hosted Evaluation
+8. After that smoke, run the crossed notebook intervention (retained, withheld,
+   and fixed-replacement arms over the same frozen rows) as the first
+   controlled matchday analysis, under
+   [Measurement's long-horizon claim rules](measurement.md#long-horizon-claims).
+9. Run separate Docker, Prime runtime, Environment Hub, and Hosted Evaluation
    smokes for the exact wheel and image. Keep Hosted Training unsupported while
    the package is matchday-only and nontrainable.
-7. Only after those package gates, connect the existing draft and
-   strict-construction artifacts into a full circuit `Env`, add schedule and
-   playoff flow, and preregister and freeze terminal circuit-return and failure
-   semantics before comparison or training.
-8. Export the mechanical draft-to-battle projection and pass its end-to-end
-   replay and join-completeness gate.
-9. Run the semantic-label pilot and preregistered controlled forks as separate
-   parallel or later analyses; neither is conditional on the other.
-10. Add GUI reporting last and only from versioned evaluation outputs; it must
+10. Only after those package gates, connect the existing draft and
+    strict-construction artifacts into a full circuit `Env`, add schedule and
+    playoff flow, and preregister and freeze terminal circuit-return and failure
+    semantics before comparison or training.
+11. Export the mechanical draft-to-battle projection and pass its end-to-end
+    replay and join-completeness gate.
+12. Run the semantic-label pilot and preregistered controlled forks as separate
+    parallel or later analyses; neither is conditional on the other.
+13. Add GUI reporting last and only from versioned evaluation outputs; it must
     not invent scores from natural league games.
 
 Do not add another generic Showdown client, copy external baselines, derive a
