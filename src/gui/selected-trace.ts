@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { REPO_ROOT } from '../paths.js';
+import { loadShowdown } from '../showdown.js';
 import type { SelectedTraceQuoteView, SelectedTraceView } from './api.js';
 
 const BUNDLE_DIRECTORY = path.join(REPO_ROOT, 'artifacts', 'public', 'landing', 'circuit-trace-v1');
@@ -125,6 +126,21 @@ function speciesId(name: string): string {
   const tauros = /^Paldean Tauros (Aqua|Blaze)$/u.exec(name);
   if (mega) return `${id(mega[1]!)}-mega`;
   return tauros ? `tauros-paldea-${tauros[1]!.toLowerCase()}` : id(name);
+}
+
+/** Sprite ids come from the pinned Champions dex so the landing pages can render
+ * the same official sprites as the workspace; a name the dex cannot resolve fails
+ * the bundle load instead of shipping a broken image. */
+function spriteIds(names: readonly string[]): Record<string, string> {
+  const { Dex } = loadShowdown();
+  const dex = Dex.mod('champions');
+  return Object.fromEntries(
+    names.map((name) => {
+      const resolved = dex.species.get(speciesId(name));
+      if (!resolved.exists) throw new Error(`selected trace names ${name}, which the pinned dex cannot resolve`);
+      return [name, resolved.spriteid];
+    }),
+  );
 }
 
 function choices(command: string, registered: readonly string[]): string[] {
@@ -306,6 +322,14 @@ export function loadSelectedTrace(directory = BUNDLE_DIRECTORY): { view: Selecte
     lead,
     back,
     firstActions,
+    sprites: spriteIds([
+      ...registeredSix,
+      ...lead,
+      ...back,
+      ...swaps.flatMap((swap) => [swap.drop, swap.add]),
+      give,
+      get,
+    ]),
     transaction: { declinedOffer: { give, get }, swaps },
     terminalQuote: excerpt(terminal.quote, 'curated terminal quote', 'Selected terminal review output', statement),
     turn: {

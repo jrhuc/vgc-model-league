@@ -1,4 +1,5 @@
 import type { SelectedTraceView } from '../../api';
+import { Sprite } from '../components/sprite';
 
 interface MethodViewProps {
   trace: SelectedTraceView;
@@ -238,6 +239,11 @@ function RecordedTurn({ trace }: { trace: SelectedTraceView }) {
           </article>
           <article>
             <span class="turn-access-label">Recorded model submission</span>
+            <div class="turn-actors" aria-hidden="true">
+              {trace.firstActions.map((label) => (
+                <Sprite id={trace.sprites[label.split(' — ')[0]!] ?? ''} size={44} key={label} />
+              ))}
+            </div>
             <h4>{trace.firstActions.join(' + ')}</h4>
             <blockquote>“{evidence.rationale}”</blockquote>
             <code class="turn-command">{evidence.submittedCommand}</code>

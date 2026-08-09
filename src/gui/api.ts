@@ -276,6 +276,8 @@ export interface SelectedTraceView {
   lead: string[];
   back: string[];
   firstActions: string[];
+  /** Pinned-dex sprite id for every species named in this view, keyed by display name. */
+  sprites: Record<string, string>;
   transaction: {
     declinedOffer: { give: string; get: string };
     swaps: Array<{ drop: string; add: string }>;

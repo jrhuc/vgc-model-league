@@ -307,6 +307,9 @@ export function App() {
   }, [route.view, route.run, route.team, route.series]);
 
   const view = route.view;
+  useEffect(() => {
+    document.body.classList.toggle('research-dark', view === 'home' || view === 'method' || view === 'docs');
+  }, [view]);
   const leagueRouteRef = useRef<{
     run: string | undefined;
     team: string | undefined;

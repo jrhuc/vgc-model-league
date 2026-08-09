@@ -1,8 +1,18 @@
 import { useRef } from 'preact/hooks';
 
 import type { SelectedTraceView } from '../../api';
+import { Sprite } from '../components/sprite';
 
 const TRACE_ARTIFACT = '/api/selected-trace/full.json';
+
+function MonChip({ name, trace }: { name: string; trace: SelectedTraceView }) {
+  return (
+    <span class="mon-chip">
+      <Sprite id={trace.sprites[name] ?? ''} size={24} />
+      {name}
+    </span>
+  );
+}
 
 interface HomeViewProps {
   trace: SelectedTraceView;
@@ -314,18 +324,30 @@ function WorkedExampleTrace({ trace }: { trace: SelectedTraceView }) {
             03–05 / {trace.eventCount}
           </span>
           <h3 id="trace-registration-title">Six, four, and the first action</h3>
+          <ul class="trace-six" aria-label="Registered six">
+            {trace.registeredSix.map((name) => (
+              <li key={name}>
+                <Sprite id={trace.sprites[name] ?? ''} size={52} />
+                <span>{name}</span>
+              </li>
+            ))}
+          </ul>
           <dl class="trace-facts">
             <div>
-              <dt>Registered six</dt>
-              <dd>{trace.registeredSix.join(' · ')}</dd>
-            </div>
-            <div>
               <dt>Lead</dt>
-              <dd>{trace.lead.join(' + ')}</dd>
+              <dd>
+                {trace.lead.map((name) => (
+                  <MonChip name={name} trace={trace} key={name} />
+                ))}
+              </dd>
             </div>
             <div>
               <dt>Back</dt>
-              <dd>{trace.back.join(' + ')}</dd>
+              <dd>
+                {trace.back.map((name) => (
+                  <MonChip name={name} trace={trace} key={name} />
+                ))}
+              </dd>
             </div>
             <div>
               <dt>First submitted battle action</dt>
@@ -344,14 +366,19 @@ function WorkedExampleTrace({ trace }: { trace: SelectedTraceView }) {
           </span>
           <h3 id="trace-window-title">Offer declined &amp; free agency</h3>
           <p class="trace-offer">
-            {trace.transaction.declinedOffer.give} for {trace.transaction.declinedOffer.get} — declined
+            <MonChip name={trace.transaction.declinedOffer.give} trace={trace} /> for{' '}
+            <MonChip name={trace.transaction.declinedOffer.get} trace={trace} /> — declined
           </p>
           <ul class="trace-swaps" aria-label="Free-agent swaps">
             {trace.transaction.swaps.map((swap) => (
               <li key={swap.drop}>
-                <span>Drop {swap.drop}</span>
+                <span>
+                  Drop <MonChip name={swap.drop} trace={trace} />
+                </span>
                 <span aria-hidden="true">→</span>
-                <span>Add {swap.add}</span>
+                <span>
+                  Add <MonChip name={swap.add} trace={trace} />
+                </span>
               </li>
             ))}
           </ul>
@@ -424,6 +451,14 @@ export function HomeView({ trace, onOpenMethod, onOpenDocs }: HomeViewProps) {
             <circle class="hero-signal" cx="322" cy="107" r="8" />
             <circle class="hero-signal secondary" cx="108" cy="323" r="5" />
           </svg>
+          {trace.lead.map((name, index) => (
+            <img
+              class={`hero-sprite hero-sprite-${index + 1}`}
+              src={`/sprites/${trace.sprites[name]}.png`}
+              alt=""
+              key={name}
+            />
+          ))}
           <span class="hero-visual-label label-one">CHOICE</span>
           <span class="hero-visual-label label-two">CONTEXT</span>
           <span class="hero-visual-label label-three">EVIDENCE</span>
