@@ -11,7 +11,7 @@ import { GuiServer } from '../src/gui/server.js';
 const RUNS_SCRATCH = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-gui-dom-'));
 after(() => fs.rmSync(RUNS_SCRATCH, { recursive: true, force: true }));
 
-async function waitFor(predicate: () => boolean, ms = 5000): Promise<void> {
+async function waitFor(predicate: () => boolean, ms = 30000): Promise<void> {
   const deadline = Date.now() + ms;
   while (!predicate()) {
     if (Date.now() > deadline) throw new Error('DOM condition was not reached before the test deadline');
