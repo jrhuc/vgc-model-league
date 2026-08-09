@@ -5,8 +5,13 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isMainThread, parentPort, Worker, workerData } from 'node:worker_threads';
-import { type GameRecord, loadGameRecords, verifyGame } from '../src/eval/corpus.js';
-import { type CounterfactualOptions, counterfactualProtocol, evaluatePosition } from '../src/eval/counterfactual.js';
+import { type GameRecord, gameRecordCorpusDigest, loadGameRecords, verifyGame } from '../src/eval/corpus.js';
+import {
+  type CounterfactualOptions,
+  counterfactualProtocol,
+  evaluatePosition,
+  validateCounterfactualOptions,
+} from '../src/eval/counterfactual.js';
 import { ACTION_PROTOCOL, positionDigest, requestPhase } from '../src/eval/fork.js';
 import { DATA_DIR, defaultPsDir } from '../src/paths.js';
 import { showdownCommit } from '../src/showdown.js';
@@ -81,25 +86,15 @@ function parse(argv: string[]): Settings {
     else throw new Error(`unknown option or missing value: ${flag}`);
     index += 1;
   }
-  const positiveIntegers: Array<[string, number | undefined]> = [
+  for (const [name, value] of [
     ['workers', settings.workers],
     ['limit', settings.limit],
-    ['luck', settings.luckSamples],
-    ['opponents', settings.opponentSamples],
-    ['shortlist', settings.shortlist],
-    ['screen', settings.screenSamples],
-  ];
-  for (const [name, value] of positiveIntegers) {
-    if (value !== undefined && (!Number.isInteger(value) || value < 1))
+  ] as const) {
+    if (value !== undefined && (!Number.isInteger(value) || value < 1)) {
       throw new Error(`--${name} must be a positive integer`);
+    }
   }
-  if (
-    settings.horizon !== undefined &&
-    settings.horizon !== Number.POSITIVE_INFINITY &&
-    (!Number.isInteger(settings.horizon) || settings.horizon < 0)
-  ) {
-    throw new Error('--horizon must be a non-negative integer or end');
-  }
+  validateCounterfactualOptions(settings);
   return settings;
 }
 
@@ -133,10 +128,6 @@ function digestParts(parts: Iterable<string>): string {
   return hash.digest('hex');
 }
 
-function sourceDigest(records: GameRecord[]): string {
-  return digestParts(records.map((record) => JSON.stringify(record)));
-}
-
 function evaluatorDigest(): string {
   const tool = fileURLToPath(import.meta.url);
   const files = [
@@ -158,10 +149,10 @@ ${fs.readFileSync(file, 'utf8')}`,
 
 function manifestFor(settings: Settings, records: GameRecord[]): GradeManifest {
   return {
-    schema_version: 4,
+    schema_version: 1,
     showdown_commit: showdownCommit(settings.psDir ?? defaultPsDir()),
     evaluator_digest: evaluatorDigest(),
-    source_digest: sourceDigest(records),
+    source_digest: gameRecordCorpusDigest(records),
     source_games: records.length,
     scope: {
       modes: settings.modes ?? null,
@@ -253,7 +244,8 @@ function gradeShard(shard: Shard, emit: (graded: GradedGame) => void): void {
   const { settings } = shard;
   const done = new Set(shard.done);
   const records = scopedRecords(settings);
-  if (sourceDigest(records) !== shard.sourceDigest) throw new Error('source corpus changed after grading started');
+  if (gameRecordCorpusDigest(records) !== shard.sourceDigest)
+    throw new Error('source corpus changed after grading started');
 
   for (const [index, record] of records.entries()) {
     if (index % shard.of !== shard.index) continue;
@@ -280,16 +272,17 @@ function gradeShard(shard: Shard, emit: (graded: GradedGame) => void): void {
           continue;
         }
         const decision = record.decisions[pid][choiceIndex] ?? {};
-        if (decision.automatic === true || decision.fallback === true) {
+        const ineligible =
+          decision.outcome !== 'accepted'
+            ? 'excluded-unaccepted'
+            : decision.submission_source !== 'model'
+              ? `excluded-${String(decision.submission_source ?? 'unknown-source')}`
+              : decision.fallback === true
+                ? 'excluded-fallback'
+                : undefined;
+        if (ineligible) {
           stats.excluded += 1;
-          rows.push(
-            decisionStatus(
-              record,
-              position.index,
-              pid,
-              decision.automatic === true ? 'excluded-automatic' : 'excluded-fallback',
-            ),
-          );
+          rows.push(decisionStatus(record, position.index, pid, ineligible));
           continue;
         }
         const seed = `${settings.seed ?? 'source-game-position'}:${key}:${position.index}:${pid}`;

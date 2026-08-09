@@ -7,160 +7,38 @@ export async function discoverModels(
   apiKey: string | undefined,
   options: { fetch?: typeof fetch; signal?: AbortSignal } = {},
 ): Promise<DiscoveredModel[]> {
-  if (provider.models?.length) return normalizeModels(provider.models.map((model) => ({ ...model })));
   if (provider.discovery === 'manual') {
-    throw new Error(`${provider.label} does not provide reliable model discovery; enter a model ID manually`);
+    throw new Error(`${provider.label} uses manual model IDs`);
   }
   if (provider.discovery === 'none') throw new Error(`${provider.label} does not have a model catalog`);
-  if (!apiKey && provider.id !== 'openrouter') {
-    throw new Error(`Missing ${provider.envKey ?? 'API key'} for ${provider.label} model discovery`);
-  }
+  if (provider.id !== 'openrouter' || !provider.baseUrl) throw new Error('unsupported model catalog provider');
+  if (!apiKey) throw new Error('Missing OPENROUTER_API_KEY for OpenRouter model discovery');
 
   const request = options.fetch ?? fetch;
   const signal = options.signal ?? AbortSignal.timeout(20_000);
-  if (provider.id === 'openrouter' && apiKey) await validateOpenRouterKey(request, provider, apiKey, signal);
-  let models: DiscoveredModel[];
-  if (provider.id === 'anthropic') models = await discoverAnthropic(request, apiKey ?? '', signal);
-  else if (provider.id === 'google') models = await discoverGoogle(request, apiKey ?? '', signal);
-  else models = await discoverOpenAICompatible(request, provider, apiKey, signal);
+  const response = await request(`${provider.baseUrl}/models`, {
+    method: 'GET',
+    headers: { Authorization: `Bearer ${apiKey}` },
+    signal,
+  });
+  const body = await responseBody(response, provider.label, apiKey);
+  const models: DiscoveredModel[] = [];
+  for (const entry of recordArray(body, 'data', provider.label)) {
+    if (!isOpenRouterTextModel(entry)) continue;
+    const model = modelFromRecord(entry);
+    if (model) models.push(model);
+  }
   return normalizeModels(models);
 }
 
 type UnknownRecord = Record<string, unknown>;
 
-async function discoverAnthropic(
-  request: typeof fetch,
-  apiKey: string,
-  signal: AbortSignal | undefined,
-): Promise<DiscoveredModel[]> {
-  const models: DiscoveredModel[] = [];
-  let afterId: string | undefined;
-  const seenPages = new Set<string>();
-
-  while (true) {
-    const url = new URL('https://api.anthropic.com/v1/models');
-    if (afterId) url.searchParams.set('after_id', afterId);
-    const response = await request(
-      url,
-      requestInit(
-        {
-          'x-api-key': apiKey,
-          'anthropic-version': '2023-06-01',
-        },
-        signal,
-      ),
-    );
-    const body = await responseBody(response, 'Anthropic', apiKey);
-    const data = recordArray(body, 'data', 'Anthropic');
-    for (const entry of data) {
-      const discovered = modelFromRecord(entry, ['display_name']);
-      if (discovered) models.push(discovered);
-    }
-
-    if (body.has_more !== true) break;
-    const lastId = stringValue(body.last_id);
-    if (!lastId || seenPages.has(lastId)) throw new Error('Anthropic returned invalid model pagination data');
-    seenPages.add(lastId);
-    afterId = lastId;
-  }
-
-  return models;
-}
-
-async function discoverGoogle(
-  request: typeof fetch,
-  apiKey: string,
-  signal: AbortSignal | undefined,
-): Promise<DiscoveredModel[]> {
-  const models: DiscoveredModel[] = [];
-  let pageToken: string | undefined;
-  const seenPages = new Set<string>();
-
-  while (true) {
-    const url = new URL('https://generativelanguage.googleapis.com/v1beta/models');
-    if (pageToken) url.searchParams.set('pageToken', pageToken);
-    const response = await request(url, requestInit({ 'x-goog-api-key': apiKey }, signal));
-    const body = await responseBody(response, 'Google', apiKey);
-    const entries = recordArray(body, 'models', 'Google');
-    for (const entry of entries) {
-      const methods = asStrings(entry.supportedGenerationMethods);
-      if (!methods.includes('generateContent')) continue;
-      const rawId = stringValue(entry.name);
-      if (!rawId) continue;
-      const id = rawId.startsWith('models/') ? rawId.slice('models/'.length) : rawId;
-      const model = makeModel(id, stringValue(entry.displayName), stringValue(entry.description));
-      if (model) models.push(model);
-    }
-
-    const nextToken = stringValue(body.nextPageToken);
-    if (!nextToken) break;
-    if (seenPages.has(nextToken)) throw new Error('Google returned invalid model pagination data');
-    seenPages.add(nextToken);
-    pageToken = nextToken;
-  }
-
-  return models;
-}
-
-async function validateOpenRouterKey(
-  request: typeof fetch,
-  provider: ProviderOption,
-  apiKey: string,
-  signal: AbortSignal | undefined,
-): Promise<void> {
-  if (!provider.baseUrl) throw new Error('OpenRouter does not define an API endpoint');
-  const response = await request(
-    `${provider.baseUrl.replace(/\/$/, '')}/key`,
-    requestInit({ Authorization: `Bearer ${apiKey}` }, signal),
-  );
-  const raw = await readCappedText(response, 100_000);
-  if (raw === undefined) throw new Error('OpenRouter API key validation response was too large');
-  if (response.ok) return;
-  const detail = errorDetail(raw, apiKey);
-  const status = response.statusText ? `${response.status} ${response.statusText}` : String(response.status);
-  throw new Error(`OpenRouter API key validation failed (${status})${detail ? `: ${detail}` : ''}`);
-}
-
-async function discoverOpenAICompatible(
-  request: typeof fetch,
-  provider: ProviderOption,
-  apiKey: string | undefined,
-  signal: AbortSignal | undefined,
-): Promise<DiscoveredModel[]> {
-  if (!provider.baseUrl) throw new Error(`${provider.label} does not define a model catalog endpoint`);
-  const headers: Record<string, string> = {};
-  if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
-  const response = await request(`${provider.baseUrl.replace(/\/$/, '')}/models`, requestInit(headers, signal));
-  const body = await responseBody(response, provider.label, apiKey);
-  const entries = recordArray(body, 'data', provider.label);
-  const models: DiscoveredModel[] = [];
-  for (const entry of entries) {
-    const supported =
-      provider.id === 'openai'
-        ? isOpenAIChatModel(entry)
-        : provider.id === 'openrouter'
-          ? isOpenRouterTextModel(entry)
-          : isGenerativeModel(entry);
-    if (!supported) continue;
-    const discovered = modelFromRecord(entry, ['name', 'display_name']);
-    if (discovered) models.push(discovered);
-  }
-  return models;
-}
-
-function requestInit(headers: Record<string, string>, signal: AbortSignal | undefined): RequestInit {
-  const init: RequestInit = { method: 'GET', headers };
-  if (signal) init.signal = signal;
-  return init;
-}
-
-async function responseBody(response: Response, provider: string, apiKey: string | undefined): Promise<UnknownRecord> {
+async function responseBody(response: Response, provider: string, apiKey: string): Promise<UnknownRecord> {
   const raw = await readCappedText(response, 1_000_000);
   if (raw === undefined) throw new Error(`${provider} model catalog response was too large`);
   if (!response.ok) {
-    const detail = errorDetail(raw, apiKey);
     const status = response.statusText ? `${response.status} ${response.statusText}` : String(response.status);
-    throw new Error(`${provider} model discovery failed (${status})${detail ? `: ${detail}` : ''}`);
+    throw new Error(`${provider} model discovery failed (${status})${raw ? `: ${errorDetail(raw, apiKey)}` : ''}`);
   }
   try {
     const parsed: unknown = JSON.parse(raw);
@@ -169,7 +47,7 @@ async function responseBody(response: Response, provider: string, apiKey: string
   throw new Error(`${provider} returned an invalid model catalog response`);
 }
 
-function errorDetail(raw: string, apiKey: string | undefined): string {
+function errorDetail(raw: string, apiKey: string): string {
   let detail = raw;
   try {
     const parsed: unknown = JSON.parse(raw);
@@ -178,7 +56,7 @@ function errorDetail(raw: string, apiKey: string | undefined): string {
       else detail = stringValue(parsed.error) ?? stringValue(parsed.message) ?? raw;
     }
   } catch {}
-  return redactSecrets(detail, apiKey ? [apiKey] : []).slice(0, 500);
+  return redactSecrets(detail, [apiKey]).slice(0, 500);
 }
 
 function recordArray(record: UnknownRecord, key: string, provider: string): UnknownRecord[] {
@@ -187,44 +65,18 @@ function recordArray(record: UnknownRecord, key: string, provider: string): Unkn
   return value.filter(isRecord);
 }
 
-function modelFromRecord(record: UnknownRecord, displayNameKeys: readonly string[]): DiscoveredModel | undefined {
-  const id = stringValue(record.id);
-  if (!id) return undefined;
-  let displayName: string | undefined;
-  for (const key of displayNameKeys) {
-    displayName = stringValue(record[key]);
-    if (displayName) break;
-  }
-  return makeModel(id, displayName, modelDescription(record));
-}
-
-function modelDescription(record: UnknownRecord): string | undefined {
-  const metadata: string[] = [];
-  const owner = stringValue(record.owned_by);
-  if (owner) metadata.push(`Owner: ${owner}`);
-  const contextLength = record.context_length;
-  if (typeof contextLength === 'number' && Number.isFinite(contextLength) && contextLength > 0) {
-    metadata.push(`${Math.floor(contextLength).toLocaleString('en-US')} token context`);
-  }
-  return metadata.length > 0 ? metadata.join(' · ') : stringValue(record.description);
-}
-
-function makeModel(
-  rawId: string,
-  rawDisplayName: string | undefined,
-  rawDescription: string | undefined,
-): DiscoveredModel | undefined {
-  const id = rawId.trim();
+function modelFromRecord(record: UnknownRecord): DiscoveredModel | undefined {
+  const id = stringValue(record.id)?.trim();
   if (!id || /[\p{Cc}\p{Cf}]/u.test(id)) return undefined;
-  const model: DiscoveredModel = { id };
-  const displayName = rawDisplayName?.replace(/[\p{Cc}\p{Cf}]/gu, ' ').trim();
-  const description = rawDescription
+  const displayName = stringValue(record.name)
     ?.replace(/[\p{Cc}\p{Cf}]/gu, ' ')
-    .trim()
-    .slice(0, 300);
-  if (displayName && displayName !== id) model.displayName = displayName;
-  if (description) model.description = description;
-  return model;
+    .trim();
+  const supportsReasoning = asStrings(record.supported_parameters).includes('reasoning');
+  return {
+    id,
+    ...(displayName && displayName !== id ? { displayName } : {}),
+    ...(supportsReasoning ? { supportsReasoning: true } : {}),
+  };
 }
 
 function normalizeModels(models: readonly DiscoveredModel[]): DiscoveredModel[] {
@@ -233,25 +85,16 @@ function normalizeModels(models: readonly DiscoveredModel[]): DiscoveredModel[] 
     const existing = unique.get(model.id);
     if (!existing) unique.set(model.id, model);
     else {
-      if (!existing.displayName && model.displayName) existing.displayName = model.displayName;
-      if (!existing.description && model.description) existing.description = model.description;
+      unique.set(model.id, {
+        id: model.id,
+        ...(existing.displayName || model.displayName
+          ? { displayName: existing.displayName ?? model.displayName }
+          : {}),
+        ...(existing.supportsReasoning || model.supportsReasoning ? { supportsReasoning: true } : {}),
+      });
     }
   }
   return [...unique.values()].sort((left, right) => left.id.localeCompare(right.id));
-}
-
-function isOpenAIChatModel(record: UnknownRecord): boolean {
-  const id = stringValue(record.id)?.toLowerCase();
-  if (!id || !/^(?:ft:)?(?:gpt-|chatgpt-|o[134](?:-|$))/.test(id) || !isGenerativeModel(record)) return false;
-  return !/(?:instruct|deep-research|(?:^|[-.])pro(?:[-.]|$))/.test(id);
-}
-
-function isGenerativeModel(record: UnknownRecord): boolean {
-  const id = stringValue(record.id)?.toLowerCase();
-  if (!id) return false;
-  return !/(?:embedding|moderation|whisper|dall-e|transcription|computer-use|(?:^|[-_/])(?:tts|image|audio|realtime|sora)(?:[-_/]|$))/.test(
-    id,
-  );
 }
 
 function isOpenRouterTextModel(record: UnknownRecord): boolean {
@@ -262,8 +105,17 @@ function isOpenRouterTextModel(record: UnknownRecord): boolean {
   const modality = stringValue(architecture.modality)?.toLowerCase();
   if (!modality) return isGenerativeModel(record);
   const separator = modality.lastIndexOf('->');
-  const output = separator >= 0 ? modality.slice(separator + 2) : modality;
-  return output.includes('text');
+  return (separator >= 0 ? modality.slice(separator + 2) : modality).includes('text');
+}
+
+function isGenerativeModel(record: UnknownRecord): boolean {
+  const id = stringValue(record.id)?.toLowerCase();
+  return Boolean(
+    id &&
+      !/(?:embedding|moderation|whisper|dall-e|transcription|computer-use|(?:^|[-_/])(?:tts|image|audio|realtime|sora)(?:[-_/]|$))/.test(
+        id,
+      ),
+  );
 }
 
 function stringValue(value: unknown): string | undefined {

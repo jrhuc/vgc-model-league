@@ -27,13 +27,6 @@ authoritative and `Battle.toJSON/fromJSON` can produce matched restorable forks.
 That is an implementation boundary, not a claim that client-based projects could
 not add equivalent state access.
 
-A proposed official-event control pipeline would preserve source provenance and
-rights, use two independent annotations of public Top 8 broadcasts with
-missingness, distinguish `public-transition-reproduced` from
-`counterfactual-fork eligible`, and freeze identity-stripped tasks before
-outcome joins. Source actions and consented human entrants would remain
-contextual controls; [Human controls](human-controls.md) specifies the planned
-admission and release gates.
 
 ## Cross-stage Pokémon systems
 
@@ -71,28 +64,11 @@ by playoffs for qualified seats. Optional transactions may be included, but are
 not required to distinguish the first slice. This is a bounded comparison, not
 an exhaustive priority claim.
 
-Only later actions accepted by Showdown would be simulator-authoritative; the
-context itself would not be. Mechanical roster-membership and accepted-transition
-joins are distinct from audited semantic plan fidelity. The current battle layer
-uses Showdown, while compatible external baselines are planned. The connected
-circuit remains an intended target, not current behavior; see [program
-status](evaluation-plan.md#program-status).
-
-## Standalone construction ablation
-
-`vgc-whole-reg-build-v0` is an internal ablation, not a novelty or benchmark
-claim. Automated team construction is prior art; the arm is useful because it
-removes drafting while exercising the same `TeamBuildTask`, `StageEvidence`,
-Showdown, preview-controller, battle-controller, and evidence path needed by the
-planned connected circuit. It adds no separate reflection scaffold.
-
-Public teams may be memorized. Any human-build comparison would require licensed
-exact packs with provenance and would be a descriptive contextual control, not
-an optimality threshold; an official stream that omits exact spreads is
-evidence of a team concept, not an exact pack. Until frozen disjoint opponent
-and human suites and the complete controller cross-product exist, the
-arm supports only vertical-slice engineering, not a public Reg M-B comparison or
-ranking.
+Only later actions accepted by Showdown are simulator-authoritative; the context
+itself is not. Mechanical roster-membership and accepted-transition joins are
+distinct from audited semantic plan fidelity. Showdown remains the battle
+referee, while compatible external systems provide baseline candidates.
+Implementation and release status lives only in the [Evaluation plan](evaluation-plan.md#program-status).
 
 ## Drafting, seasons, and negotiation outside Pokémon
 
@@ -137,37 +113,57 @@ separate methodology: any analogous trade or plan-fidelity measure here would
 need a preregistered rubric, identity-stripped traces, multiple audited graders,
 and reported grader variance.
 
+## Long-horizon agents, memory, and external validity
+
+The interface also cites these primary papers for narrower methodological
+questions. Their task scopes must not be collapsed into a general capability or
+transfer claim.
+
+| Work | Exact scope used here |
+| --- | --- |
+| [*Measuring AI Ability to Complete Long Software Tasks*](https://arxiv.org/abs/2503.14499) | Estimates a software-task time horizon from success rates and explicitly discusses external-validity limits. It is not evidence that VGC season planning transfers to software work. |
+| [*$\tau$-bench: A Benchmark for Tool-Agent-User Interaction in Real-World Domains*](https://arxiv.org/abs/2406.12045) | Evaluates policy-constrained tool use in simulated airline and retail domains and reports repeated-trial reliability with `pass^k`. It supplies a consistency method, not a VGC baseline. |
+| [*ReAct: Synergizing Reasoning and Acting in Language Models*](https://arxiv.org/abs/2210.03629) | Studies interleaved language reasoning and environment actions on the paper's knowledge and interactive decision tasks. It motivates traceable action/observation loops only. |
+| [*MemGPT: Towards LLMs as Operating Systems*](https://arxiv.org/abs/2310.08560) | Proposes virtual-context management for limited context windows. It motivates an explicit memory treatment, not an assumption that a notebook was used. |
+| [*Reflexion: Language Agents with Verbal Reinforcement Learning*](https://arxiv.org/abs/2303.11366) | Reports linguistic feedback and episodic-memory interventions on the paper's agent tasks. It motivates a versioned reflection ablation; it does not make an observed VGC reflection causal. |
+| [*Large Language Models Cannot Self-Correct Reasoning Yet*](https://arxiv.org/abs/2310.01798) | Tests intrinsic self-correction without external feedback on the paper's reasoning tasks. Its negative results motivate direct checks rather than a universal impossibility claim. |
+| [*BALROG: Benchmarking Agentic LLM and VLM Reasoning On Games*](https://arxiv.org/abs/2411.13543) | Benchmarks agents across diverse games with exploration, spatial, and longer-horizon demands. It is an external comparison domain, not evidence of shared latent ability. |
+| [*Factorio Learning Environment*](https://arxiv.org/abs/2503.09617) | Provides open-ended Factorio tasks for long-term planning, program synthesis, and resource optimization. Similar planning language does not establish transfer to or from a contested VGC draft. |
+| [*SWE-bench: Can Language Models Resolve Real-World GitHub Issues?*](https://arxiv.org/abs/2310.06770) | Builds repository-level software tasks from real GitHub issues. It is a separate external-validity target, not a proxy label for VGC planning. |
+
+A scarce draft against known future opponents is genuine in-environment planning;
+the linked season can test whether later VGC choices are consistent with it.
+Generalization to any domain above requires a separate matched evaluation. The
+papers motivate controls and trace questions, not transfer inference in either
+direction.
+
 ## Infrastructure
 
 [Prime Intellect verifiers](https://github.com/PrimeIntellect-ai/verifiers)
 provides tasksets, harnesses, runtimes, traces, judges, multi-agent `Env` control
-flow, evaluation, and `prime-rl` integration. Its native package is the planned
-controlled evaluation path for the static positions and later circuit; the local
-league remains trajectory generation and inspection. This infrastructure is
-adopted, not claimed as a repository contribution. Native Prime/verifiers is the
-target stack; Harbor and NeMo packaging is outside this plan.
+flow, evaluation, and `prime-rl` integration. This infrastructure is adopted,
+not claimed as a repository contribution. [Architecture](architecture.md) owns
+the component boundary.
 
 LangChain’s [*Towards Automating Eval
 Engineering*](https://www.langchain.com/blog/towards-automating-eval-engineering)
 describes human review of traces and promotion of observed failure modes into
-controlled tasks. Planned VGC analysis applies those steps to native
-Prime/verifiers artifacts.
+controlled tasks. Those review steps motivate the trace-analysis method here.
 
 ## Claim boundary
 
-The intended contribution, once implemented and validated, is persistent
-league-state-to-battle protocol integration and linked upstream/downstream
-evidence: a contested exclusive budget draft and optional transactions carried
-through legal VGC construction, bring, lead, played regular-season matches,
-playoffs for qualified seats, and auditable plan-to-execution links. The static
-position package is its controlled native evaluation artifact, not a claim to
-invent battle environments or simulator action values. This is a target claim,
-not a claim about the current branch.
+The contribution claim is limited to validated persistent league-state-to-battle
+protocol integration and linked upstream/downstream evidence: a contested
+exclusive budget draft and optional transactions carried through legal VGC
+construction, bring, lead, played regular-season matches, playoffs for qualified
+seats, and auditable plan-to-execution links. The static position package is the
+controlled native evaluation artifact, not a claim to invent battle environments
+or simulator action values. Program status lives only in the
+[Evaluation plan](evaluation-plan.md#program-status).
 
 The narrower pieces are not claimed as novel: Pokémon agents, doubles
 multi-agent play, draft formats or mechanisms, construction, team preview, Bo3,
 negotiation, simulator search, reasoning logs, ratings, league management, or
-multi-agent RL infrastructure. The planned circuit is intended to complement
-poke-env, VGC-Bench, and the other prior work above through compatible baselines
-and battle artifacts. The circuit is not implemented and makes no priority claim
-over those projects.
+multi-agent RL infrastructure. Compatible baselines and battle artifacts permit
+comparison with poke-env, VGC-Bench, and the other prior work above. No priority
+claim is made over those projects.

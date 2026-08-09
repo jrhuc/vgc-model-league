@@ -3,7 +3,7 @@ import path from 'node:path';
 
 import type { SeriesRecord } from './records.js';
 
-import { loadRows, scopeRows, TEST_POOL } from './records.js';
+import { loadSeriesRecords, scopeRows, TEST_POOL } from './records.js';
 import { asRecord } from './value.js';
 
 const CSS = `
@@ -62,7 +62,7 @@ function gamesTable(rows: SeriesRecord[], limit = 80): string {
 }
 
 export function writeReport(recordsPath: string, outPath: string, pool?: string): string {
-  const rows = scopeRows(loadRows(recordsPath), pool);
+  const rows = scopeRows(loadSeriesRecords(recordsPath), pool);
   const stamp = new Intl.DateTimeFormat('en-CA', { timeZone: 'UTC', dateStyle: 'medium', timeStyle: 'short' }).format(
     new Date(),
   );

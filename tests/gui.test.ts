@@ -135,22 +135,14 @@ test('gui serves the built app shell and setup state', async () => {
     assert.equal(status, 200);
     const pools = data.pools as Array<{ name: string; teamCount: number }>;
     assert.ok(pools.some((pool) => pool.name === 'test' && pool.teamCount >= 2));
-    assert.equal((data.reasoningLevels as string[]).length, 7);
+    assert.equal('reasoningLevels' in data, false);
     const providers = data.providers as Array<Record<string, unknown>>;
-    assert.ok(providers.some((provider) => provider.id === 'openrouter'));
-    assert.ok(
-      providers.every((provider) => provider.id !== 'anthropic'),
-      'direct Anthropic seats must never be offered by the GUI',
+    assert.deepEqual(
+      providers.map((provider) => provider.id),
+      ['openrouter', 'prime', 'random'],
     );
     assert.ok(providers.every((provider) => !('envKey' in provider) && !('keyPresent' in provider)));
-    const meta = providers.find((provider) => provider.id === 'meta');
-    assert.deepEqual(meta?.models, [
-      {
-        id: 'muse-spark-1.1',
-        label: 'Muse Spark 1.1',
-        reasoningLevels: ['off', 'minimal', 'low', 'medium', 'high', 'xhigh'],
-      },
-    ]);
+    assert.ok(providers.every((provider) => !('models' in provider)));
     const formats = data.formats as Array<{ id: string; label: string }>;
     assert.ok(formats.some((format) => format.id === FORMAT));
     assert.ok(formats.every((format) => format.id.startsWith('gen9champions') && format.id.endsWith('bo3')));
@@ -160,13 +152,14 @@ test('gui serves the built app shell and setup state', async () => {
     assert.equal((await fetch(`${base}readyz`)).status, 200);
     const missing = await fetch(`${base}api/nothing`);
     assert.equal(missing.status, 404);
-    const serverKeyCatalog = await fetch(`${base}api/models?provider=openai`);
-    assert.equal(serverKeyCatalog.status, 404);
-    const browserKeyRequired = await apiJson(`${base}api/models`, { provider: 'openai', apiKey: '' });
-    assert.equal(browserKeyRequired.status, 400);
-    const disabledProvider = await apiJson(`${base}api/models`, { provider: 'anthropic', apiKey: 'browser-key' });
-    assert.equal(disabledProvider.status, 400);
-    assert.match(String(disabledProvider.data.error), /openrouter:anthropic/);
+    const catalogGet = await fetch(`${base}api/models?provider=openrouter`);
+    assert.equal(catalogGet.status, 404);
+    const manualPrime = await apiJson(`${base}api/models`, { provider: 'prime', apiKey: 'browser-key' });
+    assert.equal(manualPrime.status, 400);
+    assert.match(String(manualPrime.data.error), /manual model IDs/);
+    const removedProvider = await apiJson(`${base}api/models`, { provider: 'anthropic', apiKey: 'browser-key' });
+    assert.equal(removedProvider.status, 400);
+    assert.match(String(removedProvider.data.error), /unknown provider/);
   } finally {
     gui.close();
   }
@@ -255,19 +248,10 @@ test('hosted mode enforces its canonical origin and defaults to read-only', asyn
     assert.match(String(state.headers['content-security-policy']), /frame-ancestors 'none'/);
     assert.match(String(state.headers['strict-transport-security']), /max-age=31536000/);
     const providers = state.data.providers as Array<{ id: string }>;
-    assert.ok(!providers.some((provider) => provider.id === 'compat'));
-    const cliReasoning = await rawJsonRequest(port, {
-      path: '/api/reasoning?spec=omp%3Amodel',
-      headers: { host: 'league.example' },
-    });
-    assert.equal(cliReasoning.status, 400);
-    assert.match(String(cliReasoning.data.error), /Local CLI providers are disabled in hosted mode/);
-    const claudeCliReasoning = await rawJsonRequest(port, {
-      path: '/api/reasoning?spec=claude-cli%3Amodel',
-      headers: { host: 'league.example' },
-    });
-    assert.equal(claudeCliReasoning.status, 400);
-    assert.match(String(claudeCliReasoning.data.error), /Local CLI providers are disabled in hosted mode/);
+    assert.deepEqual(
+      providers.map((provider) => provider.id),
+      ['openrouter', 'prime', 'random'],
+    );
     assert.deepEqual(state.data.auth, { mode: 'read-only', user: null, csrfToken: null });
     assert.equal(await rawRequest(port, { path: '/api/state', headers: { host: 'evil.example' } }), 403);
     assert.equal(
@@ -402,9 +386,44 @@ test('gui validates teambuilder pastes and creates immutable pools', async () =>
   }
 });
 
+test('gui exposes OpenRouter reasoning controls only from catalog capability data', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input, init) => {
+    if (String(input) === 'https://openrouter.ai/api/v1/models') {
+      return new Response(
+        JSON.stringify({
+          data: [
+            { id: 'vendor/reasoning', supported_parameters: ['reasoning'] },
+            { id: 'vendor/default-only', supported_parameters: ['tools'] },
+          ],
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    }
+    return originalFetch(input, init);
+  }) as typeof globalThis.fetch;
+  const gui = new GuiServer({ runsDir: RUNS_SCRATCH });
+  const base = await gui.listen(0);
+  try {
+    const response = await apiJson(`${base}api/models`, { provider: 'openrouter', apiKey: 'browser-key' });
+    assert.equal(response.status, 200, JSON.stringify(response.data));
+    assert.deepEqual(response.data.models, [
+      { id: 'vendor/default-only', label: 'vendor/default-only', reasoningLevels: [] },
+      {
+        id: 'vendor/reasoning',
+        label: 'vendor/reasoning',
+        reasoningLevels: ['minimal', 'low', 'medium', 'high', 'xhigh'],
+      },
+    ]);
+  } finally {
+    gui.close();
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('gui requires browser credentials and never exposes server keys', async () => {
-  const previous = process.env.OPENAI_API_KEY;
-  process.env.OPENAI_API_KEY = 'server-secret-must-not-be-used';
+  const previous = process.env.PRIME_API_KEY;
+  process.env.PRIME_API_KEY = 'server-secret-must-not-be-used';
   let receivedKeys: Record<string, string> | undefined;
   const gui = new GuiServer({
     runsDir: RUNS_SCRATCH,
@@ -415,16 +434,16 @@ test('gui requires browser credentials and never exposes server keys', async () 
   });
   const base = await gui.listen(0);
   try {
-    const disabled = await apiJson(`${base}api/run`, {
+    const removed = await apiJson(`${base}api/run`, {
       models: ['anthropic:test-model', 'random'],
       pool: 'test',
       apiKeys: { 'anthropic:test-model': 'browser-run-secret' },
     });
-    assert.equal(disabled.status, 400);
-    assert.match(String(disabled.data.error), /openrouter:anthropic/);
+    assert.equal(removed.status, 400);
+    assert.match(String(removed.data.error), /openrouter:<model-id>, prime:<model-id>, or random/);
 
     const missing = await apiJson(`${base}api/run`, {
-      models: ['openai:test-model', 'random'],
+      models: ['prime:test-model', 'random'],
       pool: 'test',
     });
     assert.equal(missing.status, 400);
@@ -432,44 +451,69 @@ test('gui requires browser credentials and never exposes server keys', async () 
     assert.doesNotMatch(JSON.stringify(missing.data), /server-secret/);
 
     const started = await apiJson(`${base}api/run`, {
-      models: ['openai:test-model', 'random'],
+      models: ['prime:test-model', 'random'],
       pool: 'test',
-      apiKeys: { 'openai:test-model': 'browser-run-secret' },
+      apiKeys: { 'prime:test-model': 'browser-run-secret' },
     });
     assert.equal(started.status, 200, JSON.stringify(started.data));
-    assert.deepEqual(receivedKeys, { 'openai:test-model': 'browser-run-secret' });
+    assert.deepEqual(receivedKeys, { 'prime:test-model': 'browser-run-secret' });
     const state = await apiJson(`${base}api/state`);
     assert.doesNotMatch(JSON.stringify(state.data), /browser-run-secret|server-secret/);
   } finally {
     gui.close();
-    if (previous === undefined) delete process.env.OPENAI_API_KEY;
-    else process.env.OPENAI_API_KEY = previous;
+    if (previous === undefined) delete process.env.PRIME_API_KEY;
+    else process.env.PRIME_API_KEY = previous;
   }
 });
 
-test('local GUI accepts CLI provider specs without browser API keys', async () => {
-  let received: string[] | undefined;
+test('gui Nitro launch maps raw model credentials and reasoning to the effective spec', async () => {
+  let receivedModels: readonly string[] | undefined;
+  let receivedKeys: Readonly<Record<string, string>> | undefined;
+  let receivedReasoning: Readonly<Record<string, string>> | undefined;
   const gui = new GuiServer({
     runsDir: RUNS_SCRATCH,
-    runner: async (models) => {
-      received = models;
+    runner: async (models, _seriesPerPair, _runDir, options = {}) => {
+      receivedModels = [...models];
+      receivedKeys = { ...options.apiKeys };
+      receivedReasoning = options.reasoningByModel ? { ...options.reasoningByModel } : undefined;
       return [];
     },
   });
   const base = await gui.listen(0);
+  const raw = 'openrouter:vendor/test-model';
+  const effective = `${raw}:nitro`;
   try {
     const started = await apiJson(`${base}api/run`, {
-      models: ['omp:provider/model', 'claude-cli:claude-sonnet-4-6'],
+      models: [raw, 'random'],
+      apiKeys: { [raw]: 'browser-nitro-key' },
+      reasoningByModel: { [raw]: 'high' },
+      nitro: true,
       pool: 'test',
     });
     assert.equal(started.status, 200, JSON.stringify(started.data));
-    assert.deepEqual(received, ['omp:provider/model', 'claude-cli:claude-sonnet-4-6']);
+    assert.deepEqual(receivedModels, [effective, 'random']);
+    assert.deepEqual(receivedKeys, { [effective]: 'browser-nitro-key' });
+    assert.deepEqual(receivedReasoning, { [effective]: 'high' });
   } finally {
     gui.close();
   }
 });
 
-test('gui validates shared and per-model reasoning before launching', async () => {
+test('local GUI rejects removed CLI and direct provider specs', async () => {
+  const gui = new GuiServer({ runsDir: RUNS_SCRATCH });
+  const base = await gui.listen(0);
+  try {
+    for (const model of ['omp:provider/model', 'claude-cli:model', 'openai:model', 'compat:https://host/v1:model']) {
+      const rejected = await apiJson(`${base}api/run`, { models: [model, 'random'], pool: 'test' });
+      assert.equal(rejected.status, 400);
+      assert.match(String(rejected.data.error), /openrouter:<model-id>, prime:<model-id>, or random/);
+    }
+  } finally {
+    gui.close();
+  }
+});
+
+test('gui accepts only explicit OpenRouter reasoning levels', async () => {
   let received: Record<string, string> | undefined;
   const gui = new GuiServer({
     runsDir: RUNS_SCRATCH,
@@ -479,36 +523,35 @@ test('gui validates shared and per-model reasoning before launching', async () =
     },
   });
   const base = await gui.listen(0);
-  const models = ['deepseek:deepseek-chat', 'meta:muse-spark-1.1'];
+  const models = ['openrouter:vendor/model-a', 'openrouter:vendor/model-b'];
   const apiKeys = Object.fromEntries(models.map((model) => [model, 'browser-key']));
   try {
-    const capabilities = await apiJson(`${base}api/reasoning?spec=${encodeURIComponent('anthropic:claude-opus-4-10')}`);
-    assert.deepEqual(capabilities.data.levels, ['low', 'medium', 'high', 'xhigh', 'max']);
+    assert.equal((await fetch(`${base}api/reasoning?spec=openrouter%3Avendor%2Fmodel-a`)).status, 404);
 
-    const unsupportedShared = await apiJson(`${base}api/run`, {
+    const removedOff = await apiJson(`${base}api/run`, {
       models,
       apiKeys,
       pool: 'test',
-      reasoning: 'minimal',
+      reasoning: 'off',
     });
-    assert.equal(unsupportedShared.status, 400);
-    assert.match(String(unsupportedShared.data.error), /does not support reasoning=minimal/);
+    assert.equal(removedOff.status, 400);
+    assert.match(String(removedOff.data.error), /reasoning must be one of/);
 
-    const unsupportedIndividual = await apiJson(`${base}api/run`, {
-      models,
-      apiKeys,
+    const primeUnknown = await apiJson(`${base}api/run`, {
+      models: ['prime:model-a', 'random'],
+      apiKeys: { 'prime:model-a': 'browser-key' },
       pool: 'test',
-      reasoningByModel: { 'meta:muse-spark-1.1': 'max' },
+      reasoning: 'low',
     });
-    assert.equal(unsupportedIndividual.status, 400);
-    assert.match(String(unsupportedIndividual.data.error), /does not support reasoning=max/);
+    assert.equal(primeUnknown.status, 400);
+    assert.match(String(primeUnknown.data.error), /no advertised configurable reasoning/);
 
     const ambiguous = await apiJson(`${base}api/run`, {
       models,
       apiKeys,
       pool: 'test',
       reasoning: 'low',
-      reasoningByModel: { 'meta:muse-spark-1.1': 'minimal' },
+      reasoningByModel: { 'openrouter:vendor/model-b': 'minimal' },
     });
     assert.equal(ambiguous.status, 400);
     assert.match(String(ambiguous.data.error), /either shared reasoning or per-model reasoning/);
@@ -518,14 +561,14 @@ test('gui validates shared and per-model reasoning before launching', async () =
       apiKeys,
       pool: 'test',
       reasoningByModel: {
-        'deepseek:deepseek-chat': 'max',
-        'meta:muse-spark-1.1': 'minimal',
+        'openrouter:vendor/model-a': 'high',
+        'openrouter:vendor/model-b': 'minimal',
       },
     });
     assert.equal(started.status, 200, JSON.stringify(started.data));
     assert.deepEqual(received, {
-      'deepseek:deepseek-chat': 'max',
-      'meta:muse-spark-1.1': 'minimal',
+      'openrouter:vendor/model-a': 'high',
+      'openrouter:vendor/model-b': 'minimal',
     });
   } finally {
     gui.close();
@@ -582,7 +625,7 @@ test('hosted runs accept untimed just like local runs', async () => {
   const port = address.port;
   const headers = { host: 'league.example', origin: 'https://league.example', 'content-type': 'application/json' };
   try {
-    for (const provider of ['omp', 'claude-cli']) {
+    for (const provider of ['omp', 'claude-cli', 'openai', 'compat']) {
       const rejected = await rawJsonRequest(port, {
         method: 'POST',
         path: '/api/run',
@@ -590,7 +633,7 @@ test('hosted runs accept untimed just like local runs', async () => {
         body: JSON.stringify({ models: [`${provider}:model`, 'random'], pool: 'test' }),
       });
       assert.equal(rejected.status, 400);
-      assert.match(String(rejected.data.error), /Local CLI providers are disabled in hosted mode/);
+      assert.match(String(rejected.data.error), /openrouter:<model-id>, prime:<model-id>, or random/);
     }
     const untimed = await rawJsonRequest(port, {
       method: 'POST',
@@ -662,8 +705,8 @@ test('recoverable provider failures pause and resume the same run', async () => 
         seed: 11,
       });
       const waiting = options.recovery!.pause(
-        'google:gemini-test',
-        { kind: 'quota', summary: 'Google API quota is exhausted.' },
+        'prime:test-model',
+        { kind: 'quota', summary: 'Prime Inference API quota is exhausted.' },
         options.signal,
       );
       paused.resolve();
@@ -681,9 +724,9 @@ test('recoverable provider failures pause and resume the same run', async () => 
     let run = (await apiJson(`${base}api/state`)).data.run as Record<string, unknown>;
     assert.equal(run.state, 'paused');
     const pause = run.pause as Record<string, unknown>;
-    assert.equal(pause.model, 'google:gemini-test');
+    assert.equal(pause.model, 'prime:test-model');
     assert.equal(pause.kind, 'quota');
-    assert.equal(pause.message, 'Google API quota is exhausted.');
+    assert.equal(pause.message, 'Prime Inference API quota is exhausted.');
     assert.equal(typeof pause.since, 'number');
 
     const rejected = await apiJson(`${base}api/run`, { models: ['random', 'random'], pool: 'test' });
@@ -917,7 +960,8 @@ test('a hung hosted worker is killed without taking down the web process', async
     assert.equal(finished.state, 'failed');
     const state = await rawJsonRequest(port, { path: '/api/state', headers: { host: 'league.example' } });
     const run = state.data.run as Record<string, unknown>;
-    assert.equal(run.error, 'run exceeded its maximum duration');
+    assert.equal(run.state, 'failed');
+    assert.equal('error' in run, false, 'anonymous hosted state omits private failure details');
     assert.equal(await rawRequest(port, { path: '/healthz' }), 200);
   } finally {
     await gui.shutdown(1_000);
@@ -1105,9 +1149,10 @@ test('gui starts tournament runs and mirrors bracket state', async () => {
     assert.equal(timers.p2?.seconds, null);
     assert.equal(typeof timers.p2?.elapsedSeconds, 'number');
     const publicBattle = await apiJson(`${base}api/battle/public?index=0`);
-    const publicSnapshot = publicBattle.data.snapshot as Record<string, unknown>;
-    assert.deepEqual(publicSnapshot.decisions, []);
-    assert.deepEqual((publicSnapshot.spend as Record<string, unknown>).p1, { seconds: 12, tokens: 50_000 });
+    assert.equal(publicBattle.data.visibility, 'public');
+    assert.equal('snapshot' in publicBattle.data, false);
+    assert.deepEqual(publicBattle.data.log, [], 'an unresolved game does not stream anonymous transitions');
+    assert.equal('decisions' in publicBattle.data, false);
   } finally {
     gui.close();
   }
@@ -1298,6 +1343,14 @@ test('gui starts draft runs, validates the board, and mirrors draft state', asyn
     });
     assert.equal(invalidWindow.status, 400);
     assert.match(String(invalidWindow.data.error), /between 1 and 1/);
+    const invalidOfferCap = await apiJson(`${base}api/run`, {
+      mode: 'draft',
+      models: ['random', 'random'],
+      board: 'regmb-202607',
+      tradeWindow: { afterWeek: 1, tradesAllowed: 4 },
+    });
+    assert.equal(invalidOfferCap.status, 400);
+    assert.match(String(invalidOfferCap.data.error), /between 0 and 3/);
 
     const started = await apiJson(`${base}api/run`, {
       mode: 'draft',

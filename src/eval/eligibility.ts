@@ -1,9 +1,9 @@
 import type { ExhaustiveActionTable, ExhaustivePanel } from './counterfactual.js';
 
-export const POSITION_ELIGIBILITY_METRICS_VERSION = 2;
+export const POSITION_ELIGIBILITY_METRICS_VERSION = 1;
 
 export interface PositionEligibilityMetrics {
-  version: 2;
+  version: 1;
   legalActions: number;
   qualificationDrawsPerPanel: [number, number];
   qualificationOpponentPopulation: [number, number];
@@ -17,20 +17,6 @@ export interface PositionEligibilityMetrics {
   stabilityRankCorrelation: number | null;
   maxNormalizedRewardDrift: number | null;
   maxQualificationNormalizedStandardError: number | null;
-}
-
-export interface PositionEligibilityPolicy {
-  schema_version: 2;
-  status: 'frozen';
-  min_luck_replications: number;
-  min_sampled_opponent_slots: number;
-  min_held_out_span_value: number;
-  max_held_out_span_standard_error: number;
-  min_stability_rank_correlation: number;
-  max_normalized_reward_drift: number;
-  max_qualification_normalized_standard_error: number;
-  require_best_anchor_agreement: boolean;
-  require_extrema_set_agreement: boolean;
 }
 
 function averageRanks(values: readonly number[]): number[] {
@@ -106,94 +92,4 @@ export function positionEligibilityMetrics(table: ExhaustiveActionTable): Positi
     maxNormalizedRewardDrift: table.maxNormalizedRewardDrift,
     maxQualificationNormalizedStandardError: normalizedQualificationUncertainty(qualification),
   };
-}
-
-export function validatePositionEligibilityPolicy(policy: PositionEligibilityPolicy): void {
-  const keys = Object.keys(policy).sort();
-  const expected = [
-    'max_held_out_span_standard_error',
-    'max_normalized_reward_drift',
-    'max_qualification_normalized_standard_error',
-    'min_held_out_span_value',
-    'min_luck_replications',
-    'min_sampled_opponent_slots',
-    'min_stability_rank_correlation',
-    'require_best_anchor_agreement',
-    'require_extrema_set_agreement',
-    'schema_version',
-    'status',
-  ].sort();
-  if (JSON.stringify(keys) !== JSON.stringify(expected))
-    throw new Error('eligibility policy has unexpected or missing keys');
-  if (policy.schema_version !== 2 || policy.status !== 'frozen')
-    throw new Error('eligibility policy must be frozen schema version 2');
-  if (!Number.isInteger(policy.min_luck_replications) || policy.min_luck_replications < 2)
-    throw new Error('eligibility min_luck_replications must be an integer >= 2');
-  if (!Number.isInteger(policy.min_sampled_opponent_slots) || policy.min_sampled_opponent_slots < 2)
-    throw new Error('eligibility min_sampled_opponent_slots must be an integer >= 2');
-  if (
-    !Number.isFinite(policy.min_stability_rank_correlation) ||
-    policy.min_stability_rank_correlation < -1 ||
-    policy.min_stability_rank_correlation > 1
-  )
-    throw new Error('eligibility rank correlation must be in [-1, 1]');
-  if (
-    !Number.isFinite(policy.max_normalized_reward_drift) ||
-    policy.max_normalized_reward_drift < 0 ||
-    policy.max_normalized_reward_drift > 1
-  )
-    throw new Error('eligibility normalized reward drift must be in [0, 1]');
-  for (const [name, value] of [
-    ['min_held_out_span_value', policy.min_held_out_span_value],
-    ['max_held_out_span_standard_error', policy.max_held_out_span_standard_error],
-    ['max_qualification_normalized_standard_error', policy.max_qualification_normalized_standard_error],
-  ] as const) {
-    if (!Number.isFinite(value) || value < 0) throw new Error(`eligibility ${name} must be non-negative`);
-  }
-  if (
-    typeof policy.require_best_anchor_agreement !== 'boolean' ||
-    typeof policy.require_extrema_set_agreement !== 'boolean'
-  )
-    throw new Error('eligibility anchor requirements must be booleans');
-}
-
-export function assessPositionEligibility(
-  metrics: PositionEligibilityMetrics,
-  policy: PositionEligibilityPolicy,
-): { eligible: boolean; reasons: string[] } {
-  validatePositionEligibilityPolicy(policy);
-  const reasons: string[] = [];
-  if (Math.min(...metrics.qualificationLuckReplications) < policy.min_luck_replications)
-    reasons.push('insufficient_luck_replications');
-  if (
-    metrics.qualificationOpponentSlots.some(
-      (slots, index) =>
-        (metrics.qualificationOpponentPopulation[index] as number) > 1 && slots < policy.min_sampled_opponent_slots,
-    )
-  )
-    reasons.push('insufficient_sampled_opponent_slots');
-  if (metrics.heldOutSpanValue < policy.min_held_out_span_value) reasons.push('held_out_span_below_threshold');
-  if (
-    metrics.heldOutSpanStandardError === null ||
-    metrics.heldOutSpanStandardError > policy.max_held_out_span_standard_error
-  )
-    reasons.push('held_out_span_uncertainty_above_threshold');
-  if (
-    metrics.stabilityRankCorrelation === null ||
-    metrics.stabilityRankCorrelation < policy.min_stability_rank_correlation
-  )
-    reasons.push('rank_stability_below_threshold');
-  if (
-    metrics.maxNormalizedRewardDrift === null ||
-    metrics.maxNormalizedRewardDrift > policy.max_normalized_reward_drift
-  )
-    reasons.push('normalized_reward_drift_above_threshold');
-  if (
-    metrics.maxQualificationNormalizedStandardError === null ||
-    metrics.maxQualificationNormalizedStandardError > policy.max_qualification_normalized_standard_error
-  )
-    reasons.push('qualification_uncertainty_above_threshold');
-  if (policy.require_best_anchor_agreement && !metrics.bestAnchorAgreement) reasons.push('best_anchor_unstable');
-  if (policy.require_extrema_set_agreement && !metrics.extremaSetAgreement) reasons.push('extrema_sets_unstable');
-  return { eligible: reasons.length === 0, reasons };
 }

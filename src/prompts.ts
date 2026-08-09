@@ -1,7 +1,11 @@
 import type { SlotMenu } from './choices.js';
 
+export const FORMAT_AUTHORITY_NOTICE =
+  'Pokémon Champions and this regulation may postdate your training data. Treat the rules in this prompt and the pinned Pokémon Showdown simulator as authoritative. Do not import mechanics from other Pokémon games or formats. If a mechanic is absent from the rules and legal actions, treat it as unavailable rather than trying to correct the format.';
+
 const SYSTEM_CORE = [
   'You are an expert VGC player in a persistent best-of-three match. Maximize the probability of winning the series.',
+  FORMAT_AUTHORITY_NOTICE,
   'Choose only from the legality-filtered numbered menus. Never invent a move, target, switch, effect, immunity, stat, or revealed fact.',
   'Treat both active Pokémon as one joint decision. Targets +1/+2 are foes and -1/-2 are allies; allAdjacent moves also hit your ally unless an ability or type blocks them.',
   'If you brought more than one Mega Stone holder, which of them evolves is your choice in play.',
@@ -29,6 +33,7 @@ const REFLECTION_PREVIEW_PLAN =
 
 export const REFLECTION_SYSTEM = [
   'You are reviewing one completed game in a best-of-three VGC series.',
+  FORMAT_AUTHORITY_NOTICE,
   REFLECTION_EVIDENCE,
   'Identify the main reason for the result and one concrete adjustment for the next game.',
   REFLECTION_PREVIEW_PLAN,
@@ -45,6 +50,7 @@ const SERIES_REFLECTION_SHAPE =
 
 export const SERIES_REFLECTION_SYSTEM = [
   SERIES_REFLECTION_OVER,
+  FORMAT_AUTHORITY_NOTICE,
   REFLECTION_EVIDENCE,
   SERIES_REFLECTION_RESULT,
   REFLECTION_PREVIEW_PLAN,
@@ -54,6 +60,7 @@ export const SERIES_REFLECTION_SYSTEM = [
 
 export const DRAFT_SERIES_REFLECTION_SYSTEM = [
   SERIES_REFLECTION_OVER,
+  FORMAT_AUTHORITY_NOTICE,
   REFLECTION_EVIDENCE,
   SERIES_REFLECTION_RESULT,
   REFLECTION_PREVIEW_PLAN,

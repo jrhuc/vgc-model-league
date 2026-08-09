@@ -13,7 +13,7 @@ import type {
   TournamentsResponse,
 } from './gui/api.js';
 import { SAFE_SEGMENT } from './path-safety.js';
-import { modelKey, type SeriesRecord, TEST_POOL } from './records.js';
+import { type SeriesRecord, TEST_POOL } from './records.js';
 import { loadPool } from './teams.js';
 import { buildBracket } from './tournament.js';
 import type { Pid } from './types.js';
@@ -84,28 +84,25 @@ export function quantile(sorted: number[], q: number): number {
   return sorted[low]! + (sorted[high]! - sorted[low]!) * (position - low);
 }
 
-function summarizeTournaments(rows: SeriesRecord[]): TournamentSummary {
-  const runs = new Set<string>();
-  let matches = 0;
-  for (const row of rows) {
-    if (!row.players?.p1 || !row.players?.p2) continue;
-    runs.add(String(row.run_id ?? ''));
-    matches += 1;
-  }
-  return { tournaments: runs.size, matches };
+function summarizeTournaments(tournaments: Array<{ rounds: ArchivedMatchView[][] }>): TournamentSummary {
+  const counts = tournaments.map(
+    (archive) => archive.rounds.flat().filter((match) => match.seriesIndex !== null && match.score !== null).length,
+  );
+  return { tournaments: counts.filter((matches) => matches > 0).length, matches: counts.reduce((a, b) => a + b, 0) };
 }
 
 function liveTournamentRuns(runsDir: string): string[] {
-  let entries: string[];
+  let entries: fs.Dirent[];
   try {
-    entries = fs.readdirSync(runsDir);
+    entries = fs.readdirSync(runsDir, { withFileTypes: true });
   } catch {
     return [];
   }
-  return entries.filter(
-    (runId) =>
-      SAFE_SEGMENT.test(runId) && runConfig(runsDir, runId)?.mode === 'tournament' && isRunLive(runsDir, runId),
-  );
+  return entries.flatMap((entry) => {
+    const runId = entry.name;
+    if (!entry.isDirectory() || entry.isSymbolicLink() || !SAFE_SEGMENT.test(runId)) return [];
+    return runConfig(runsDir, runId)?.mode === 'tournament' && isRunLive(runsDir, runId) ? [runId] : [];
+  });
 }
 
 function runConfig(runsDir: string, runId: string): Record<string, unknown> | null {
@@ -130,8 +127,7 @@ function runStartedAt(runsDir: string, runId: string): string {
   }
 }
 
-function configEntrants(runsDir: string, runId: string): BracketEntrantView[] | null {
-  const config = runConfig(runsDir, runId);
+function configEntrants(config: Record<string, unknown> | null): BracketEntrantView[] | null {
   if (!config || !Array.isArray(config.entrants)) return null;
   const entrants = (config.entrants as Array<Record<string, unknown>>).map((entry) => ({
     model: String(entry.model ?? ''),
@@ -139,7 +135,7 @@ function configEntrants(runsDir: string, runId: string): BracketEntrantView[] | 
     seed: typeof entry.seed === 'number' ? entry.seed : null,
     placement: typeof entry.placement === 'number' ? entry.placement : null,
   }));
-  return entrants.every((entry: BracketEntrantView) => entry.model) ? entrants : null;
+  return entrants.every((entry: BracketEntrantView) => entry.model && entry.team) ? entrants : null;
 }
 
 function poolProvenance(
@@ -186,67 +182,98 @@ function poolProvenance(
   }
 }
 
-function rowEntrants(rows: SeriesRecord[]): BracketEntrantView[] | null {
-  const size = rows.map((row) => count(row.entrant_count)).find((value) => value >= 2);
-  if (!size) return null;
-  const bySeed = new Map<number, BracketEntrantView>();
+interface TournamentEntrantFact {
+  model: string;
+  team: string;
+  seed?: number | null;
+  placement?: number | null;
+}
+
+interface TournamentSeriesLocation {
+  round: number;
+  slots: [number | null, number | null];
+}
+
+interface TournamentFold {
+  entrants: TournamentEntrantFact[];
+  rounds: ArchivedMatchView[][];
+  champion: number | null;
+  rowsBySeries: Map<number, SeriesRecord>;
+  locations: Map<number, TournamentSeriesLocation>;
+}
+
+interface TournamentProjection<View> {
+  view: View;
+  fold: TournamentFold;
+}
+
+/** Rebuilds a tournament solely from selected structural facts and rejects facts that cannot all be true. */
+function foldTournament(
+  rows: SeriesRecord[],
+  configured: readonly TournamentEntrantFact[] | null,
+): TournamentFold | null {
+  let size = configured?.length ?? null;
+  if (size !== null && size < 2) return null;
   for (const row of rows) {
+    const entrantCount = row.entrant_count;
+    if (!Number.isSafeInteger(entrantCount) || Number(entrantCount) < 2) return null;
+    if (size === null) size = Number(entrantCount);
+    else if (entrantCount !== size) return null;
+  }
+  if (size === null) return null;
+
+  const identities: Array<{ model: string; team: string } | null> = configured
+    ? configured.map(({ model, team }) => (model && team ? { model, team } : null))
+    : Array.from({ length: size }, () => null);
+  if (configured && identities.some((identity) => identity === null)) return null;
+  const rowsBySeries = new Map<number, SeriesRecord>();
+  for (const row of rows) {
+    const seriesIndex = row.series_index;
+    if (!Number.isSafeInteger(seriesIndex) || Number(seriesIndex) < 0 || rowsBySeries.has(Number(seriesIndex))) {
+      return null;
+    }
+    rowsBySeries.set(Number(seriesIndex), row);
     const seeds = row.seeds as Record<Pid, unknown> | undefined;
+    const teams = row.teams as Record<Pid, unknown> | undefined;
     for (const pid of ['p1', 'p2'] as const) {
       const seed = seeds?.[pid];
-      if (typeof seed !== 'number' || seed < 0 || seed >= size) return null;
-      bySeed.set(seed, {
-        model: row.players[pid],
-        team: String((row.teams as Record<Pid, unknown> | undefined)?.[pid] ?? ''),
-      });
+      const model = row.players?.[pid];
+      const team = teams?.[pid];
+      if (
+        !Number.isSafeInteger(seed) ||
+        Number(seed) < 0 ||
+        Number(seed) >= size ||
+        typeof model !== 'string' ||
+        !model ||
+        typeof team !== 'string' ||
+        !team
+      ) {
+        return null;
+      }
+      const entrant = { model, team };
+      const previous = identities[Number(seed)];
+      if (previous && (previous.model !== entrant.model || previous.team !== entrant.team)) return null;
+      identities[Number(seed)] = entrant;
     }
+    if (seeds?.p1 === seeds?.p2) return null;
   }
-  if (bySeed.size !== size) return null;
-  return Array.from({ length: size }, (_, seed) => bySeed.get(seed)!);
-}
+  if (identities.some((identity) => identity === null)) return null;
+  const resolvedIdentities = identities as Array<{ model: string; team: string }>;
+  if (new Set(resolvedIdentities.map((identity) => identity.model)).size !== size) return null;
 
-function entrantForModel(entrants: BracketEntrantView[], spec: string): number | null {
-  const exact = entrants.findIndex((entrant) => entrant.model === spec);
-  if (exact >= 0) return exact;
-  const matches = entrants
-    .map((entrant, index) => (modelKey(entrant.model) === modelKey(spec) ? index : -1))
-    .filter((index) => index >= 0);
-  return matches.length === 1 ? matches[0]! : null;
-}
+  const entrants = configured
+    ? configured.map((entrant) => ({ ...entrant }))
+    : resolvedIdentities.map((identity) => ({ ...identity }));
+  const bracket = buildBracket(size);
+  const expectedSeries = new Set(
+    bracket.flatMap((round) => round.flatMap((match) => (match.seriesIndex === null ? [] : [match.seriesIndex]))),
+  );
+  if ([...rowsBySeries.keys()].some((seriesIndex) => !expectedSeries.has(seriesIndex))) return null;
 
-function liveTournamentSeriesIndex(
-  entrants: BracketEntrantView[],
-  rounds: ArchivedMatchView[][],
-  entry: { seriesIndex: number | null; players?: Record<Pid, string> | null },
-): number | null {
-  if (entry.seriesIndex !== null) return entry.seriesIndex;
-  if (!entry.players) return null;
-  const first = entrantForModel(entrants, entry.players.p1);
-  const second = entrantForModel(entrants, entry.players.p2);
-  if (first === null || second === null) return null;
-  const pair = new Set([first, second]);
-  for (const round of rounds) {
-    for (const match of round) {
-      if (match.seriesIndex === null || match.slots[0] === null || match.slots[1] === null) continue;
-      if (pair.has(match.slots[0]) && pair.has(match.slots[1])) return match.seriesIndex;
-    }
-  }
-  return null;
-}
-
-function archiveTournament(
-  runId: string,
-  rows: SeriesRecord[],
-  runsDir: string,
-  teamsDir?: string,
-): TournamentArchiveView | null {
-  const entrants = rowEntrants(rows) ?? configEntrants(runsDir, runId);
-  if (!entrants || entrants.length < 2) return null;
-  const bySeries = new Map<number, SeriesRecord>();
-  for (const row of rows) bySeries.set(count(row.series_index), row);
   const rounds: ArchivedMatchView[][] = [];
   const winners = new Map<number, number | null>();
-  for (const [roundIndex, round] of buildBracket(entrants.length).entries()) {
+  const locations = new Map<number, TournamentSeriesLocation>();
+  for (const [roundIndex, round] of bracket.entries()) {
     const views: ArchivedMatchView[] = [];
     for (const [matchIndex, match] of round.entries()) {
       const slots: [number | null, number | null] =
@@ -256,71 +283,135 @@ function archiveTournament(
       let winner = match.seriesIndex === null ? (slots[0] ?? slots[1]) : null;
       let score: [number, number] | null = null;
       let turns: number | null = null;
-      const row = match.seriesIndex === null ? undefined : bySeries.get(match.seriesIndex);
-      if (row) {
-        const sideScore = row.score as Record<Pid, number> | undefined;
-        score = [count(sideScore?.p1), count(sideScore?.p2)];
-        turns = count(row.turns);
-        if (row.winner_side === 'p1') winner = slots[0];
-        else if (row.winner_side === 'p2') winner = slots[1];
+      if (match.seriesIndex !== null) {
+        locations.set(match.seriesIndex, { round: roundIndex, slots });
+        const row = rowsBySeries.get(match.seriesIndex);
+        if (row) {
+          const seeds = row.seeds as Record<Pid, unknown> | undefined;
+          const sideScore = row.score as Record<Pid, unknown> | undefined;
+          const firstScore = sideScore?.p1;
+          const secondScore = sideScore?.p2;
+          if (
+            slots[0] === null ||
+            slots[1] === null ||
+            seeds?.p1 !== slots[0] ||
+            seeds.p2 !== slots[1] ||
+            (row.round !== undefined && row.round !== roundIndex + 1) ||
+            (row.winner_side !== 'p1' && row.winner_side !== 'p2') ||
+            !Number.isSafeInteger(firstScore) ||
+            Number(firstScore) < 0 ||
+            !Number.isSafeInteger(secondScore) ||
+            Number(secondScore) < 0
+          ) {
+            return null;
+          }
+          const winnerPid = row.winner_side;
+          if (
+            (winnerPid === 'p1' && Number(firstScore) <= Number(secondScore)) ||
+            (winnerPid === 'p2' && Number(secondScore) <= Number(firstScore))
+          ) {
+            return null;
+          }
+          const winnerModel = row.players[winnerPid];
+          if (
+            (typeof row.winner === 'string' && row.winner !== winnerModel) ||
+            (typeof row.advanced === 'string' && row.advanced !== winnerModel)
+          ) {
+            return null;
+          }
+          score = [Number(firstScore), Number(secondScore)];
+          turns = count(row.turns);
+          winner = slots[winnerPid === 'p1' ? 0 : 1];
+        }
       }
       views.push({ seriesIndex: match.seriesIndex, slots, winner, score, turns });
     }
     for (const [matchIndex, view] of views.entries()) winners.set(matchIndex, view.winner);
     rounds.push(views);
   }
-  const champion = rounds[rounds.length - 1]![0]!.winner;
-  const timestamps = rows.map((row) => String(row.timestamp ?? '')).filter(Boolean);
+  return {
+    entrants,
+    rounds,
+    champion: rounds[rounds.length - 1]?.[0]?.winner ?? null,
+    rowsBySeries,
+    locations,
+  };
+}
+
+function tournamentSeriesLocation(fold: TournamentFold, seriesIndex: unknown): TournamentSeriesLocation | null {
+  return Number.isSafeInteger(seriesIndex) ? (fold.locations.get(Number(seriesIndex)) ?? null) : null;
+}
+
+function locateTournamentStarts<T>(
+  fold: TournamentFold,
+  starts: Array<{ value: T; seriesIndex: unknown }>,
+): Array<{ value: T; seriesIndex: number; location: TournamentSeriesLocation }> | null {
+  const seen = new Set<number>();
+  const located: Array<{ value: T; seriesIndex: number; location: TournamentSeriesLocation }> = [];
+  for (const start of starts) {
+    if (!Number.isSafeInteger(start.seriesIndex)) continue;
+    const seriesIndex = Number(start.seriesIndex);
+    if (fold.rowsBySeries.has(seriesIndex)) continue;
+    const location = tournamentSeriesLocation(fold, seriesIndex);
+    if (!location || location.slots[0] === null || location.slots[1] === null || seen.has(seriesIndex)) return null;
+    seen.add(seriesIndex);
+    located.push({ value: start.value, seriesIndex, location });
+  }
+  return located;
+}
+
+function archiveTournament(
+  runId: string,
+  rows: SeriesRecord[],
+  runsDir: string,
+  teamsDir?: string,
+): TournamentProjection<TournamentArchiveView> | null {
   const config = runConfig(runsDir, runId);
+  const fold = foldTournament(rows, configEntrants(config));
+  if (!fold) return null;
   const poolField = rows.find((row) => typeof row.pool === 'string')?.pool ?? config?.pool;
   const pool = typeof poolField === 'string' ? poolField : null;
   const { event, teams } = poolProvenance(pool, teamsDir);
-  const detailed = entrants.map((entrant) => ({
+  const detailed = fold.entrants.map((entrant) => ({
     ...entrant,
     ...(teams.get(entrant.team) ?? {}),
     model: entrant.model,
   }));
   const live = isRunLive(runsDir, runId);
-  const slotsOf = new Map<number, [number | null, number | null]>();
-  for (const [roundIndex, round] of rounds.entries()) {
-    for (const [matchIndex, view] of round.entries()) {
-      const source = buildBracket(entrants.length)[roundIndex]![matchIndex]!;
-      if (source.seriesIndex !== null) slotsOf.set(source.seriesIndex, view.slots);
-    }
-  }
-  const roundOf = new Map<number, number>();
-  for (const [roundIndex, round] of buildBracket(entrants.length).entries()) {
-    for (const match of round) if (match.seriesIndex !== null) roundOf.set(match.seriesIndex, roundIndex);
-  }
-  const liveSeries: TournamentLiveSeriesView[] = live
-    ? scanUnfinishedSeries(runsDir, runId, rows)
-        .filter((entry) => entry.decisions > 0 || entry.players)
-        .map((entry) => {
-          const seriesIndex = liveTournamentSeriesIndex(detailed, rounds, entry);
-          return {
-            seriesId: entry.seriesId,
-            seriesIndex,
-            round: seriesIndex === null ? null : (roundOf.get(seriesIndex) ?? null),
-            slots: seriesIndex === null ? [null, null] : (slotsOf.get(seriesIndex) ?? [null, null]),
-            game: entry.game,
-            turn: entry.turn,
-            decisions: entry.decisions,
-          };
-        })
+  const unfinished = live
+    ? scanUnfinishedSeries(runsDir, runId, rows).filter((entry) => entry.decisions > 0 || entry.players)
     : [];
+  const located = locateTournamentStarts(
+    fold,
+    unfinished.map((entry) => ({ value: entry, seriesIndex: entry.seriesIndex })),
+  );
+  if (!located) return null;
+  const liveSeries: TournamentLiveSeriesView[] = located.map(({ value: entry, seriesIndex, location }) => ({
+    seriesId: entry.seriesId,
+    seriesIndex,
+    round: location.round,
+    slots: location.slots,
+    game: entry.game,
+    turn: entry.turn,
+    decisions: entry.decisions,
+  }));
+  const timestamps = rows.map((row) => String(row.timestamp ?? '')).filter(Boolean);
   const provenance = config?.provenance;
   return {
-    runId,
-    when: timestamps.sort()[0] ?? runStartedAt(runsDir, runId),
-    pool,
-    entrants: detailed,
-    rounds,
-    champion,
-    complete: champion !== null,
-    live,
-    liveSeries,
-    event,
-    provenance: provenance === 'disclosed' || provenance === 'blind' ? provenance : null,
+    fold,
+    view: {
+      runId,
+      when: timestamps.sort()[0] ?? runStartedAt(runsDir, runId),
+      pool,
+      entrants: detailed,
+      rounds: fold.rounds,
+      champion: fold.champion,
+      complete: fold.champion !== null,
+      live,
+      liveSeries,
+      event,
+      provenance: provenance === 'disclosed' || provenance === 'blind' ? provenance : null,
+    },
   };
 }
 
@@ -334,26 +425,15 @@ export function buildTournamentGame(
 ): LeagueGameResponse | null {
   if (!SAFE_SEGMENT.test(runId)) return null;
   const rows = allRows.filter((row) => row.mode === 'tournament' && String(row.run_id ?? '') === runId);
-  const archive = archiveTournament(runId, rows, runsDir, teamsDir);
-  if (!archive) return null;
-  const bracket = buildBracket(archive.entrants.length);
-  let slots: [number | null, number | null] | null = null;
-  let roundIndex = 0;
-  for (const [index, round] of bracket.entries()) {
-    for (const [matchIndex, match] of round.entries()) {
-      if (match.seriesIndex !== seriesIndex) continue;
-      slots = archive.rounds[index]![matchIndex]!.slots;
-      roundIndex = index;
-    }
-  }
-  if (!slots || slots[0] === null || slots[1] === null) return null;
-  const row = rows.find((entry) => count(entry.series_index) === seriesIndex);
+  const projection = archiveTournament(runId, rows, runsDir, teamsDir);
+  if (!projection) return null;
+  const location = tournamentSeriesLocation(projection.fold, seriesIndex);
+  if (!location || location.slots[0] === null || location.slots[1] === null) return null;
+  const row = projection.fold.rowsBySeries.get(seriesIndex);
   const seriesId =
-    row !== undefined
-      ? String(row.series_id ?? '')
-      : (scanUnfinishedSeries(runsDir, runId, rows).find(
-          (entry) => liveTournamentSeriesIndex(archive.entrants, archive.rounds, entry) === seriesIndex,
-        )?.seriesId ?? '');
+    row === undefined
+      ? (projection.view.liveSeries.find((entry) => entry.seriesIndex === seriesIndex)?.seriesId ?? '')
+      : String(row.series_id ?? '');
   if (!seriesId) return null;
   return buildSeriesGame(
     runsDir,
@@ -362,11 +442,11 @@ export function buildTournamentGame(
     game,
     {
       seriesId,
-      sides: [slots[0], slots[1]],
+      sides: [location.slots[0], location.slots[1]],
       stage: 'playoff',
-      round: roundIndex + 1,
-      models: archive.entrants.map((entrant) => entrant.model),
-      labels: archive.entrants.map((entrant) => entrant.team || entrant.model),
+      round: location.round + 1,
+      models: projection.view.entrants.map((entrant) => entrant.model),
+      labels: projection.view.entrants.map((entrant) => entrant.team || entrant.model),
     },
     row,
   );
@@ -403,8 +483,10 @@ export function buildTournaments(
   }
   for (const runId of liveTournamentRuns(runsDir)) if (!runs.has(runId)) runs.set(runId, []);
   const tournaments = [...runs.entries()]
-    .map(([runId, rows]) => archiveTournament(runId, rows, runsDir, teamsDir))
-    .filter((archive): archive is TournamentArchiveView => archive !== null)
+    .flatMap(([runId, rows]) => {
+      const archive = archiveTournament(runId, rows, runsDir, teamsDir);
+      return archive ? [archive.view] : [];
+    })
     .sort((a, b) => b.when.localeCompare(a.when));
-  return { pool, pools, summary: summarizeTournaments(tournamentRows), tournaments };
+  return { pool, pools, summary: summarizeTournaments(tournaments), tournaments };
 }

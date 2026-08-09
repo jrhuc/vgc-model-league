@@ -17,7 +17,7 @@ async function fetchPaste(url: string): Promise<string> {
   return response.text();
 }
 
-export async function buildPool(manifestFile: string): Promise<string> {
+async function buildPool(manifestFile: string): Promise<string> {
   const manifestPath = path.resolve(manifestFile);
   const poolDir = path.dirname(manifestPath);
   const manifest: unknown = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));

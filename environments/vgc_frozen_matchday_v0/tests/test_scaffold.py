@@ -5,6 +5,7 @@ import json
 import pytest
 
 from vgc_frozen_matchday_v0.scaffold import (
+    FORMAT_AUTHORITY_NOTICE,
     NOTEBOOK_EVIDENCE_DIAGNOSTIC,
     NOTEBOOK_REPLACEMENT_LIMIT,
     ScaffoldError,
@@ -16,188 +17,105 @@ from vgc_frozen_matchday_v0.scaffold import (
 )
 
 
-def view() -> tuple[dict, dict, list[dict]]:
-    request = {"active": [{"moves": [{"move": "Private Move"}]}]}
-    observation = {
-        "protocolVersion": 1,
-        "battleProtocolVersion": 2,
-        "pid": "p1",
+def test_seat_prompt_projections_and_remote_reply_parsers() -> None:
+    playing = {
         "phase": "playing",
-        "gameNumber": 1,
-        "score": {"p1": 0, "p2": 0, "ties": 0},
-        "revision": 17,
-        "stateHash": "outer-secret-controller-token",
-        "povLines": ["duplicated-matchday-line"],
-        "pendingSides": ["must-not-leak"],
-        "battle": {
-            "protocolVersion": 2,
-            "pid": "p1",
-            "revision": 9,
-            "stateHash": "battle-secret-controller-token",
-            "request": request,
-            "povLines": ["duplicated-battle-line"],
-            "terminal": False,
-        },
-        "terminal": False,
-    }
-    actions = [
-        {
-            "number": 4,
-            "label": "Use the authoritative label",
-            "command": "move 1 +2, move 2 +1",
-            "choices": [0, 1],
-            "tokens": {"revision": 9},
-            "construction": "must-not-leak",
-        }
-    ]
-    return observation, request, actions
-
-
-def test_playing_prompt_is_minimal_seat_view_and_exact_numbered_labels() -> None:
-    observation, request, actions = view()
-    prompt = render_playing_prompt(
-        observation=observation,
-        request=request,
-        history=["|seat-pov|p1"],
-        current_notebook="my private notes",
-        actions=actions,
-    )
-    instruction, body_text = prompt.split("\n\n", 1)
-    assert "evidence is ignored" in instruction
-    body = json.loads(body_text)
-    assert body == {
-        "phase": "playing",
-        "gameNumber": 1,
-        "score": {"p1": 0, "p2": 0, "ties": 0},
-        "povHistory": ["|seat-pov|p1"],
-        "request": request,
-        "currentNotebook": "my private notes",
-        "menu": [{"number": 4, "label": "Use the authoritative label"}],
-    }
-    for forbidden in (
-        "pendingSides",
-        "outer-secret-controller-token",
-        "battle-secret-controller-token",
-        "duplicated-matchday-line",
-        "duplicated-battle-line",
-        "move 1 +2",
-        "must-not-leak",
-        '"choices"',
-    ):
-        assert forbidden not in prompt
-    assert prompt.count("Private Move") == 1
-    assert "tera" not in prompt.lower()
-
-
-def test_between_prompt_labels_completed_outer_minus_one_and_native_limit() -> None:
-    observation = {
-        "protocolVersion": 1,
-        "pid": "p2",
-        "phase": "between-games",
         "gameNumber": 2,
         "score": {"p1": 1, "p2": 0, "ties": 0},
-        "revision": 99,
-        "stateHash": "not-public",
-        "povLines": ["duplicated-final"],
-        "battle": None,
+        "pid": "p1",
+        "stateHash": "controller-secret",
+        "battle": {"private": "not projected"},
     }
-    prompt = render_between_games_prompt(
-        observation=observation,
-        history=["p2-final-authorized"],
-        current_notebook="p2-notebook",
+    request = {"active": [{"moves": [{"move": "Protect"}]}], "rqid": 7}
+    actions = [
+        {"number": 3, "label": "Protect + Protect", "command": "move 1, move 1"},
+        {"number": 8, "label": "Switch + Protect", "command": "switch 3, move 1"},
+    ]
+    prompt = render_playing_prompt(
+        observation=playing,
+        request=request,
+        history=["|turn|1", "|private|p1"],
+        current_notebook="role-private notebook",
+        actions=actions,
     )
-    instruction, body_text = prompt.split("\n\n", 1)
-    assert f"{NOTEBOOK_REPLACEMENT_LIMIT:,} characters" in instruction
-    assert json.loads(body_text) == {
-        "phase": "between-games",
-        "completedGameNumber": 1,
+    notice, instruction, payload_text = prompt.split("\n\n", 2)
+    payload = json.loads(payload_text)
+    assert notice == FORMAT_AUTHORITY_NOTICE
+    assert prompt.count(FORMAT_AUTHORITY_NOTICE) == 1
+    assert "optional rationale" in instruction.lower()
+    assert payload == {
+        "phase": "playing",
+        "gameNumber": 2,
         "score": {"p1": 1, "p2": 0, "ties": 0},
-        "povHistory": ["p2-final-authorized"],
-        "currentNotebook": "p2-notebook",
+        "povHistory": ["|turn|1", "|private|p1"],
+        "request": request,
+        "currentNotebook": "role-private notebook",
+        "menu": [
+            {"number": 3, "label": "Protect + Protect"},
+            {"number": 8, "label": "Switch + Protect"},
+        ],
     }
-    assert "not-public" not in prompt
-    assert "duplicated-final" not in prompt
+    assert "controller-secret" not in prompt
+    assert "move 1, move 1" not in prompt
+    assert "not projected" not in prompt
 
-
-@pytest.mark.parametrize(
-    "reply",
-    [
-        "```json\n{\"choice\":4}\n```",
-        '{"choice":4} trailing',
-        "[4]",
+    reply = parse_playing_reply(
+        '{"rationale":"long untrusted prose","choice":8,"unknown":{"x":1}}',
+        {3, 8},
+    )
+    assert reply.choice == 8
+    assert not hasattr(reply, "rationale")
+    assert select_action(actions, reply.choice) is actions[1]
+    for invalid in (
+        "3",
+        "{}",
         '{"choice":true}',
-        '{"choice":4,"choice":4}',
-        '{"choice":NaN}',
-        '{"choice":3}',
-        '{}',
-    ],
-)
-def test_playing_parser_fails_only_without_one_valid_authoritative_choice(
-    reply: str,
-) -> None:
-    with pytest.raises(ScaffoldError):
-        parse_playing_reply(reply, {4})
+        '{"choice":4}',
+        '{"choice":3,"choice":8}',
+        "not json",
+    ):
+        with pytest.raises(ScaffoldError):
+            parse_playing_reply(invalid, {3, 8})
 
+    between = render_between_games_prompt(
+        observation={
+            "phase": "between-games",
+            "gameNumber": 3,
+            "score": {"p1": 1, "p2": 1, "ties": 0},
+            "privateControllerField": "hidden",
+        },
+        history=["|win|p2"],
+        current_notebook="old notes",
+    )
+    notice, instruction, payload_text = between.split("\n\n", 2)
+    assert notice == FORMAT_AUTHORITY_NOTICE
+    assert f"{NOTEBOOK_REPLACEMENT_LIMIT:,}" in instruction
+    assert json.loads(payload_text) == {
+        "phase": "between-games",
+        "completedGameNumber": 2,
+        "score": {"p1": 1, "p2": 1, "ties": 0},
+        "povHistory": ["|win|p2"],
+        "currentNotebook": "old notes",
+    }
+    assert "hidden" not in between
 
-@pytest.mark.parametrize(
-    ("reply", "rationale"),
-    [
-        ('{"choice":4,"unknown":{"malformed":"evidence"}}', None),
-        ('{"choice":4,"rationale":7}', None),
-        ('{"choice":4,"rationale":"kept","other":false}', "kept"),
-        ('{"rationale":7,"choice":4,"rationale":"later string"}', "later string"),
-    ],
-)
-def test_playing_parser_ignores_optional_or_unknown_evidence(
-    reply: str, rationale: str | None
-) -> None:
-    parsed = parse_playing_reply(reply, {4})
-    assert parsed.choice == 4
-    assert parsed.rationale == rationale
-
-
-def test_playing_selection_returns_exact_authoritative_entry() -> None:
-    _observation, _request, actions = view()
-    parsed = parse_playing_reply('{"choice":4,"rationale":"because"}', {4})
-    assert select_action(actions, parsed.choice) is actions[0]
-
-
-@pytest.mark.parametrize(
-    "reply",
-    [
-        '{"notebook":null}',
-        '{"notebook":false}',
-        '{"notebook":"x","extra":1}',
-        'wrapper {"notebook":"x"}',
-        "[]",
-        '{"notebook":"x","notebook":"y"}',
-    ],
-)
-def test_invalid_notebook_evidence_becomes_diagnostic_omission(reply: str) -> None:
-    parsed = parse_between_games_reply(reply)
-    assert parsed.notebook_supplied is False
-    assert parsed.notebook is None
-    assert parsed.diagnostic == NOTEBOOK_EVIDENCE_DIAGNOSTIC
-
-
-def test_notebook_omission_retain_empty_clear_and_no_truncation() -> None:
     omitted = parse_between_games_reply("{}")
     cleared = parse_between_games_reply('{"notebook":""}')
-    notebook = "x" * (NOTEBOOK_REPLACEMENT_LIMIT + 1)
-    oversized = parse_between_games_reply(json.dumps({"notebook": notebook}))
+    replaced = parse_between_games_reply(
+        json.dumps({"notebook": "x" * (NOTEBOOK_REPLACEMENT_LIMIT + 1)})
+    )
     assert omitted.notebook_supplied is False and omitted.diagnostic is None
     assert cleared.notebook_supplied is True and cleared.notebook == ""
-    assert oversized.notebook == notebook
-
-
-def test_json_structural_exhaustion_is_optional_only_for_notebook_evidence() -> None:
-    nesting = 2_000
-    notebook_reply = '{"notebook":' + "[" * nesting + "0" + "]" * nesting + "}"
-    parsed = parse_between_games_reply(notebook_reply)
-    assert parsed.notebook_supplied is False
-    assert parsed.notebook is None
-    assert parsed.diagnostic == NOTEBOOK_EVIDENCE_DIAGNOSTIC
-
-    action_reply = '{"choice":' + "[" * nesting + "4" + "]" * nesting + "}"
-    with pytest.raises(ScaffoldError):
-        parse_playing_reply(action_reply, {4})
+    assert replaced.notebook == "x" * (NOTEBOOK_REPLACEMENT_LIMIT + 1)
+    for invalid in (
+        "not json",
+        "[]",
+        '{"notebook":1}',
+        '{"notebook":"a","notebook":"b"}',
+        '{"notebook":"a","extra":true}',
+        "[" * 2000,
+    ):
+        parsed = parse_between_games_reply(invalid)
+        assert parsed.notebook_supplied is False
+        assert parsed.notebook is None
+        assert parsed.diagnostic == NOTEBOOK_EVIDENCE_DIAGNOSTIC

@@ -6,14 +6,9 @@ import { completeWithDexTools } from './dex-lookups.js';
 import type { DraftBoard, DraftBoardMon } from './draft.js';
 import type { DraftPickView, DraftTableRow } from './gui/api.js';
 import { appendJsonlObject, readJsonlObjects } from './jsonl.js';
+import { FORMAT_AUTHORITY_NOTICE } from './prompts.js';
 import type { ModelReasoningConfig, ReasoningLevel } from './providers.js';
-import {
-  classifyProviderFailure,
-  makeProvider,
-  parseSpec,
-  reasoningForModel,
-  resolveSpecOverride,
-} from './providers.js';
+import { classifyProviderFailure, makeProvider, parseSpec, reasoningForModel } from './providers.js';
 import type { RecoveryGate } from './recovery.js';
 import { ShowdownReference } from './reference.js';
 import { mapLimit } from './series.js';
@@ -24,6 +19,7 @@ import { clip } from './value.js';
 const SEASON_REVIEW_PROMPT_POLICY = {
   systemTemplate: [
     'You are {{model}}, a coach in a Pokémon VGC draft league played in the format {{format}}. Your season is over.',
+    FORMAT_AUTHORITY_NOTICE,
     '',
     'This is a retrospective, not a decision. Nothing you write changes a result; it is published on your team page.',
     '- Judge the whole season: the roster you drafted, what you did with coach trades and free agency, the six you registered for each series, and how you piloted them.',
@@ -300,13 +296,11 @@ export async function runSeasonReview(
       const model = state.models[entrant]!;
       const make =
         options.makeReviewProvider ??
-        ((spec: string, apiKey: string | undefined, reasoning: ReasoningLevel | undefined) => {
-          const resolved = resolveSpecOverride(spec);
-          return makeProvider(parseSpec(resolved), {
+        ((spec: string, apiKey: string | undefined, reasoning: ReasoningLevel | undefined) =>
+          makeProvider(parseSpec(spec), {
             ...(reasoning === undefined ? {} : { reasoning }),
-            ...(resolved === spec && apiKey !== undefined ? { apiKey } : {}),
-          });
-        });
+            ...(apiKey === undefined ? {} : { apiKey }),
+          }));
       const provider =
         model === 'random' ? undefined : make(model, options.apiKeys?.[model], reasoningForModel(model, options));
       let parsed: ParsedSeasonReview | undefined;
@@ -399,8 +393,4 @@ export async function runSeasonReview(
   );
   reviews.push(...fresh);
   return reviews;
-}
-
-export function readSeasonReviews(runDir: string): SeasonReview[] {
-  return replayReviews(path.join(runDir, 'season.jsonl'));
 }

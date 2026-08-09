@@ -40,13 +40,15 @@ jobs:
             environments/vgc_frozen_matchday_v0/uv.lock
       - run: pnpm install --frozen-lockfile
       - run: pnpm run setup:showdown
-      - run: pnpm run ci
+      - run: pnpm run check
+      - run: pnpm run check:artifacts
+      - run: pnpm run build
+      - run: pnpm run build:frozen-matchday
+      - run: pnpm run test:unit
       - run: uv sync --locked --group test
         working-directory: environments/vgc_frozen_matchday_v0
       - run: uv run --locked --group test pytest
         working-directory: environments/vgc_frozen_matchday_v0
-        env:
-          VGC_REQUIRE_COMPILED_SMOKE: "1"
       - run: uv build --clear
         working-directory: environments/vgc_frozen_matchday_v0
       - name: Smoke test the clean wheel

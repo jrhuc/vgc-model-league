@@ -1,14 +1,16 @@
-import type { TeambuildSetView } from '../../api';
+import type { PublicTeamSheetSetView, TeambuildSetView } from '../../api';
 import { STAT_ORDER } from './boardbrowser';
 import { ItemIcon, Sprite } from './sprite';
 
-export function SetCard({ set }: { set: TeambuildSetView }) {
-  const evs =
-    STAT_ORDER.filter((stat) => set.evs[stat])
-      .map((stat) => `${set.evs[stat]}\u00a0${stat}`)
-      .join('\u00a0· ') || 'no EVs';
+export function SetCard({ set }: { set: PublicTeamSheetSetView }) {
+  const privateSet = 'evs' in set ? (set as TeambuildSetView) : null;
+  const evs = privateSet
+    ? STAT_ORDER.filter((stat) => privateSet.evs[stat])
+        .map((stat) => `${privateSet.evs[stat]}\u00a0${stat}`)
+        .join('\u00a0· ') || 'no EVs'
+    : '';
   return (
-    <article class={`teambuild-set ${set.repaired ? 'repaired' : ''}`}>
+    <article class={`teambuild-set ${privateSet?.repaired ? 'repaired' : ''}`}>
       <header class="teambuild-set-head">
         <Sprite id={set.spriteId} size={28} />
         <div class="teambuild-set-identity">
@@ -31,7 +33,7 @@ export function SetCard({ set }: { set: TeambuildSetView }) {
           <li key={move}>{move}</li>
         ))}
       </ul>
-      <footer class="teambuild-evs">{evs}</footer>
+      {privateSet ? <footer class="teambuild-evs">{evs}</footer> : null}
     </article>
   );
 }

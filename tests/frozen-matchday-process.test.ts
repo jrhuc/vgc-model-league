@@ -93,8 +93,8 @@ test('the isolated matchday artifact runs strict construction through a native C
   assert.deepEqual(ready, {
     kind: 'ready',
     protocolVersion: 1,
-    matchdayProtocolVersion: 2,
-    battleProtocolVersion: 2,
+    matchdayProtocolVersion: 1,
+    battleProtocolVersion: 1,
     showdownRevision: SHOWDOWN_REVISION,
   });
   const malformed = await referee.sendRaw('{not json');
@@ -127,8 +127,8 @@ test('the isolated matchday artifact runs strict construction through a native C
       assert.ok((finalP2.povLines as string[]).some((line) => line.startsWith('|win|')));
       assert.deepEqual(okObject(await referee.call(id++, 'observe', { pid: 'p1' })).povLines, []);
       assert.deepEqual(okObject(await referee.call(id++, 'observe', { pid: 'p2' })).povLines, []);
-      assert.equal(evidence.protocolVersion, 2);
-      assert.equal(evidence.battleProtocolVersion, 2);
+      assert.equal(evidence.protocolVersion, 1);
+      assert.equal(evidence.battleProtocolVersion, 1);
       assert.equal(evidence.showdownRevision, SHOWDOWN_REVISION);
       assert.equal(evidence.format, 'gen9championsvgc2026regmbbo3');
       assert.equal(Object.hasOwn(evidence, 'povLines'), false);

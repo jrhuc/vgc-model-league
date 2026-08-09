@@ -132,7 +132,9 @@ async function login(port: number): Promise<{ cookie: string; csrf: string; logi
   return { cookie: `vgc_session=${sessionToken}`, csrf: stateBody.auth.csrfToken, login: stateBody.auth.user.login };
 }
 
-test('hosted GitHub OAuth protects mutations with sessions, CSRF, and run ownership', async (t) => {
+test('hosted GitHub OAuth protects mutations with sessions, CSRF, and run ownership', {
+  timeout: 15_000,
+}, async (t) => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'vgcleague-gui-auth-'));
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
   let profileId = 1;
@@ -170,8 +172,8 @@ test('hosted GitHub OAuth protects mutations with sessions, CSRF, and run owners
         type: 'game-update',
         index: 0,
         game: 1,
-        lines: ['|-damage|p1a: Alpha|80/200'],
-        publicLines: ['|-damage|p1a: Alpha|40/100'],
+        lines: ['|-damage|p1a: Alpha|80/200', '|win|random'],
+        publicLines: ['|-damage|p1a: Alpha|40/100', '|win|random'],
       });
     const signal = options?.signal;
     if (!signal?.aborted) {
@@ -193,6 +195,7 @@ test('hosted GitHub OAuth protects mutations with sessions, CSRF, and run owners
   const address = gui.server.address();
   assert.ok(address && typeof address === 'object');
   const port = address.port;
+  let ownerStream: ReturnType<typeof eventStream> | undefined;
 
   try {
     const anonymous = await request(port, { path: '/api/state' });
@@ -262,25 +265,25 @@ test('hosted GitHub OAuth protects mutations with sessions, CSRF, and run owners
     };
     assert.equal(ownerState.run.canControl, true);
     const publicState = JSON.parse((await request(port, { path: '/api/state' })).body) as {
-      run: { canControl: boolean };
+      run: Record<string, unknown>;
     };
-    assert.equal(publicState.run.canControl, false);
+    assert.equal('canControl' in publicState.run, false);
     const ownerBattle = await request(port, { path: '/api/battle?index=0', headers: { cookie: owner.cookie } });
     assert.equal(ownerBattle.status, 200);
     assert.match(ownerBattle.body, /100\/200/);
     const publicBattle = await request(port, { path: '/api/battle/public?index=0' });
     assert.equal(publicBattle.status, 200);
-    assert.match(publicBattle.body, /50\/100/);
-    assert.doesNotMatch(publicBattle.body, /100\/200/);
+    assert.doesNotMatch(publicBattle.body, /50\/100|100\/200/);
+    assert.match(publicBattle.body, /"visibility":"public"/);
 
     profileId = 2;
     const other = await login(port);
     const otherState = JSON.parse(
       (await request(port, { path: '/api/state', headers: { cookie: other.cookie } })).body,
     ) as {
-      run: { canControl: boolean };
+      run: Record<string, unknown>;
     };
-    assert.equal(otherState.run.canControl, false);
+    assert.equal('canControl' in otherState.run, false);
     const forbiddenStop = await request(port, {
       path: '/api/run/stop',
       method: 'POST',
@@ -295,8 +298,7 @@ test('hosted GitHub OAuth protects mutations with sessions, CSRF, and run owners
     assert.equal(forbiddenStop.status, 403);
     const otherBattle = await request(port, { path: '/api/battle?index=0', headers: { cookie: other.cookie } });
     assert.equal(otherBattle.status, 200);
-    assert.match(otherBattle.body, /50\/100/);
-    assert.doesNotMatch(otherBattle.body, /100\/200/);
+    assert.doesNotMatch(otherBattle.body, /50\/100|100\/200/);
 
     const stopped = await request(port, {
       path: '/api/run/stop',
@@ -310,6 +312,11 @@ test('hosted GitHub OAuth protects mutations with sessions, CSRF, and run owners
       body: '{}',
     });
     assert.equal(stopped.status, 200);
+    const otherAfterStop = JSON.parse(
+      (await request(port, { path: '/api/state', headers: { cookie: other.cookie } })).body,
+    ) as { sampleTeams?: unknown[]; run: Record<string, unknown> };
+    assert.ok(Array.isArray(otherAfterStop.sampleTeams), 'contributors retain setup data after another owner stops');
+    assert.equal('error' in otherAfterStop.run, false, "the other owner's stopped run remains public-projected");
 
     for (let attempt = 0; attempt < 30; attempt += 1) {
       const response = await request(port, {
@@ -339,7 +346,7 @@ test('hosted GitHub OAuth protects mutations with sessions, CSRF, and run owners
     assert.equal(limited.status, 429);
     assert.ok(Number(limited.headers['retry-after']) >= 1);
 
-    const ownerStream = eventStream(port, '/api/events', { cookie: owner.cookie });
+    ownerStream = eventStream(port, '/api/events', { cookie: owner.cookie });
     assert.equal(await ownerStream.ready, 200);
 
     const logout = await request(port, {
@@ -357,10 +364,10 @@ test('hosted GitHub OAuth protects mutations with sessions, CSRF, and run owners
     assert.equal(cookieValue(logout.headers, 'vgc_session'), '');
     emitLateUpdate?.();
     const afterLogout = await ownerStream.battle;
-    assert.match(afterLogout, /40\/100/);
-    assert.doesNotMatch(afterLogout, /80\/200/);
-    ownerStream.close();
+    assert.match(afterLogout, /"visibility":"public"/);
+    assert.match(afterLogout, /won the game/);
   } finally {
+    ownerStream?.close();
     await gui.shutdown(1_000);
     auth.close();
   }

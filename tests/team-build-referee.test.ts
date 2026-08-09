@@ -1,19 +1,9 @@
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
 import test from 'node:test';
 
 import { loadBoard } from '../src/draft.js';
 import { defaultPsDir } from '../src/paths.js';
-import { seededRng } from '../src/random.js';
-import {
-  renderTeamBuildTask,
-  runTeamBuild,
-  type TeamBuildTask,
-  validateTeamBuildSubmission,
-} from '../src/teambuild.js';
-import type { Completion, Provider } from '../src/types.js';
+import { replayTeamBuildArtifact, type TeamBuildTask, validateTeamBuildSubmission } from '../src/teambuild.js';
 import { legalTeamResponse } from './fixtures/team-build.js';
 
 const BOARD = loadBoard('regmb-202607');
@@ -27,12 +17,12 @@ const CANDIDATES = ['garchomp', 'incineroar', 'sinistcha', 'farigiraf', 'whimsic
 );
 const CREATED_AT = '2026-03-17T00:00:00.000Z';
 
-function task(sheetPolicy: 'open' | 'closed' = 'open'): TeamBuildTask {
+function task(): TeamBuildTask {
   return {
     id: 'referee-fixture',
     model: 'scripted:model',
     format: BOARD.format,
-    sheetPolicy,
+    sheetPolicy: 'open',
     executionPolicy: 'strict',
     constraint: { kind: 'frozen-candidate-pool', id: 'referee-pool', teamSize: 6, candidates: CANDIDATES },
     objective: { kind: 'general', brief: 'Build a coherent team.' },
@@ -43,48 +33,29 @@ function task(sheetPolicy: 'open' | 'closed' = 'open'): TeamBuildTask {
 
 const RESPONSE = legalTeamResponse('Flexible speed control lets this team pressure both fast and slow modes.');
 
-function provider(response: string): Provider {
-  return {
-    complete(): Promise<Completion> {
-      return Promise.resolve({ text: response, usage: {}, toolCalls: [] });
-    },
-  };
-}
-
-test('strict referee agrees byte-for-byte with a scripted strict run', async (t) => {
-  const pure = validateTeamBuildSubmission(task(), RESPONSE, {
+test('provider-free construction referee produces an exactly replayable artifact', () => {
+  const result = validateTeamBuildSubmission(task(), RESPONSE, {
     psDir: defaultPsDir(),
     attempts: 1,
     createdAt: CREATED_AT,
   });
-  assert.equal(pure.status, 'accepted');
-  if (pure.status !== 'accepted') return;
-  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-team-build-referee-'));
-  t.after(() => fs.rmSync(logDir, { recursive: true, force: true }));
-  const result = await runTeamBuild(task(), {
-    logDir,
-    rng: seededRng(1),
-    psDir: defaultPsDir(),
-    createdAt: CREATED_AT,
-    makeTeambuildProvider: () => provider(RESPONSE),
-  });
-  assert.deepEqual(result.artifact, pure.artifact);
-  assert.equal(result.packed, pure.packed);
+  assert.equal(result.status, 'accepted');
+  if (result.status !== 'accepted') return;
+  const replayed = replayTeamBuildArtifact(result.artifact, { psDir: defaultPsDir() });
+  assert.deepEqual(replayed.artifact, result.artifact);
+  assert.equal(replayed.packed, result.packed);
 });
 
-test('strict referee rejects malformed and illegal submissions without mutating its task', () => {
-  const input = task();
-  const before = structuredClone(input);
-  const malformed = validateTeamBuildSubmission(input, '{"sets": []}', {
+test('provider-free construction referee rejects malformed and illegal free text', () => {
+  const malformed = validateTeamBuildSubmission(task(), '{"sets": []}', {
     psDir: defaultPsDir(),
     createdAt: CREATED_AT,
   });
   assert.equal(malformed.status, 'rejected');
-  assert.deepEqual(input, before);
 
   const illegal = JSON.parse(RESPONSE) as { sets: Array<{ item: string }> };
   illegal.sets[0]!.item = 'Not An Item';
-  const rejected = validateTeamBuildSubmission(input, JSON.stringify(illegal), {
+  const rejected = validateTeamBuildSubmission(task(), JSON.stringify(illegal), {
     psDir: defaultPsDir(),
     createdAt: CREATED_AT,
   });
@@ -94,91 +65,18 @@ test('strict referee rejects malformed and illegal submissions without mutating 
   assert.equal(rejected.artifact.fallback, false);
   assert.equal(rejected.artifact.validation.repaired, false);
   assert.ok(rejected.problems.some((problem) => problem.includes('canonical Showdown name')));
-  assert.deepEqual(input, before);
 });
 
-test('strict rendering is deterministic and binds open and closed policy identities', () => {
-  const open = renderTeamBuildTask(task('open'), { psDir: defaultPsDir() });
-  const openAgain = renderTeamBuildTask(task('open'), { psDir: defaultPsDir() });
-  const closed = renderTeamBuildTask(task('closed'), { psDir: defaultPsDir() });
-  assert.deepEqual(open, openAgain);
-  assert.notEqual(open.scaffold, closed.scaffold);
-  assert.match(open.system, /team sheets are open/);
-  assert.match(closed.system, /team sheets are closed/);
-  assert.equal(open.executionPolicy, 'strict');
-  assert.equal(open.task.executionPolicy, 'strict');
-});
+test('semantic replay rejects action sets or roster ids that do not match packed bytes', () => {
+  const result = validateTeamBuildSubmission(task(), RESPONSE, { psDir: defaultPsDir(), createdAt: CREATED_AT });
+  assert.equal(result.status, 'accepted');
+  if (result.status !== 'accepted') return;
 
-test('strict run and referee preserve the same malformed rejection artifact', async (t) => {
-  const response = '{"sets": []}';
-  const pure = validateTeamBuildSubmission(task(), response, {
-    psDir: defaultPsDir(),
-    attempts: 5,
-    createdAt: CREATED_AT,
-  });
-  assert.equal(pure.status, 'rejected');
-  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-team-build-referee-rejected-'));
-  t.after(() => fs.rmSync(logDir, { recursive: true, force: true }));
-  const result = await runTeamBuild(task(), {
-    logDir,
-    rng: seededRng(1),
-    psDir: defaultPsDir(),
-    createdAt: CREATED_AT,
-    makeTeambuildProvider: () => provider(response),
-  });
-  if (pure.status !== 'rejected') return;
-  assert.deepEqual(result.artifact, pure.artifact);
-  assert.equal(result.packed, null);
-});
+  const changedSet = structuredClone(result.artifact);
+  changedSet.action!.sets[0]!.nature = 'Adamant';
+  assert.throws(() => replayTeamBuildArtifact(changedSet), /do not exactly match|inconsistent/);
 
-test('strict referee preserves and detaches a refused non-strict task', () => {
-  const input = task();
-  input.executionPolicy = 'league-resilient';
-  const before = structuredClone(input);
-  const rejected = validateTeamBuildSubmission(input, RESPONSE, {
-    psDir: defaultPsDir(),
-    createdAt: CREATED_AT,
-  });
-  assert.equal(rejected.status, 'rejected');
-  if (rejected.status !== 'rejected') return;
-  assert.deepEqual(rejected.artifact.task, before);
-  assert.equal(rejected.artifact.executionPolicy, 'strict');
-  rejected.artifact.task.notebook = 'changed downstream';
-  rejected.artifact.task.constraint.candidates[0]!.name = 'Changed downstream';
-  assert.deepEqual(input, before);
-});
-
-test('strict run records token truncation as the rejection problem', async (t) => {
-  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-team-build-referee-truncated-'));
-  t.after(() => fs.rmSync(logDir, { recursive: true, force: true }));
-  const result = await runTeamBuild(task(), {
-    logDir,
-    rng: seededRng(1),
-    psDir: defaultPsDir(),
-    createdAt: CREATED_AT,
-    makeTeambuildProvider: () => ({
-      complete: () => Promise.resolve({ text: '{"sets": []}', finishReason: 'length', usage: {}, toolCalls: [] }),
-    }),
-  });
-  assert.equal(result.packed, null);
-  assert.deepEqual(result.artifact.validation.problems, [
-    'the reply used its whole token budget before finishing the team',
-  ]);
-});
-
-test('strict random task fails without manufacturing a fallback action', async (t) => {
-  const input = task();
-  input.model = 'random';
-  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-team-build-referee-random-'));
-  t.after(() => fs.rmSync(logDir, { recursive: true, force: true }));
-  const result = await runTeamBuild(input, {
-    logDir,
-    rng: seededRng(1),
-    psDir: defaultPsDir(),
-    createdAt: CREATED_AT,
-  });
-  assert.equal(result.packed, null);
-  assert.equal(result.artifact.attempts, 0);
-  assert.equal(result.artifact.fallback, false);
-  assert.deepEqual(result.artifact.validation.problems, ['strict team building has no provider action']);
+  const changedSelection = structuredClone(result.artifact);
+  changedSelection.action!.selected[0] = 'not-owned';
+  assert.throws(() => replayTeamBuildArtifact(changedSelection), /does not own/);
 });

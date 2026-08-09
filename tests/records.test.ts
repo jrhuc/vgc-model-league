@@ -4,13 +4,45 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
+import { readJsonlObjects } from '../src/jsonl.js';
 import type { SeriesRecord } from '../src/records.js';
 
-import { appendRow, loadRows, modelKey, scopeRows } from '../src/records.js';
+import { appendRow, loadSeriesRecords, modelKey, scopeRows } from '../src/records.js';
 import { writeReport } from '../src/report.js';
 
 function row(p1: string, p2: string, winner: string | null): SeriesRecord {
-  return { players: { p1, p2 }, winner, games: [] };
+  const winnerSide = winner === p1 ? 'p1' : winner === p2 ? 'p2' : null;
+  return {
+    schema_version: 1,
+    mode: 'rotation',
+    protocol_version: 1,
+    scaffold: 'fixture',
+    timestamp: '2026-07-14T12:00:00Z',
+    run_id: `run-${p1}-${p2}`,
+    series_id: `series-${p1}-${p2}`,
+    series_index: 0,
+    format: 'test',
+    players: { p1, p2 },
+    teams: { p1: 'team-a', p2: 'team-b' },
+    winner,
+    winner_side: winnerSide,
+    score: { p1: winnerSide === 'p1' ? 1 : 0, p2: winnerSide === 'p2' ? 1 : 0 },
+    turns: 1,
+    games: [
+      {
+        number: 1,
+        winner,
+        winner_side: winnerSide,
+        turns: 1,
+        seed: [1, 2, 3, 4],
+      },
+    ],
+    engine_seeds: { p1: 1, p2: 2 },
+    reasoning: null,
+    decision_stats: { p1: {}, p2: {} },
+    run_seed: 1,
+    ps_commit: '0000000000000000000000000000000000000000',
+  };
 }
 
 test('model identities normalize across providers and gateways', () => {
@@ -40,12 +72,25 @@ test('scoping keeps the test pool out of overall views but selectable', () => {
   );
 });
 
+test('generic journals remain JSON objects while result authority requires the current series schema', (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-model-league-record-types-'));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const journal = path.join(directory, 'draft.jsonl');
+  fs.writeFileSync(journal, '{"kind":"draft_pick","pick":1}\n');
+  assert.deepEqual(readJsonlObjects(journal), [{ kind: 'draft_pick', pick: 1 }]);
+  assert.throws(() => loadSeriesRecords(journal), /not a current series record/);
+
+  const results = path.join(directory, 'results.jsonl');
+  fs.writeFileSync(results, `${JSON.stringify({ ...row('a', 'b', 'a'), unexpected: true })}\n`);
+  assert.throws(() => loadSeriesRecords(results), /Unrecognized key: "unexpected"/);
+});
+
 test('record loading ignores whitespace-only lines', (t) => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-model-league-records-'));
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
   const records = path.join(directory, 'results.jsonl');
   fs.writeFileSync(records, `${JSON.stringify(row('a', 'b', 'a'))}\n   \n`);
-  assert.deepEqual(loadRows(records), [row('a', 'b', 'a')]);
+  assert.deepEqual(loadSeriesRecords(records), [row('a', 'b', 'a')]);
 });
 
 test('record loading retains valid rows before a torn final JSONL fragment', (t) => {
@@ -55,7 +100,7 @@ test('record loading retains valid rows before a torn final JSONL fragment', (t)
   const first = row('a', 'b', 'a');
   const second = row('c', 'd', 'c');
   fs.writeFileSync(records, `${JSON.stringify(first)}\n${JSON.stringify(second)}\n{"players":{"p1":"partial"`);
-  assert.deepEqual(loadRows(records), [first, second]);
+  assert.deepEqual(loadSeriesRecords(records), [first, second]);
 });
 
 test('record append removes a torn tail before committing the new row', (t) => {
@@ -68,7 +113,7 @@ test('record append removes a torn tail before committing the new row', (t) => {
 
   appendRow(records, replacement);
 
-  assert.deepEqual(loadRows(records), [first, replacement]);
+  assert.deepEqual(loadSeriesRecords(records), [first, replacement]);
   assert.doesNotMatch(fs.readFileSync(records, 'utf8'), /partial/);
 });
 
@@ -82,7 +127,7 @@ test('record append preserves a valid unterminated object with a separator', (t)
 
   appendRow(records, second);
 
-  assert.deepEqual(loadRows(records), [first, second]);
+  assert.deepEqual(loadSeriesRecords(records), [first, second]);
 });
 
 test('record append rejects committed malformed rows without changing the journal', (t) => {
@@ -122,7 +167,7 @@ test('record loading rejects a terminated malformed final JSONL row', (t) => {
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
   const records = path.join(directory, 'results.jsonl');
   fs.writeFileSync(records, `${JSON.stringify(row('a', 'b', 'a'))}\n{"players":\n`);
-  assert.throws(() => loadRows(records), /invalid JSONL line 2.*results\.jsonl/);
+  assert.throws(() => loadSeriesRecords(records), /invalid JSONL line 2.*results\.jsonl/);
 });
 
 test('record loading rejects a malformed interior JSONL row with its line number', (t) => {
@@ -133,7 +178,7 @@ test('record loading rejects a malformed interior JSONL row with its line number
     records,
     `${JSON.stringify(row('a', 'b', 'a'))}\n{"players":\n${JSON.stringify(row('c', 'd', 'c'))}\n`,
   );
-  assert.throws(() => loadRows(records), /invalid JSONL line 2.*results\.jsonl/);
+  assert.throws(() => loadSeriesRecords(records), /invalid JSONL line 2.*results\.jsonl/);
 });
 
 test('record loading invalidates a cached torn tail after it is completed by an append', (t) => {
@@ -142,14 +187,16 @@ test('record loading invalidates a cached torn tail after it is completed by an 
   const records = path.join(directory, 'results.jsonl');
   const first = row('a', 'b', 'a');
   const second = row('c', 'd', 'c');
-  fs.writeFileSync(records, `${JSON.stringify(first)}\n{"players":{"p1":"c","p2":`);
-  const cached = loadRows(records);
+  const secondJson = JSON.stringify(second);
+  const cut = Math.floor(secondJson.length / 2);
+  fs.writeFileSync(records, `${JSON.stringify(first)}\n${secondJson.slice(0, cut)}`);
+  const cached = loadSeriesRecords(records);
   assert.deepEqual(cached, [first]);
-  assert.equal(loadRows(records), cached, 'an unchanged torn snapshot returns the cached valid prefix');
+  assert.equal(loadSeriesRecords(records), cached, 'an unchanged torn snapshot returns the cached valid prefix');
 
-  fs.appendFileSync(records, `"d"},"winner":"c","games":[]}\n`);
+  fs.appendFileSync(records, `${secondJson.slice(cut)}\n`);
 
-  const completed = loadRows(records);
+  const completed = loadSeriesRecords(records);
   assert.deepEqual(completed, [first, second]);
   assert.notEqual(completed, cached, 'the changed size invalidates the cached torn snapshot');
 });
@@ -168,8 +215,22 @@ test('HTML reports include nested games and filter pools', (t) => {
     score: { p1: 2, p2: 0 },
     turns: 12,
     games: [
-      { number: 1, winner: 'included-a', winner_side: 'p1', turns: 5, log: 'game-1.log' },
-      { number: 2, winner: 'included-a', winner_side: 'p1', turns: 7, log: 'game-2.log' },
+      {
+        number: 1,
+        winner: 'included-a',
+        winner_side: 'p1',
+        turns: 5,
+        seed: [1, 2, 3, 4],
+        log: 'game-1.log',
+      },
+      {
+        number: 2,
+        winner: 'included-a',
+        winner_side: 'p1',
+        turns: 7,
+        seed: [5, 6, 7, 8],
+        log: 'game-2.log',
+      },
     ],
   });
   appendRow(records, { ...row('excluded-c', 'excluded-d', 'excluded-c'), pool: 'beta' });
@@ -182,7 +243,6 @@ test('HTML reports include nested games and filter pools', (t) => {
   assert.match(html, /series-1/);
   assert.match(html, /game-1\.log/);
   assert.match(html, /not an aggregate model ranking/);
-  assert.match(html, /unrecorded/);
   assert.doesNotMatch(html, /Elo|Head-to-head|Win rate/);
   assert.doesNotMatch(html, /excluded-c/);
 

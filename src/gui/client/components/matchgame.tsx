@@ -60,7 +60,7 @@ export function MatchGame({
   titles: [string, string];
   players: [string, string];
   details?: [string, string];
-  teams: [TeambuildSetView[] | undefined, TeambuildSetView[] | undefined];
+  teams: [Array<TeambuildSetView> | undefined, Array<TeambuildSetView> | undefined];
   onOpenGame: (game: number) => void;
   actions?: ComponentChildren;
 }) {
@@ -69,7 +69,8 @@ export function MatchGame({
     view.gameWinners.filter((winner) => winner === view.sides[1]).length,
   ];
   const winnerName = view.winner === view.sides[0] ? titles[0] : view.winner === view.sides[1] ? titles[1] : '';
-  const seriesOver = view.reflections.some((reflection) => reflection.seriesOver);
+  const { decisions, reflections, snapshot } = view;
+  const seriesOver = reflections.some((reflection) => reflection.seriesOver);
   const hasTeams = teams.some((team) => team && team.length > 0);
   const chipSide = (winner: number | null): string =>
     winner === view.sides[0] ? 'left' : winner === view.sides[1] ? 'right' : '';
@@ -123,19 +124,19 @@ export function MatchGame({
         </div>
       </header>
 
-      {view.snapshot ? (
+      {snapshot ? (
         <section class="panel battlefield">
           <Battlefield
-            snapshot={view.snapshot}
+            snapshot={snapshot}
             receivedAt={view.receivedAt}
             players={{ p1: players[0], p2: players[1] }}
             labels={{ p1: titles[0], p2: titles[1] }}
             warnings={{
-              p1: latestFallback(view.decisions, (d) => d.side === 0),
-              p2: latestFallback(view.decisions, (d) => d.side === 1),
+              p1: latestFallback(decisions, (d) => d.side === 0),
+              p2: latestFallback(decisions, (d) => d.side === 1),
             }}
             teams={{ p1: teams[0], p2: teams[1] }}
-            meta={<span class="turn-badge">{view.snapshot.turn ? `Turn ${view.snapshot.turn}` : 'Team preview'}</span>}
+            meta={<span class="turn-badge">{snapshot.turn ? `Turn ${snapshot.turn}` : 'Team preview'}</span>}
           />
         </section>
       ) : view.live && view.winner === null ? (
@@ -171,10 +172,10 @@ export function MatchGame({
             <p>Both sides’ choices with their recorded reasoning, then what the simulator resolved.</p>
           </div>
         </div>
-        <GameTimeline decisions={view.decisions} log={view.log} names={titles} />
+        <GameTimeline decisions={decisions} log={view.log} names={titles} />
       </section>
 
-      {view.reflections.length > 0 ? (
+      {reflections.length > 0 ? (
         <section class="panel">
           <div class="section-head">
             <div>
@@ -187,7 +188,7 @@ export function MatchGame({
             </div>
           </div>
           <GameReflections
-            reflections={view.reflections}
+            reflections={reflections}
             names={titles}
             notebookLabel={seriesOver ? 'Notes for a rematch' : 'Notebook carried forward'}
           />

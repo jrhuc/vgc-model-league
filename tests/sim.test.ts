@@ -16,7 +16,7 @@ import { finishUpdateRouting, routeUpdateLines, SimBattle } from '../src/sim.js'
 import { BattleState } from '../src/state.js';
 import { loadPool } from '../src/teams.js';
 import { parseTimerScale, TimerAdapter } from '../src/timer.js';
-import type { BattleRequest, TimerScale } from '../src/types.js';
+import type { ActionSubmission, BattleRequest, JsonObject, SubmissionContext, TimerScale } from '../src/types.js';
 
 test('forced-switch menus retain the neutral forfeit option', () => {
   const menus = buildMenus({
@@ -84,35 +84,84 @@ test('seeded random VGC battle completes untimed by default without protocol err
   assert.match(state.render({}), /Opponent side/);
 });
 
-test('three rejected simulator commands cause one simulator substitution and no model fallback', async () => {
+test('Showdown rejection and accepted retry resolve distinct stable submissions once', async () => {
   const pool = loadPool();
-  class RejectedCommandAgent extends RandomEngine {
+  const p1Rows: JsonObject[] = [];
+  const p2Rows: JsonObject[] = [];
+  class RetryEngine extends RandomEngine {
     calls = 0;
 
-    override act(): Promise<string> {
+    override submit(request: BattleRequest, context: SubmissionContext) {
       this.calls += 1;
-      return Promise.resolve(this.calls <= 3 ? 'invalid' : 'forfeit');
-    }
-
-    override decisionStats(): Record<string, number> {
-      return { fallbacks: 0 };
+      if (this.calls === 2) return super.submit(request, context);
+      return Promise.resolve<ActionSubmission>({
+        submissionId: context.submissionId,
+        choice: this.calls === 1 ? 'invalid' : 'forfeit',
+        source: 'random',
+      });
     }
   }
-  const rejecting = new RejectedCommandAgent('p1', 1);
   const outcome = await new SimBattle(
     pool.format,
     {
-      p1: { name: 'A-rejected', team: pool.teams[0]!.packed },
-      p2: { name: 'B-deterministic', team: pool.teams[1]!.packed },
+      p1: { name: 'A-retry', team: pool.teams[0]!.packed },
+      p2: { name: 'B-normal', team: pool.teams[1]!.packed },
+    },
+    [61, 62, 63, 64],
+  ).run({ p1: new RetryEngine('p1', 1, p1Rows), p2: new RandomEngine('p2', 2, p2Rows) });
+
+  assert.deepEqual(outcome.errors, { p1: 1, p2: 0 });
+  const all = [...p1Rows, ...p2Rows];
+  assert.ok(all.every((row) => row.kind === 'decision'));
+  assert.equal(new Set(all.map((row) => row.submission_id)).size, all.length);
+  const rejected = p1Rows.find((row) => row.outcome === 'rejected');
+  assert.equal(rejected?.action, 'invalid');
+  assert.match(String(rejected?.showdown_error), /^\|error\|/);
+  assert.ok(p1Rows.some((row) => row.outcome === 'accepted'));
+  assert.ok(p2Rows.every((row) => row.outcome === 'accepted'));
+});
+
+test('an unavailable third reject is resolved before its simulator default', async () => {
+  class RejectThenTrappedSwitch extends RandomEngine {
+    private calls = 0;
+
+    override submit(request: BattleRequest, context: SubmissionContext) {
+      if (!request.active) return super.submit(request, context);
+      this.calls += 1;
+      return Promise.resolve<ActionSubmission>({
+        submissionId: context.submissionId,
+        choice: this.calls <= 2 ? 'invalid' : this.calls === 3 ? 'switch 2' : 'forfeit',
+        source: 'random',
+      });
+    }
+  }
+  class LeadGothitelle extends RandomEngine {
+    protected override decideJoint(menus: SlotMenu[]): number[] {
+      return menus.map((_, index) => index);
+    }
+  }
+  const decisions: JsonObject[] = [];
+  const outcome = await new SimBattle(
+    'gen9customgame',
+    {
+      p1: {
+        name: 'A-trapped',
+        team: 'Pika|Pikachu|LightBall|Static|Thunderbolt,Protect|Timid|,,,252,,252|||||]Eevee|||RunAway|Tackle,Protect|Jolly||||||',
+      },
+      p2: {
+        name: 'B-shadow-tag',
+        team: 'Goth|Gothitelle||ShadowTag|Psychic,Protect|Bold||||||]Ditto|||Limber|Transform|Serious||||||',
+      },
     },
     [31, 32, 33, 34],
-  ).run({ p1: rejecting, p2: new RandomEngine('p2', 2) });
+  ).run({ p1: new RejectThenTrappedSwitch('p1', 1, decisions), p2: new LeadGothitelle('p2', 2) });
 
-  assert.equal(rejecting.calls, 4);
-  assert.equal(outcome.winner, 'B-deterministic');
   assert.deepEqual(outcome.errors, { p1: 3, p2: 0 });
   assert.deepEqual(outcome.simulatorSubstitutions, { p1: 1, p2: 0 });
-  assert.equal(rejecting.decisionStats().fallbacks, 0);
+  assert.match(String(decisions.find((row) => row.action === 'switch 2')?.showdown_error), /Unavailable choice/);
+  const generated = decisions.find((row) => row.submission_source === 'simulator-default');
+  assert.equal(generated?.outcome, 'accepted');
+  assert.equal(new Set(decisions.map((row) => row.submission_id)).size, decisions.length);
 });
 
 test('closed sheets strip the open-team-sheet rules while the stock format keeps them', async () => {
@@ -166,9 +215,11 @@ test('Showdown timer defaults a slow decision', { timeout: 25_000 }, async () =>
     undefined,
     1,
   );
-  const outcome = await battle.run({ p1: new SlowEngine('p1', 1), p2: new RandomEngine('p2', 2) });
+  const decisions: JsonObject[] = [];
+  const outcome = await battle.run({ p1: new SlowEngine('p1', 1, decisions), p2: new RandomEngine('p2', 2) });
   assert.ok(outcome.timerAutodefaults.p1 >= 1);
   assert.ok(outcome.pov.p1.includes('|timer|autodefault'));
+  assert.ok(decisions.some((row) => row.submission_source === 'timer-default' && row.outcome === 'accepted'));
 });
 
 test('timer scale multiplies Showdown timer settings and reseeds the banks', () => {
@@ -231,16 +282,16 @@ test('recovery pause time is not charged to an invalid-choice retry', async () =
   class PausedInvalidAgent extends RandomEngine {
     private calls = 0;
 
-    override act(request: BattleRequest): Promise<string> {
+    override async submit(request: BattleRequest, context: SubmissionContext): Promise<ActionSubmission> {
       this.calls += 1;
       if (this.calls === 1) {
         firstTimer = request.timer;
         firstRequestStarted.resolve();
-        return firstChoice.promise;
+        return { submissionId: context.submissionId, choice: await firstChoice.promise, source: 'random' };
       }
       retryTimer = request.timer;
       retryReceived.resolve();
-      return Promise.resolve('forfeit');
+      return { submissionId: context.submissionId, choice: 'forfeit', source: 'random' };
     }
   }
   let clock = 1_000;

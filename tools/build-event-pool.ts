@@ -186,7 +186,7 @@ function exportSet(set: OpenSet, evs: Spread): string {
   return lines.join('\n');
 }
 
-export async function buildEventPool(manifestFile: string): Promise<string> {
+async function buildEventPool(manifestFile: string): Promise<string> {
   const manifestPath = path.resolve(manifestFile);
   const poolDir = path.dirname(manifestPath);
   const data: unknown = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));

@@ -1,6 +1,6 @@
 import type { ComponentChildren } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
-import type { BattleSnapshot, MonView, SideTimerView, SideView, SpendView, TeambuildSetView } from '../../api';
+import type { BattleSnapshot, MonView, PublicTeamSheetSetView, SideTimerView, SideView, SpendView } from '../../api';
 import { TeamLineup } from './lineup';
 import { Mark } from './mark';
 import { ItemIcon, Sprite } from './sprite';
@@ -13,13 +13,13 @@ function speciesSlug(value: string): string {
 }
 
 /** A drafted mega enters play under its base species until it evolves, so match by slug prefix. */
-function setMatchesMon(set: TeambuildSetView, mon: MonView): boolean {
+function setMatchesMon(set: PublicTeamSheetSetView, mon: MonView): boolean {
   const setId = speciesSlug(set.species);
   const monId = speciesSlug(mon.species);
   return setId === monId || setId.startsWith(`${monId}-`) || monId.startsWith(`${setId}-`);
 }
 
-function TeamStrip({ team, mons }: { team: TeambuildSetView[]; mons: MonView[] }) {
+function TeamStrip({ team, mons }: { team: Array<PublicTeamSheetSetView>; mons: MonView[] }) {
   return (
     <ul class="team-strip" aria-label="Brought team">
       {team.map((set) => {
@@ -143,7 +143,7 @@ function Side({
   warning: string | null;
   model?: string | undefined;
   label?: string | undefined;
-  team?: TeambuildSetView[] | undefined;
+  team?: Array<PublicTeamSheetSetView> | undefined;
 }) {
   const [, setTick] = useState(0);
   useEffect(() => {
@@ -213,7 +213,7 @@ export function Battlefield({
   players?: Partial<Record<'p1' | 'p2', string>>;
   labels?: Partial<Record<'p1' | 'p2', string>>;
   warnings?: Partial<Record<'p1' | 'p2', string | null>>;
-  teams?: Partial<Record<'p1' | 'p2', TeambuildSetView[] | undefined>>;
+  teams?: Partial<Record<'p1' | 'p2', Array<PublicTeamSheetSetView> | undefined>>;
   meta?: ComponentChildren;
 }) {
   const [sheetsOpen, setSheetsOpen] = useState(false);

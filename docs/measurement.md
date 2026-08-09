@@ -30,6 +30,13 @@ or a required reasoning algorithm, search policy, or subagent topology. Tools
 may calculate mechanics but never choose an action. An authoritative answer must
 include every interaction material to it.
 
+The generic format-authority notice is allowed neutral process information. It
+is model-visible across league roles and tells seats that Champions may postdate
+training data, the prompt and pinned simulator are authoritative, and mechanics
+absent from the rules/legal actions are unavailable. It contains no strategy or
+matchup diagnosis. Its exact bytes belong to the affected scaffold identities;
+it is not invisible evidence-only metadata.
+
 If required information was absent, incomplete, or misleading, fix the harness
 and change its scaffold identity. If visible information was ignored, preserve
 it as a model result rather than coaching it away. Rationale, notebooks,
@@ -106,6 +113,16 @@ versions, so:
 - use mirrored assignments or population evaluation for battle-policy claims;
 - cluster uncertainty by game or episode, not turn.
 
+Roster fielding counts and a drafted Pokémon's win/draw/loss record are selected,
+conditioned diagnostics: fielding depends on coach, roster, opponent, build,
+bring, pilot, schedule, and prior results, while game outcomes also contain RNG.
+They can motivate a hypothesis about usage, never estimate an asset's causal
+impact or quality. Named Kimi patterns in the legacy archive have the same
+confounds and are neither capability nor rank evidence. A legacy short
+`modelKey` can group multiple provider/model identifiers; provider aliases and
+archive keys do not establish a frozen treatment, served revision, scaffold, or
+sampling condition.
+
 ## Counterfactual decision rules
 
 A position is eligible only when its source game replays exactly from the
@@ -130,11 +147,12 @@ Showdown mechanic, and its declared omissions remain part of the protocol. Two
 independent qualification panels determine eligibility under a policy calibrated
 outside the candidate corpus; an untouched measurement panel supplies rewards. A row
 admitted by qualification but missing a usable measurement panel fails the
-candidate freeze. Do not select or remove rows using measurement values, call a
+candidate build. Do not select or remove rows using measurement values, call a
 noisy maximum the true best, or silently clamp an independent reversal.
 
-A normalized value requires a reliable opportunity span. Thresholds and balance
-tolerances belong to the frozen schema-v2 policy, not exporter discretion. The
+A normalized value requires a reliable opportunity span. Qualification
+thresholds and corpus-balance requirements must be calibrated outside the
+candidate corpus, not chosen by exporter discretion. The
 [evaluation plan](evaluation-plan.md) lists the remaining validation gates.
 
 ## Controlled position sets and artifacts
@@ -142,7 +160,7 @@ tolerances belong to the frozen schema-v2 policy, not exporter discretion. The
 Every compared model receives the same anonymized prompt renderer, numbered
 action encoding, tools, sampling policy, and scoring reference. Selection is
 seeded, stratified by phase/state, and capped per source game. Source-series and
-near-duplicate connected components stay within one split. The first source is
+near-duplicate groups cannot cross calibration, candidate, and held-out corpora. The first source is
 VGCML-generated play, not representative human VGC without an external holdout
 and coverage argument.
 
@@ -151,10 +169,11 @@ actions. It excludes source identity/action/rationale/notebook, opponent-private
 requests, and simulator snapshots. The original league scaffold is provenance,
 not inherited context.
 
-Public tasks, private score tables, and sealed snapshots/matrices use physically
-separate immutable roots. Model/browser loaders accept only public artifacts and
-only with a verified complete manifest. Candidate artifacts remain
-`release_ready: false` until every release gate passes.
+Public tasks use one immutable public root. Private score tables and sealed
+snapshots/matrices share one physically separate immutable private root.
+Model/browser loaders accept only public artifacts and only with a verified
+complete manifest. Candidate artifacts are not released until every release gate
+passes.
 
 ## Cross-stage evidence
 
@@ -175,6 +194,16 @@ never affect task inclusion, legality, action acceptance, seat context, reward,
 `Env.finalize`, or training. Report not-applicable separately and divide rates
 by eligible opportunities. Requiring a rationale changes the task, so compare
 only runs with the same requirement.
+
+A notebook handoff is a mechanical receipt: exact retained bytes appeared in a
+later authorized prompt. A reflection trace adds a generated statement. Neither
+shows that the model used the note, changed behavior because of it, or benefited.
+Causal transfer requires a versioned intervention (for example, crossed
+retained/replaced/withheld notebook conditions), a preregistered later-action
+contrast, fixed downstream controllers/common draws where applicable, and an
+artifact that binds the complete reflection-to-prompt-to-action chain. A
+terminal season review has no later action in the current season and therefore
+cannot demonstrate learning or transfer.
 
 Recorded human choices are reference actions, not answer keys. Analyze action
 agreement separately from the paired reference-value difference between the
@@ -208,3 +237,11 @@ public schedule may create whole-circuit interference. Wins, standings, and plan
 prose are insufficient for any of these stronger claims. A backup Mega is only
 an example of a preregistered diagnostic motif, not required behavior or evidence
 by itself.
+
+Drafting against scarce resources and scheduled future opponents is genuine
+planning *within this VGC environment*; it need not be renamed an engineering or
+software task to count as planning behavior. Episode linkage can make that plan
+inspectable. Whether the behavior transfers to software work, tool-agent tasks,
+open-ended construction, or other real-world domains is a separate external
+validity question requiring matched studies in those domains. Similarity to an
+external benchmark or paper is motivation, never transfer evidence.

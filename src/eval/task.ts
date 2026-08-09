@@ -102,24 +102,6 @@ export function renderPositionTask(input: RenderPositionTaskInput): CanonicalPos
   };
 }
 
-export function parsePositionResponse(response: string, actions: readonly PositionTaskAction[]): PositionTaskAction {
-  let value: unknown;
-  try {
-    value = JSON.parse(response);
-  } catch {
-    throw new Error('response must be exactly one JSON object');
-  }
-  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('response must be one JSON object');
-  const record = value as Record<string, unknown>;
-  if (Object.keys(record).length !== 1 || !Object.hasOwn(record, 'choice')) {
-    throw new Error('response must contain only the choice field');
-  }
-  if (!Number.isInteger(record.choice)) throw new Error('choice must be an integer');
-  const action = actions.find((entry) => entry.number === record.choice);
-  if (!action) throw new Error('choice is outside the legal action map');
-  return action;
-}
-
 export interface PositionScoreAction {
   number: number;
   canonicalAction: string;
@@ -150,42 +132,5 @@ export function validateTaskScoreJoin(
     ) {
       throw new Error('score action has an invalid normalized reward');
     }
-  }
-}
-
-export interface PositionResponseScore {
-  reward: number;
-  validOutput: boolean;
-  choice: number | null;
-  canonicalAction: string | null;
-  error: string | null;
-}
-
-export function scorePositionResponse(
-  response: string,
-  actions: readonly PositionTaskAction[],
-  rewards: ReadonlyMap<string, number>,
-): PositionResponseScore {
-  try {
-    const action = parsePositionResponse(response, actions);
-    const reward = rewards.get(action.canonicalAction);
-    if (reward === undefined || !Number.isFinite(reward) || reward < 0 || reward > 1) {
-      throw new Error('score table does not contain a legal normalized reward');
-    }
-    return {
-      reward,
-      validOutput: true,
-      choice: action.number,
-      canonicalAction: action.canonicalAction,
-      error: null,
-    };
-  } catch (error) {
-    return {
-      reward: POSITION_TASK_PROTOCOL.invalidOutputReward,
-      validOutput: false,
-      choice: null,
-      canonicalAction: null,
-      error: error instanceof Error ? error.message : String(error),
-    };
   }
 }

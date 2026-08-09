@@ -107,46 +107,46 @@ test('stale revision and hash submissions are rejected without mutation', () => 
   referee.submit('p1', 'team 1234', p1.revision, p1.stateHash);
   referee.submit('p2', 'team 1234', p2.revision, p2.stateHash);
 
-  const beforeRevisionFailure = referee.snapshot();
+  const beforeRevisionFailure = referee.currentState();
   assert.throws(
     () => referee.submit('p1', 'move 1, move 1', p1.revision, p1.stateHash),
     assertRefereeError('stale-revision'),
   );
-  assert.deepEqual(referee.snapshot(), beforeRevisionFailure);
+  assert.deepEqual(referee.currentState(), beforeRevisionFailure);
 
   const current = referee.observe('p1');
-  const beforeHashFailure = referee.snapshot();
+  const beforeHashFailure = referee.currentState();
   assert.throws(
     () => referee.submit('p1', 'move 1, move 1', current.revision, '0'.repeat(64)),
     assertRefereeError('stale-state'),
   );
-  assert.deepEqual(referee.snapshot(), beforeHashFailure);
+  assert.deepEqual(referee.currentState(), beforeHashFailure);
 });
 
 test('illegal and duplicate submissions are rejected without mutation', () => {
   const referee = new FrozenBattleReferee(options());
   const p1 = referee.observe('p1');
-  const beforeIllegal = referee.snapshot();
+  const beforeIllegal = referee.currentState();
   assert.throws(
     () => referee.submit('p1', 'not-a-showdown-choice', p1.revision, p1.stateHash),
     assertRefereeError('illegal-action'),
   );
-  assert.deepEqual(referee.snapshot(), beforeIllegal);
+  assert.deepEqual(referee.currentState(), beforeIllegal);
 
   const legal = referee.legalActions('p1');
   assert.ok(legal.actions.some((entry) => entry.command === 'team 1234'));
   for (const entry of legal.actions) {
-    const candidate = FrozenBattleReferee.restore(JSON.parse(JSON.stringify(beforeIllegal)));
+    const candidate = new FrozenBattleReferee(options());
     assert.doesNotThrow(() => candidate.submit('p1', entry.command, legal.revision, legal.stateHash));
   }
 
   referee.submit('p1', 'team 1234', p1.revision, p1.stateHash);
-  const beforeDuplicate = referee.snapshot();
+  const beforeDuplicate = referee.currentState();
   assert.throws(
     () => referee.submit('p1', 'team 4321', p1.revision, p1.stateHash),
     assertRefereeError('duplicate-submission'),
   );
-  assert.deepEqual(referee.snapshot(), beforeDuplicate);
+  assert.deepEqual(referee.currentState(), beforeDuplicate);
 });
 
 test('routed observations preserve Showdown split secrecy for exact HP', () => {
@@ -165,23 +165,6 @@ test('routed observations preserve Showdown split secrecy for exact HP', () => {
   assert.ok(privateSwitch, 'p1 must receive its exact active HP');
   assert.ok(!p2.includes(privateSwitch), 'p2 must not receive p1 exact HP');
   assert.ok(p2.some((line) => line.startsWith('|switch|p1a: Grimmsnarl|') && line.endsWith('|100/100')));
-});
-
-test('a snapshot with one staged action restores the same mid-decision', () => {
-  const original = new FrozenBattleReferee(options());
-  const p1 = original.observe('p1');
-  original.observe('p2');
-  original.submit('p1', 'team 1234', p1.revision, p1.stateHash);
-
-  const serialized = JSON.parse(JSON.stringify(original.snapshot())) as ReturnType<FrozenBattleReferee['snapshot']>;
-  const restored = FrozenBattleReferee.restore(serialized);
-  const originalP2 = original.observe('p2');
-  const restoredP2 = restored.observe('p2');
-  assert.deepEqual(restoredP2, originalP2);
-
-  original.submit('p2', 'team 1234', originalP2.revision, originalP2.stateHash);
-  restored.submit('p2', 'team 1234', restoredP2.revision, restoredP2.stateHash);
-  assert.deepEqual(runToTerminal(restored), runToTerminal(original));
 });
 
 test('terminal evidence has authoritative result, turns, log, seed, and submitted actions', () => {

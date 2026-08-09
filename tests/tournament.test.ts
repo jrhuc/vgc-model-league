@@ -5,7 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import type { BracketView } from '../src/gui/api.js';
-import { loadRows } from '../src/records.js';
+import { loadSeriesRecords } from '../src/records.js';
 import { loadPool } from '../src/teams.js';
 import type { TournamentEvent } from '../src/tournament.js';
 import {
@@ -91,7 +91,7 @@ test('a tournament crowns a champion and records rounds coherently', async (t) =
   assert.equal(final.entrants.length, 5);
   assert.equal(new Set(final.entrants.map((entrant) => entrant.team)).size, 5, 'every entrant has a distinct team');
 
-  const persisted = loadRows(recordsPath);
+  const persisted = loadSeriesRecords(recordsPath);
   assert.equal(persisted.length, 4);
   for (const match of final.rounds.flat()) {
     if (match.seriesIndex === null) continue;
@@ -222,40 +222,38 @@ test('a stopped bracket resumes on its records and replays the interrupted serie
     resumed.map((row) => row.series_index),
     [0, 1, 2],
   );
-  assert.equal(loadRows(recordsPath).length, 3, 'no series is recorded twice');
+  assert.equal(loadSeriesRecords(recordsPath).length, 3, 'no series is recorded twice');
   const played = fs.readdirSync(path.join(directory, 'series'));
   assert.equal(played.length, 3, 'the interrupted series reuses its directory');
   assert.ok(played.includes(interrupted[0]!), 'and keeps the one it already opened');
   const first = resumed.find((row) => row.series_index === 0)!;
   assert.equal(
     (first.games as Array<Record<string, unknown>>)[0]?.resumed,
-    true,
-    'the game that already finished is replayed from its log, not bought again',
+    undefined,
+    'adoption preserves the exact completed game result instead of adding resume metadata',
   );
   assert.equal(fs.readFileSync(path.join(directory, 'config.json'), 'utf8'), config, 'a resume rewrites no provenance');
 });
 
-test('a resume refuses a bracket whose stored seats no longer match the draw', async (t) => {
+test('a resume refuses a tournament result whose defaults diverge from canonical series evidence', async (t) => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-model-league-tournament-mismatch-'));
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
-  const models = Array.from({ length: 4 }, () => 'random');
-  await runTournament(models, directory, {
-    seed: 3,
-    concurrency: 2,
-    recordsPath: path.join(directory, 'results.jsonl'),
-  });
-  const configPath = path.join(directory, 'config.json');
-  const config = JSON.parse(fs.readFileSync(configPath, 'utf8')) as { entrants: Array<{ team: string }> };
-  config.entrants[0]!.team = 'some-other-team';
-  fs.writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`, 'utf8');
+  const models = ['random', 'random'];
+  const recordsPath = path.join(directory, 'results.jsonl');
+  await runTournament(models, directory, { seed: 3, concurrency: 1, recordsPath });
+  const rows = fs
+    .readFileSync(recordsPath, 'utf8')
+    .trim()
+    .split('\n')
+    .map((line) => JSON.parse(line) as Record<string, unknown>);
+  const game = (rows[0]!.games as Array<Record<string, unknown>>)[0]!;
+  const defaults = game.timer_autodefaults as Record<'p1' | 'p2', number>;
+  defaults.p1 += 1;
+  fs.writeFileSync(recordsPath, `${rows.map((row) => JSON.stringify(row)).join('\n')}\n`, 'utf8');
+
   await assert.rejects(
-    runTournament(models, directory, {
-      seed: 3,
-      concurrency: 2,
-      recordsPath: path.join(directory, 'results.jsonl'),
-      resume: true,
-    }),
-    /cannot resume/,
+    runTournament(models, directory, { seed: 3, concurrency: 1, recordsPath, resume: true }),
+    /canonical completed series evidence/,
   );
 });
 

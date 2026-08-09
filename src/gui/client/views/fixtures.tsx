@@ -2,14 +2,15 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 
 import type {
   AppState,
+  ContributorAppState,
   ModelInfo,
   ModelsResponse,
   PokepasteResponse,
   PoolInfo,
   PoolTeamsResponse,
   ProviderInfo,
-  ReasoningLevelsResponse,
   RunSnapshot,
+  RunView,
   ValidateResponse,
 } from '../../api';
 import { Dropdown, resolveOption } from '../components/dropdown';
@@ -17,8 +18,8 @@ import { api } from '../http';
 import { PoolsView } from './pools';
 
 interface FixturesProps {
-  app: AppState;
-  run: RunSnapshot | null;
+  app: AppState | ContributorAppState;
+  run: RunView | null;
   onStarted: (run: RunSnapshot) => void;
   onPools: (pools: PoolInfo[]) => void;
 }
@@ -35,7 +36,7 @@ const TEAM_SHEET_OPTIONS = [
   {
     value: 'open',
     label: 'Open team sheets',
-    description: 'Both sides read opposing sets at preview.',
+    description: 'Opposing moves, ability, item, and nature are shown; stat points stay hidden.',
   },
   {
     value: 'closed',
@@ -94,7 +95,7 @@ function needsKey(providers: ProviderInfo[], spec: string): boolean {
   if (spec === 'random') return false;
   const providerId = spec.split(':')[0]!;
   const info = providers.find((item) => item.id === providerId);
-  return info ? info.requiresKey : providerId !== 'compat';
+  return info?.requiresKey ?? true;
 }
 
 function keyStatus(providers: ProviderInfo[], keys: Record<string, string>, spec: string) {
@@ -333,7 +334,7 @@ function TeamEditor({
 }
 
 export function FixturesView({ app, run, onStarted, onPools }: FixturesProps) {
-  const providers = app.providers.filter((provider) => provider.discovery === 'list' || provider.models.length > 0);
+  const providers = app.providers.filter((provider) => provider.id !== 'random');
   const [mode, setMode] = useState<RunMode>('match');
   const board = app.boards[0] ?? null;
   const [models, setModels] = useState<string[]>([]);
@@ -352,8 +353,6 @@ export function FixturesView({ app, run, onStarted, onPools }: FixturesProps) {
   const [setupMsg, setSetupMsg] = useState('');
   const [launchMsg, setLaunchMsg] = useState('');
   const [manualSpec, setManualSpec] = useState('');
-  const [manualKey, setManualKey] = useState('');
-  const [resolvingManual, setResolvingManual] = useState(false);
   const [pool, setPool] = useState(
     () => app.pools.find((info) => info.name !== 'test')?.name ?? app.pools[0]?.name ?? '',
   );
@@ -379,7 +378,7 @@ export function FixturesView({ app, run, onStarted, onPools }: FixturesProps) {
   const [starting, setStarting] = useState(false);
 
   const provider = providers.find((item) => item.id === providerId) ?? null;
-  const curated = Boolean(provider && provider.models.length > 0);
+  const discoverable = provider?.discovery === 'list';
   const maxModels = mode === 'match' ? 2 : mode === 'draft' ? Math.min(8, board?.maxEntrants ?? 8) : 8;
   const draftWeeks = models.length < 2 ? 7 : models.length % 2 === 0 ? models.length - 1 : models.length;
   const tradeWindowOptions = [
@@ -405,10 +404,12 @@ export function FixturesView({ app, run, onStarted, onPools }: FixturesProps) {
   const lineupRef = useRef({ models, maxModels, mode });
   lineupRef.current = { models, maxModels, mode };
   const reasoningModels = models.filter((model) => model !== 'random');
-  const sharedReasoningLevels = app.reasoningLevels.filter(
-    (level) =>
-      reasoningModels.length > 0 && reasoningModels.every((model) => reasoningLevelsByModel[model]?.includes(level)),
-  );
+  const sharedReasoningLevels =
+    reasoningModels.length > 0
+      ? (reasoningLevelsByModel[reasoningModels[0]!] ?? []).filter((level) =>
+          reasoningModels.every((model) => reasoningLevelsByModel[model]?.includes(level)),
+        )
+      : [];
   const sharedReasoningKey = sharedReasoningLevels.join('\0');
 
   useEffect(() => {
@@ -419,12 +420,8 @@ export function FixturesView({ app, run, onStarted, onPools }: FixturesProps) {
     setSetupMsg('');
     setModelText('');
     catalogKeyRef.current = '';
-    const next = providers.find((item) => item.id === providerId);
     const session = providerSessionsRef.current[providerId];
-    if (next && next.models.length > 0) {
-      setCatalog(next.models);
-      setCatalogProvider(next.id);
-    } else if (session) {
+    if (session) {
       setCatalog(session.catalog);
       setCatalogProvider(providerId);
       catalogKeyRef.current = session.key;
@@ -475,7 +472,7 @@ export function FixturesView({ app, run, onStarted, onPools }: FixturesProps) {
         const removedProvider = removed.split(':')[0]!;
         if (!next.some((spec) => spec.startsWith(`${removedProvider}:`))) {
           delete providerSessionsRef.current[removedProvider];
-          if (catalogProvider === removedProvider && !curated) {
+          if (catalogProvider === removedProvider) {
             catalogKeyRef.current = '';
             setKeyHeld(false);
           }
@@ -556,7 +553,7 @@ export function FixturesView({ app, run, onStarted, onPools }: FixturesProps) {
   };
 
   const addFromCatalog = () => {
-    if (!provider || !catalog.length || resolvingManual) return;
+    if (!provider || !catalog.length) return;
     const option = resolveOption(modelOptions, modelText);
     if (!option) {
       setSetupMsg('Pick a model from the search list first.');
@@ -574,30 +571,19 @@ export function FixturesView({ app, run, onStarted, onPools }: FixturesProps) {
   };
 
   const addManual = () => {
-    const spec = manualSpec.trim();
-    if (!spec || resolvingManual) return;
-    if (needsKey(providers, spec) && !manualKey.trim()) {
-      setSetupMsg('Bring an API key for this manual provider.');
+    if (provider?.discovery !== 'manual') return;
+    const model = manualSpec.trim();
+    if (!model) return;
+    const spec = `${provider.id}:${model}`;
+    const key = apiKeyText.trim();
+    if (!key) {
+      setSetupMsg(`Paste a run-only ${provider.label} key first.`);
       return;
     }
     setSetupMsg('');
-    setResolvingManual(true);
-    const key = manualKey;
-    api<ReasoningLevelsResponse>(`/api/reasoning?spec=${encodeURIComponent(spec)}`)
-      .then((data) => {
-        const { models: current, maxModels: limit, mode: currentMode } = lineupRef.current;
-        if (current.length >= limit) {
-          setSetupMsg(
-            currentMode === 'match' ? 'An exhibition match takes exactly two models.' : `At most ${limit} models.`,
-          );
-          return;
-        }
-        addModel(spec, key, data.levels);
-        setManualSpec('');
-        setManualKey('');
-      })
-      .catch((error: Error) => setSetupMsg(error.message))
-      .finally(() => setResolvingManual(false));
+    addModel(spec, key);
+    setManualSpec('');
+    setApiKeyText('');
   };
 
   const selectSharedReasoning = () => {
@@ -674,7 +660,6 @@ export function FixturesView({ app, run, onStarted, onPools }: FixturesProps) {
         catalogKeyRef.current = '';
         setApiKeyText('');
         setKeyHeld(false);
-        setManualKey('');
         onStarted(state.run);
       })
       .catch((error: Error) => setLaunchMsg(error.message))
@@ -941,64 +926,46 @@ export function FixturesView({ app, run, onStarted, onPools }: FixturesProps) {
                   onInput={(event) => setApiKeyText(event.currentTarget.value)}
                 />
               </div>
-              {!curated && (
+              {discoverable && (
                 <button type="button" class="button" disabled={loadingModels} onClick={connect}>
                   Connect &amp; find models
                 </button>
               )}
             </div>
-            <p class="provider-help">
-              {provider
-                ? provider.description +
-                  (curated ? ' · Built-in catalog. Paste a run-only key to add it.' : ' · Your key is not stored.')
-                : ''}
-            </p>
-            <div class="model-flow">
-              <Dropdown
-                id="modelSearch"
-                label="Model"
-                options={modelOptions}
-                value={modelText}
-                onChange={setModelText}
-                searchable
-                placeholder={
-                  loadingModels
-                    ? 'Loading models…'
-                    : catalog.length
-                      ? `Search ${catalog.length} model${catalog.length === 1 ? '' : 's'}…`
-                      : 'Connect a provider first'
-                }
-                onSubmit={addFromCatalog}
-                emptyText="No matching models. Use manual entry for an unlisted ID."
-              />
-              <button
-                type="button"
-                class="button primary"
-                disabled={!catalog.length || resolvingManual}
-                onClick={addFromCatalog}
-              >
-                Add model
-              </button>
-              <button
-                type="button"
-                class="button"
-                disabled={resolvingManual}
-                onClick={() => addModel('random', '', [])}
-              >
-                Add random baseline
-              </button>
-            </div>
-            <details class="advanced-entry">
-              <summary>Manual model or custom endpoint</summary>
+            <p class="provider-help">{provider ? `${provider.description} · Your key is not stored.` : ''}</p>
+            {discoverable ? (
+              <div class="model-flow">
+                <Dropdown
+                  id="modelSearch"
+                  label="Model"
+                  options={modelOptions}
+                  value={modelText}
+                  onChange={setModelText}
+                  searchable
+                  placeholder={
+                    loadingModels
+                      ? 'Loading models…'
+                      : catalog.length
+                        ? `Search ${catalog.length} model${catalog.length === 1 ? '' : 's'}…`
+                        : 'Connect OpenRouter first'
+                  }
+                  onSubmit={addFromCatalog}
+                  emptyText="No matching models."
+                />
+                <button type="button" class="button primary" disabled={!catalog.length} onClick={addFromCatalog}>
+                  Add model
+                </button>
+              </div>
+            ) : (
               <div class="manual-flow">
                 <div class="field">
                   <label class="field-label" for="manualSpec">
-                    Model spec
+                    Prime model ID
                   </label>
                   <input
                     id="manualSpec"
                     autocomplete="off"
-                    placeholder="compat:https://host/v1:model"
+                    placeholder="Enter a Prime Inference model ID"
                     value={manualSpec}
                     onInput={(event) => setManualSpec(event.currentTarget.value)}
                     onKeyDown={(event) => {
@@ -1006,24 +973,16 @@ export function FixturesView({ app, run, onStarted, onPools }: FixturesProps) {
                     }}
                   />
                 </div>
-                <div class="field">
-                  <label class="field-label" for="manualKey">
-                    API key (optional for local endpoints)
-                  </label>
-                  <input
-                    id="manualKey"
-                    type="password"
-                    autocomplete="off"
-                    spellcheck={false}
-                    value={manualKey}
-                    onInput={(event) => setManualKey(event.currentTarget.value)}
-                  />
-                </div>
-                <button type="button" class="button" disabled={resolvingManual} onClick={addManual}>
-                  {resolvingManual ? 'Checking model…' : 'Add manual model'}
+                <button type="button" class="button primary" onClick={addManual}>
+                  Add Prime model
                 </button>
               </div>
-            </details>
+            )}
+            <div class="model-flow">
+              <button type="button" class="button" onClick={() => addModel('random', '', [])}>
+                Add random baseline
+              </button>
+            </div>
             {setupMsg && (
               <div class="message error" role="alert">
                 {setupMsg}

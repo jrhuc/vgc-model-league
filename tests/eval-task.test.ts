@@ -3,13 +3,7 @@ import test from 'node:test';
 import type { Battle } from 'pokemon-showdown';
 
 import { requestActionCandidateEntries } from '../src/eval/fork.js';
-import {
-  POSITION_TASK_PROTOCOL,
-  parsePositionResponse,
-  renderPositionTask,
-  scorePositionResponse,
-  validateTaskScoreJoin,
-} from '../src/eval/task.js';
+import { POSITION_TASK_PROTOCOL, renderPositionTask, validateTaskScoreJoin } from '../src/eval/task.js';
 import { loadPool } from '../src/teams.js';
 import type { BattleRequest } from '../src/types.js';
 
@@ -80,47 +74,6 @@ test('a canonical task freezes one numbered map of every Showdown-accepted candi
   assert.equal(task.turn, 3);
   assert.equal(task.phase, 'turn');
   assert.equal(POSITION_TASK_PROTOCOL.action.numberBase, 0);
-});
-
-test('the static response parser accepts only the exact scored action object', () => {
-  const actions = [
-    { number: 0, canonicalAction: 'move 1', label: 'Protect' },
-    { number: 1, canonicalAction: 'move 2 1', label: 'Thunderbolt into foe 1' },
-  ];
-  assert.equal(parsePositionResponse('{"choice":1}', actions).canonicalAction, 'move 2 1');
-  for (const response of [
-    'choose 1',
-    '{"choice":1} trailing',
-    '{"choice":1,"rationale":"x"}',
-    '{"choice":true}',
-    '{"choice":1.5}',
-    '{"choice":"1"}',
-    '{"choice":2}',
-  ]) {
-    assert.throws(() => parsePositionResponse(response, actions));
-  }
-});
-
-test('invalid output is separate from the worst legal normalized reward', () => {
-  const actions = [
-    { number: 0, canonicalAction: 'move 1', label: 'Protect' },
-    { number: 1, canonicalAction: 'move 2 1', label: 'Thunderbolt into foe 1' },
-  ];
-  const rewards = new Map([
-    ['move 1', 0],
-    ['move 2 1', 1],
-  ]);
-  assert.deepEqual(scorePositionResponse('{"choice":0}', actions, rewards), {
-    reward: 0,
-    validOutput: true,
-    choice: 0,
-    canonicalAction: 'move 1',
-    error: null,
-  });
-  const invalid = scorePositionResponse('{"choice":9}', actions, rewards);
-  assert.equal(invalid.reward, -1);
-  assert.equal(invalid.validOutput, false);
-  assert.equal(invalid.choice, null);
 });
 
 test('task and score resources must join by both number and canonical action', () => {

@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -10,66 +11,108 @@ export interface RunStatus {
   pid?: number;
 }
 
-function isRunningStatus(value: unknown): value is RunStatus & { state: 'running'; pid: number } {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
-  const status = value as Record<string, unknown>;
-  return (
-    status.state === 'running' &&
-    status.error === null &&
-    Array.isArray(status.notices) &&
-    status.notices.every((notice) => typeof notice === 'string') &&
-    typeof status.start_time === 'string' &&
-    status.end_time === null &&
-    typeof status.pid === 'number' &&
-    Number.isSafeInteger(status.pid) &&
-    status.pid > 0
-  );
+interface LeaseOwner {
+  id: string;
+  pid: number;
+  acquired_at: string;
 }
 
-export function liveRunPid(runDir: string): number | null {
-  let status: unknown;
-  try {
-    status = JSON.parse(fs.readFileSync(path.join(runDir, 'status.json'), 'utf8'));
-  } catch {
-    return null;
+export class LeaseBusyError extends Error {
+  constructor(
+    readonly leasePath: string,
+    readonly pid: number,
+  ) {
+    super(`${leasePath} is owned by live pid ${pid}`);
   }
-  if (!isRunningStatus(status)) return null;
+}
+
+function ownerAt(file: string): LeaseOwner | null {
   try {
-    process.kill(status.pid, 0);
-    return status.pid;
+    const value = JSON.parse(fs.readFileSync(file, 'utf8')) as Partial<LeaseOwner>;
+    return typeof value.id === 'string' && Number.isSafeInteger(value.pid) && Number(value.pid) > 0
+      ? (value as LeaseOwner)
+      : null;
   } catch {
     return null;
   }
 }
 
-export function findLiveRun(runsDir: string): { runId: string; pid: number } | null {
-  let runIds: string[];
+function isLive(pid: number): boolean {
   try {
-    runIds = fs.readdirSync(runsDir).sort((a, b) => a.localeCompare(b));
-  } catch {
-    return null;
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'EPERM';
   }
-  for (const runId of runIds) {
-    const pid = liveRunPid(path.join(runsDir, runId));
-    if (pid !== null) return { runId, pid };
-  }
-  return null;
 }
 
-export function assertRunCanResume(runDir: string): void {
-  const pid = liveRunPid(runDir);
-  if (pid !== null) {
-    throw new Error(`Cannot resume run at ${runDir}: pid ${pid} is still live; only one resume owner is allowed.`);
+/** Acquires one atomic process lease, replacing an owner only after its PID is no longer live. */
+export function acquireLease(leasePath: string): () => void {
+  fs.mkdirSync(path.dirname(leasePath), { recursive: true });
+  const owner: LeaseOwner = { id: randomUUID(), pid: process.pid, acquired_at: new Date().toISOString() };
+  const stage = `${leasePath}.stage-${owner.id}`;
+  try {
+    fs.writeFileSync(stage, `${JSON.stringify(owner)}\n`, {
+      encoding: 'utf8',
+      flag: 'wx',
+      flush: true,
+      mode: 0o600,
+    });
+    for (;;) {
+      try {
+        fs.linkSync(stage, leasePath);
+        break;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+        const current = ownerAt(leasePath);
+        if (current && isLive(current.pid)) throw new LeaseBusyError(leasePath, current.pid);
+        const stale = `${leasePath}.stale-${randomUUID()}`;
+        try {
+          fs.renameSync(leasePath, stale);
+          fs.rmSync(stale, { force: true });
+        } catch (takeoverError) {
+          const code = (takeoverError as NodeJS.ErrnoException).code;
+          if (code !== 'ENOENT' && code !== 'EEXIST') throw takeoverError;
+        }
+      }
+    }
+  } finally {
+    fs.rmSync(stage, { force: true });
   }
+  return () => {
+    if (ownerAt(leasePath)?.id === owner.id) fs.rmSync(leasePath, { force: true });
+  };
+}
+
+const runLeases = new Map<string, () => void>();
+
+function holdRunLease(runDir: string): () => void {
+  const leasePath = path.join(runDir, '.run.lease');
+  if (runLeases.has(leasePath)) throw new LeaseBusyError(leasePath, process.pid);
+  const releaseFile = acquireLease(leasePath);
+  let held = true;
+  const release = () => {
+    if (!held) return;
+    held = false;
+    runLeases.delete(leasePath);
+    releaseFile();
+  };
+  runLeases.set(leasePath, release);
+  return release;
 }
 
 export function writeRunStatus(runDir: string, status: RunStatus): void {
+  const leasePath = path.join(runDir, '.run.lease');
+  const active = status.state === 'running' || status.state === 'paused';
+  if (active && !runLeases.has(leasePath)) holdRunLease(runDir);
   try {
     fs.writeFileSync(path.join(runDir, 'status.json'), `${JSON.stringify(status, null, 1)}\n`, 'utf8');
   } catch {}
+  if (!active) runLeases.get(leasePath)?.();
 }
 
 export async function withRunStatus<T>(runDir: string, task: () => Promise<T>): Promise<T> {
+  const release = holdRunLease(runDir);
   const startTime = new Date().toISOString();
   const write = (state: RunStatus['state'], error: string | null) =>
     writeRunStatus(runDir, {
@@ -78,11 +121,11 @@ export async function withRunStatus<T>(runDir: string, task: () => Promise<T>): 
       notices: [],
       start_time: startTime,
       end_time: state === 'running' ? null : new Date().toISOString(),
-      ...(state === 'running' ? { pid: process.pid } : {}),
     });
   const signals = ['SIGINT', 'SIGTERM'] as const;
   const onSignal = (signal: string) => {
     write('stopped', `terminated by ${signal}`);
+    release();
     process.exit(signal === 'SIGINT' ? 130 : 143);
   };
   write('running', null);
@@ -96,5 +139,6 @@ export async function withRunStatus<T>(runDir: string, task: () => Promise<T>): 
     throw error;
   } finally {
     for (const signal of signals) process.removeListener(signal, onSignal);
+    release();
   }
 }

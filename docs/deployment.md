@@ -50,6 +50,13 @@ Do not set `VGC_LEAGUE_ENABLE_MUTATIONS=true` on a public service. This setting
 permits unauthenticated changes. Use it only behind separate private access
 control.
 
+## Public result projection
+
+Anonymous and operator responses use the projections defined in
+[Architecture](architecture.md#state-evidence-and-trust). Importing a run or
+changing its lifecycle state never publishes raw trace. The selected immutable
+GUI artifact is a separate hash-checked projection.
+
 ## Configure runs and imports
 
 `VGC_LEAGUE_MAX_RUN_MINUTES` sets the run deadline. The valid range is 1 through
@@ -70,45 +77,8 @@ The service admits one run at a time. It applies these limits:
 
 Each hosted run can use at most two concurrent series. Each run uses a child
 process with a 768 MiB V8 heap limit and a restricted environment. The server
-terminates the process when the run deadline expires. Hosted mode rejects
-arbitrary OpenAI-compatible endpoints.
-
-## Eight-seat study topology (planning only)
-
-This is not a supported Draft Circuit deployment. Eight logical, isolated seat
-roles do not require eight weight servers. Provide one inference endpoint per
-distinct served model stack, not per treatment. Scaffold or context arms using
-the same served stack can share a stateless weight endpoint, while seat runtimes
-and context roots remain separately authorized and isolated.
-
-Begin serially, with one draft turn and one matchday active at a time. Add
-concurrency only after capacity tests and role-isolation evidence. An
-RTX 4080 (16 GB VRAM) host with 128 GB RAM is a candidate for
-orchestration, Showdown, the referee, and a single served model, subject to
-benchmarking. The same control stack can instead use cloud APIs; do not plan
-eight model replicas. All
-7–9B and 12–14B planning ranges assume suitable ~4-bit quantization, bounded
-context, sufficient KV-cache headroom, and a compatible backend; each stack
-must be benchmarked, and neither range is a categorical fit promise. Larger
-models with offload are slow and must also be benchmarked. Record hardware,
-backend, context length, concurrency, throughput, latency, memory headroom, and
-failures for each capacity test.
-
-A CPU VPS is useful for uptime, queueing, the control plane, and controlled
-provider egress, not for model capability. Prime services, cloud services, and
-rented GPUs are generic future compute options; mentioning them does not prove
-support for a native Environment, Environment Hub, or Hosted workflow.
-
-Keep referee JSONL private and never expose it through a public tunnel. Permit
-only controlled provider egress or a private, authenticated path to a weight
-server.
-
-Use [Measurement](measurement.md#scaffolds-and-rollout-profiles) for condition,
-profile, and treatment identity. Comparison, counterbalancing, return, release,
-and rank policy belong to the
-[Draft Circuit release gates](evaluation-plan.md#draft-circuit-release-gates);
-its [Draft Circuit status](evaluation-plan.md#program-status) records that the
-connected circuit and circuit return are absent.
+terminates the process when the run deadline expires. Every mode accepts only the fixed OpenRouter and Prime Inference endpoints (plus
+the provider-free random baseline); no model spec can supply an endpoint.
 
 ## Monitor the service
 

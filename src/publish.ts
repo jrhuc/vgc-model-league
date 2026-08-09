@@ -3,7 +3,7 @@ import path from 'node:path';
 
 import type { AppState, ImportRequest, ImportResponse } from './gui/api.js';
 import { isImported } from './import.js';
-import { loadRows, type SeriesRecord, TEST_POOL } from './records.js';
+import { loadSeriesRecords, type SeriesRecord, TEST_POOL } from './records.js';
 import { exportTeam, loadPool } from './teams.js';
 import type { Pid } from './types.js';
 
@@ -150,7 +150,7 @@ async function post(origin: string, token: string, bundle: ImportRequest): Promi
 
 export async function publishRecords(options: PublishOptions): Promise<PublishSummary> {
   const log = options.log ?? (() => {});
-  const rows = selectable(loadRows(options.recordsPath), options);
+  const rows = selectable(loadSeriesRecords(options.recordsPath), options);
   if (rows.length === 0) throw new Error('no local series match the selection');
   const remote = await get<AppState>(options.origin, '/api/state');
   const remotePools = new Set(remote.pools.map((entry) => entry.name));

@@ -12,36 +12,42 @@ function decisionLine(latency: number, turn: number, extra: Record<string, unkno
   return `${JSON.stringify({ kind: 'decision', latency_ms: latency, game_number: 1, turn, phase: 'turn', ...extra })}\n`;
 }
 
-test('buildTournaments reconstructs a bracket with byes from row seeds', () => {
-  const match = (
-    seriesIndex: number,
-    round: number,
-    seeds: [number, number],
-    p1: string,
-    p2: string,
-    winnerSide: 'p1' | 'p2',
-  ): SeriesRecord =>
-    ({
-      mode: 'tournament',
-      run_id: 'cup-2',
-      timestamp: `2026-07-25T0${seriesIndex}:00:00.000Z`,
-      series_index: seriesIndex,
-      round,
-      entrant_count: 3,
-      seeds: { p1: seeds[0], p2: seeds[1] },
-      pool: 'majors',
-      players: { p1, p2 },
-      teams: { p1: `team-${seeds[0]}`, p2: `team-${seeds[1]}` },
-      winner: winnerSide === 'p1' ? p1 : p2,
-      winner_side: winnerSide,
-      score: winnerSide === 'p1' ? { p1: 2, p2: 0 } : { p1: 1, p2: 2 },
-      turns: 12,
-      advanced: winnerSide === 'p1' ? p1 : p2,
-    }) as SeriesRecord;
-  const rows = [
-    match(0, 1, [1, 2], 'openai:beta', 'openai:gamma', 'p2'),
-    match(1, 2, [0, 2], 'openai:alpha', 'openai:gamma', 'p1'),
+function tournamentMatch(
+  seriesIndex: number,
+  round: number,
+  seeds: [number, number],
+  p1: string,
+  p2: string,
+  winnerSide: 'p1' | 'p2',
+): SeriesRecord {
+  return {
+    mode: 'tournament',
+    run_id: 'cup-2',
+    timestamp: `2026-07-25T0${seriesIndex}:00:00.000Z`,
+    series_index: seriesIndex,
+    round,
+    entrant_count: 3,
+    seeds: { p1: seeds[0], p2: seeds[1] },
+    pool: 'majors',
+    players: { p1, p2 },
+    teams: { p1: `team-${seeds[0]}`, p2: `team-${seeds[1]}` },
+    winner: winnerSide === 'p1' ? p1 : p2,
+    winner_side: winnerSide,
+    score: winnerSide === 'p1' ? { p1: 2, p2: 0 } : { p1: 1, p2: 2 },
+    turns: 12,
+    advanced: winnerSide === 'p1' ? p1 : p2,
+  } as unknown as SeriesRecord;
+}
+
+function threeEntrantRows(): SeriesRecord[] {
+  return [
+    tournamentMatch(0, 1, [1, 2], 'openai:beta', 'openai:gamma', 'p2'),
+    tournamentMatch(1, 2, [0, 2], 'openai:alpha', 'openai:gamma', 'p1'),
   ];
+}
+
+test('buildTournaments reconstructs a bracket with byes from row seeds', () => {
+  const rows = threeEntrantRows();
   const response = buildTournaments(rows, '/nonexistent', null);
   assert.deepEqual(response.summary, { tournaments: 1, matches: 2 });
   assert.ok(!('records' in response.summary), 'cross-tournament model placements are not exposed');
@@ -61,6 +67,31 @@ test('buildTournaments reconstructs a bracket with byes from row seeds', () => {
   assert.equal(buildTournaments(rows, '/nonexistent', 'other-pool').tournaments.length, 0);
 });
 
+test('tournament folds reject contradictory structural facts', () => {
+  const repeatedIdentity = threeEntrantRows();
+  repeatedIdentity[1]!.players.p1 = 'openai:beta';
+  const duplicateSeries = threeEntrantRows();
+  duplicateSeries.push(structuredClone(duplicateSeries[0]!));
+  const conflictingSides = threeEntrantRows();
+  conflictingSides[1]!.seeds = { p1: 0, p2: 1 };
+  conflictingSides[1]!.players.p2 = 'openai:beta';
+  conflictingSides[1]!.teams = { p1: 'team-0', p2: 'team-1' };
+  const conflictingResult = threeEntrantRows();
+  conflictingResult[1]!.score = { p1: 0, p2: 2 };
+  const ambiguousModels = threeEntrantRows();
+  ambiguousModels[0]!.players.p1 = 'openai:gamma';
+
+  for (const [name, rows] of Object.entries({
+    repeatedIdentity,
+    duplicateSeries,
+    conflictingSides,
+    conflictingResult,
+    ambiguousModels,
+  })) {
+    assert.equal(buildTournaments(rows, '/nonexistent', null).tournaments.length, 0, name);
+  }
+});
+
 test('tournament archives include open team sheets for the shared match viewer', () => {
   const rows: SeriesRecord[] = [
     {
@@ -78,7 +109,7 @@ test('tournament archives include open team sheets for the shared match viewer',
       winner_side: 'p1',
       score: { p1: 2, p2: 0 },
       turns: 8,
-    },
+    } as unknown as SeriesRecord,
   ];
   const archive = buildTournaments(rows, '/nonexistent', 'test', TEAMS_DIR).tournaments[0]!;
   assert.equal(archive.entrants[0]!.teamSheet?.length, 6);
@@ -86,7 +117,7 @@ test('tournament archives include open team sheets for the shared match viewer',
   assert.ok(archive.entrants[0]!.teamSheet?.every((set) => set.spriteId && set.moves.length > 0));
 });
 
-test('live CLI tournament series recover their bracket index from player names', () => {
+test('live CLI tournament series join the bracket by their current series index', () => {
   const runsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-live-tournament-'));
   const runId = 'cup-live';
   const runDir = path.join(runsDir, runId);
@@ -113,7 +144,7 @@ test('live CLI tournament series recover their bracket index from player names',
   );
   fs.writeFileSync(
     path.join(seriesDir, 'series.json'),
-    `${JSON.stringify({ players: { p1: 'provider:beta', p2: 'provider:gamma' } })}\n`,
+    `${JSON.stringify({ schema_version: 3, identity: { series_index: 1 } })}\n`,
     'utf8',
   );
   fs.writeFileSync(path.join(seriesDir, 'p1-decisions.jsonl'), decisionLine(900, 2), 'utf8');

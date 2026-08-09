@@ -7,14 +7,9 @@ import { completeWithDexTools } from './dex-lookups.js';
 import type { BoardInfo, DraftBoardMonView, DraftPickView } from './gui/api.js';
 import { appendJsonlObject, readJsonlObjects } from './jsonl.js';
 import { BOARDS_DIR, defaultPsDir } from './paths.js';
+import { FORMAT_AUTHORITY_NOTICE } from './prompts.js';
 import type { ModelReasoningConfig, ReasoningLevel } from './providers.js';
-import {
-  classifyProviderFailure,
-  makeProvider,
-  parseSpec,
-  reasoningForModel,
-  resolveSpecOverride,
-} from './providers.js';
+import { classifyProviderFailure, makeProvider, parseSpec, reasoningForModel } from './providers.js';
 import type { Rng } from './random.js';
 import type { RecoveryGate } from './recovery.js';
 import { ShowdownReference } from './reference.js';
@@ -28,6 +23,7 @@ const BOARD_SLUG = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const DRAFT_PROMPT_POLICY = {
   systemTemplate: [
     'You are {{model}}, a coach in a Pokémon VGC draft league played in the format {{format}}.',
+    FORMAT_AUTHORITY_NOTICE,
     '',
     'LEAGUE RULES',
     '- {{coaches}} coaches snake-draft {{picks}} Pokémon each from the shared board below.',
@@ -84,6 +80,7 @@ const DRAFT_PROMPT_POLICY = {
 const FRANCHISE_NAME_PROMPT_POLICY = {
   systemTemplate: [
     'You are {{model}}. The competitive draft is complete.',
+    FORMAT_AUTHORITY_NOTICE,
     'Choose a concise, playful franchise name for the spectator-facing league display based on your finished roster.',
     "Wordplay and personality are welcome. The Shadow Cabinet, Prankster's Paradise, and Drought Dodgers are examples of the tone, not names to copy.",
     'The name is presentation only: coaches never see franchise names during competitive decisions.',
@@ -732,13 +729,11 @@ export async function runDraft(models: string[], board: DraftBoard, options: Run
     if (model === 'random') return undefined;
     const make =
       options.makeDraftProvider ??
-      ((spec: string, apiKey: string | undefined, reasoning: ReasoningLevel | undefined) => {
-        const resolved = resolveSpecOverride(spec);
-        return makeProvider(parseSpec(resolved), {
+      ((spec: string, apiKey: string | undefined, reasoning: ReasoningLevel | undefined) =>
+        makeProvider(parseSpec(spec), {
           ...(reasoning === undefined ? {} : { reasoning }),
-          ...(resolved === spec && apiKey !== undefined ? { apiKey } : {}),
-        });
-      });
+          ...(apiKey === undefined ? {} : { apiKey }),
+        }));
     return make(model, options.apiKeys?.[model], reasoningForModel(model, options));
   });
   const reference = new ShowdownReference(board.format, psDir);

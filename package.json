@@ -16,16 +16,16 @@
     "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
     "build": "tsc -p tsconfig.json && tsc -p tsconfig.client.json && vite build --logLevel warn",
     "build:frozen-matchday": "node tools/setup-showdown.mjs --check && node -e \"require('node:fs').rmSync('dist-matchday', { recursive: true, force: true })\" && tsc -p tsconfig.frozen-matchday.json",
-    "test:frozen-matchday-package": "cd environments/vgc_frozen_matchday_v0 && uv sync --locked --group test && VGC_REQUIRE_COMPILED_SMOKE=1 uv run --locked --group test pytest",
+    "test:frozen-matchday-package": "cd environments/vgc_frozen_matchday_v0 && uv sync --locked --group test && uv run --locked --group test pytest",
     "build:frozen-matchday-package": "cd environments/vgc_frozen_matchday_v0 && uv build --clear",
     "check": "biome check . && pnpm run check:comments",
     "check:fix": "biome check --write .",
     "check:comments": "node tools/check-comments.mjs",
+    "check:artifacts": "node tools/check-public-artifacts.mjs",
     "typecheck": "node tools/setup-showdown.mjs --check && tsc -p tsconfig.json --noEmit && tsc -p tsconfig.client.json",
     "dev:gui": "vite build --watch",
     "test:unit": "node --test --test-concurrency=4 --test-timeout=60000 dist/tests/*.test.js",
-    "test": "pnpm run check && pnpm run build && pnpm run build:frozen-matchday && pnpm run test:unit",
-    "ci": "pnpm run test",
+    "test": "pnpm run check && pnpm run check:artifacts && pnpm run build && pnpm run build:frozen-matchday && pnpm run test:unit",
     "archive-run": "node tools/archive-run.mjs",
     "start": "node dist/src/cli.js gui",
     "vgcleague": "node --env-file-if-exists=.env dist/src/cli.js",
@@ -35,10 +35,7 @@
     "fetch-sprites": "node dist/tools/fetch-sprites.js",
     "capture-requests": "node dist/tools/capture-requests.js",
     "grade-positions": "node dist/tools/grade-positions.js",
-    "freeze-positions": "node dist/tools/freeze-positions.js",
     "export-position-panels": "node dist/tools/export-position-panels.js",
-    "summarize-position-pilot": "node dist/tools/summarize-position-pilot.js",
-    "freeze-position-splits": "node dist/tools/freeze-position-splits.js",
     "freeze-frozen-matchday-task-source": "node tools/setup-showdown.mjs --check && node dist/tools/freeze-frozen-matchday-task-source.js"
   },
   "engines": {
@@ -55,12 +52,7 @@
     "vite": "8.1.5"
   },
   "dependencies": {
-    "@ai-sdk/anthropic": "4.0.15",
-    "@ai-sdk/deepseek": "3.0.11",
-    "@ai-sdk/google": "4.0.17",
-    "@ai-sdk/openai": "4.0.15",
     "@ai-sdk/openai-compatible": "3.0.11",
-    "@ai-sdk/xai": "4.0.14",
     "ai": "7.0.28",
     "zod": "4.4.3"
   }

@@ -7,244 +7,16 @@ import {
   classifyProviderFailure,
   makeProvider,
   nitroSpec,
+  parseRoutingPreferences,
   parseSpec,
-  reasoningLevels,
-  SdkProvider,
   toolResultMessage,
   uniqueToolCalls,
+  validateModelExecution,
   validateReasoning,
 } from '../src/providers.js';
-import type { JsonObject, ProviderMessage } from '../src/types.js';
 
-test('provider specs route aliases and custom endpoints', () => {
-  const meta = parseSpec('meta:muse-spark-1.1');
-  assert.equal(meta.baseUrl, 'https://api.meta.ai/v1');
-  assert.deepEqual(reasoningLevels(meta), ['off', 'minimal', 'low', 'medium', 'high', 'xhigh']);
-  assert.ok(makeProvider(meta, { apiKey: 'test', reasoning: 'medium' }) instanceof SdkProvider);
-  for (const [provider, baseUrl] of Object.entries({
-    'opencode-go': 'https://opencode.ai/zen/go/v1',
-    'opencode-zen': 'https://opencode.ai/zen/v1',
-    vercel: 'https://ai-gateway.vercel.sh/v1',
-  })) {
-    const spec = parseSpec(`${provider}:vendor/model`);
-    assert.deepEqual(spec, { provider, model: 'vendor/model', baseUrl });
-    assert.ok(makeProvider(spec, { apiKey: 'test' }) instanceof SdkProvider);
-  }
-  assert.deepEqual(parseSpec('compat:https://example.test/v1:model'), {
-    provider: 'compat',
-    baseUrl: 'https://example.test/v1',
-    model: 'model',
-  });
-  assert.deepEqual(parseSpec('compat:http://localhost:11434/v1:qwen2.5:7b'), {
-    provider: 'compat',
-    baseUrl: 'http://localhost:11434/v1',
-    model: 'qwen2.5:7b',
-  });
-  assert.throws(() => parseSpec('human'), /Usage/);
-});
-
-test('OpenAI-compatible routers use explicit environment key names', async () => {
-  const openCodeKey = process.env.OPENCODE_API_KEY;
-  const vercelKey = process.env.AI_GATEWAY_API_KEY;
-  delete process.env.OPENCODE_API_KEY;
-  delete process.env.AI_GATEWAY_API_KEY;
-  try {
-    for (const provider of ['opencode-go', 'opencode-zen']) {
-      await assert.rejects(
-        makeProvider(parseSpec(`${provider}:model`)).complete('system', []),
-        /Missing OPENCODE_API_KEY/,
-      );
-    }
-    await assert.rejects(makeProvider(parseSpec('vercel:model')).complete('system', []), /Missing AI_GATEWAY_API_KEY/);
-  } finally {
-    if (openCodeKey === undefined) delete process.env.OPENCODE_API_KEY;
-    else process.env.OPENCODE_API_KEY = openCodeKey;
-    if (vercelKey === undefined) delete process.env.AI_GATEWAY_API_KEY;
-    else process.env.AI_GATEWAY_API_KEY = vercelKey;
-  }
-});
-
-test('reasoning levels are validated by model family', () => {
-  const meta = parseSpec('meta:muse-spark-1.1');
-  validateReasoning(meta, 'xhigh');
-  assert.throws(() => validateReasoning(meta, 'max'), /reasoning=max/);
-  assert.deepEqual(reasoningLevels(parseSpec('anthropic:claude-opus-4-10')), ['low', 'medium', 'high', 'xhigh', 'max']);
-});
-
-test('provider failures distinguish terminal capacity from recoverable upstream errors', () => {
-  assert.deepEqual(
-    classifyProviderFailure(
-      new ApiError(429, 'google:gemini-3.6-flash 429: exceeded your current quota; GenerateRequestsPerDay-FreeTier'),
-      'google:gemini-3.6-flash',
-    ),
-    { kind: 'quota', summary: 'Google API quota is exhausted (429).', terminal: true, pausable: true },
-  );
-  assert.deepEqual(classifyProviderFailure(new ApiError(429, 'rate limit; retry in 20s'), 'google:gemini'), {
-    kind: 'rate_limit',
-    summary: 'Google API rate limit was reached (429).',
-    terminal: false,
-    pausable: true,
-  });
-  assert.deepEqual(
-    classifyProviderFailure(
-      new ApiError(
-        429,
-        'google:gemini-3.6-flash 429: {"error":{"details":[{"@type":"type.googleapis.com/google.rpc.QuotaFailure",' +
-          '"violations":[{"quotaMetric":"generativelanguage.googleapis.com/generate_content_paid_tier_input_token_count",' +
-          '"quotaId":"GenerateContentInputTokensPerModelPerMinute-PaidTier"}]},' +
-          '{"@type":"type.googleapis.com/google.rpc.RetryInfo","retryDelay":"27.5s"}]}}',
-      ),
-      'google:gemini-3.6-flash',
-    ),
-    {
-      kind: 'rate_limit',
-      summary: 'Google API rate limit was reached (429; GenerateContentInputTokensPerModelPerMinute-PaidTier).',
-      terminal: false,
-      pausable: true,
-      retryAfterMs: 27_500,
-    },
-    'the violated quota and the wait the provider asked for both survive classification',
-  );
-  assert.deepEqual(
-    classifyProviderFailure(
-      new ApiError(429, 'openai:gpt-5.6-terra 429: Rate limit reached. Please try again in 1.2s.'),
-      'openai:gpt-5.6-terra',
-    ),
-    {
-      kind: 'rate_limit',
-      summary: 'OpenAI API rate limit was reached (429).',
-      terminal: false,
-      pausable: true,
-      retryAfterMs: 1_200,
-    },
-  );
-  assert.deepEqual(
-    classifyProviderFailure(
-      new ApiError(402, 'This request requires more credits, or fewer max_tokens. You requested up to 32768 tokens'),
-      'openrouter:moonshotai/kimi-k3:nitro',
-    ),
-    { kind: 'quota', summary: 'OpenRouter API credits are exhausted (402).', terminal: true, pausable: true },
-  );
-  assert.deepEqual(classifyProviderFailure(new ApiError(0, 'request timed out after 55s'), 'openai:gpt'), {
-    kind: 'timeout',
-    summary: 'OpenAI API request timed out.',
-    terminal: false,
-    pausable: true,
-  });
-  assert.deepEqual(classifyProviderFailure(new Error('empty response'), 'opencode-go:deepseek-v4-flash'), {
-    kind: 'upstream',
-    summary: 'OpenCode Go API returned no usable response.',
-    terminal: true,
-    retryable: true,
-    pausable: true,
-  });
-  assert.deepEqual(
-    classifyProviderFailure(new Error('reasoning exhausted the 16384-token response budget'), 'opencode-go:glm-5.2'),
-    {
-      kind: 'truncation',
-      summary: 'OpenCode Go API spent the whole response budget on reasoning and returned no answer.',
-      terminal: false,
-    },
-  );
-  assert.deepEqual(
-    classifyProviderFailure(
-      new ApiError(
-        400,
-        'opencode-go:kimi-k3 400: {"error":{"message":"Error from provider (Console Go): Upstream request failed"}}',
-      ),
-      'opencode-go:kimi-k3',
-    ),
-    {
-      kind: 'upstream',
-      summary: 'OpenCode Go API is temporarily unavailable (400).',
-      terminal: false,
-      pausable: true,
-    },
-  );
-  assert.deepEqual(
-    classifyProviderFailure(
-      new ApiError(
-        429,
-        'You exceeded your current quota. Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 5. quotaId: GenerateRequestsPerMinutePerProjectPerModel-FreeTier. Please retry in 34.025085268s.',
-      ),
-      'google:gemini-3.6-flash',
-    ),
-    {
-      kind: 'rate_limit',
-      summary: 'Google API rate limit was reached (429).',
-      terminal: false,
-      pausable: true,
-    },
-  );
-  assert.equal(
-    classifyProviderFailure(
-      new ApiError(429, 'You exceeded your current quota: GenerateRequestsPerDayPerProjectPerModel-FreeTier'),
-      'google:gemini-3.6-flash',
-    ).terminal,
-    true,
-  );
-  assert.equal(classifyProviderFailure(new ApiError(401, 'invalid key'), 'anthropic:claude').terminal, true);
-  assert.equal(classifyProviderFailure(new ApiError(503, 'overloaded'), 'anthropic:claude').terminal, false);
-  assert.equal(classifyProviderFailure(new ApiError(501, 'not implemented'), 'compat:model').terminal, true);
-});
-
-test('restart only recognizes vgcleague GUI processes', async () => {
-  const { looksLikeGuiCommand } = await import('../src/restart.js');
-  assert.equal(looksLikeGuiCommand('node dist/src/cli.js gui --port 8484'), true);
-  assert.equal(looksLikeGuiCommand('node /srv/vgcleague gui'), true);
-  assert.equal(looksLikeGuiCommand('node server.js --port 8484'), false);
-  assert.equal(looksLikeGuiCommand('postgres -D /usr/local/var'), false);
-  assert.equal(looksLikeGuiCommand('node dist/src/cli.js rotation --models a b'), false);
-});
-
-test('shared tool messages preserve typed calls', () => {
-  const completion = {
-    text: 'checking',
-    usage: {},
-    toolCalls: [{ id: 'call_1', name: 'lookup_move', arguments: { name: 'Protect' } }],
-  };
-  assert.deepEqual(assistantToolMessage(completion), {
-    role: 'assistant',
-    content: 'checking',
-    toolCalls: completion.toolCalls,
-  });
-  assert.deepEqual(toolResultMessage('call_1', 'Protect is a status move'), {
-    role: 'tool',
-    toolCallId: 'call_1',
-    content: 'Protect is a status move',
-  });
-});
-
-test('a repeated call id is answered once and a missing one gets a stable name', () => {
-  const calls = [
-    { id: 'call_a', name: 'lookup_move', arguments: { name: 'Protect' } },
-    { id: 'call_a', name: 'lookup_move', arguments: { name: 'Protect' } },
-    { id: '', name: 'lookup_item', arguments: { name: 'Leftovers' } },
-  ];
-  const unique = uniqueToolCalls(calls);
-  assert.deepEqual(
-    unique.map((call) => call.id),
-    ['call_a', 'call_2'],
-    'one output per call id, and an id the model omitted is named by its position',
-  );
-  assert.deepEqual(
-    assistantToolMessage({ text: '', usage: {}, toolCalls: calls }).toolCalls,
-    unique,
-    'the assistant turn announces exactly the calls the engine will answer',
-  );
-});
-
-function jsonResponse(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { 'content-type': 'application/json' },
-  });
-}
-
-function sseResponse(events: unknown[], options: { done?: boolean } = {}): Response {
-  const frames = events.map((event) => `data: ${JSON.stringify(event)}\n\n`);
-  if (options.done) frames.push('data: [DONE]\n\n');
-  return new Response(frames.join(''), {
+function sseResponse(events: unknown[]): Response {
+  return new Response(`${events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join('')}data: [DONE]\n\n`, {
     status: 200,
     headers: { 'content-type': 'text/event-stream' },
   });
@@ -252,150 +24,208 @@ function sseResponse(events: unknown[], options: { done?: boolean } = {}): Respo
 
 function chatStream(text: string, final: Record<string, unknown> = {}): Response {
   const base = { id: 'gen_1', object: 'chat.completion.chunk', created: 1, model: 'stub' };
-  return sseResponse(
-    [
-      { ...base, choices: [{ index: 0, delta: { role: 'assistant', content: text }, finish_reason: null }] },
-      { ...base, choices: [{ index: 0, delta: {}, finish_reason: 'stop' }], ...final },
-    ],
-    { done: true },
-  );
+  return sseResponse([
+    { ...base, choices: [{ index: 0, delta: { role: 'assistant', content: text }, finish_reason: null }] },
+    { ...base, choices: [{ index: 0, delta: {}, finish_reason: 'stop' }], ...final },
+  ]);
 }
 
-test('OpenAI uses Responses API with reasoning and tools', async () => {
+test('provider specs are exactly OpenRouter, Prime Inference, and random', () => {
+  assert.deepEqual(parseSpec('openrouter:anthropic/claude-sonnet-4:nitro'), {
+    provider: 'openrouter',
+    model: 'anthropic/claude-sonnet-4:nitro',
+  });
+  assert.deepEqual(parseSpec('prime:Qwen/Qwen3-32B'), {
+    provider: 'prime',
+    model: 'Qwen/Qwen3-32B',
+  });
+  assert.deepEqual(parseSpec('random'), { provider: 'random', model: 'random' });
+  assert.throws(() => validateReasoning(parseSpec('prime:model'), 'high'), /no advertised configurable reasoning/);
+  assert.doesNotThrow(() => validateReasoning(parseSpec('openrouter:model'), 'high'));
+  assert.throws(() => validateReasoning(parseSpec('openrouter:model'), 'off' as never), /invalid reasoning level/);
+
+  for (const value of [
+    'openrouter:',
+    'prime:',
+    'prime:-model',
+    'openrouter:model name',
+    'compat:https://example.test/v1:model',
+    'openai:gpt-5',
+    'anthropic:claude',
+    'google:gemini',
+    'omp:model',
+    'claude-cli:model',
+    'random:anything',
+  ]) {
+    assert.throws(() => parseSpec(value), /openrouter:<model-id>, prime:<model-id>, or random/, value);
+  }
+});
+
+test('run-scoped credentials are isolated by exact model spec', async () => {
+  assert.throws(
+    () =>
+      validateModelExecution(['openrouter:model-a', 'prime:model-b'], {
+        apiKeys: { 'openrouter:model-a': 'openrouter-key' },
+      }),
+    /API key missing for prime:model-b/,
+  );
+
+  const previousOpenRouter = process.env.OPENROUTER_API_KEY;
+  const previousPrime = process.env.PRIME_API_KEY;
+  process.env.OPENROUTER_API_KEY = 'openrouter-only';
+  delete process.env.PRIME_API_KEY;
+  try {
+    await assert.rejects(makeProvider(parseSpec('prime:model')).complete('system', []), /Missing PRIME_API_KEY/);
+    delete process.env.OPENROUTER_API_KEY;
+    process.env.PRIME_API_KEY = 'prime-only';
+    await assert.rejects(
+      makeProvider(parseSpec('openrouter:model')).complete('system', []),
+      /Missing OPENROUTER_API_KEY/,
+    );
+  } finally {
+    if (previousOpenRouter === undefined) delete process.env.OPENROUTER_API_KEY;
+    else process.env.OPENROUTER_API_KEY = previousOpenRouter;
+    if (previousPrime === undefined) delete process.env.PRIME_API_KEY;
+    else process.env.PRIME_API_KEY = previousPrime;
+  }
+});
+
+test('OpenRouter disables fallback and optionally pins exactly one upstream', () => {
+  assert.deepEqual(parseRoutingPreferences({} as NodeJS.ProcessEnv), { allow_fallbacks: false });
+  assert.deepEqual(parseRoutingPreferences({ VGC_OPENROUTER_PIN: 'deepinfra' } as NodeJS.ProcessEnv), {
+    order: ['deepinfra'],
+    allow_fallbacks: false,
+  });
+  assert.throws(
+    () => parseRoutingPreferences({ VGC_OPENROUTER_PIN: 'deepinfra,together' } as NodeJS.ProcessEnv),
+    /exactly one upstream provider/,
+  );
+});
+
+test('OpenRouter executes the model spec while recording its pinned upstream as routing metadata', async () => {
+  const previousPin = process.env.VGC_OPENROUTER_PIN;
+  process.env.VGC_OPENROUTER_PIN = 'deepinfra';
   let url = '';
-  let authorization: string | null = null;
+  let authorization = '';
   let body: Record<string, unknown> = {};
   const fetch = (async (input, init) => {
     url = String(input);
-    authorization = new Headers(init?.headers).get('authorization');
+    authorization = new Headers(init?.headers).get('authorization') ?? '';
     body = JSON.parse(String(init?.body));
-    const message = {
-      type: 'message',
-      role: 'assistant',
-      id: 'msg_1',
-      status: 'completed',
-      content: [{ type: 'output_text', text: 'hello', annotations: [] }],
-    };
-    const functionCall = {
-      type: 'function_call',
-      id: 'fc_1',
-      call_id: 'call_1',
-      name: 'lookup_move',
-      arguments: '{"name":"Protect"}',
-      status: 'completed',
-    };
-    const response = { id: 'resp_1', created_at: 1, model: 'gpt-5.6-luna', output: [] };
-    return sseResponse([
-      { type: 'response.created', response },
-      { type: 'response.output_item.added', output_index: 0, item: { ...message, content: [] } },
-      { type: 'response.output_text.delta', item_id: 'msg_1', output_index: 0, content_index: 0, delta: 'hello' },
-      { type: 'response.output_item.done', output_index: 0, item: message },
-      { type: 'response.output_item.added', output_index: 1, item: { ...functionCall, arguments: '' } },
-      {
-        type: 'response.function_call_arguments.delta',
-        item_id: 'fc_1',
-        output_index: 1,
-        delta: '{"name":"Protect"}',
-      },
-      { type: 'response.output_item.done', output_index: 1, item: functionCall },
-      {
-        type: 'response.completed',
-        response: { ...response, output: [message, functionCall], usage: { input_tokens: 10, output_tokens: 5 } },
-      },
-    ]);
+    return chatStream('ok', {
+      provider: 'DeepInfra',
+      usage: { prompt_tokens: 4, completion_tokens: 2, total_tokens: 6, cost: 0.00123 },
+    });
   }) as typeof globalThis.fetch;
-  const provider = makeProvider(parseSpec('openai:gpt-5.6-luna'), {
-    apiKey: 'openai-key',
-    reasoning: 'medium',
-    fetch,
-  });
+  try {
+    const completion = await makeProvider(parseSpec('openrouter:z-ai/glm-5:nitro'), {
+      apiKey: 'openrouter-key',
+      reasoning: 'medium',
+      fetch,
+    }).complete('system', [{ role: 'user', content: 'hello' }]);
 
-  const completion = await provider.complete('system', [{ role: 'user', content: 'hello' }], {
-    tools: [
-      {
-        name: 'lookup_move',
-        description: 'Look up a move',
-        parameters: {
-          type: 'object',
-          properties: { name: { type: 'string' } },
-          required: ['name'],
-          additionalProperties: false,
-        },
-      },
-    ],
-  });
-
-  assert.equal(url, 'https://api.openai.com/v1/responses');
-  assert.equal(authorization, 'Bearer openai-key');
-  assert.equal('temperature' in body, false);
-  assert.match(JSON.stringify(body), /lookup_move/);
-  const reasoning = body.reasoning as Record<string, unknown> | undefined;
-  assert.equal(reasoning?.effort ?? body.reasoning_effort, 'medium');
-  const { responseMessages, ...rest } = completion;
-  assert.deepEqual(rest, {
-    text: 'hello',
-    finishReason: 'tool-calls',
-    usage: { input_tokens: 10, output_tokens: 5 },
-    toolCalls: [
-      {
-        id: 'call_1',
-        name: 'lookup_move',
-        arguments: { name: 'Protect' },
-        providerMetadata: { openai: { itemId: 'fc_1' } },
-      },
-    ],
-  });
-  assert.match(JSON.stringify(responseMessages), /msg_1/, 'raw response messages keep provider item ids');
+    assert.equal(url, 'https://openrouter.ai/api/v1/chat/completions');
+    assert.equal(authorization, 'Bearer openrouter-key');
+    assert.equal(body.model, 'z-ai/glm-5:nitro');
+    assert.deepEqual(body.provider, { order: ['deepinfra'], allow_fallbacks: false });
+    assert.deepEqual(body.usage, { include: true });
+    assert.equal(body.reasoning_effort, 'medium');
+    assert.equal(completion.provider, 'DeepInfra');
+    assert.deepEqual(completion.usage, { input_tokens: 4, output_tokens: 2, cost: 0.00123 });
+    assert.equal(completion.finishReason, 'stop');
+  } finally {
+    if (previousPin === undefined) delete process.env.VGC_OPENROUTER_PIN;
+    else process.env.VGC_OPENROUTER_PIN = previousPin;
+  }
 });
 
-test('Gemini thought signatures round-trip through replayed tool calls', async () => {
+test('Prime uses only its fixed OpenAI-compatible chat endpoint and plain response metadata', async () => {
+  let url = '';
+  let authorization = '';
+  let body: Record<string, unknown> = {};
+  const fetch = (async (input, init) => {
+    url = String(input);
+    authorization = new Headers(init?.headers).get('authorization') ?? '';
+    body = JSON.parse(String(init?.body));
+    return chatStream('prime reply', {
+      provider: 'must-not-surface',
+      usage: { prompt_tokens: 7, completion_tokens: 3, total_tokens: 10, cost: 99 },
+    });
+  }) as typeof globalThis.fetch;
+
+  const completion = await makeProvider(parseSpec('prime:test-model'), {
+    apiKey: 'prime-key',
+    fetch,
+  }).complete('system', [{ role: 'user', content: 'hello' }], { maxTokens: 2222 });
+
+  assert.equal(url, 'https://api.pinference.ai/api/v1/chat/completions');
+  assert.equal(authorization, 'Bearer prime-key');
+  assert.equal(body.model, 'test-model');
+  assert.equal(body.max_tokens, 2222);
+  assert.equal(body.reasoning_effort, undefined);
+  assert.equal('provider' in body, false);
+  assert.equal(completion.provider, undefined);
+  assert.deepEqual(completion.usage, { input_tokens: 7, output_tokens: 3 });
+  assert.equal(completion.text, 'prime reply');
+});
+
+test('the common compatible stream preserves tools, structured finish reason, and replay messages', async () => {
   let body: Record<string, unknown> = {};
   const fetch = (async (_input, init) => {
     body = JSON.parse(String(init?.body));
+    const base = { id: 'gen_tool', object: 'chat.completion.chunk', created: 1, model: 'stub' };
     return sseResponse([
       {
-        candidates: [
+        ...base,
+        choices: [
           {
-            content: {
-              role: 'model',
-              parts: [{ functionCall: { name: 'estimate_damage', args: { move: 'Surf' } }, thoughtSignature: 'sig-2' }],
+            index: 0,
+            delta: {
+              role: 'assistant',
+              tool_calls: [
+                {
+                  index: 0,
+                  id: 'call_1',
+                  type: 'function',
+                  function: { name: 'lookup_move', arguments: '{"name":"Pro' },
+                },
+              ],
             },
-            finishReason: 'STOP',
+            finish_reason: null,
           },
         ],
-        usageMetadata: { promptTokenCount: 12, candidatesTokenCount: 4, totalTokenCount: 16 },
+      },
+      {
+        ...base,
+        choices: [
+          {
+            index: 0,
+            delta: { tool_calls: [{ index: 0, function: { arguments: 'tect"}' } }] },
+            finish_reason: null,
+          },
+        ],
+      },
+      {
+        ...base,
+        choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }],
+        usage: { prompt_tokens: 9, completion_tokens: 4, total_tokens: 13 },
       },
     ]);
   }) as typeof globalThis.fetch;
-  const provider = makeProvider(parseSpec('google:gemini-3.1-flash-lite'), { apiKey: 'google-key', fetch });
 
-  const completion = await provider.complete(
+  const completion = await makeProvider(parseSpec('prime:tool-model'), { apiKey: 'prime-key', fetch }).complete(
     'system',
-    [
-      { role: 'user', content: 'hello' },
-      {
-        role: 'assistant',
-        content: null,
-        toolCalls: [
-          {
-            id: 'call_1',
-            name: 'estimate_damage',
-            arguments: { move: 'Thunderbolt' },
-            providerMetadata: { google: { thoughtSignature: 'sig-1' } },
-          },
-        ],
-      },
-      toolResultMessage('call_1', '42%'),
-    ],
+    [{ role: 'user', content: 'check Protect' }],
     {
+      toolChoice: 'required',
       tools: [
         {
-          name: 'estimate_damage',
-          description: 'Estimate damage',
+          name: 'lookup_move',
+          description: 'Look up a move',
           parameters: {
             type: 'object',
-            properties: { move: { type: 'string' } },
-            required: ['move'],
+            properties: { name: { type: 'string' } },
+            required: ['name'],
             additionalProperties: false,
           },
         },
@@ -403,398 +233,107 @@ test('Gemini thought signatures round-trip through replayed tool calls', async (
     },
   );
 
-  const replayed = (body.contents as Array<{ parts: Array<Record<string, unknown>> }>)
-    .flatMap((content) => content.parts)
-    .find((part) => 'functionCall' in part);
-  assert.equal(replayed?.thoughtSignature, 'sig-1');
-  assert.deepEqual(completion.toolCalls[0]?.providerMetadata, { google: { thoughtSignature: 'sig-2' } });
+  assert.match(JSON.stringify(body.tools), /lookup_move/);
+  assert.equal(body.tool_choice, 'required');
+  assert.equal(completion.finishReason, 'tool-calls');
+  assert.deepEqual(completion.toolCalls, [{ id: 'call_1', name: 'lookup_move', arguments: { name: 'Protect' } }]);
+  assert.ok(completion.responseMessages?.length, 'the SDK assistant response is retained for replay');
+  const replay = assistantToolMessage(completion);
+  assert.deepEqual(replay.toolCalls, completion.toolCalls);
+  assert.deepEqual(replay.raw, completion.responseMessages);
+  assert.deepEqual(toolResultMessage('call_1', 'Protect is a status move'), {
+    role: 'tool',
+    toolCallId: 'call_1',
+    content: 'Protect is a status move',
+  });
+  assert.deepEqual(uniqueToolCalls([...completion.toolCalls, completion.toolCalls[0]!]), completion.toolCalls);
 });
 
-test('OpenRouter requests buy usage accounting and surface cost and upstream provider', async () => {
-  let body: Record<string, unknown> = {};
-  const fetch = (async (_input, init) => {
-    body = JSON.parse(String(init?.body));
-    return chatStream('ok', {
-      provider: 'DeepInfra',
-      usage: { prompt_tokens: 4, completion_tokens: 2, total_tokens: 6, cost: 0.00123 },
+test('compatible HTTP and in-band stream failures preserve retry classification without leaking keys', async () => {
+  const failed = makeProvider(parseSpec('prime:failed-model'), {
+    apiKey: 'prime-secret',
+    fetch: (async () =>
+      new Response(JSON.stringify({ error: { message: 'service unavailable prime-secret' } }), {
+        status: 503,
+        headers: { 'content-type': 'application/json' },
+      })) as typeof globalThis.fetch,
+  });
+  await assert.rejects(failed.complete('system', [{ role: 'user', content: 'hello' }]), (error: unknown) => {
+    assert.ok(error instanceof ApiError);
+    assert.equal(error.status, 503);
+    assert.doesNotMatch(error.message, /prime-secret/);
+    assert.match(error.message, /\[redacted\]/);
+    assert.deepEqual(classifyProviderFailure(error, 'prime:failed-model'), {
+      kind: 'upstream',
+      summary: 'Prime Inference API is temporarily unavailable (503).',
+      terminal: false,
+      pausable: true,
     });
-  }) as typeof globalThis.fetch;
-  const provider = makeProvider(parseSpec('openrouter:z-ai/glm-5.2:nitro'), { apiKey: 'or-key', fetch });
+    return true;
+  });
 
-  const completion = await provider.complete('system', [{ role: 'user', content: 'hello' }]);
-
-  assert.equal(body.model, 'z-ai/glm-5.2:nitro', 'variant suffixes pass through to OpenRouter untouched');
-  assert.deepEqual(body.usage, { include: true });
-  assert.equal(completion.provider, 'DeepInfra');
-  assert.equal(completion.usage.cost, 0.00123);
-  assert.equal(completion.usage.input_tokens, 4);
-  assert.equal(completion.usage.output_tokens, 2);
+  const inBand = makeProvider(parseSpec('openrouter:failed-model'), {
+    apiKey: 'openrouter-key',
+    fetch: (async () =>
+      sseResponse([{ error: { code: 502, message: 'upstream worker failed' } }])) as typeof globalThis.fetch,
+  });
+  await assert.rejects(inBand.complete('system', [{ role: 'user', content: 'hello' }]), (error: unknown) => {
+    assert.ok(error instanceof ApiError);
+    assert.equal(error.status, 502);
+    return true;
+  });
 });
 
-test('nitroSpec adds routing only to unrouted OpenRouter specs', () => {
-  assert.equal(nitroSpec('openrouter:z-ai/glm-5.2'), 'openrouter:z-ai/glm-5.2:nitro');
-  assert.equal(nitroSpec('openrouter:z-ai/glm-5.2:nitro'), 'openrouter:z-ai/glm-5.2:nitro');
-  assert.equal(nitroSpec('openrouter:deepseek/deepseek-v4:floor'), 'openrouter:deepseek/deepseek-v4:floor');
-  assert.equal(nitroSpec('opencode-go:kimi-k3'), 'opencode-go:kimi-k3');
-  assert.equal(nitroSpec('anthropic:claude-opus-5'), 'anthropic:claude-opus-5');
-});
+test('adapter redacts thrown transport and malformed stream failures', async () => {
+  const suppliedKey = 'supplied-provider-secret';
+  const environmentKey = 'environment-provider-secret';
+  const previous = process.env.PRIME_API_KEY;
+  process.env.PRIME_API_KEY = environmentKey;
+  const failures: Array<{ label: string; fetch: typeof globalThis.fetch }> = [
+    {
+      label: 'Error transport',
+      fetch: (async () => {
+        throw new Error(`transport exposed ${suppliedKey} and ${environmentKey}`);
+      }) as typeof globalThis.fetch,
+    },
+    {
+      label: 'primitive transport',
+      fetch: (async () => {
+        throw suppliedKey;
+      }) as typeof globalThis.fetch,
+    },
+    {
+      label: 'malformed stream',
+      fetch: (async () =>
+        new Response(
+          `data: {"secret":"${suppliedKey}"
 
-test('OpenRouter requests for Anthropic models carry cache breakpoints, others stay untouched', async () => {
-  let body: Record<string, unknown> = {};
-  const fetch = (async (_input, init) => {
-    body = JSON.parse(String(init?.body));
-    return chatStream('ok', { usage: { prompt_tokens: 4, completion_tokens: 2, total_tokens: 6 } });
-  }) as typeof globalThis.fetch;
-
-  const claude = makeProvider(parseSpec('openrouter:anthropic/claude-opus-5'), { apiKey: 'or-key', fetch });
-  await claude.complete('rules', [{ role: 'user', content: 'state' }]);
-  const messages = body.messages as Array<{ role: string; content: unknown }>;
-  const system = messages.find((message) => message.role === 'system');
-  const user = messages.find((message) => message.role === 'user');
-  assert.deepEqual(system?.content, [{ type: 'text', text: 'rules', cache_control: { type: 'ephemeral' } }]);
-  assert.deepEqual(user?.content, [{ type: 'text', text: 'state', cache_control: { type: 'ephemeral' } }]);
-
-  const glm = makeProvider(parseSpec('openrouter:z-ai/glm-5.2'), { apiKey: 'or-key', fetch });
-  await glm.complete('rules', [{ role: 'user', content: 'state' }]);
-  const untouched = body.messages as Array<{ role: string; content: unknown }>;
-  assert.ok(
-    untouched.every((message) => typeof message.content === 'string'),
-    'non-Anthropic models keep plain string content',
-  );
-});
-
-test('OpenRouter routing preferences come from the environment and must be JSON', async () => {
-  process.env.VGC_OPENROUTER_PROVIDER = '{"order":["deepinfra"]}';
+`,
+          {
+            status: 200,
+            headers: { 'content-type': 'text/event-stream' },
+          },
+        )) as typeof globalThis.fetch,
+    },
+  ];
   try {
-    let body: Record<string, unknown> = {};
-    const fetch = (async (_input, init) => {
-      body = JSON.parse(String(init?.body));
-      return chatStream('ok', { usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 } });
-    }) as typeof globalThis.fetch;
-    const provider = makeProvider(parseSpec('openrouter:qwen/qwen3.7-plus'), { apiKey: 'or-key', fetch });
-    const completion = await provider.complete('system', [{ role: 'user', content: 'hello' }]);
-    assert.deepEqual(body.provider, { order: ['deepinfra'] });
-    assert.equal(completion.provider, undefined, 'a response naming no provider adds nothing');
-    assert.equal('cost' in completion.usage, false);
-
-    process.env.VGC_OPENROUTER_PROVIDER = 'not json';
-    assert.throws(() => makeProvider(parseSpec('openrouter:qwen/qwen3.7-plus'), { apiKey: 'or-key' }), /must be JSON/);
+    for (const failure of failures) {
+      const provider = makeProvider(parseSpec('prime:redaction-test'), { apiKey: suppliedKey, fetch: failure.fetch });
+      await assert.rejects(provider.complete('system', [{ role: 'user', content: 'hello' }]), (error: unknown) => {
+        assert.ok(error instanceof Error, failure.label);
+        assert.doesNotMatch(error.message, new RegExp(`${suppliedKey}|${environmentKey}`), failure.label);
+        return true;
+      });
+    }
   } finally {
-    delete process.env.VGC_OPENROUTER_PROVIDER;
+    if (previous === undefined) delete process.env.PRIME_API_KEY;
+    else process.env.PRIME_API_KEY = previous;
   }
 });
 
-test('compat provider uses chat completions', async () => {
-  let url = '';
-  let body: Record<string, unknown> = {};
-  const fetch = (async (input, init) => {
-    url = String(input);
-    body = JSON.parse(String(init?.body));
-    return chatStream('ok', { usage: { prompt_tokens: 4, completion_tokens: 2, total_tokens: 6 } });
-  }) as typeof globalThis.fetch;
-  const provider = makeProvider(parseSpec('kimi:kimi-k3'), { apiKey: 'moonshot-key', fetch });
-
-  const completion = await provider.complete('system', [{ role: 'user', content: 'hello' }]);
-
-  assert.equal(url, 'https://api.moonshot.ai/v1/chat/completions');
-  assert.equal(body.temperature, 0.2);
-  assert.equal('reasoning_effort' in body, false);
-  const { responseMessages, ...rest } = completion;
-  assert.deepEqual(rest, {
-    text: 'ok',
-    finishReason: 'stop',
-    usage: { input_tokens: 4, output_tokens: 2 },
-    toolCalls: [],
-  });
-  assert.equal(responseMessages?.length, 1);
-});
-
-test('temperature is dropped after a 400 response', async () => {
-  const bodies: Record<string, unknown>[] = [];
-  const fetch = (async (_input, init) => {
-    bodies.push(JSON.parse(String(init?.body)));
-    if (bodies.length === 1)
-      return jsonResponse({ error: { message: 'temperature is not supported', type: 'invalid_request_error' } }, 400);
-    return chatStream('ok', { usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 } });
-  }) as typeof globalThis.fetch;
-  const provider = makeProvider(parseSpec('kimi:kimi-k3'), { apiKey: 'moonshot-key', fetch });
-
-  const completion = await provider.complete('system', [{ role: 'user', content: 'hello' }]);
-
-  assert.equal(bodies.length, 2);
-  assert.equal('temperature' in bodies[0]!, true);
-  assert.equal('temperature' in bodies[1]!, false);
-  assert.equal(completion.text, 'ok');
-});
-
-test('a masked OpenCode upstream 400 retries without temperature', async () => {
-  const bodies: Record<string, unknown>[] = [];
-  const fetch = (async (_input, init) => {
-    bodies.push(JSON.parse(String(init?.body)));
-    if (bodies.length === 1)
-      return jsonResponse(
-        {
-          error: {
-            message: 'Error from provider (Console Go): Upstream request failed',
-            type: 'invalid_request_error',
-          },
-        },
-        400,
-      );
-    return chatStream('ok', { usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 } });
-  }) as typeof globalThis.fetch;
-  const provider = makeProvider(parseSpec('opencode-go:kimi-k3'), { apiKey: 'zen-key', fetch });
-
-  const completion = await provider.complete('system', [{ role: 'user', content: 'hello' }]);
-
-  assert.equal(bodies.length, 2);
-  assert.equal('temperature' in bodies[0]!, true);
-  assert.equal('temperature' in bodies[1]!, false);
-  assert.equal(completion.text, 'ok');
-});
-
-test('API call errors map to ApiError without leaking credentials', async () => {
-  const fetch = (async () =>
-    new Response('service unavailable for moonshot-key', { status: 503 })) as typeof globalThis.fetch;
-  const provider = makeProvider(parseSpec('kimi:kimi-k3'), { apiKey: 'moonshot-key', fetch });
-
-  await assert.rejects(
-    provider.complete('system', [{ role: 'user', content: 'hello' }]),
-    (error: unknown) =>
-      error instanceof ApiError &&
-      error.status === 503 &&
-      error.message.startsWith('kimi:kimi-k3 503:') &&
-      error.message.includes('[redacted]') &&
-      !error.message.includes('moonshot-key'),
-  );
-});
-
-test('OpenRouter preserves in-band error status after generation starts', async () => {
-  const fetch = (async () =>
-    sseResponse([
-      {
-        error: {
-          code: 502,
-          message: 'ResourceExhausted: Worker local total request limit reached (33/32)',
-        },
-      },
-    ])) as typeof globalThis.fetch;
-  const provider = makeProvider(parseSpec('openrouter:nvidia/nemotron-3-super-120b-a12b:free'), {
-    apiKey: 'openrouter-key',
-    fetch,
-  });
-
-  await assert.rejects(
-    provider.complete('system', [{ role: 'user', content: 'hello' }]),
-    (error: unknown) =>
-      error instanceof ApiError &&
-      error.status === 502 &&
-      error.message.startsWith('openrouter:nvidia/nemotron-3-super-120b-a12b:free 502:') &&
-      error.message.includes('ResourceExhausted'),
-  );
-});
-
-test('Anthropic maps adaptive reasoning without temperature', async () => {
-  let url = '';
-  let body: Record<string, unknown> = {};
-  const fetch = (async (input, init) => {
-    url = String(input);
-    body = JSON.parse(String(init?.body));
-    return sseResponse([
-      {
-        type: 'message_start',
-        message: {
-          type: 'message',
-          id: 'msg_1',
-          role: 'assistant',
-          model: 'claude-opus-4-10',
-          content: [],
-          stop_reason: null,
-          stop_sequence: null,
-          usage: { input_tokens: 6, output_tokens: 0 },
-        },
-      },
-      { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } },
-      { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'hello' } },
-      { type: 'content_block_stop', index: 0 },
-      { type: 'message_delta', delta: { stop_reason: 'end_turn', stop_sequence: null }, usage: { output_tokens: 3 } },
-      { type: 'message_stop' },
-    ]);
-  }) as typeof globalThis.fetch;
-  const provider = makeProvider(parseSpec('anthropic:claude-opus-4-10'), {
-    apiKey: 'anthropic-key',
-    reasoning: 'xhigh',
-    fetch,
-  });
-
-  const completion = await provider.complete('system', [{ role: 'user', content: 'hello' }]);
-
-  assert.equal(url, 'https://api.anthropic.com/v1/messages');
-  assert.deepEqual(body.thinking, { type: 'adaptive' });
-  const outputConfig = body.output_config as Record<string, unknown> | undefined;
-  assert.equal(outputConfig?.effort ?? body.effort, 'xhigh');
-  assert.equal('temperature' in body, false);
-  assert.equal(completion.text, 'hello');
-  const system = body.system as Array<Record<string, unknown>>;
-  assert.deepEqual(system[0]?.cache_control, { type: 'ephemeral' }, 'the system prefix is a cache breakpoint');
-  const messages = body.messages as Array<{ content: Array<Record<string, unknown>> }>;
-  const lastPart = messages[messages.length - 1]?.content.at(-1);
-  assert.deepEqual(lastPart?.cache_control, { type: 'ephemeral' }, 'the conversation tail is a cache breakpoint');
-});
-
-test('model overrides reroute specs and follow file edits', async (t) => {
-  const { resolveSpecOverride } = await import('../src/providers.js');
-  const os = await import('node:os');
-  const fs = await import('node:fs');
-  const path = await import('node:path');
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-overrides-'));
-  const file = path.join(directory, 'overrides.json');
-  const previous = process.env.VGC_MODEL_OVERRIDES;
-  process.env.VGC_MODEL_OVERRIDES = file;
-  t.after(() => {
-    if (previous === undefined) delete process.env.VGC_MODEL_OVERRIDES;
-    else process.env.VGC_MODEL_OVERRIDES = previous;
-    fs.rmSync(directory, { recursive: true, force: true });
-  });
-
-  assert.equal(resolveSpecOverride('opencode-go:kimi-k3'), 'opencode-go:kimi-k3', 'no file means no rerouting');
-
-  fs.writeFileSync(file, JSON.stringify({ models: { 'opencode-go:kimi-k3': 'openrouter:moonshotai/kimi-k3' } }));
-  assert.equal(resolveSpecOverride('opencode-go:kimi-k3'), 'openrouter:moonshotai/kimi-k3');
-  assert.equal(resolveSpecOverride('opencode-go:glm-5.2'), 'opencode-go:glm-5.2', 'unlisted specs pass through');
-
-  const future = new Date(Date.now() + 5000);
-  fs.writeFileSync(file, JSON.stringify({ models: {} }));
-  fs.utimesSync(file, future, future);
-  assert.equal(resolveSpecOverride('opencode-go:kimi-k3'), 'opencode-go:kimi-k3', 'edits apply without a restart');
-
-  fs.writeFileSync(file, 'not json');
-  fs.utimesSync(file, new Date(Date.now() + 10_000), new Date(Date.now() + 10_000));
-  assert.equal(resolveSpecOverride('opencode-go:kimi-k3'), 'opencode-go:kimi-k3', 'a malformed file reroutes nothing');
-});
-
-function anthropicStream(): Response {
-  const frames = [
-    [
-      'message_start',
-      {
-        type: 'message_start',
-        message: {
-          id: 'm',
-          type: 'message',
-          role: 'assistant',
-          content: [],
-          model: 'claude-opus-5',
-          usage: { input_tokens: 1, output_tokens: 0 },
-        },
-      },
-    ],
-    ['content_block_start', { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } }],
-    ['content_block_delta', { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'ok' } }],
-    ['content_block_stop', { type: 'content_block_stop', index: 0 }],
-    [
-      'message_delta',
-      { type: 'message_delta', delta: { stop_reason: 'end_turn', stop_sequence: null }, usage: { output_tokens: 1 } },
-    ],
-    ['message_stop', { type: 'message_stop' }],
-  ]
-    .map(([event, data]) => `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)
-    .join('');
-  return new Response(frames, { status: 200, headers: { 'content-type': 'text/event-stream' } });
-}
-
-const REPLAYED_TOOL_LOOP: ProviderMessage[] = [
-  { role: 'user', content: 'decide' },
-  {
-    role: 'assistant',
-    content: null,
-    toolCalls: [{ id: 'call_1', name: 'lookup_species', arguments: { name: 'Gengar' } }],
-    raw: [
-      {
-        role: 'assistant',
-        content: [
-          { type: 'reasoning', text: '', providerOptions: { anthropic: { signature: 'sig' } } },
-          { type: 'tool-call', toolCallId: 'call_1', toolName: 'lookup_species', input: { name: 'Gengar' } },
-        ],
-      },
-    ] as unknown as JsonObject[],
-  },
-  toolResultMessage('call_1', 'Ghost/Poison'),
-];
-
-const LOOKUP_TOOL = {
-  name: 'lookup_species',
-  description: 'look up',
-  parameters: {
-    type: 'object',
-    properties: { name: { type: 'string' } },
-    required: ['name'],
-    additionalProperties: false,
-  },
-};
-
-test('anthropic strips replayed thinking blocks unless thinking is enabled', async () => {
-  const bodies: Record<string, unknown>[] = [];
-  const fetch = (async (_input, init) => {
-    bodies.push(JSON.parse(String(init?.body)));
-    return anthropicStream();
-  }) as typeof globalThis.fetch;
-
-  const plain = makeProvider(parseSpec('anthropic:claude-opus-5'), { apiKey: 'ant-key', fetch });
-  await plain.complete('system', REPLAYED_TOOL_LOOP, { tools: [LOOKUP_TOOL] });
-  const assistant = (bodies[0]!.messages as { role: string; content: unknown[] }[]).find(
-    (m) => m.role === 'assistant',
-  )!;
-  assert.deepEqual(
-    (assistant.content as { type: string }[]).map((part) => part.type),
-    ['tool_use'],
-  );
-  const lastMessage = (bodies[0]!.messages as { content: { cache_control?: unknown }[] }[]).at(-1)!;
-  assert.ok(lastMessage.content.at(-1)?.cache_control, 'trailing cache breakpoint survives the strip');
-
-  const thinking = makeProvider(parseSpec('anthropic:claude-opus-5.1'), {
-    apiKey: 'ant-key',
-    fetch,
-    reasoning: 'medium',
-  });
-  await thinking.complete('system', REPLAYED_TOOL_LOOP, { tools: [LOOKUP_TOOL] });
-  const kept = (bodies[1]!.messages as { role: string; content: { type: string }[] }[]).find(
-    (m) => m.role === 'assistant',
-  )!;
-  assert.ok(
-    kept.content.some((part) => part.type === 'thinking' || part.type === 'redacted_thinking'),
-    'enabled thinking keeps replayed blocks',
-  );
-});
-
-test('anthropic keeps the trailing cache breakpoint when a round made several tool calls', async () => {
-  const bodies: Record<string, unknown>[] = [];
-  const fetch = (async (_input, init) => {
-    bodies.push(JSON.parse(String(init?.body)));
-    return anthropicStream();
-  }) as typeof globalThis.fetch;
-
-  const calls = ['call_1', 'call_2', 'call_3', 'call_4'];
-  const loop: ProviderMessage[] = [
-    { role: 'user', content: 'decide' },
-    {
-      role: 'assistant',
-      content: null,
-      toolCalls: calls.map((id) => ({ id, name: 'lookup_species', arguments: { name: id } })),
-    },
-    ...calls.map((id) => toolResultMessage(id, 'Ghost/Poison')),
-  ];
-
-  const provider = makeProvider(parseSpec('anthropic:claude-opus-5'), { apiKey: 'ant-key', fetch });
-  await provider.complete('system', loop, { tools: [LOOKUP_TOOL] });
-
-  const messages = bodies[0]!.messages as { role: string; content: { type: string; cache_control?: unknown }[] }[];
-  const last = messages.at(-1)!;
-  assert.equal(last.role, 'user');
-  assert.deepEqual(
-    last.content.map((part) => part.type),
-    ['tool_result', 'tool_result', 'tool_result', 'tool_result'],
-    'consecutive tool results group into one user message',
-  );
-  assert.ok(last.content.at(-1)!.cache_control, 'grouped tool results keep the trailing cache breakpoint');
+test('nitro routing changes only OpenRouter specs', () => {
+  assert.equal(nitroSpec('openrouter:model'), 'openrouter:model:nitro');
+  assert.equal(nitroSpec('openrouter:model:floor'), 'openrouter:model:floor');
+  assert.equal(nitroSpec('prime:model'), 'prime:model');
+  assert.equal(nitroSpec('random'), 'random');
 });

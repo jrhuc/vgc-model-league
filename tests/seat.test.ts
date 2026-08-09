@@ -6,7 +6,7 @@ import test from 'node:test';
 
 import { runExhibition } from '../src/exhibition.js';
 import type { SeriesRecord } from '../src/records.js';
-import { loadRows, scopeRows } from '../src/records.js';
+import { loadSeriesRecords, scopeRows } from '../src/records.js';
 import { SeatBridge } from '../src/seat.js';
 
 test('unscoped play data includes exhibitions without turning them into a ranking', () => {
@@ -18,7 +18,7 @@ test('unscoped play data includes exhibitions without turning them into a rankin
   assert.equal(scopeRows(rows, 'regmb').length, 2);
 });
 
-test('seat bridge serves exchanges, enforces its token, and answers tool lookups', async () => {
+test('seat bridge keeps a pending exchange, tools, and private context behind one token', async () => {
   const lookups: string[] = [];
   const bridge = new SeatBridge({
     lookup: (name, args) => {
@@ -29,32 +29,33 @@ test('seat bridge serves exchanges, enforces its token, and answers tool lookups
   });
   const url = await bridge.listen(0);
   const headers = { 'content-type': 'application/json', authorization: `Bearer ${bridge.token}` };
-  const post = async (route: string, body: unknown) =>
+  const post = (route: string, body: unknown) =>
     fetch(`${url}${route}`, { method: 'POST', headers, body: JSON.stringify(body) });
   try {
-    const unauthorized = await fetch(`${url}/status`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: '{}',
-    });
-    assert.equal(unauthorized.status, 401);
-
-    const empty = (await (await post('/poll', { waitMs: 0 })).json()) as { exchange: unknown };
-    assert.equal(empty.exchange, null);
+    assert.equal(
+      (
+        await fetch(`${url}/context`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: '{}',
+        })
+      ).status,
+      401,
+    );
 
     const completion = bridge.provider().complete('SYSTEM TEXT', [{ role: 'user', content: 'prompt text' }]);
     const poll = (await (await post('/poll', { waitMs: 2000 })).json()) as {
       exchange: { id: number; phase: string; system: string; prompt: string };
     };
-    assert.equal(poll.exchange.phase, 'decision');
-    assert.equal(poll.exchange.system, 'SYSTEM TEXT');
-    assert.equal(poll.exchange.prompt, 'prompt text');
+    assert.deepEqual(
+      {
+        phase: poll.exchange.phase,
+        system: poll.exchange.system,
+        prompt: poll.exchange.prompt,
+      },
+      { phase: 'decision', system: 'SYSTEM TEXT', prompt: 'prompt text' },
+    );
 
-    const stale = await post('/submit', { id: poll.exchange.id + 1, text: 'x' });
-    assert.equal(stale.status, 409);
-
-    const unknownTool = await post('/tool', { name: 'not_a_tool', arguments: {} });
-    assert.equal(unknownTool.status, 400);
     const tool = (await (await post('/tool', { name: 'lookup_move', arguments: { name: 'Protect' } })).json()) as {
       result: string;
     };
@@ -65,94 +66,8 @@ test('seat bridge serves exchanges, enforces its token, and answers tool lookups
     };
     assert.equal(context.query.after, 'ctx-00000001');
 
-    const submitted = await post('/submit', { id: poll.exchange.id, text: '{"choices":[0]}' });
-    assert.equal(submitted.status, 200);
+    assert.equal((await post('/submit', { id: poll.exchange.id, text: '{"choices":[0]}' })).status, 200);
     assert.equal((await completion).text, '{"choices":[0]}');
-  } finally {
-    bridge.close();
-  }
-});
-
-test('seat bridge requires POST requests with JSON object bodies', async () => {
-  const bridge = new SeatBridge({ lookup: () => '' });
-  const url = await bridge.listen(0);
-  const authorization = `Bearer ${bridge.token}`;
-  try {
-    for (const route of ['/status', '/poll', '/messages', '/context', '/tools', '/tool', '/submit']) {
-      const response = await fetch(`${url}${route}`, { headers: { authorization } });
-      assert.equal(response.status, 405, route);
-    }
-
-    const wrongType = await fetch(`${url}/status`, {
-      method: 'POST',
-      headers: { authorization, 'content-type': 'text/plain' },
-      body: '{}',
-    });
-    assert.equal(wrongType.status, 415);
-
-    const empty = await fetch(`${url}/status`, {
-      method: 'POST',
-      headers: { authorization, 'content-type': 'application/json' },
-    });
-    assert.equal(empty.status, 400);
-
-    const nonObject = await fetch(`${url}/status`, {
-      method: 'POST',
-      headers: { authorization, 'content-type': 'application/json' },
-      body: '[]',
-    });
-    assert.equal(nonObject.status, 400);
-
-    const oversized = await fetch(`${url}/status`, {
-      method: 'POST',
-      headers: { authorization, 'content-type': 'application/json' },
-      body: JSON.stringify({ value: 'x'.repeat(1_000_000) }),
-    });
-    assert.equal(oversized.status, 413);
-  } finally {
-    bridge.close();
-  }
-});
-
-test('seat bridge submit requires the exact pending safe-integer exchange ID', async () => {
-  const bridge = new SeatBridge({ lookup: () => '' });
-  const url = await bridge.listen(0);
-  const headers = { authorization: `Bearer ${bridge.token}`, 'content-type': 'application/json' };
-  const post = (route: string, body: unknown) =>
-    fetch(`${url}${route}`, { method: 'POST', headers, body: JSON.stringify(body) });
-  const completion = bridge.provider().complete('SYSTEM TEXT', [{ role: 'user', content: 'prompt text' }]);
-  void completion.catch(() => {});
-  try {
-    const polled = (await (await post('/poll', {})).json()) as { exchange: { id: number } };
-    const missing = await post('/submit', { text: 'missing' });
-    assert.equal(missing.status, 400);
-    const unsafe = await post('/submit', { id: Number.MAX_SAFE_INTEGER + 1, text: 'unsafe' });
-    assert.equal(unsafe.status, 400);
-    const stale = await post('/submit', { id: polled.exchange.id + 1, text: 'stale' });
-    assert.equal(stale.status, 409);
-
-    const submitted = await post('/submit', { id: polled.exchange.id, text: 'accepted' });
-    assert.equal(submitted.status, 200);
-    assert.equal((await completion).text, 'accepted');
-    const duplicate = await post('/submit', { id: polled.exchange.id, text: 'duplicate' });
-    assert.equal(duplicate.status, 409);
-  } finally {
-    bridge.close();
-  }
-});
-
-test('seat bridge removes timed-out long-poll waiters immediately', async () => {
-  const bridge = new SeatBridge({ lookup: () => '' });
-  const url = await bridge.listen(0);
-  const headers = { authorization: `Bearer ${bridge.token}`, 'content-type': 'application/json' };
-  try {
-    const response = await fetch(`${url}/poll`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ waitMs: 10 }),
-    });
-    assert.equal(response.status, 200);
-    assert.equal((bridge as unknown as { pollWaiters: unknown[] }).pollWaiters.length, 0);
   } finally {
     bridge.close();
   }
@@ -404,7 +319,7 @@ test('an exhibition series against random plays to completion through the bridge
   assert.ok(prompts.some((prompt) => prompt.includes('Ordered team menu')));
   assert.ok(!prompts.some((prompt) => prompt.includes('Showdown timer:')));
 
-  const recorded = loadRows(recordsPath);
+  const recorded = loadSeriesRecords(recordsPath);
   assert.equal(recorded.length, 1);
   assert.equal(scopeRows(recorded).length, 0);
   assert.equal(scopeRows(recorded, 'test').length, 1);

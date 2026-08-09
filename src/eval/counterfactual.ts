@@ -58,7 +58,7 @@ const DEFAULTS = {
   rolloutLimit: 60,
 } as const;
 
-export interface CounterfactualProtocol {
+interface CounterfactualProtocol {
   version: number;
   reference: typeof REFERENCE;
   horizon: number | 'end';
@@ -112,13 +112,18 @@ export function counterfactualProtocol(options: CounterfactualOptions = {}): Cou
   };
 }
 
-export interface ActionValue {
+export function exhaustiveCounterfactualProtocol(options: CounterfactualOptions = {}) {
+  const { version, reference, horizon, luckSamples, opponentSamples } = counterfactualProtocol(options);
+  return { version, reference, horizon, luckSamples, opponentSamples };
+}
+
+interface ActionValue {
   action: string;
   value: number;
   samples: number;
 }
 
-export interface ReferenceView {
+interface ReferenceView {
   chosen: number;
   selected: number;
   selectedAction: string;
@@ -129,7 +134,7 @@ export interface ReferenceView {
   selectionReversed: boolean;
 }
 
-export interface PositionScore {
+interface PositionScore {
   pid: Pid;
   turn: number;
   chosen: string;
@@ -140,7 +145,7 @@ export interface PositionScore {
   vsSampledOpponent: ReferenceView;
 }
 
-export interface ExhaustiveActionValue {
+interface ExhaustiveActionValue {
   action: string;
   value: number;
   standardError: number | null;
@@ -148,7 +153,7 @@ export interface ExhaustiveActionValue {
   reward: number | null;
 }
 
-export interface HeldOutGap {
+interface HeldOutGap {
   selectedAction: string;
   alternativeAction: string;
   value: number;
@@ -176,7 +181,7 @@ export interface ExhaustivePanel {
   span: number;
 }
 
-export interface ExhaustivePanelDrawPlanInput {
+interface ExhaustivePanelDrawPlanInput {
   panelSeed: string;
   id: ExhaustivePanel['id'];
   opponentLegalActions: readonly string[];
@@ -184,7 +189,7 @@ export interface ExhaustivePanelDrawPlanInput {
   luckReplications: number;
 }
 
-export interface ExhaustivePanelDrawPlan {
+interface ExhaustivePanelDrawPlan {
   seedNamespace: string;
   opponentPopulation: number;
   opponentSlots: number;
@@ -192,7 +197,7 @@ export interface ExhaustivePanelDrawPlan {
   draws: ExhaustiveDraw[];
 }
 
-export interface ExhaustivePanelMatrixDigestInput {
+interface ExhaustivePanelMatrixDigestInput {
   id: ExhaustivePanel['id'];
   seedNamespace: string;
   opponentPopulation: number;
@@ -345,7 +350,7 @@ function sampleVariance(values: readonly number[]): number {
   return values.reduce((sum, entry) => sum + (entry - center) ** 2, 0) / (values.length - 1);
 }
 
-export interface TwoStageClusterEstimate {
+interface TwoStageClusterEstimate {
   value: number;
   standardError: number | null;
 }
@@ -412,7 +417,7 @@ function search(
     if (result) screened.push(result);
   }
   if (!screened.length) return null;
-  screened.sort((a, b) => b.value - a.value || a.action.localeCompare(b.action));
+  screened.sort((a, b) => b.value - a.value || Buffer.compare(Buffer.from(a.action), Buffer.from(b.action)));
   const shortlist = new Set(screened.slice(0, budget.shortlist).map((entry) => entry.action));
 
   const refined: ActionValue[] = [];
@@ -421,7 +426,7 @@ function search(
     const result = average(trial, action, selectionOpponents, budget.luckSamples, 1_000);
     if (result) refined.push(result);
   }
-  refined.sort((a, b) => b.value - a.value || a.action.localeCompare(b.action));
+  refined.sort((a, b) => b.value - a.value || Buffer.compare(Buffer.from(a.action), Buffer.from(b.action)));
   const selectedAction = refined[0]?.action;
   const selectedWorst = screened.at(-1)?.action;
   if (!selectedAction || !selectedWorst) return null;
@@ -625,7 +630,9 @@ function exhaustivePanel(
 }
 
 function rankedActions(panel: ExhaustivePanel): ExhaustiveActionValue[] {
-  return [...panel.actions].sort((a, b) => b.value - a.value || Buffer.from(a.action).compare(Buffer.from(b.action)));
+  return [...panel.actions].sort(
+    (a, b) => b.value - a.value || Buffer.compare(Buffer.from(a.action), Buffer.from(b.action)),
+  );
 }
 
 function anchors(panel: ExhaustivePanel): { best: Set<string>; worst: Set<string> } {

@@ -10,6 +10,13 @@ records
 *.sqlite
 *.sqlite-*
 coverage
+artifacts/**
+!artifacts/public/
+!artifacts/public/landing/
+!artifacts/public/landing/circuit-trace-v1/
+!artifacts/public/landing/circuit-trace-v1/manifest.json
+!artifacts/public/landing/circuit-trace-v1/curated.json
+!artifacts/public/landing/circuit-trace-v1/full.json
 *.tsbuildinfo
 .DS_Store
 .vscode

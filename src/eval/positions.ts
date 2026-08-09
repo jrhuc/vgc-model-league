@@ -2,8 +2,6 @@ import { seededRng, shuffle } from '../random.js';
 import type { BattleRequest, JsonObject, Pid } from '../types.js';
 
 export const MIN_MEASURED_CONTRAST = 0.05;
-export const POSITION_SET_SCHEMA_VERSION = 4;
-
 export interface CandidatePosition {
   runId: string;
   seriesId: string;
@@ -29,7 +27,7 @@ export interface SelectionOptions {
   formats?: readonly string[];
 }
 
-export interface Stratum {
+interface Stratum {
   key: string;
   phase: string;
   pace: string;
@@ -38,7 +36,7 @@ export interface Stratum {
   taken: number;
 }
 
-export interface Selection {
+interface Selection {
   positions: CandidatePosition[];
   strata: Stratum[];
   games: number;
@@ -171,11 +169,11 @@ export function selectPositions(candidates: CandidatePosition[], options: Select
     grouped.set(key, [...(grouped.get(key) ?? []), position]);
   }
   const pools: PoolState[] = [...grouped.entries()]
-    .sort(([a], [b]) => a.localeCompare(b))
+    .sort(([a], [b]) => Buffer.compare(Buffer.from(a), Buffer.from(b)))
     .map(([key, pool]) => ({
       key,
       pool: shuffle(
-        [...pool].sort((a, b) => keyOf(a).localeCompare(keyOf(b))),
+        [...pool].sort((a, b) => Buffer.compare(Buffer.from(keyOf(a)), Buffer.from(keyOf(b)))),
         random,
       ),
       cursor: 0,
@@ -195,7 +193,10 @@ export function selectPositions(candidates: CandidatePosition[], options: Select
       return false;
     });
     if (!available.length) break;
-    available.sort((a, b) => (a.taken + 1) / a.weight - (b.taken + 1) / b.weight || a.key.localeCompare(b.key));
+    available.sort(
+      (a, b) =>
+        (a.taken + 1) / a.weight - (b.taken + 1) / b.weight || Buffer.compare(Buffer.from(a.key), Buffer.from(b.key)),
+    );
     const state = available[0] as PoolState;
     const position = state.pool[state.cursor] as CandidatePosition;
     state.cursor += 1;

@@ -37,20 +37,36 @@ pnpm run test:frozen-matchday-package
 pnpm run build:frozen-matchday-package
 ```
 
-`pnpm test` builds both required artifacts. The package test requires their
-compiled smoke, and the final command performs a clear wheel build.
-`vgc-frozen-matchday-v0` is an unpublished matchday-only package, not the Draft
-Circuit. These commands test local source and the compiled package suite and
-build its wheel; they do not run a real provider/model, isolated deployment, or
-hosted evaluation. See the
-[package README](../environments/vgc_frozen_matchday_v0/README.md) for its
-package-specific development and runtime contract.
+The package workflow and its current evidence are tracked only in the
+[evaluation support table](evaluation-plan.md#verifiers-boundary-and-target-architecture).
+The [package README](../environments/vgc_frozen_matchday_v0/README.md) owns its
+runtime contract.
+
+After `pnpm test` has built the CLI, freeze a reviewed private matchday source
+only into an absent private output root:
+
+```sh
+pnpm run freeze-frozen-matchday-task-source \
+  --input /absolute/path/private-source.json \
+  --out /absolute/path/absent-private-output-root
+```
+
+The command writes a private `manifest.json` and `task-source.jsonl`. It is safe
+only under the command's trusted-single-producer,
+immutable-repository/build/runtime-tree precondition;
+run `pnpm run freeze-frozen-matchday-task-source --help` for the byte,
+attestation, portability, concurrency, and identical-rerun limits. Do not treat
+this output as reviewed or release-approved.
 
 ## Run an experiment
 
-A model spec is `<provider>:<model-id>`; `random` is the legal-action baseline.
-CLI runs read provider credentials from the environment. GUI credentials entered
-in the browser remain in server memory only for that run.
+Executable model specs are exactly `openrouter:<model-id>`, `prime:<model-id>`,
+and `random`, the legal-action baseline. OpenRouter uses the fixed
+`https://openrouter.ai/api/v1` endpoint and `OPENROUTER_API_KEY`; its GUI catalog
+lists current model IDs. Prime Inference uses the fixed
+`https://api.pinference.ai/api/v1` endpoint and `PRIME_API_KEY`; enter its model ID
+manually. Model specs never accept a base URL. GUI credentials entered in the
+browser remain in server memory only for that run.
 
 ```sh
 pnpm run vgcleague gui
@@ -73,17 +89,25 @@ pnpm run vgcleague exhibition --opponent <spec>
 | Rotation | mirrored assignments across a fixed pool | controlled/contextual; no rating |
 | Exhibition | one external terminal-agent seat | uncontrolled; no rating |
 
-All experiment commands accept `--seed` and `--reasoning`. Rotation, tournament,
-and draft accept `--concurrency` and `--timer-scale <n|off>`. Battles are untimed
-by default. `--timer-scale 1` uses the standard VGC clock; 0.5 through 4 scales
+All experiment commands accept `--seed`. Rotation, tournament, and draft
+accept `--concurrency` and `--timer-scale <n|off>`. Battles are untimed by
+default. `--timer-scale 1` uses the standard VGC clock; 0.5 through 4 scales
 Showdown's clocks. Never pool different clocks or scaffolds.
 
+Omitting reasoning configuration means provider default; there is no setting that
+claims to disable reasoning. The CLI may send `minimal`, `low`, `medium`, `high`,
+or `xhigh` to an explicit OpenRouter model and report any upstream rejection
+unchanged. The GUI offers those levels for an OpenRouter catalog model only when
+its `supported_parameters` includes `reasoning`. Prime's manually entered model
+IDs advertise no configurable levels because their capability is unknown.
+
 Transient provider outages and rate/quota errors pause and retry; credential and
-invalid-request errors fail fast. For OpenRouter, `--nitro` adds the `:nitro`
-throughput route to specs without another routing variant.
-`VGC_OPENROUTER_PIN=<provider>` selects one upstream and disables fallback;
-`VGC_OPENROUTER_PROVIDER` accepts a full routing JSON object. The pin overrides
-its order/fallback fields. Evidence records returned upstream and cost data.
+invalid-request errors fail fast. Each call executes the recorded seat's exact
+model spec. For OpenRouter, `--nitro` adds the `:nitro` throughput route to specs
+without another routing variant. Fallback is always disabled.
+`VGC_OPENROUTER_PIN=<provider>` optionally supplies the sole upstream order entry
+as routing metadata; without it OpenRouter chooses one upstream. The returned
+provider is recorded with cost data.
 
 ### Tournaments and resume
 
@@ -108,8 +132,11 @@ never resume one run concurrently.
 ### Draft leagues
 
 Drafts select ten roster entries within 100 points, then build six complete sets
-per matchup. Round-robin builds run blind to other round-robin results and may
-run concurrently. Useful controls include:
+per matchup. Round-robin builds are blind to other round-robin results. By
+default the scheduler runs concurrency-limited blind batches: all scheduled
+series through the transaction week, the barrier/window, then the remaining
+series. With the window off, the round robin is one batch. Use sequential weeks
+only as a labeled alternative. Useful controls include:
 
 ```sh
 pnpm run vgcleague draft --models <specs...> --draft-only
@@ -139,8 +166,9 @@ metadata and never enter competitive or review prompts. A terminal
 [Season review](season-review.md) is recorded when each coach's season ends.
 
 Resume uses the stored board, models, seed, rosters, schedule, transaction state,
-completed results, and authorized playoff context. A draft-only run chooses its
-window when season play begins because it has not held one yet.
+completed results, and authorized playoff context. Inconsistent transaction,
+result, playoff, or roster evidence stops the resume. A draft-only run chooses
+its window when season play begins because it has not held one yet.
 
 ## Manage immutable inputs
 
@@ -170,54 +198,39 @@ They show contextual per-series rows with mode, pool, clock, scaffold, opponents
 and sample size; they never merge aliases or calculate an aggregate order.
 Within-run standings and brackets remain descriptions of that run.
 
-The GUI **Overview** describes program status. **Position Lab** displays public
-artifacts and gates. **Draft leagues** currently opens the exploratory draft
-archive; the GUI has no runnable full Draft Circuit. The internal unpublished
-matchday-only package is separate from the GUI and is not a circuit substitute.
-The GUI is a viewer: Showdown and the versioned offline evaluator remain
-authorities, and private scores, opponent requests, snapshots, and sealed panels
-are offline-only.
+The GUI's canonical routes are **Home**, **Method**, **Docs**, **Draft
+leagues**, **Live**, **Tournaments**, and **New run**. Home and Method render the
+committed hash-checked selected artifact. Release status belongs only in the
+[Evaluation plan](evaluation-plan.md#program-status).
+
+Showdown and the versioned offline evaluator remain authorities. Browser and
+anonymous evidence boundaries are defined once in
+[Architecture](architecture.md#state-evidence-and-trust).
 
 Decision/context logs record authorized observations and submitted model
 evidence. They do not prove Showdown accepted a transition; join game/referee
 logs to establish legality, substitutions, timer defaults, and outcomes.
 
-## Grade and freeze positions
+## Export experimental position evidence
 
-The current pipeline is experimental offline tooling, not a model-comparison
-runner:
+The supported offline commands remain experimental and run no comparison model:
 
 ```sh
 pnpm run grade-positions --workers 4 --restart
-pnpm run freeze-positions --size 500 --seed set-1
-pnpm run export-position-panels   --horizon 2 --luck 8 --opponents 4 --seed panels-1
-pnpm run summarize-position-pilot   records/private/position-panels/scores.pilot.jsonl
-pnpm run freeze-position-splits   --policy path/to/reviewed-policy.json   --calibration-manifest path/to/calibration-manifest.json
+pnpm run export-position-panels --horizon 2 --luck 8 --opponents 4 --seed panels-1
 ```
 
 `grade-positions` exactly replays eligible games and measures recorded choices.
-Use matching `--records` and `--runs-dir` options to isolate a pilot. Resume
-requires the same Showdown revision and full reference protocol; use `--restart`
-or a new output path after changing settings.
-
-`freeze-positions` performs preliminary seeded selection and writes public
-point-of-view inputs separately from private snapshots, opponent requests,
-source identity, and source action. Never expose the private file.
-
-`export-position-panels` evaluates every non-concession joint action on two
-qualification panels and one untouched measurement panel. It writes public tasks
-separately from private scores/sealed matrices and binds them in a canonical
-schema-v2 candidate manifest marked `release_ready: false`.
-`summarize-position-pilot` reports distributions but chooses no thresholds.
-
-`freeze-position-splits` requires that candidate manifest, a distinct canonical
-calibration manifest, and a reviewed policy. It keeps source-series and
-near-duplicate components intact, applies deterministic greedy stratification,
-and fails closed on missing measurement data or balance tolerances. Outputs are
-immutable and still not release-ready. No current command runs a new model over
-the tasks. See [Evaluation plan](evaluation-plan.md) for every remaining gate.
+`export-position-panels` writes one public candidate root and one private root
+containing both score and sealed-panel files. Neither command releases a position
+package. The [Evaluation plan](evaluation-plan.md#program-status) alone owns
+status; its `vgc-positions-v1` section owns the remaining gates.
 
 ## Archive and publish
+
+The selected GUI evidence uses a committed immutable three-file bundle.
+Run its clean-checkout integrity and privacy check with `pnpm run
+check:artifacts`; there is no supported reconstruction or promotion command.
 
 Archive full run directories to verified tarballs without deleting their source:
 
@@ -242,10 +255,15 @@ pnpm run vgcleague publish --run <run-id>
 
 Publishing is idempotent. Without filters it excludes `test`; `--include-test`
 overrides that. Repeat `--run` for exact runs, including draft leagues whose rows
-have no pool. The command sends results, decision/game logs, run configuration,
-draft assets, and missing pools. It does not send prompts, raw model responses,
-trace logs, or seat-context JSONL, so published config is not full execution
-evidence. See [Deployment](deployment.md).
+have no pool. The command imports results, decision/game logs, run configuration,
+draft/teambuild/window/season support assets, and missing pools so authorized
+operators can reconstruct the archive. It does not send prompt-attempt logs, raw
+provider responses, trace logs, or seat-context JSONL, so the import is not a
+complete execution envelope.
+
+Import is not trace release. The exact anonymous and operator boundaries live in
+[Architecture](architecture.md#state-evidence-and-trust); service configuration
+lives in [Deployment](deployment.md).
 
 ## Exhibition seat
 

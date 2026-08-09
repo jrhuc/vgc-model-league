@@ -1,6 +1,4 @@
 import { createHash, randomUUID } from 'node:crypto';
-import fs from 'node:fs';
-import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import {
   type AgentContextEvent,
@@ -28,7 +26,6 @@ import {
   classifyProviderFailure,
   makeProvider,
   parseSpec,
-  resolveSpecOverride,
   toolResultMessage,
   uniqueToolCalls,
 } from './providers.js';
@@ -42,6 +39,7 @@ import {
 } from './stage-evidence.js';
 import { BattleState } from './state.js';
 import type {
+  ActionSubmission,
   AgentContext,
   BattleRequest,
   CompleteOptions,
@@ -50,6 +48,7 @@ import type {
   Pid,
   Provider,
   ProviderMessage,
+  SubmissionSource,
   ToolCall,
   ToolDefinition,
 } from './types.js';
@@ -131,7 +130,6 @@ const DECISION_MIN_TOKENS = 1024;
 const DECISION_MAX_TOKENS_DEEP: Partial<Record<ReasoningLevel, number>> = {
   high: 8192,
   xhigh: 16_384,
-  max: 16_384,
 };
 /** Timed budgets follow generation pace so replies arrive before the deadline. The untimed ceiling and wall
  * clock only stop runaway reasoning loops, so both are sized to sit above anything real traffic produces:
@@ -504,7 +502,6 @@ const retrySleep = (ms: number, signal?: AbortSignal): Promise<void> =>
 
 export class LLMEngine extends BaseEngine {
   provider: Provider;
-  private resolvedSpec: string;
   readonly reference: ShowdownReference;
   private state: BattleState;
   private readonly fullContext: AgentContextStream;
@@ -555,9 +552,13 @@ export class LLMEngine extends BaseEngine {
     readonly spec: string,
     private readonly options: LLMEngineOptions = {},
   ) {
-    super(pid);
-    this.resolvedSpec = options.provider ? spec : resolveSpecOverride(spec);
-    this.provider = options.provider ?? this.buildProvider(this.resolvedSpec);
+    super(pid, options.decisionLog);
+    this.provider =
+      options.provider ??
+      makeProvider(parseSpec(spec), {
+        ...(options.reasoning === undefined ? {} : { reasoning: options.reasoning }),
+        ...(options.apiKey === undefined ? {} : { apiKey: options.apiKey }),
+      });
     this.reference =
       options.reference ?? new ShowdownReference(options.format ?? 'gen9championsvgc2026regmbbo3', options.psDir);
     this.state = new BattleState(pid);
@@ -576,24 +577,8 @@ export class LLMEngine extends BaseEngine {
     this.gameId = spec;
   }
 
-  private buildProvider(resolved: string): Provider {
-    return makeProvider(parseSpec(resolved), {
-      ...(this.options.reasoning === undefined ? {} : { reasoning: this.options.reasoning }),
-      ...(resolved === this.spec && this.options.apiKey !== undefined ? { apiKey: this.options.apiKey } : {}),
-    });
-  }
-
-  /** An explicit key belongs to the seat's own spec, so a rerouted seat falls back to environment
-   * keys for its replacement provider. */
-  private refreshProvider(): void {
-    if (this.options.provider) return;
-    const resolved = resolveSpecOverride(this.spec);
-    if (resolved === this.resolvedSpec) return;
-    this.resolvedSpec = resolved;
-    this.provider = this.buildProvider(resolved);
-  }
-
   override beginGame(context: GameStart): void {
+    super.beginGame(context);
     this.decisionController?.abort(new Error('game changed'));
     this.decisionController = undefined;
     this.gameId = context.gameId;
@@ -682,7 +667,10 @@ export class LLMEngine extends BaseEngine {
       row.game_number !== this.gameNumber ||
       row.turn !== this.state.turn ||
       row.phase !== phase ||
-      typeof row.action !== 'string'
+      typeof row.action !== 'string' ||
+      typeof row.submission_id !== 'string' ||
+      !['model', 'automatic', 'model-default'].includes(String(row.submission_source)) ||
+      (row.outcome !== 'accepted' && row.outcome !== 'rejected')
     ) {
       /** The live battle diverged from the recording, so the recording is no longer the truth;
        * the rest of the game is decided live. */
@@ -705,6 +693,11 @@ export class LLMEngine extends BaseEngine {
       notebook: this.notebook,
       menus: this.contextMenus(menus),
       replayed: true,
+    });
+    this.restoreSubmission({
+      submissionId: row.submission_id,
+      choice: row.action,
+      source: row.submission_source as SubmissionSource,
     });
     return row.action;
   }
@@ -836,7 +829,6 @@ export class LLMEngine extends BaseEngine {
         `No choice submitted: ${failure.summary} ${stop ? 'The run cannot continue.' : 'The battle timer acts when time expires.'}`,
       );
       const phase = decisionPhase(request);
-      const requestDigest = this.requestDigest(request, menus, phase);
       const timer = request.timer
         ? { turn_seconds: request.timer.turnSeconds ?? null, bank_seconds: request.timer.seconds ?? null }
         : null;
@@ -848,29 +840,6 @@ export class LLMEngine extends BaseEngine {
         pid: this.pid,
         phase,
       };
-      const rationale = stop
-        ? `${failure.summary} The run cannot continue.`
-        : `${failure.summary} No decision was submitted; the battle timer decides.`;
-      this.writeLog(this.options.decisionLog, {
-        kind: 'decision',
-        ...base,
-        request_digest: requestDigest,
-        selection: [],
-        action: 'abandoned',
-        rationale,
-        evidence_supplied: evidenceSuppliedRecord(noStageEvidence(this.notebook)),
-        automatic: false,
-        fallback: true,
-        failure_kind: failure.kind,
-        error_summary: failure.summary,
-        error: message,
-        parse_failures: parseFailures,
-        latency_ms: Math.round(performance.now() - started),
-        total_tokens: totalTokens(usage),
-        ...reasoningField(usage),
-        timer,
-        tool_lookups: toolCalls.map((call) => call.name),
-      });
       this.writeLog(this.options.traceLog, {
         kind: 'decision_trace',
         ...base,
@@ -1122,7 +1091,6 @@ export class LLMEngine extends BaseEngine {
       runSignal && operationSignal ? AbortSignal.any([runSignal, operationSignal]) : (runSignal ?? operationSignal);
     while (true) {
       await this.options.recovery?.wait(this.spec, signal);
-      this.refreshProvider();
       try {
         return await this.completeWithRetry(messages, options, generation, system, deadline?.(), operationSignal);
       } catch (error) {
@@ -1182,13 +1150,18 @@ export class LLMEngine extends BaseEngine {
     }
   }
 
-  protected override actionCommitted(
+  protected override submissionSource(automatic: boolean, substitution?: ChoiceSubstitution): SubmissionSource {
+    return substitution || this.pending?.fallback ? 'model-default' : automatic ? 'automatic' : 'model';
+  }
+
+  protected override actionSubmitted(
     request: BattleRequest,
     _context: AgentContext,
     menus: SlotMenu[],
     choices: number[],
     parts: string[],
     automatic: boolean,
+    submission: ActionSubmission,
     substitution?: ChoiceSubstitution,
   ): void {
     const pending = this.pending;
@@ -1236,7 +1209,7 @@ export class LLMEngine extends BaseEngine {
       automatic,
       fallback: pending.fallback ?? false,
     });
-    this.writeLog(this.options.decisionLog, {
+    this.holdSubmissionEvidence(submission, {
       kind: 'decision',
       game_id: this.gameId,
       series_id: this.seriesId ?? null,
@@ -1680,16 +1653,6 @@ export class LLMEngine extends BaseEngine {
   private scoreText(): string {
     const foe: Pid = this.pid === 'p1' ? 'p2' : 'p1';
     return `you ${this.seriesScore[this.pid]}, opponent ${this.seriesScore[foe]}`;
-  }
-
-  private writeLog(output: DecisionLog | undefined, row: JsonObject): void {
-    if (!output) return;
-    if (typeof output === 'function') output(row);
-    else if (Array.isArray(output)) output.push(row);
-    else {
-      fs.mkdirSync(path.dirname(output), { recursive: true });
-      fs.appendFileSync(output, `${JSON.stringify(row)}\n`, 'utf8');
-    }
   }
 }
 

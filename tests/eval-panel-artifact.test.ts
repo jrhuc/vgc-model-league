@@ -9,11 +9,7 @@ import {
   twoStageClusterEstimate,
 } from '../src/eval/counterfactual.js';
 import { requestActionCandidates } from '../src/eval/fork.js';
-import {
-  exactPublicPositionFingerprint,
-  positionSourceGroup,
-  validatePositionPanelArtifacts,
-} from '../src/eval/panel-artifact.js';
+import { exactPublicPositionFingerprint, validatePositionPanelArtifacts } from '../src/eval/panel-artifact.js';
 import { canonicalJson, canonicalJsonDigest, canonicalJsonl } from '../src/eval/serialization.js';
 import type { BattleRequest, JsonObject } from '../src/types.js';
 import { minimalPanelBattle } from './fixtures/position-panel.js';
@@ -26,9 +22,8 @@ function artifacts(): { tasks: JsonObject[]; scores: JsonObject[]; sealed: JsonO
   ];
   const tasks: JsonObject[] = [
     {
-      schema_version: 3,
+      schema_version: 1,
       task_id: 'task-a',
-      split: 'pilot',
       format: 'gen9customgame',
       phase: 'turn',
       turn: 1,
@@ -55,15 +50,14 @@ function artifacts(): { tasks: JsonObject[]; scores: JsonObject[]; sealed: JsonO
   ];
   const scores: JsonObject[] = [
     {
-      schema_version: 3,
+      schema_version: 1,
       task_id: 'task-a',
       structural_pass: true,
       structural_reasons: [],
       measurement_ready: true,
       diagnostic_flags: [],
-      eligibility_status: 'pilot-thresholds-not-frozen',
       eligibility_metrics: {
-        version: 2,
+        version: 1,
         legalActions: 2,
         qualificationDrawsPerPanel: [2, 2],
         qualificationOpponentPopulation: [1, 1],
@@ -147,11 +141,9 @@ function artifacts(): { tasks: JsonObject[]; scores: JsonObject[]; sealed: JsonO
   };
   const sealed: JsonObject[] = [
     {
-      schema_version: 3,
+      schema_version: 1,
       task_id: 'task-a',
       source_id: 'source-a',
-      source_group: 'pending',
-      selection_stratum: 'turn/early/level',
       exact_public_fingerprint: 'pending',
       source: {
         run_id: 'run',
@@ -201,7 +193,6 @@ function artifacts(): { tasks: JsonObject[]; scores: JsonObject[]; sealed: JsonO
   const stabilityPanels = table.stability as JsonObject[];
   (scores[0]!.stability as JsonObject).matrix_digests = stabilityPanels.map((entry) => entry.matrixDigest);
   (scores[0]!.measurement_panel as JsonObject).matrix_digest = (table.measurement as JsonObject).matrixDigest;
-  sealed[0]!.source_group = positionSourceGroup(sealed[0]!.source as JsonObject);
   sealed[0]!.exact_public_fingerprint = exactPublicPositionFingerprint(tasks[0] as JsonObject);
   return { tasks, scores, sealed };
 }
@@ -373,18 +364,11 @@ test('public, private-score, and sealed panel rows form one exact schema join', 
   const artifact = artifacts();
   assert.doesNotThrow(() => validatePositionPanelArtifacts(artifact.tasks, artifact.scores, artifact.sealed));
 
-  const leaked = structuredClone(artifact);
-  leaked.tasks[0]!.snapshot = '{}';
+  const extraField = structuredClone(artifact);
+  extraField.tasks[0]!.extra = true;
   assert.throws(
-    () => validatePositionPanelArtifacts(leaked.tasks, leaked.scores, leaked.sealed),
+    () => validatePositionPanelArtifacts(extraField.tasks, extraField.scores, extraField.sealed),
     /task\[0\] keys differ/,
-  );
-
-  const privateLeak = structuredClone(artifact);
-  privateLeak.scores[0]!.source = {};
-  assert.throws(
-    () => validatePositionPanelArtifacts(privateLeak.tasks, privateLeak.scores, privateLeak.sealed),
-    /score\[0\] keys differ/,
   );
 
   const brokenJoin = structuredClone(artifact);
@@ -395,10 +379,10 @@ test('public, private-score, and sealed panel rows form one exact schema join', 
   );
 });
 
-test('public, score, and sealed rows all require artifact schema version 3', () => {
+test('public, score, and sealed rows require the current artifact schema', () => {
   for (const collection of ['tasks', 'scores', 'sealed'] as const) {
     const artifact = artifacts();
-    artifact[collection][0]!.schema_version = 1;
+    artifact[collection][0]!.schema_version = 999;
     assert.throws(
       () => validatePositionPanelArtifacts(artifact.tasks, artifact.scores, artifact.sealed),
       /unsupported schema version/,
@@ -406,7 +390,7 @@ test('public, score, and sealed rows all require artifact schema version 3', () 
   }
 });
 
-test('frozen prompt, public fingerprint, source group, stratum, and panel seed are sealed joins', () => {
+test('frozen prompt, public fingerprint, played action, and panel seed are sealed joins', () => {
   const badHeader = artifacts();
   badHeader.tasks[0]!.prompt = String(badHeader.tasks[0]!.prompt).replace('Choose one listed', 'Pick one listed');
   assert.throws(
@@ -450,20 +434,6 @@ test('frozen prompt, public fingerprint, source group, stratum, and panel seed a
   assert.throws(
     () => validatePositionPanelArtifacts(changedInvariant.tasks, changedInvariant.scores, changedInvariant.sealed),
     /sealed public fingerprint/,
-  );
-
-  const badSourceGroup = artifacts();
-  badSourceGroup.sealed[0]!.source_group = 'other-source-group';
-  assert.throws(
-    () => validatePositionPanelArtifacts(badSourceGroup.tasks, badSourceGroup.scores, badSourceGroup.sealed),
-    /source_group does not match its source series/,
-  );
-
-  const badStratum = artifacts();
-  badStratum.sealed[0]!.selection_stratum = 'turn/late/far-ahead';
-  assert.throws(
-    () => validatePositionPanelArtifacts(badStratum.tasks, badStratum.scores, badStratum.sealed),
-    /selection stratum differs/,
   );
 
   const badPlayedAction = artifacts();
@@ -730,20 +700,6 @@ test('score duplicates and structural versus measurement readiness are exact', (
   assert.throws(
     () => validatePositionPanelArtifacts(staleEligibility.tasks, staleEligibility.scores, staleEligibility.sealed),
     /eligibility_metrics differ from duplicated score diagnostics/,
-  );
-
-  const unsupportedStatus = artifacts();
-  unsupportedStatus.scores[0]!.eligibility_status = 'anything-goes';
-  assert.throws(
-    () => validatePositionPanelArtifacts(unsupportedStatus.tasks, unsupportedStatus.scores, unsupportedStatus.sealed),
-    /eligibility_status is unsupported/,
-  );
-
-  const staleStatus = artifacts();
-  staleStatus.scores[0]!.eligibility_status = 'eligible-under-frozen-policy';
-  assert.throws(
-    () => validatePositionPanelArtifacts(staleStatus.tasks, staleStatus.scores, staleStatus.sealed),
-    /eligibility status differs from its public split/,
   );
 
   const staleReadiness = artifacts();

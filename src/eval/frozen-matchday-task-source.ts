@@ -240,12 +240,6 @@ function assertPythonCompactJsonValue(value: unknown, label: string): void {
   }
 }
 
-export interface FrozenMatchdayTaskSourceRowForStart {
-  condition_digest: unknown;
-  showdown_revision: unknown;
-  options: unknown;
-}
-
 /** Builds the id-one Python-client start request bytes, including its LF transport terminator. */
 export function frozenMatchdayStartRequestLine(
   row: Record<string, unknown>,
@@ -423,7 +417,7 @@ function validatedOptionsProjection(options: FrozenMatchdayRefereeOptions): {
   const seats = (['p1', 'p2'] as const).map((pid, index) => {
     const seat = options.seats[index];
     if (!seat || seat.pid !== pid || seat.construction.status !== 'accepted') {
-      throw new Error(`validated snapshot is missing the ${pid} strict construction`);
+      throw new Error(`validated options are missing the ${pid} strict construction`);
     }
     const construction = object(seat.construction, `validated ${pid} construction`);
     exactKeys(construction, ['artifact', 'packed', 'status'], `validated ${pid} construction`);
@@ -496,8 +490,7 @@ function validateCases(
         `${label} referee uses Showdown revision ${referee.showdownRevision}; expected pinned ${SHOWDOWN_LOCK.commit}`,
       );
     }
-    const snapshot = referee.snapshot();
-    const projected = validatedOptionsProjection(snapshot.options);
+    const projected = validatedOptionsProjection(referee.acceptedOptions());
     const binding = `${condition.digest}:${referee.configDigest}`;
     if (bindings.has(binding)) {
       throw new Error(`${label} duplicates a condition_digest and expected_config_digest binding`);
@@ -566,7 +559,7 @@ function manifest(
     authority: {
       implementation: 'typescript',
       referee: 'FrozenMatchdayReferee',
-      validated_options: 'FrozenMatchdayReferee.snapshot().options exact accepted-construction projection',
+      validated_options: 'FrozenMatchdayReferee.acceptedOptions() exact accepted-construction projection',
       config_digest: 'FrozenMatchdayReferee.configDigest',
       showdown_revision: manifestAuthorityRevision,
       format: first.format,
@@ -590,7 +583,7 @@ function manifest(
     },
     input: { sha256: sha256(input.bytes), bytes: input.bytes.length },
     output: {
-      file: 'task-source.jsonl',
+      file: FROZEN_MATCHDAY_TASK_SOURCE_FILES[1],
       sha256: sha256(taskSourceContent),
       bytes: taskSourceContent.length,
       rows: cases.length,
@@ -885,8 +878,8 @@ export function freezeFrozenMatchdayTaskSource(
   const manifestValue = manifest(sourceId, input, conditions.ordered, validated.cases, taskSourceContent, producer);
   const manifestContent = Buffer.from(`${canonicalJson(manifestValue)}\n`, 'utf8');
   const files = new Map<string, Buffer>([
-    ['task-source.jsonl', taskSourceContent],
-    ['manifest.json', manifestContent],
+    [FROZEN_MATCHDAY_TASK_SOURCE_FILES[1], taskSourceContent],
+    [FROZEN_MATCHDAY_TASK_SOURCE_FILES[0], manifestContent],
   ]);
   const location = outputLocation(outputRoot, input);
   assertReviewedRuntimeBinding(producer, runtimeBinding);

@@ -387,17 +387,3 @@ function snapshotRuntimeProducerAuthority(entryUrl: string): RuntimeProducerAuth
 export function captureRuntimeProducerAuthority(entryUrl: string): RuntimeProducerAuthoritySnapshot {
   return snapshotRuntimeProducerAuthority(entryUrl);
 }
-
-/** Binds a producer to its runtime entry point, complete authority, dependency lock, and reviewed Showdown bytes. */
-export function runtimeProducerAuthority(entryUrl: string): RuntimeProducerAuthority {
-  const snapshot = snapshotRuntimeProducerAuthority(entryUrl);
-  return {
-    producerDigest: snapshot.producerDigest,
-    showdownRuntimeDigest: snapshot.showdownRuntimeDigest,
-  };
-}
-
-/** Binds a producer to the complete byte authority used at runtime. */
-export function runtimeProducerDigest(entryUrl: string): string {
-  return runtimeProducerAuthority(entryUrl).producerDigest;
-}

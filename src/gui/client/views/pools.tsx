@@ -1,6 +1,13 @@
 import { useRef, useState } from 'preact/hooks';
 
-import type { AppState, CreatePoolResponse, PoolInfo, TeamMemberView, ValidateResponse } from '../../api';
+import type {
+  AppState,
+  ContributorAppState,
+  CreatePoolResponse,
+  PoolInfo,
+  TeamMemberView,
+  ValidateResponse,
+} from '../../api';
 import { Dropdown } from '../components/dropdown';
 import { api } from '../http';
 
@@ -13,7 +20,7 @@ interface Draft {
 }
 
 interface PoolsProps {
-  app: AppState;
+  app: AppState | ContributorAppState;
   onPools: (pools: PoolInfo[]) => void;
 }
 
@@ -100,11 +107,11 @@ export function PoolsView({ app, onPools }: PoolsProps) {
       <div class="page-heading">
         <div>
           <p class="eyebrow">Reusable team pools</p>
-          <h1>
+          <h2>
             Create a
             <br />
             team pool.
-          </h1>
+          </h2>
         </div>
         <p class="lede">
           Paste Showdown teambuilder exports, validate them, and save a team pool for future runs. Create a new pool
@@ -115,7 +122,7 @@ export function PoolsView({ app, onPools }: PoolsProps) {
         <aside class="panel pool-rail">
           <div class="section-head">
             <div>
-              <h2>Saved pools</h2>
+              <h3>Saved pools</h3>
               <p>Available to new runs.</p>
             </div>
           </div>
@@ -141,7 +148,7 @@ export function PoolsView({ app, onPools }: PoolsProps) {
               <p class="eyebrow" style="color:#f3ce39">
                 Validated with Pokémon Showdown
               </p>
-              <h2>Team intake</h2>
+              <h3>Team intake</h3>
               <p>
                 Build each team in the official teambuilder and paste its Import/Export text here. Every set is checked
                 against the selected format before the pool is saved.

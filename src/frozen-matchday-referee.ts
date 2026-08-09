@@ -5,15 +5,14 @@ import {
   FROZEN_BATTLE_REFEREE_PROTOCOL_VERSION,
   type FrozenBattleObservation,
   FrozenBattleReferee,
-  type FrozenBattleSnapshot,
   type FrozenBattleTerminalEvidence,
   type FrozenLegalActions,
 } from './frozen-battle-referee.js';
 import { loadShowdown, showdownCommit } from './showdown.js';
-import { type TeamBuildSubmissionValidation, validateTeamBuildSubmission } from './teambuild.js';
+import { replayTeamBuildArtifact, type TeamBuildSubmissionValidation } from './teambuild.js';
 import type { Pid } from './types.js';
 
-export const FROZEN_MATCHDAY_REFEREE_PROTOCOL_VERSION = 2 as const;
+export const FROZEN_MATCHDAY_REFEREE_PROTOCOL_VERSION = 1 as const;
 export const FROZEN_MATCHDAY_FORMAT = 'gen9championsvgc2026regmbbo3' as const;
 export const FROZEN_MATCHDAY_NOTEBOOK_LIMIT = 20_000;
 
@@ -129,35 +128,13 @@ interface FrozenReadyState {
   notebookSha256: string;
 }
 
-interface FrozenMatchdaySnapshotBody {
-  protocolVersion: typeof FROZEN_MATCHDAY_REFEREE_PROTOCOL_VERSION;
-  options: FrozenMatchdayRefereeOptions;
-  configDigest: string;
-  revision: number;
-  phase: FrozenMatchdayPhase;
-  score: FrozenMatchdayScore;
-  completedGames: FrozenBattleTerminalEvidence[];
-  completedGamePovCursors: Array<Record<Pid, number>>;
-  activeBattle: FrozenBattleSnapshot | null;
-  pendingPovLines: Record<Pid, string[]>;
-  ready: Partial<Record<Pid, FrozenReadyState>>;
-  notebooks: Record<Pid, string>;
-  privateEvidence: Record<Pid, FrozenBetweenGamePrivateRecord[]>;
-  stateHash: string;
-}
-
-export interface FrozenMatchdaySnapshot extends FrozenMatchdaySnapshotBody {
-  sha256: string;
-}
-
 export type FrozenMatchdayRefereeErrorCode =
   | 'invalid-construction'
   | 'unknown-seat'
   | 'wrong-phase'
   | 'stale-revision'
   | 'stale-state'
-  | 'duplicate-submission'
-  | 'snapshot-protocol';
+  | 'duplicate-submission';
 
 export class FrozenMatchdayRefereeError extends Error {
   constructor(
@@ -200,76 +177,35 @@ function asAccepted(value: TeamBuildSubmissionValidation, pid: Pid): AcceptedCon
 
 function assertConstruction(seat: FrozenMatchdaySeat, format: string, revision: string): FrozenMatchdayRegistration {
   const construction = asAccepted(seat.construction, seat.pid);
-  const artifact = construction.artifact;
-  const action = artifact.action;
+  let replayed: ReturnType<typeof replayTeamBuildArtifact>;
+  try {
+    replayed = replayTeamBuildArtifact(construction.artifact);
+  } catch (cause) {
+    throw new FrozenMatchdayRefereeError(
+      'invalid-construction',
+      `${seat.pid} construction failed semantic replay: ${cause instanceof Error ? cause.message : String(cause)}`,
+    );
+  }
+  const artifact = replayed.artifact;
   if (
-    artifact.schemaVersion !== 1 ||
-    artifact.status !== 'valid' ||
     artifact.executionPolicy !== 'strict' ||
     artifact.task.executionPolicy !== 'strict' ||
     artifact.task.sheetPolicy !== 'open' ||
     artifact.task.format !== format ||
     artifact.showdownCommit !== revision ||
-    !action ||
-    artifact.fallback ||
-    !artifact.validation.showdown ||
-    artifact.validation.repaired ||
-    artifact.validation.repairs.length > 0 ||
-    artifact.validation.problems.length > 0 ||
-    typeof artifact.evidence.notebook !== 'string' ||
-    artifact.evidence.notebook.length > FROZEN_MATCHDAY_NOTEBOOK_LIMIT ||
-    artifact.task.constraint.teamSize !== 6 ||
-    action.selected.length !== 6 ||
-    action.sets.length !== 6 ||
-    construction.packed !== action.packed
+    construction.packed !== replayed.packed ||
+    artifact.evidence.notebook.length > FROZEN_MATCHDAY_NOTEBOOK_LIMIT
   ) {
     throw new FrozenMatchdayRefereeError(
       'invalid-construction',
-      `${seat.pid} construction artifact is not strict and valid`,
-    );
-  }
-  const submitted = {
-    sets: action.sets.map((set, index) => ({
-      id: action.selected[index],
-      item: set.item,
-      ability: set.ability,
-      nature: set.nature,
-      moves: set.moves,
-      evs: set.evs,
-      note: set.note,
-    })),
-    ...(artifact.evidence.supplied.rationale ? { team_plan: artifact.evidence.rationale } : {}),
-    ...(artifact.evidence.supplied.notebookUpdate ? { notebook: artifact.evidence.notebook } : {}),
-  };
-  const replayed = validateTeamBuildSubmission(artifact.task, JSON.stringify(submitted), {
-    attempts: artifact.attempts,
-    createdAt: artifact.createdAt,
-  });
-  if (
-    replayed.status !== 'accepted' ||
-    replayed.packed !== construction.packed ||
-    canonicalJsonDigest(replayed.artifact) !== canonicalJsonDigest(artifact)
-  ) {
-    throw new FrozenMatchdayRefereeError(
-      'invalid-construction',
-      `${seat.pid} construction does not reproduce through the strict referee`,
-    );
-  }
-  const sets = loadShowdown().Teams.unpack(construction.packed);
-  if (sets?.length !== 6) {
-    throw new FrozenMatchdayRefereeError('invalid-construction', `${seat.pid} must register exactly six Pokémon`);
-  }
-  if (sets.some((set) => Boolean(set.teraType))) {
-    throw new FrozenMatchdayRefereeError(
-      'invalid-construction',
-      `${seat.pid} construction contains unsupported Tera metadata`,
+      `${seat.pid} construction artifact is not joined to the frozen format and open-sheet policy`,
     );
   }
   return {
     pid: seat.pid,
     name: seat.name,
-    packedTeam: construction.packed,
-    teamSha256: sha256(construction.packed),
+    packedTeam: replayed.packed,
+    teamSha256: sha256(replayed.packed),
     constructionSha256: canonicalJsonDigest(artifact),
     initialNotebook: artifact.evidence.notebook,
   };
@@ -343,11 +279,6 @@ function assertFormat(format: string): void {
   }
 }
 
-function snapshotBody(snapshot: FrozenMatchdaySnapshot): FrozenMatchdaySnapshotBody {
-  const { sha256: _digest, ...body } = snapshot;
-  return body;
-}
-
 export class FrozenMatchdayReferee {
   readonly format: string;
   readonly gameSeeds: readonly [Seed, Seed, Seed];
@@ -360,7 +291,6 @@ export class FrozenMatchdayReferee {
   private revision = 0;
   private score: FrozenMatchdayScore = { p1: 0, p2: 0, ties: 0 };
   private completedGames: FrozenBattleTerminalEvidence[] = [];
-  private completedGamePovCursors: Array<Record<Pid, number>> = [];
   private battle: FrozenBattleReferee | null;
   private pendingPovLines: Record<Pid, string[]> = { p1: [], p2: [] };
   private ready: Partial<Record<Pid, FrozenReadyState>> = {};
@@ -398,108 +328,6 @@ export class FrozenMatchdayReferee {
       p2: this.registrations.p2.initialNotebook,
     };
     this.battle = this.newBattle(0);
-  }
-
-  static restore(snapshot: FrozenMatchdaySnapshot): FrozenMatchdayReferee {
-    if (snapshot.protocolVersion !== FROZEN_MATCHDAY_REFEREE_PROTOCOL_VERSION) {
-      throw new FrozenMatchdayRefereeError('snapshot-protocol', 'snapshot protocol is not supported');
-    }
-    const body = snapshotBody(snapshot);
-    if (canonicalJsonDigest(body) !== snapshot.sha256) {
-      throw new FrozenMatchdayRefereeError('snapshot-protocol', 'snapshot digest does not match its state');
-    }
-    const referee = new FrozenMatchdayReferee(structuredClone(snapshot.options));
-    if (snapshot.configDigest !== referee.configDigest) {
-      throw new FrozenMatchdayRefereeError(
-        'snapshot-protocol',
-        'snapshot configuration does not match its construction',
-      );
-    }
-    if (!Number.isSafeInteger(snapshot.revision) || snapshot.revision < 0 || snapshot.completedGames.length > 3) {
-      throw new FrozenMatchdayRefereeError('snapshot-protocol', 'snapshot revision or game count is invalid');
-    }
-    const completedGames = structuredClone(snapshot.completedGames);
-    const completedPovValidations: Array<{
-      povLines: Record<Pid, string[]>;
-      observablePovLengths: Record<Pid, Set<number>>;
-    }> = [];
-    let completedRevisions = 0;
-    let score: FrozenMatchdayScore = { p1: 0, p2: 0, ties: 0 };
-    for (const [index, game] of completedGames.entries()) {
-      if (matchEnded(score, index)) {
-        throw new FrozenMatchdayRefereeError('snapshot-protocol', 'snapshot contains a game after the match ended');
-      }
-      const validation = referee.assertCompletedGame(game, index);
-      completedRevisions += validation.revision;
-      completedPovValidations.push(validation);
-      score = foldScore(completedGames.slice(0, index + 1));
-    }
-    referee.assertPendingPovSnapshot(snapshot, completedPovValidations);
-    if (JSON.stringify(score) !== JSON.stringify(snapshot.score)) {
-      throw new FrozenMatchdayRefereeError('snapshot-protocol', 'snapshot score does not match its games');
-    }
-    const ended = matchEnded(score, completedGames.length);
-    if (
-      (snapshot.phase === 'playing' && (!snapshot.activeBattle || ended)) ||
-      (snapshot.phase === 'between-games' && (snapshot.activeBattle || ended || completedGames.length === 0)) ||
-      (snapshot.phase === 'terminal' && (snapshot.activeBattle || !ended))
-    ) {
-      throw new FrozenMatchdayRefereeError('snapshot-protocol', 'snapshot phase does not match its games');
-    }
-    if (!['playing', 'between-games', 'terminal'].includes(snapshot.phase)) {
-      throw new FrozenMatchdayRefereeError('snapshot-protocol', 'snapshot phase is invalid');
-    }
-    const battle = snapshot.activeBattle ? FrozenBattleReferee.restore(structuredClone(snapshot.activeBattle)) : null;
-    let activeRevision = 0;
-    if (battle && snapshot.activeBattle) {
-      const expectedSeed = referee.gameSeeds[completedGames.length]!;
-      if (
-        battle.format !== referee.format ||
-        JSON.stringify(battle.seed) !== JSON.stringify(expectedSeed) ||
-        battle.seats.some(
-          (seat) =>
-            seat.name !== referee.registrations[seat.pid].name ||
-            seat.packedTeam !== referee.registrations[seat.pid].packedTeam,
-        )
-      ) {
-        throw new FrozenMatchdayRefereeError('snapshot-protocol', 'active battle does not match its registration');
-      }
-      activeRevision = referee.assertActiveBattle(snapshot.activeBattle, completedGames.length, battle);
-    }
-    const intervalTransitions =
-      snapshot.phase === 'playing' ? completedGames.length : Math.max(0, completedGames.length - 1);
-    if (snapshot.revision !== completedRevisions + activeRevision + intervalTransitions) {
-      throw new FrozenMatchdayRefereeError('snapshot-protocol', 'snapshot revision does not match its transitions');
-    }
-    const ready = structuredClone(snapshot.ready);
-    if (snapshot.phase !== 'between-games' && Object.keys(ready).length > 0) {
-      throw new FrozenMatchdayRefereeError('snapshot-protocol', 'snapshot has readiness outside an interval');
-    }
-    for (const [rawPid, value] of Object.entries(ready)) {
-      if (
-        !exactPid(rawPid) ||
-        !value ||
-        typeof value.notebook !== 'string' ||
-        value.notebookSha256 !== sha256(value.notebook)
-      ) {
-        throw new FrozenMatchdayRefereeError('snapshot-protocol', 'snapshot readiness evidence is invalid');
-      }
-    }
-    referee.assertPrivateSnapshot(snapshot, completedGames.length);
-    referee.revision = snapshot.revision;
-    referee.phase = snapshot.phase;
-    referee.score = score;
-    referee.completedGames = completedGames;
-    referee.completedGamePovCursors = structuredClone(snapshot.completedGamePovCursors);
-    referee.battle = battle;
-    referee.pendingPovLines = structuredClone(snapshot.pendingPovLines);
-    referee.ready = ready;
-    referee.notebooks = structuredClone(snapshot.notebooks);
-    referee.privateEvidence = structuredClone(snapshot.privateEvidence);
-    if (referee.stateHash() !== snapshot.stateHash) {
-      throw new FrozenMatchdayRefereeError('snapshot-protocol', 'snapshot state hash does not match its state');
-    }
-    return referee;
   }
 
   observe(pid: Pid): FrozenMatchdayObservation {
@@ -547,7 +375,7 @@ export class FrozenMatchdayReferee {
     if (this.phase !== 'playing')
       throw new FrozenMatchdayRefereeError('wrong-phase', 'battle actions are accepted only while playing');
     const battle = this.requireBattle();
-    const inner = battle.snapshot();
+    const inner = battle.currentState();
     const result = battle.submit(pid, command, inner.revision, inner.stateHash);
     if (!result.advanced) return this.submissionResult(false);
     this.revision += 1;
@@ -612,24 +440,12 @@ export class FrozenMatchdayReferee {
     };
   }
 
-  snapshot(): FrozenMatchdaySnapshot {
-    const body: FrozenMatchdaySnapshotBody = {
-      protocolVersion: FROZEN_MATCHDAY_REFEREE_PROTOCOL_VERSION,
-      options: structuredClone(this.options),
-      configDigest: this.configDigest,
-      revision: this.revision,
-      phase: this.phase,
-      score: copyScore(this.score),
-      completedGames: structuredClone(this.completedGames),
-      completedGamePovCursors: structuredClone(this.completedGamePovCursors),
-      activeBattle: this.battle?.snapshot() ?? null,
-      pendingPovLines: structuredClone(this.pendingPovLines),
-      ready: structuredClone(this.ready),
-      notebooks: structuredClone(this.notebooks),
-      privateEvidence: structuredClone(this.privateEvidence),
-      stateHash: this.stateHash(),
-    };
-    return { ...body, sha256: canonicalJsonDigest(body) };
+  acceptedOptions(): FrozenMatchdayRefereeOptions {
+    return structuredClone(this.options);
+  }
+
+  currentState(): { revision: number; stateHash: string } {
+    return { revision: this.revision, stateHash: this.stateHash() };
   }
 
   terminalEvidence(): FrozenMatchdayTerminalEvidence | null {
@@ -657,202 +473,6 @@ export class FrozenMatchdayReferee {
     };
   }
 
-  private replayActions(
-    actions: ReadonlyArray<FrozenBattleTerminalEvidence['submittedActions'][number]>,
-    index: number,
-    onObservableBoundary?: (replay: FrozenBattleReferee) => void,
-  ): FrozenBattleReferee {
-    const replay = this.newBattle(index);
-    try {
-      onObservableBoundary?.(replay);
-      for (const action of actions) {
-        const state = replay.snapshot();
-        if (action.decisionRevision !== state.revision || action.stateHash !== state.stateHash) {
-          throw new Error('action provenance is invalid');
-        }
-        const result = replay.submit(action.pid, action.command, state.revision, state.stateHash);
-        if (!result.terminal) onObservableBoundary?.(replay);
-      }
-    } catch (error) {
-      throw new FrozenMatchdayRefereeError(
-        'snapshot-protocol',
-        `game ${index + 1} action replay failed: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
-    return replay;
-  }
-
-  private assertCompletedGame(
-    evidence: FrozenBattleTerminalEvidence,
-    index: number,
-  ): {
-    revision: number;
-    povLines: Record<Pid, string[]>;
-    observablePovLengths: Record<Pid, Set<number>>;
-  } {
-    const observablePovLengths: Record<Pid, Set<number>> = { p1: new Set([0]), p2: new Set([0]) };
-    const replay = this.replayActions(evidence.submittedActions, index, (boundary) => {
-      const native = this.nativePovObservation(boundary);
-      observablePovLengths.p1.add(native.lengths.p1);
-      observablePovLengths.p2.add(native.lengths.p2);
-    });
-    const reproduced = replay.terminalEvidence();
-    if (!reproduced || JSON.stringify(reproduced) !== JSON.stringify(evidence)) {
-      throw new FrozenMatchdayRefereeError('snapshot-protocol', `game ${index + 1} does not replay to its evidence`);
-    }
-    const terminal = this.nativePovObservation(replay);
-    return {
-      revision: replay.snapshot().revision,
-      povLines: terminal.lines,
-      observablePovLengths,
-    };
-  }
-
-  private nativePovObservation(referee: FrozenBattleReferee): {
-    lines: Record<Pid, string[]>;
-    lengths: Record<Pid, number>;
-  } {
-    const clone = FrozenBattleReferee.restore(structuredClone(referee.snapshot()));
-    const lines = {
-      p1: clone.observe('p1').povLines,
-      p2: clone.observe('p2').povLines,
-    };
-    const observed = clone.snapshot();
-    return { lines, lengths: { ...observed.routing.povCursors } };
-  }
-
-  private assertPendingPovSnapshot(
-    snapshot: FrozenMatchdaySnapshot,
-    completedPovValidations: ReadonlyArray<{
-      povLines: Record<Pid, string[]>;
-      observablePovLengths: Record<Pid, Set<number>>;
-    }>,
-  ): void {
-    const cursors = snapshot.completedGamePovCursors;
-    if (!Array.isArray(cursors) || cursors.length !== completedPovValidations.length) {
-      throw new FrozenMatchdayRefereeError('snapshot-protocol', 'snapshot completed-game POV cursors are invalid');
-    }
-    const terminalDeltas = cursors.map((gameCursors, gameIndex): Record<Pid, string[]> => {
-      if (!gameCursors || JSON.stringify(Object.keys(gameCursors).sort()) !== JSON.stringify(['p1', 'p2'])) {
-        throw new FrozenMatchdayRefereeError('snapshot-protocol', 'snapshot completed-game POV cursors are invalid');
-      }
-      const validation = completedPovValidations[gameIndex]!;
-      for (const pid of ['p1', 'p2'] as const) {
-        const cursor = gameCursors[pid];
-        if (!Number.isSafeInteger(cursor) || !validation.observablePovLengths[pid].has(cursor)) {
-          throw new FrozenMatchdayRefereeError('snapshot-protocol', 'snapshot completed-game POV cursors are invalid');
-        }
-      }
-      return {
-        p1: validation.povLines.p1.slice(gameCursors.p1),
-        p2: validation.povLines.p2.slice(gameCursors.p2),
-      };
-    });
-
-    const pending = snapshot.pendingPovLines;
-    if (!pending || JSON.stringify(Object.keys(pending).sort()) !== JSON.stringify(['p1', 'p2'])) {
-      throw new FrozenMatchdayRefereeError('snapshot-protocol', 'snapshot pending POV queues are invalid');
-    }
-    for (const pid of ['p1', 'p2'] as const) {
-      const lines = pending[pid];
-      if (!Array.isArray(lines) || lines.some((line) => typeof line !== 'string')) {
-        throw new FrozenMatchdayRefereeError('snapshot-protocol', 'snapshot pending POV queues are invalid');
-      }
-      const possible =
-        lines.length === 0 ||
-        terminalDeltas.some(
-          (_game, start) =>
-            JSON.stringify(terminalDeltas.slice(start).flatMap((game) => game[pid])) === JSON.stringify(lines),
-        );
-      if (!possible) {
-        throw new FrozenMatchdayRefereeError(
-          'snapshot-protocol',
-          `snapshot pending POV queue for ${pid} does not match completed native observations`,
-        );
-      }
-    }
-  }
-
-  private assertActiveBattle(snapshot: FrozenBattleSnapshot, index: number, restored: FrozenBattleReferee): number {
-    const replay = this.replayActions(snapshot.submittedActions, index);
-    try {
-      for (const [rawPid, command] of Object.entries(snapshot.stagedActions)) {
-        const pid = exactPid(rawPid);
-        if (!pid || typeof command !== 'string') throw new Error('staged action is invalid');
-        const state = replay.snapshot();
-        const result = replay.submit(pid, command, state.revision, state.stateHash);
-        if (result.advanced) throw new Error('staged actions contain a complete joint decision');
-      }
-    } catch (error) {
-      throw new FrozenMatchdayRefereeError(
-        'snapshot-protocol',
-        `game ${index + 1} staged action replay failed: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
-    const expected = replay.snapshot();
-    if (
-      replay.terminalEvidence() ||
-      restored.terminalEvidence() ||
-      expected.revision !== snapshot.revision ||
-      expected.stateHash !== snapshot.stateHash ||
-      expected.winnerPid !== snapshot.winnerPid ||
-      JSON.stringify(expected.submittedActions) !== JSON.stringify(snapshot.submittedActions) ||
-      JSON.stringify(expected.stagedActions) !== JSON.stringify(snapshot.stagedActions)
-    ) {
-      throw new FrozenMatchdayRefereeError('snapshot-protocol', `game ${index + 1} active state does not replay`);
-    }
-    return expected.revision;
-  }
-
-  private assertPrivateSnapshot(snapshot: FrozenMatchdaySnapshot, completedGameCount: number): void {
-    if (!snapshot.notebooks || !snapshot.privateEvidence) {
-      throw new FrozenMatchdayRefereeError('snapshot-protocol', 'snapshot private evidence is missing');
-    }
-    const expectedIntervals = snapshot.phase === 'playing' ? completedGameCount : Math.max(0, completedGameCount - 1);
-    for (const pid of ['p1', 'p2'] as const) {
-      const records = snapshot.privateEvidence[pid];
-      if (!Array.isArray(records) || records.length !== expectedIntervals) {
-        throw new FrozenMatchdayRefereeError('snapshot-protocol', 'snapshot private evidence count is invalid');
-      }
-      let current = this.registrations[pid].initialNotebook;
-      for (const [index, record] of records.entries()) {
-        if (
-          record.gameNumber !== index + 1 ||
-          typeof record.supplied !== 'boolean' ||
-          typeof record.notebook !== 'string' ||
-          record.notebook.length > FROZEN_MATCHDAY_NOTEBOOK_LIMIT ||
-          record.notebookSha256 !== sha256(record.notebook)
-        ) {
-          throw new FrozenMatchdayRefereeError('snapshot-protocol', 'snapshot private evidence is invalid');
-        }
-        current = record.notebook;
-      }
-      if (snapshot.notebooks[pid] !== current) {
-        throw new FrozenMatchdayRefereeError(
-          'snapshot-protocol',
-          'snapshot current notebook does not match its evidence',
-        );
-      }
-      const staged = snapshot.ready[pid];
-      if (
-        staged &&
-        (typeof staged.supplied !== 'boolean' ||
-          typeof staged.notebook !== 'string' ||
-          staged.notebook.length > FROZEN_MATCHDAY_NOTEBOOK_LIMIT ||
-          staged.notebookSha256 !== sha256(staged.notebook) ||
-          (!staged.supplied && staged.notebook !== current))
-      ) {
-        throw new FrozenMatchdayRefereeError('snapshot-protocol', 'snapshot staged notebook is invalid');
-      }
-    }
-    if (Object.keys(snapshot.ready).length > 1) {
-      throw new FrozenMatchdayRefereeError(
-        'snapshot-protocol',
-        'snapshot contains an uncommitted joint acknowledgement',
-      );
-    }
-  }
-
   private newBattle(index: number): FrozenBattleReferee {
     const seed = this.gameSeeds[index];
     if (!seed) throw new Error('no scheduled seed remains');
@@ -869,8 +489,6 @@ export class FrozenMatchdayReferee {
 
   private archiveGame(evidence: FrozenBattleTerminalEvidence): void {
     const battle = this.requireBattle();
-    const terminalSnapshot = battle.snapshot();
-    this.completedGamePovCursors.push({ ...terminalSnapshot.routing.povCursors });
     for (const pid of ['p1', 'p2'] as const) {
       const observation = battle.observe(pid);
       this.pendingPovLines[pid].push(...observation.povLines);
@@ -895,7 +513,7 @@ export class FrozenMatchdayReferee {
       gameNumber: this.gameNumber(),
       score: this.score,
       completedGameDigests: this.completedGames.map((game) => canonicalJsonDigest(game)),
-      activeBattleStateHash: this.battle?.snapshot().stateHash ?? null,
+      activeBattleStateHash: this.battle?.currentState().stateHash ?? null,
     });
   }
 

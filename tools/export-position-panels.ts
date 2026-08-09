@@ -3,23 +3,34 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-
+import { assertGameRecordCorpusDigest, type GameRecord, loadGameRecords, verifyGame } from '../src/eval/corpus.js';
 import {
   type CounterfactualOptions,
-  counterfactualProtocol,
   EXHAUSTIVE_PANEL_PROTOCOL,
   evaluateActionTable,
+  exhaustiveCounterfactualProtocol,
+  validateCounterfactualOptions,
 } from '../src/eval/counterfactual.js';
 import { POSITION_ELIGIBILITY_METRICS_VERSION, positionEligibilityMetrics } from '../src/eval/eligibility.js';
-import { ACTION_PROTOCOL, openPosition, type Position, pendingSides } from '../src/eval/fork.js';
+import { ACTION_PROTOCOL, openPosition, positionDigest } from '../src/eval/fork.js';
 import {
   exactPublicPositionFingerprint,
-  POSITION_SOURCE_GROUP_PROTOCOL,
-  positionSourceGroup,
+  POSITION_PANEL_ARTIFACT_SCHEMA_VERSION,
   validatePositionPanelArtifacts,
 } from '../src/eval/panel-artifact.js';
-import { validatePilotManifestV2 } from '../src/eval/position-artifact-manifest.js';
-import { anonymiseRequest, POSITION_SET_SCHEMA_VERSION } from '../src/eval/positions.js';
+import {
+  CANDIDATE_POSITION_MANIFEST_SCHEMA_VERSION,
+  CANDIDATE_POSITION_SELECTION_RULES,
+  validateCandidateManifest,
+} from '../src/eval/position-artifact-manifest.js';
+import {
+  anonymiseLog,
+  anonymiseRequest,
+  gameOf,
+  readCandidates,
+  type SelectionOptions,
+  selectPositions,
+} from '../src/eval/positions.js';
 import {
   CANONICAL_JSON_PROTOCOL,
   canonicalJson,
@@ -29,22 +40,15 @@ import {
 import { POSITION_TASK_PROTOCOL, renderPositionTask, validateTaskScoreJoin } from '../src/eval/task.js';
 import { DATA_DIR, defaultPsDir } from '../src/paths.js';
 import { showdownCommit } from '../src/showdown.js';
-import type { BattleRequest, JsonObject, Pid } from '../src/types.js';
+import type { JsonObject, Pid } from '../src/types.js';
 
-interface Settings extends CounterfactualOptions {
-  set: string;
-  privateSet: string;
+interface Settings extends CounterfactualOptions, Omit<SelectionOptions, 'seed'> {
+  graded: string;
+  selectionSeed?: string;
+  recordsPath?: string;
+  runsDir?: string;
   out: string;
   privateOut: string;
-}
-
-interface OutputRoot {
-  directory: string;
-  realDirectory: string;
-  device: number;
-  inode: number;
-  directoryMode: number;
-  fileMode: number;
 }
 
 const PUBLIC_DIRECTORY_MODE = 0o755;
@@ -67,124 +71,48 @@ function assertDisjointPaths(publicRoot: string, privateRoot: string, resolution
   }
 }
 
-function secureOutputDirectory(directory: string, directoryMode: number, fileMode: number): OutputRoot {
+function outputDirectory(directory: string, mode: number): string {
   const requested = path.resolve(directory);
-  let existing = requested;
-  const missingComponents: string[] = [];
-  let existingStatus: fs.Stats;
-  for (;;) {
-    try {
-      existingStatus = fs.lstatSync(existing);
-      break;
-    } catch (error) {
-      if (errorCode(error) !== 'ENOENT') throw error;
-      const parent = path.dirname(existing);
-      if (parent === existing) throw new Error(`output root has no existing filesystem ancestor: ${requested}`);
-      missingComponents.unshift(path.basename(existing));
-      existing = parent;
-    }
-  }
-  if (!missingComponents.length && (existingStatus.isSymbolicLink() || !existingStatus.isDirectory())) {
+  fs.mkdirSync(requested, { recursive: true, mode });
+  const status = fs.lstatSync(requested);
+  if (status.isSymbolicLink() || !status.isDirectory()) {
     throw new Error(`output root must be a non-symlink directory: ${requested}`);
   }
-
-  const canonicalParent = fs.realpathSync.native(existing);
-  let current = canonicalParent;
-  let parentStatus = fs.statSync(canonicalParent);
-  if (!parentStatus.isDirectory()) {
-    throw new Error(`nearest existing output parent must resolve to a directory: ${existing}`);
-  }
-  for (const component of missingComponents) {
-    const checkedParent = fs.lstatSync(current);
-    if (
-      checkedParent.isSymbolicLink() ||
-      !checkedParent.isDirectory() ||
-      checkedParent.dev !== parentStatus.dev ||
-      checkedParent.ino !== parentStatus.ino
-    ) {
-      throw new Error(`physical output parent changed while creating the root: ${current}`);
-    }
-    current = path.join(current, component);
-    try {
-      fs.mkdirSync(current, { mode: directoryMode });
-    } catch (error) {
-      if (errorCode(error) !== 'EEXIST') throw error;
-    }
-    const created = fs.lstatSync(current);
-    if (created.isSymbolicLink()) {
-      throw new Error(`created output root component must not be a symlink: ${current}`);
-    }
-    if (!created.isDirectory()) {
-      throw new Error(`created output root component must be a directory: ${current}`);
-    }
-    fs.chmodSync(current, directoryMode);
-    parentStatus = fs.lstatSync(current);
-  }
-
-  fs.chmodSync(current, directoryMode);
-  const beforeRealpath = fs.lstatSync(current);
-  if (beforeRealpath.isSymbolicLink() || !beforeRealpath.isDirectory()) {
-    throw new Error(`output root must remain a non-symlink directory: ${current}`);
-  }
-  const realDirectory = fs.realpathSync.native(current);
-  const afterRealpath = fs.lstatSync(current);
-  if (
-    afterRealpath.isSymbolicLink() ||
-    !afterRealpath.isDirectory() ||
-    afterRealpath.dev !== beforeRealpath.dev ||
-    afterRealpath.ino !== beforeRealpath.ino
-  ) {
-    throw new Error(`output root changed while it was resolved: ${current}`);
-  }
-  if ((afterRealpath.mode & 0o777) !== directoryMode) {
-    throw new Error(`output root has an unexpected mode after chmod: ${current}`);
-  }
-  return {
-    directory: realDirectory,
-    realDirectory,
-    device: afterRealpath.dev,
-    inode: afterRealpath.ino,
-    directoryMode,
-    fileMode,
-  };
+  fs.chmodSync(requested, mode);
+  return fs.realpathSync.native(requested);
 }
 
-function prepareOutputRoots(
+function prepareOutputDirectories(
   publicDirectory: string,
   privateDirectory: string,
 ): {
-  publicRoot: OutputRoot;
-  privateRoot: OutputRoot;
+  publicDirectory: string;
+  privateDirectory: string;
 } {
-  const publicRoot = secureOutputDirectory(publicDirectory, PUBLIC_DIRECTORY_MODE, PUBLIC_FILE_MODE);
-  const privateRoot = secureOutputDirectory(privateDirectory, PRIVATE_DIRECTORY_MODE, PRIVATE_FILE_MODE);
-  assertDisjointPaths(publicRoot.realDirectory, privateRoot.realDirectory, 'after realpath resolution');
-  if (publicRoot.device === privateRoot.device && publicRoot.inode === privateRoot.inode) {
-    throw new Error('public and private output roots must not be realpath aliases');
-  }
-  return { publicRoot, privateRoot };
-}
-
-function verifyOutputRoot(root: OutputRoot): void {
-  const checked = secureOutputDirectory(root.directory, root.directoryMode, root.fileMode);
-  if (checked.realDirectory !== root.realDirectory || checked.device !== root.device || checked.inode !== root.inode) {
-    throw new Error(`output root changed during publication: ${root.directory}`);
-  }
+  assertDisjointPaths(publicDirectory, privateDirectory, 'lexically');
+  const publicRoot = outputDirectory(publicDirectory, PUBLIC_DIRECTORY_MODE);
+  const privateRoot = outputDirectory(privateDirectory, PRIVATE_DIRECTORY_MODE);
+  assertDisjointPaths(publicRoot, privateRoot, 'after realpath resolution');
+  return { publicDirectory: publicRoot, privateDirectory: privateRoot };
 }
 
 function parse(argv: string[]): Settings {
   const out = path.join(DATA_DIR, 'records', 'position-panels');
   const settings: Settings = {
-    set: path.join(DATA_DIR, 'records', 'position-set.json'),
-    privateSet: path.join(DATA_DIR, 'records', 'private', 'position-set.json'),
+    graded: path.join(DATA_DIR, 'records', 'positions.jsonl'),
     out,
     privateOut: path.join(DATA_DIR, 'records', 'private', 'position-panels'),
   };
   for (let index = 0; index < argv.length; index += 1) {
     const flag = argv[index];
     const value = argv[index + 1];
-    if (flag === '--set' && value) settings.set = path.resolve(value);
-    else if (flag === '--private-set' && value) settings.privateSet = path.resolve(value);
+    if (flag === '--graded' && value) settings.graded = path.resolve(value);
+    else if (flag === '--records' && value) settings.recordsPath = path.resolve(value);
+    else if (flag === '--runs-dir' && value) settings.runsDir = path.resolve(value);
+    else if (flag === '--size' && value) settings.size = Number(value);
+    else if (flag === '--selection-seed' && value) settings.selectionSeed = value;
+    else if (flag === '--per-game' && value) settings.perGame = Number(value);
+    else if (flag === '--formats' && value) settings.formats = value.split(',');
     else if (flag === '--out' && value) settings.out = path.resolve(value);
     else if (flag === '--private-out' && value) settings.privateOut = path.resolve(value);
     else if (flag === '--horizon' && value)
@@ -197,20 +125,15 @@ function parse(argv: string[]): Settings {
     index += 1;
   }
   for (const [name, value] of [
-    ['luck', settings.luckSamples],
-    ['opponents', settings.opponentSamples],
+    ['size', settings.size],
+    ['per-game', settings.perGame],
   ] as const) {
     if (value !== undefined && (!Number.isInteger(value) || value < 1)) {
       throw new Error(`--${name} must be a positive integer`);
     }
   }
-  if (
-    settings.horizon !== undefined &&
-    settings.horizon !== Number.POSITIVE_INFINITY &&
-    (!Number.isInteger(settings.horizon) || settings.horizon < 0)
-  ) {
-    throw new Error('--horizon must be a non-negative integer or end');
-  }
+  if (settings.formats?.some((format) => !format.trim())) throw new Error('--formats cannot contain an empty format');
+  validateCounterfactualOptions(settings);
   assertDisjointPaths(settings.out, settings.privateOut, 'lexically');
   return settings;
 }
@@ -221,6 +144,10 @@ function digest(value: unknown): string {
 
 function fileDigest(file: string): string {
   return crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+}
+
+function contentDigest(content: string): string {
+  return crypto.createHash('sha256').update(content, 'utf8').digest('hex');
 }
 
 function digestParts(parts: Iterable<string>): string {
@@ -241,7 +168,7 @@ function runtimeFiles(tool: string): string[] {
     ...visit(sourceRoot),
     path.resolve(path.dirname(tool), '../../package.json'),
     path.resolve(path.dirname(tool), '../../pnpm-lock.yaml'),
-  ].sort((a, b) => Buffer.from(a).compare(Buffer.from(b)));
+  ].sort((a, b) => Buffer.compare(Buffer.from(a), Buffer.from(b)));
 }
 
 function evaluatorDigest(): string {
@@ -261,271 +188,225 @@ function readObject(file: string): JsonObject {
   return value as JsonObject;
 }
 
-function rows(value: JsonObject, file: string): JsonObject[] {
-  if (!Array.isArray(value.positions)) throw new Error(`${file} has no positions array`);
-  return value.positions.map((entry) => {
-    if (!entry || typeof entry !== 'object' || Array.isArray(entry))
-      throw new Error(`${file} has a malformed position`);
-    return entry as JsonObject;
-  });
+function readJsonl(file: string): JsonObject[] {
+  return fs
+    .readFileSync(file, 'utf8')
+    .split('\n')
+    .filter((line) => line.trim())
+    .map((line) => JSON.parse(line) as JsonObject);
 }
 
-type ExistingTargetState = 'missing' | 'identical' | 'different';
-
-function assertRegularTarget(file: string, status: fs.Stats, expectedMode: number): void {
-  if (status.isSymbolicLink() || !status.isFile()) {
-    throw new Error(`pilot artifact target must be a regular file and not a symbolic link: ${file}`);
-  }
-  if (status.nlink !== 1 || (status.mode & 0o777) !== expectedMode) {
-    throw new Error(`pilot artifact target has an unexpected mode or hard-link alias: ${file}`);
-  }
+function rowGame(row: JsonObject): string {
+  return `${row.run_id}:${row.series_id}:${row.game_number}`;
 }
 
-function existingTargetState(file: string, expected: Buffer, expectedMode: number): ExistingTargetState {
-  for (let attempt = 0; attempt < 4; attempt += 1) {
-    let initial: fs.Stats;
-    try {
-      initial = fs.lstatSync(file);
-    } catch (error) {
-      if (errorCode(error) === 'ENOENT') return 'missing';
-      throw error;
-    }
-    assertRegularTarget(file, initial, expectedMode);
-    let descriptor: number;
-    try {
-      descriptor = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
-    } catch (error) {
-      if (errorCode(error) === 'ENOENT') continue;
-      if (errorCode(error) === 'ELOOP') {
-        throw new Error(`pilot artifact target must not be a symbolic link: ${file}`);
-      }
-      throw error;
-    }
-    let opened: fs.Stats;
-    let finished: fs.Stats;
-    let actual: Buffer;
-    try {
-      opened = fs.fstatSync(descriptor);
-      assertRegularTarget(file, opened, expectedMode);
-      actual = fs.readFileSync(descriptor);
-      finished = fs.fstatSync(descriptor);
-    } finally {
-      fs.closeSync(descriptor);
-    }
-    let current: fs.Stats;
-    try {
-      current = fs.lstatSync(file);
-    } catch (error) {
-      if (errorCode(error) === 'ENOENT') continue;
-      throw error;
-    }
-    assertRegularTarget(file, current, expectedMode);
-    if (
-      initial.dev !== opened.dev ||
-      initial.ino !== opened.ino ||
-      opened.dev !== current.dev ||
-      opened.ino !== current.ino ||
-      opened.size !== finished.size ||
-      opened.mtimeMs !== finished.mtimeMs ||
-      opened.ctimeMs !== finished.ctimeMs ||
-      finished.size !== current.size ||
-      finished.mtimeMs !== current.mtimeMs ||
-      finished.ctimeMs !== current.ctimeMs
-    ) {
+function completedPositionScores(rows: JsonObject[], manifest: JsonObject): JsonObject[] {
+  const expectedGames = Number(manifest.source_games);
+  if (!Number.isInteger(expectedGames) || expectedGames < 0) {
+    throw new Error('graded manifest has no valid source_games');
+  }
+  const markers = new Map<string, JsonObject>();
+  const scores = new Map<string, JsonObject>();
+  const perGame = new Map<string, Set<string>>();
+  for (const row of rows) {
+    if (row.kind === 'game_complete' && row.complete === true) {
+      const game = rowGame(row);
+      if (markers.has(game)) throw new Error(`graded input has duplicate completion marker for ${game}`);
+      markers.set(game, row);
       continue;
     }
-    return actual.equals(expected) ? 'identical' : 'different';
+    if (row.kind !== 'position_score') continue;
+    if (JSON.stringify(row.counterfactual) !== JSON.stringify(manifest.counterfactual)) {
+      throw new Error(`position score ${rowGame(row)} mixes a different counterfactual protocol`);
+    }
+    const game = rowGame(row);
+    const key = `${game}#${row.position_index}#${row.pid}`;
+    const prior = scores.get(key);
+    if (prior && JSON.stringify(prior) !== JSON.stringify(row)) throw new Error(`conflicting duplicate score ${key}`);
+    scores.set(key, row);
+    const keys = perGame.get(game) ?? new Set<string>();
+    keys.add(key);
+    perGame.set(game, keys);
   }
-  throw new Error(`pilot artifact target changed while it was being checked: ${file}`);
+  if (markers.size !== expectedGames) {
+    throw new Error(`graded input is incomplete: ${markers.size} of ${expectedGames} source games are complete`);
+  }
+  for (const [game, keys] of perGame) {
+    const marker = markers.get(game);
+    if (!marker) throw new Error(`graded input has scores for incomplete game ${game}`);
+    if (Number(marker.decisions) !== keys.size) {
+      throw new Error(`completion marker for ${game} reports ${marker.decisions} scores but ${keys.size} are present`);
+    }
+  }
+  return [...scores.values()];
 }
 
-function stageArtifact(root: OutputRoot, file: string, content: Buffer): string {
-  for (let attempt = 0; attempt < 8; attempt += 1) {
-    const temporary = path.join(
-      root.directory,
-      `.${path.basename(file)}.${process.pid}.${crypto.randomBytes(12).toString('hex')}.tmp`,
-    );
-    let descriptor: number;
-    try {
-      descriptor = fs.openSync(
-        temporary,
-        fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW,
-        root.fileMode,
-      );
-    } catch (error) {
-      if (errorCode(error) === 'EEXIST') continue;
-      throw error;
-    }
-    try {
-      fs.fchmodSync(descriptor, root.fileMode);
-      fs.writeFileSync(descriptor, content);
-      fs.fsyncSync(descriptor);
-      assertRegularTarget(temporary, fs.fstatSync(descriptor), root.fileMode);
-    } catch (error) {
-      fs.closeSync(descriptor);
-      fs.unlinkSync(temporary);
-      throw error;
-    }
-    fs.closeSync(descriptor);
-    return temporary;
-  }
-  throw new Error(`could not allocate a temporary pilot artifact beside ${file}`);
+function gameKey(record: GameRecord): string {
+  return `${record.runId}:${record.seriesId}:${record.gameNumber}`;
 }
 
-function publishImmutable(root: OutputRoot, name: string, content: string): void {
-  if (path.basename(name) !== name) throw new Error(`pilot artifact name must be a basename: ${name}`);
-  verifyOutputRoot(root);
-  const file = path.join(root.directory, name);
+function reopenedGradedCorpus(settings: Settings, manifest: JsonObject): GameRecord[] {
+  const scope = manifest.scope;
+  if (!scope || typeof scope !== 'object' || Array.isArray(scope)) {
+    throw new Error('graded manifest has no valid scope');
+  }
+  const scopeObject = scope as JsonObject;
+  const expectedScopeKeys = ['limit', 'modes', 'records_path', 'runs_dir'];
+  if (
+    JSON.stringify(Object.keys(scopeObject).sort()) !== JSON.stringify(expectedScopeKeys) ||
+    (scopeObject.modes !== null &&
+      (!Array.isArray(scopeObject.modes) || scopeObject.modes.some((mode) => typeof mode !== 'string' || !mode))) ||
+    (scopeObject.limit !== null && (!Number.isSafeInteger(scopeObject.limit) || Number(scopeObject.limit) < 1)) ||
+    (scopeObject.records_path !== null &&
+      (typeof scopeObject.records_path !== 'string' || !scopeObject.records_path)) ||
+    (scopeObject.runs_dir !== null && (typeof scopeObject.runs_dir !== 'string' || !scopeObject.runs_dir))
+  ) {
+    throw new Error('graded manifest scope is malformed');
+  }
+  const records = loadGameRecords({
+    ...(scopeObject.modes === null ? {} : { modes: scopeObject.modes as string[] }),
+    ...(settings.recordsPath
+      ? { recordsPath: settings.recordsPath }
+      : scopeObject.records_path === null
+        ? {}
+        : { recordsPath: String(scopeObject.records_path) }),
+    ...(settings.runsDir
+      ? { runsDir: settings.runsDir }
+      : scopeObject.runs_dir === null
+        ? {}
+        : { runsDir: String(scopeObject.runs_dir) }),
+    ...(settings.psDir ? { psDir: settings.psDir } : {}),
+  }).slice(0, scopeObject.limit === null ? Number.POSITIVE_INFINITY : Number(scopeObject.limit));
+  const expectedGames = manifest.source_games;
+  const expectedDigest = manifest.source_digest;
+  if (
+    !Number.isSafeInteger(expectedGames) ||
+    Number(expectedGames) < 0 ||
+    typeof expectedDigest !== 'string' ||
+    records.length !== expectedGames
+  ) {
+    throw new Error('reopened source corpus does not match the graded manifest');
+  }
+  assertGameRecordCorpusDigest(records, expectedDigest, 'reopened source corpus and graded manifest');
+  return records;
+}
+
+function publishImmutable(directory: string, name: string, content: string, mode: number): void {
+  if (path.basename(name) !== name) throw new Error(`candidate artifact name must be a basename: ${name}`);
+  const file = path.join(directory, name);
   const expected = Buffer.from(content, 'utf8');
-  const initial = existingTargetState(file, expected, root.fileMode);
-  if (initial === 'identical') return;
-  if (initial === 'different') {
-    throw new Error(`refusing to replace non-identical pilot artifact: ${file}`);
-  }
-  const temporary = stageArtifact(root, file, expected);
-  let published = false;
-  let publicationFailed = false;
-  let publicationError: unknown;
-  try {
-    for (let attempt = 0; attempt < 4; attempt += 1) {
-      verifyOutputRoot(root);
-      const current = existingTargetState(file, expected, root.fileMode);
-      if (current === 'identical') {
-        published = true;
-        break;
-      }
-      if (current === 'different') {
-        throw new Error(`refusing to replace non-identical pilot artifact: ${file}`);
-      }
-      try {
-        fs.linkSync(temporary, file);
-        published = true;
-        break;
-      } catch (error) {
-        if (errorCode(error) !== 'EEXIST') throw error;
-      }
+  if (fs.existsSync(file)) {
+    const status = fs.lstatSync(file);
+    if (status.isSymbolicLink() || !status.isFile() || status.nlink !== 1 || !fs.readFileSync(file).equals(expected)) {
+      throw new Error(`refusing to replace non-identical candidate artifact: ${file}`);
     }
-    if (!published) throw new Error(`pilot artifact target changed during publication: ${file}`);
-  } catch (error) {
-    publicationFailed = true;
-    publicationError = error;
+    return;
   }
-  let cleanupFailed = false;
-  let cleanupError: unknown;
+  const temporary = path.join(directory, `.${name}.${process.pid}.${crypto.randomBytes(12).toString('hex')}.tmp`);
   try {
-    fs.unlinkSync(temporary);
+    fs.writeFileSync(temporary, expected, { flag: 'wx', mode });
+    fs.chmodSync(temporary, mode);
+    fs.linkSync(temporary, file);
   } catch (error) {
-    if (errorCode(error) !== 'ENOENT') {
-      cleanupFailed = true;
-      cleanupError = error;
-    }
+    if (errorCode(error) !== 'EEXIST' || !fs.existsSync(file) || !fs.readFileSync(file).equals(expected)) throw error;
+  } finally {
+    fs.rmSync(temporary, { force: true });
   }
-  if (publicationFailed) throw publicationError;
-  if (cleanupFailed) throw cleanupError;
-}
-
-function taskPosition(publicRow: JsonObject, privateRow: JsonObject, psDir?: string): { position: Position; pid: Pid } {
-  const source = privateRow.source as JsonObject | undefined;
-  const pid = source?.pid;
-  if (pid !== 'p1' && pid !== 'p2') throw new Error(`position ${String(publicRow.id)} has no private pid`);
-  const foe: Pid = pid === 'p1' ? 'p2' : 'p1';
-  const request = publicRow.request as BattleRequest | undefined;
-  if (!request) throw new Error(`position ${String(publicRow.id)} has no public request`);
-  const opponent = privateRow.opponent_request as BattleRequest | null | undefined;
-  const requests = { [pid]: request } as Record<Pid, BattleRequest>;
-  if (opponent) requests[foe] = opponent;
-  const position: Position = {
-    index: Number(source?.position_index ?? 0),
-    turn: Number(publicRow.turn ?? 0),
-    pending: [],
-    requests,
-    actual: {},
-    choiceIndex: {},
-    seen: { p1: 0, p2: 0 },
-    snapshot: String(privateRow.snapshot ?? ''),
-  };
-  position.pending = pendingSides(openPosition(position, psDir));
-  return { pid, position };
 }
 
 async function main(): Promise<void> {
   const settings = parse(process.argv.slice(2));
-  const publicSet = readObject(settings.set);
-  const privateSet = readObject(settings.privateSet);
-  if (
-    publicSet.schema_version !== POSITION_SET_SCHEMA_VERSION ||
-    privateSet.schema_version !== POSITION_SET_SCHEMA_VERSION
-  ) {
-    throw new Error(`position sets must use schema version ${POSITION_SET_SCHEMA_VERSION}`);
+  const gradedManifestPath = `${settings.graded}.manifest.json`;
+  const gradedManifest = readObject(gradedManifestPath);
+  if (gradedManifest.schema_version !== 1) throw new Error('graded manifest is not the current schema');
+  if (gradedManifest.showdown_commit !== showdownCommit(settings.psDir ?? defaultPsDir())) {
+    throw new Error('graded manifest does not match the current Pokémon Showdown checkout');
   }
-  if (typeof publicSet.id !== 'string' || publicSet.id !== privateSet.id) {
-    throw new Error('public and private position sets do not share one id');
+  const sourceRecords = reopenedGradedCorpus(settings, gradedManifest);
+  const gradedDigest = fileDigest(settings.graded);
+  const gradedManifestDigest = fileDigest(gradedManifestPath);
+  const scoreRows = completedPositionScores(readJsonl(settings.graded), gradedManifest);
+  const selection = selectPositions(readCandidates(scoreRows), {
+    ...(settings.size === undefined ? {} : { size: settings.size }),
+    ...(settings.perGame === undefined ? {} : { perGame: settings.perGame }),
+    ...(settings.formats === undefined ? {} : { formats: settings.formats }),
+    seed: settings.selectionSeed ?? 'position-set',
+  });
+  const requested = settings.size ?? 500;
+  if (selection.positions.length !== requested) {
+    throw new Error(
+      `requested ${requested} positions but only ${selection.positions.length} satisfy the filters and per-game cap`,
+    );
   }
-  if (privateSet.public_checksum !== digest(publicSet)) throw new Error('private set does not bind the public set');
-  const publicRows = rows(publicSet, settings.set);
-  const privateRows = rows(privateSet, settings.privateSet);
-  const privateById = new Map(privateRows.map((row) => [String(row.id), row]));
-  if (privateById.size !== privateRows.length || publicRows.length !== privateRows.length) {
-    throw new Error('public and private position sets are not a bijection');
+  process.stdout.write(
+    `selected ${selection.positions.length} positions from ${selection.games} games across ${selection.strata.length} strata
+`,
+  );
+  for (const stratum of selection.strata) {
+    process.stdout.write(`  ${stratum.key.padEnd(34)} ${String(stratum.taken).padStart(4)} of ${stratum.available}
+`);
   }
 
+  const records = new Map(sourceRecords.map((record) => [gameKey(record), record]));
+  const reopened = new Map<string, NonNullable<ReturnType<typeof verifyGame>>>();
+  const selectionConfig = {
+    count: requested,
+    seed: settings.selectionSeed ?? 'position-set',
+    per_game: settings.perGame ?? 3,
+    formats: settings.formats ?? null,
+    rules: CANDIDATE_POSITION_SELECTION_RULES,
+  };
+
   const taskRows: JsonObject[] = [];
-  const scoreRows: JsonObject[] = [];
+  const privateRows: JsonObject[] = [];
   const sealedRows: JsonObject[] = [];
-  for (const [index, publicRow] of publicRows.entries()) {
-    const sourceId = String(publicRow.id ?? '');
-    const privateRow = privateById.get(sourceId);
-    if (!sourceId || !privateRow) throw new Error(`public position ${sourceId || index} has no private row`);
-    const { position, pid } = taskPosition(publicRow, privateRow, settings.psDir);
+  for (const [index, candidate] of selection.positions.entries()) {
+    const game = gameOf(candidate);
+    const record = records.get(game);
+    if (!record) throw new Error(`selected source game ${game} is missing`);
+    let verified = reopened.get(game);
+    if (!verified) {
+      verified = verifyGame(record, settings.psDir) ?? undefined;
+      if (!verified) throw new Error(`selected source game ${game} no longer replays uniquely`);
+      reopened.set(game, verified);
+    }
+    const position = verified.replay.positions[candidate.positionIndex];
+    if (!position) throw new Error(`selected source position ${game}#${candidate.positionIndex} is missing`);
+    const request = position.requests[candidate.pid];
+    if (!request)
+      throw new Error(`selected source decision ${game}#${candidate.positionIndex}#${candidate.pid} is missing`);
+    const liveDigest = positionDigest(position, candidate.pid);
+    if (liveDigest !== candidate.positionDigest) {
+      throw new Error(
+        `selected source decision ${game}#${candidate.positionIndex}#${candidate.pid} changed after grading`,
+      );
+    }
+    const sourceId = digest([game, candidate.positionIndex, candidate.pid, liveDigest]);
     const authoritative = openPosition(position, settings.psDir);
-    const authoritativeRequest = authoritative.getSide(pid).activeRequest as unknown as BattleRequest | null;
-    if (!authoritativeRequest) throw new Error(`position ${sourceId} snapshot has no source request`);
-    const names = { p1: authoritative.getSide('p1').name, p2: authoritative.getSide('p2').name };
-    if (canonicalJson(anonymiseRequest(authoritativeRequest, names)) !== canonicalJson(position.requests[pid])) {
-      throw new Error(`position ${sourceId} public request does not match its anonymized snapshot request`);
-    }
-    const opponentPid: Pid = pid === 'p1' ? 'p2' : 'p1';
-    const authoritativeOpponent = authoritative.getSide(opponentPid).activeRequest as unknown as BattleRequest | null;
-    const submittedOpponent = position.requests[opponentPid];
-    if (position.pending.includes(opponentPid) !== Boolean(submittedOpponent)) {
-      throw new Error(`position ${sourceId} opponent request presence does not match its snapshot decision boundary`);
-    }
-    if (
-      submittedOpponent &&
-      (!authoritativeOpponent || canonicalJson(authoritativeOpponent) !== canonicalJson(submittedOpponent))
-    ) {
-      throw new Error(`position ${sourceId} opponent request does not match its snapshot request`);
-    }
+    const publicRequest = anonymiseRequest(request, record.names);
+    const seen = anonymiseLog(verified.replay.pov[candidate.pid].slice(0, position.seen[candidate.pid]), record.names);
     const seed = `${String(settings.seed ?? 'position-panels')}:${sourceId}`;
-    const table = evaluateActionTable(position, pid, { ...settings, seed });
+    const table = evaluateActionTable(position, candidate.pid, { ...settings, seed });
     if (!table) throw new Error(`position ${sourceId} did not produce three complete exhaustive panels`);
     const rendered = renderPositionTask({
       id: sourceId,
-      format: String(publicRow.format ?? ''),
-      pid,
+      format: candidate.format,
+      pid: candidate.pid,
       battle: authoritative,
-      request: position.requests[pid],
-      seen: Array.isArray(publicRow.seen) ? publicRow.seen.map(String) : [],
+      request: publicRequest,
+      seen,
       ...(settings.psDir ? { psDir: settings.psDir } : {}),
     });
     const measuredByAction = new Map(table.measurement.actions.map((entry) => [entry.action, entry]));
     const renderedCommands = rendered.actions.map((entry) => entry.canonicalAction);
     const measuredCommands = table.measurement.actions.map((entry) => entry.action);
-    const frozenPublicCommands = Array.isArray(publicRow.legal) ? publicRow.legal.map(String) : [];
     if (
       rendered.actions.length !== table.legal ||
-      JSON.stringify(renderedCommands) !== JSON.stringify(measuredCommands) ||
-      JSON.stringify(renderedCommands) !== JSON.stringify(frozenPublicCommands)
+      JSON.stringify(renderedCommands) !== JSON.stringify(measuredCommands)
     ) {
-      throw new Error(`position ${sourceId} frozen, prompt, and graded action maps are not exactly equal`);
+      throw new Error(`position ${sourceId} prompt and graded action maps are not exactly equal`);
     }
-    const taskId = canonicalJsonDigest([
-      publicSet.id,
-      sourceId,
-      POSITION_TASK_PROTOCOL,
-      rendered.prompt,
-      rendered.actions,
-    ]);
+    const taskId = canonicalJsonDigest([sourceId, POSITION_TASK_PROTOCOL, rendered.prompt, rendered.actions]);
     const scoredActions = rendered.actions.map((entry) => {
       const measured = measuredByAction.get(entry.canonicalAction);
       if (!measured) throw new Error(`position ${sourceId} is missing ${entry.canonicalAction}`);
@@ -552,9 +433,8 @@ async function main(): Promise<void> {
     ];
     const eligibilityMetrics = positionEligibilityMetrics(table);
     taskRows.push({
-      schema_version: 3,
+      schema_version: POSITION_PANEL_ARTIFACT_SCHEMA_VERSION,
       task_id: taskId,
-      split: 'pilot',
       format: rendered.format,
       phase: rendered.phase,
       turn: rendered.turn,
@@ -571,14 +451,13 @@ async function main(): Promise<void> {
         label: entry.label,
       })),
     });
-    scoreRows.push({
-      schema_version: 3,
+    privateRows.push({
+      schema_version: POSITION_PANEL_ARTIFACT_SCHEMA_VERSION,
       task_id: taskId,
       structural_pass: structuralReasons.length === 0,
       structural_reasons: structuralReasons,
       measurement_ready: table.valueSpan > 0,
       diagnostic_flags: diagnosticFlags,
-      eligibility_status: 'pilot-thresholds-not-frozen',
       eligibility_metrics: eligibilityMetrics,
       measurement_panel: {
         id: table.measurement.id,
@@ -605,64 +484,72 @@ async function main(): Promise<void> {
         held_out_span: table.heldOutSpan,
       },
     });
-    const source = privateRow.source as JsonObject;
-    const sourceGroup = positionSourceGroup(source);
-    const exactPublicFingerprint = exactPublicPositionFingerprint(taskRows.at(-1) as JsonObject);
+    const source = {
+      run_id: candidate.runId,
+      series_id: candidate.seriesId,
+      game_number: candidate.gameNumber,
+      position_index: candidate.positionIndex,
+      pid: candidate.pid,
+      scaffold: candidate.scaffold,
+      played_by: record.players[candidate.pid],
+      played: candidate.played,
+    };
+    const opponentPid: Pid = candidate.pid === 'p1' ? 'p2' : 'p1';
+    const opponentRequest = position.pending.includes(opponentPid) ? (position.requests[opponentPid] ?? null) : null;
     sealedRows.push({
-      schema_version: 3,
+      schema_version: POSITION_PANEL_ARTIFACT_SCHEMA_VERSION,
       task_id: taskId,
       source_id: sourceId,
-      source_group: sourceGroup,
-      selection_stratum: String(privateRow.selection_stratum ?? ''),
-      exact_public_fingerprint: exactPublicFingerprint,
-      source: privateRow.source,
-      snapshot: privateRow.snapshot,
-      opponent_request: privateRow.opponent_request,
+      exact_public_fingerprint: exactPublicPositionFingerprint(taskRows.at(-1) as JsonObject),
+      source,
+      snapshot: position.snapshot,
+      opponent_request: opponentRequest,
       panel_seed: seed,
       table: { ...table, horizon: Number.isFinite(table.horizon) ? table.horizon : 'end' },
     });
-    process.stdout.write(`exported ${index + 1}/${publicRows.length} ${taskId}\n`);
+    process.stdout.write(`exported ${index + 1}/${selection.positions.length} ${taskId}
+`);
   }
-  if (privateById.size !== taskRows.length) throw new Error('private position set contains an unmatched row');
 
-  validatePositionPanelArtifacts(taskRows, scoreRows, sealedRows, settings.psDir);
-  const { publicRoot, privateRoot } = prepareOutputRoots(settings.out, settings.privateOut);
-  const taskFile = path.join(publicRoot.directory, 'tasks.pilot.jsonl');
-  const scoreFile = path.join(privateRoot.directory, 'scores.pilot.jsonl');
-  const sealedFile = path.join(privateRoot.directory, 'sealed-panels.pilot.jsonl');
-  publishImmutable(publicRoot, path.basename(taskFile), canonicalJsonl(taskRows));
-  publishImmutable(privateRoot, path.basename(scoreFile), canonicalJsonl(scoreRows));
-  publishImmutable(privateRoot, path.basename(sealedFile), canonicalJsonl(sealedRows));
+  validatePositionPanelArtifacts(taskRows, privateRows, sealedRows, settings.psDir);
+  if (fileDigest(settings.graded) !== gradedDigest || fileDigest(gradedManifestPath) !== gradedManifestDigest) {
+    throw new Error('graded cache or manifest changed while candidate panels were generated');
+  }
+  reopenedGradedCorpus(settings, gradedManifest);
+  const taskName = 'tasks.jsonl';
+  const scoreName = 'scores.jsonl';
+  const sealedName = 'sealed-panels.jsonl';
+  const taskContent = canonicalJsonl(taskRows);
+  const scoreContent = canonicalJsonl(privateRows);
+  const sealedContent = canonicalJsonl(sealedRows);
   const manifest = {
-    schema_version: 2,
-    release_ready: false,
-    eligibility_status: 'pilot-thresholds-not-frozen',
-    eligibility_metrics_version: POSITION_ELIGIBILITY_METRICS_VERSION,
-    split_status: 'pilot-only-source-groups-and-exact-fingerprints-recorded',
-    source_set_id: publicSet.id,
+    schema_version: CANDIDATE_POSITION_MANIFEST_SCHEMA_VERSION,
     evaluator_digest: evaluatorDigest(),
     runtime: { node: process.version, platform: process.platform, arch: process.arch },
     showdown_commit: showdownCommit(settings.psDir ?? defaultPsDir()),
+    seed_namespace: String(settings.seed ?? 'position-panels'),
     action_protocol: ACTION_PROTOCOL,
     task_protocol: POSITION_TASK_PROTOCOL,
     canonical_json: CANONICAL_JSON_PROTOCOL,
-    counterfactual: counterfactualProtocol(settings),
+    counterfactual: exhaustiveCounterfactualProtocol(settings),
     exhaustive_panels: EXHAUSTIVE_PANEL_PROTOCOL,
-    source_group_protocol: POSITION_SOURCE_GROUP_PROTOCOL,
-    seed_namespace: String(settings.seed ?? 'position-panels'),
-    inputs: {
-      public_set: fileDigest(settings.set),
-      private_set: fileDigest(settings.privateSet),
-    },
+    eligibility_metrics_version: POSITION_ELIGIBILITY_METRICS_VERSION,
+    inputs: { graded: gradedDigest, graded_manifest: gradedManifestDigest },
+    selection: selectionConfig,
     outputs: {
-      tasks: { file: path.basename(taskFile), sha256: fileDigest(taskFile), rows: taskRows.length },
-      scores: { sha256: fileDigest(scoreFile), rows: scoreRows.length },
-      sealed_panels: { sha256: fileDigest(sealedFile), rows: sealedRows.length },
+      tasks: { file: taskName, sha256: contentDigest(taskContent), rows: taskRows.length },
+      scores: { sha256: contentDigest(scoreContent), rows: privateRows.length },
+      sealed_panels: { sha256: contentDigest(sealedContent), rows: sealedRows.length },
     },
     ordered_task_ids: taskRows.map((row) => row.task_id),
   };
-  validatePilotManifestV2(manifest, 'constructed pilot manifest');
-  publishImmutable(publicRoot, 'manifest.pilot.json', `${canonicalJson(manifest)}\n`);
+  validateCandidateManifest(manifest, 'constructed candidate manifest');
+  const manifestContent = `${canonicalJson(manifest)}\n`;
+  const outputs = prepareOutputDirectories(settings.out, settings.privateOut);
+  publishImmutable(outputs.publicDirectory, taskName, taskContent, PUBLIC_FILE_MODE);
+  publishImmutable(outputs.privateDirectory, scoreName, scoreContent, PRIVATE_FILE_MODE);
+  publishImmutable(outputs.privateDirectory, sealedName, sealedContent, PRIVATE_FILE_MODE);
+  publishImmutable(outputs.publicDirectory, 'manifest.json', manifestContent, PUBLIC_FILE_MODE);
 }
 
 await main();

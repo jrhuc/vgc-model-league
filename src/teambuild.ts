@@ -1,17 +1,15 @@
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
+
+import { z } from 'zod';
 import { completeWithDexTools } from './dex-lookups.js';
 import type { TeambuildSetView, TeambuildView } from './gui/api.js';
 import { defaultPsDir } from './paths.js';
+import { FORMAT_AUTHORITY_NOTICE } from './prompts.js';
 import type { ModelReasoningConfig, ReasoningLevel } from './providers.js';
-import {
-  classifyProviderFailure,
-  makeProvider,
-  parseSpec,
-  reasoningForModel,
-  resolveSpecOverride,
-} from './providers.js';
+import { classifyProviderFailure, makeProvider, parseSpec, reasoningForModel } from './providers.js';
 import { type Rng, shuffle } from './random.js';
 import type { RecoveryGate } from './recovery.js';
 import { ShowdownReference } from './reference.js';
@@ -24,6 +22,7 @@ import type { JsonObject, Provider, ProviderFailure, ProviderMessage } from './t
 const TEAMBUILD_PROMPT_POLICY = {
   systemTemplate: [
     'You are {{model}}, a coach in a Pokémon VGC draft league, format {{format}}.',
+    FORMAT_AUTHORITY_NOTICE,
     '',
     'You drafted a roster of {{picks}} Pokémon and keep it all season. Before every match you choose exactly 6 of them',
     'and build each set from scratch. Your current private roster notebook is supplied as context, not a constraint.',
@@ -33,7 +32,7 @@ const TEAMBUILD_PROMPT_POLICY = {
     '- Every Pokémon is set to level 50.',
     '- EVs: {{evLimit}} points total across the team member, at most {{evMax}} in any one stat. IVs are fixed at maximum.',
     '  This is the Champions EV system, not the older 508/252 one. Points are whole numbers.',
-    '- Each move has at most 20 PP. There is no Terastallisation in this format.',
+    '- Each move has at most 20 PP.',
     '- Item Clause: no two of your six may hold the same item. Species Clause: no two may share a species.',
     '- This game has its own item list, which is shorter than the one you may expect. Many Gen 9 staples do not',
     '  exist here. Use only these items:',
@@ -45,7 +44,7 @@ const TEAMBUILD_PROMPT_POLICY = {
     'You have the Showdown dex tools. Use them while you build: check what an item or ability actually does here,',
     'what a spread outruns, and how hard an attack lands. They compute from the',
     'simulator this league runs on. Trust the mechanics and factors each result explicitly says it applied;',
-    'a hypothetical damage result does not imply omitted abilities or field effects. This game is newer than your training data.',
+    'a hypothetical damage result does not imply omitted abilities or field effects.',
     '',
     'Choose the 6 for this specific opponent and build their sets. Reply with JSON only, in this shape:',
     '{"team_plan": "<2-5 sentences on the matchup and how these six answer it>",',
@@ -75,6 +74,7 @@ const TEAMBUILD_PROMPT_POLICY = {
 const GENERAL_TEAMBUILD_PROMPT_POLICY = {
   systemTemplate: [
     'You are {{model}}, building a Pokémon VGC team for format {{format}}.',
+    FORMAT_AUTHORITY_NOTICE,
     '',
     'Choose exactly {{teamSize}} entries from the explicit frozen candidate pool supplied below and build every set from scratch.',
     'No particular opponent is specified. Build for robust play across the format; do not assume an opponent roster.',
@@ -85,7 +85,7 @@ const GENERAL_TEAMBUILD_PROMPT_POLICY = {
     '- Every Pokémon is set to level 50.',
     '- EVs: {{evLimit}} points total across the team member, at most {{evMax}} in any one stat. IVs are fixed at maximum.',
     '  This is the Champions EV system, not the older 508/252 one. Points are whole numbers.',
-    '- Each move has at most 20 PP. There is no Terastallisation in this format.',
+    '- Each move has at most 20 PP.',
     '- Item Clause: no two team members may hold the same item. Species Clause: no two may share a species.',
     '- Use only these items:',
     '{{items}}',
@@ -257,16 +257,6 @@ export interface TeamBuildResult {
   artifact: TeamBuildArtifact;
 }
 
-/** The serialized, provider-independent rendering of a strict team-build task. */
-export interface RenderedTeamBuildTask {
-  task: TeamBuildTask;
-  executionPolicy: 'strict';
-  system: string;
-  user: string;
-  scaffold: string;
-  showdownCommit: string;
-}
-
 /** Optional deterministic metadata for the provider-free team-build referee. */
 export interface TeamBuildRefereeOptions {
   psDir?: string;
@@ -312,6 +302,144 @@ export interface TeambuildRequest {
   playoffContext: string[];
   format: string;
   sheetPolicy?: TeamBuildSheetPolicy;
+}
+
+const statSpreadSchema = z.strictObject({
+  hp: z.number(),
+  atk: z.number(),
+  def: z.number(),
+  spa: z.number(),
+  spd: z.number(),
+  spe: z.number(),
+});
+const candidateSchema = z.strictObject({
+  id: z.string(),
+  name: z.string(),
+  species: z.string(),
+  forme: z.string().optional(),
+  item: z.string().optional(),
+  base: z.string(),
+  types: z.array(z.string()),
+});
+const constraintBaseSchema = {
+  id: z.string(),
+  teamSize: z.number(),
+  candidates: z.array(candidateSchema),
+};
+const constraintSchema = z.discriminatedUnion('kind', [
+  z.strictObject({ kind: z.literal('draft-picks'), ...constraintBaseSchema }),
+  z.strictObject({ kind: z.literal('frozen-candidate-pool'), ...constraintBaseSchema }),
+]);
+const objectiveSchema = z.discriminatedUnion('kind', [
+  z.strictObject({
+    kind: z.literal('matchup'),
+    stage: z.union([z.literal('roundrobin'), z.literal('playoff')]),
+    opponent: z.strictObject({ model: z.string(), candidates: z.array(candidateSchema) }),
+    priorContext: z.array(z.string()),
+  }),
+  z.strictObject({ kind: z.literal('general'), brief: z.string().optional() }),
+]);
+const provenanceSchema = z.strictObject({
+  source: z.string(),
+  seed: z.union([z.string(), z.number()]).optional(),
+  parentRunId: z.string().optional(),
+  seriesIndex: z.number().optional(),
+  entrant: z.number().optional(),
+  opponent: z.number().optional(),
+});
+const taskSchema = z.strictObject({
+  id: z.string(),
+  model: z.string(),
+  format: z.string(),
+  sheetPolicy: z.union([z.literal('open'), z.literal('closed')]),
+  executionPolicy: z.union([z.literal('league-resilient'), z.literal('strict')]),
+  constraint: constraintSchema,
+  objective: objectiveSchema,
+  notebook: z.string(),
+  provenance: provenanceSchema,
+});
+const actionSetSchema = z.strictObject({
+  species: z.string(),
+  spriteId: z.string(),
+  item: z.string(),
+  ability: z.string(),
+  nature: z.string(),
+  moves: z.array(z.string()),
+  evs: statSpreadSchema,
+  note: z.string(),
+  repaired: z.boolean(),
+  repairs: z.array(z.string()),
+});
+const actionSchema = z.strictObject({
+  selected: z.array(z.string()),
+  packed: z.string(),
+  sets: z.array(actionSetSchema),
+});
+const evidenceSchema = z.strictObject({
+  rationale: z.string(),
+  notebook: z.string(),
+  supplied: z.strictObject({ rationale: z.boolean(), notebookUpdate: z.boolean() }),
+});
+const teamBuildArtifactSchema = z.strictObject({
+  schemaVersion: z.literal(1),
+  status: z.literal('valid'),
+  task: taskSchema,
+  executionPolicy: z.union([z.literal('league-resilient'), z.literal('strict')]),
+  scaffold: z.string(),
+  showdownCommit: z.string(),
+  action: actionSchema,
+  evidence: evidenceSchema,
+  validation: z.strictObject({
+    showdown: z.literal(true),
+    repaired: z.boolean(),
+    repairs: z.array(z.string()),
+    problems: z.array(z.string()),
+  }),
+  attempts: z.number(),
+  fallback: z.boolean(),
+  createdAt: z.string(),
+});
+
+function canonicalCandidate(candidate: TeamBuildCandidate): TeamBuildCandidate {
+  return {
+    id: candidate.id,
+    name: candidate.name,
+    species: candidate.species,
+    ...(candidate.forme === undefined ? {} : { forme: candidate.forme }),
+    ...(candidate.item === undefined ? {} : { item: candidate.item }),
+    base: candidate.base,
+    types: [...candidate.types],
+  };
+}
+
+function canonicalTask(task: TeamBuildTask, executionPolicy: TeamBuildExecutionPolicy): TeamBuildTask {
+  const constraint = {
+    ...task.constraint,
+    candidates: task.constraint.candidates.map(canonicalCandidate),
+  } as TeamBuildConstraint;
+  const objective: TeamBuildObjective =
+    task.objective.kind === 'general'
+      ? { kind: 'general', ...(task.objective.brief === undefined ? {} : { brief: task.objective.brief }) }
+      : {
+          kind: 'matchup',
+          stage: task.objective.stage,
+          opponent: {
+            model: task.objective.opponent.model,
+            candidates: task.objective.opponent.candidates.map(canonicalCandidate),
+          },
+          priorContext: [...task.objective.priorContext],
+        };
+  return {
+    id: task.id,
+    model: task.model,
+    format: task.format,
+    sheetPolicy: task.sheetPolicy,
+    executionPolicy,
+    constraint,
+    objective,
+    notebook: task.notebook,
+    provenance: { ...task.provenance },
+  };
 }
 
 function slug(value: string): string {
@@ -703,7 +831,7 @@ function strictTask(task: TeamBuildTask): TeamBuildTask {
   if (task.executionPolicy !== undefined && task.executionPolicy !== 'strict') {
     throw new Error('the team-build referee accepts only strict executionPolicy tasks');
   }
-  return { ...structuredClone(task), executionPolicy: 'strict' };
+  return canonicalTask(task, 'strict');
 }
 
 function refereeArtifact(
@@ -735,32 +863,6 @@ function refereeArtifact(
   };
 }
 
-/**
- * Renders the frozen strict referee input. It does not create providers, make
- * provider calls, write logs, retry, repair, or select a fallback team.
- */
-export function renderTeamBuildTask(
-  task: TeamBuildTask,
-  options: Pick<TeamBuildRefereeOptions, 'psDir'> = {},
-): RenderedTeamBuildTask {
-  const canonicalTask = strictTask(task);
-  const psDir = options.psDir ?? defaultPsDir();
-  const { Dex } = loadShowdown(psDir);
-  const format = Dex.formats.get(canonicalTask.format);
-  const dex = Dex.mod(format.mod || 'base') as unknown as DexLike;
-  const ruleTable = Dex.formats.getRuleTable(format);
-  const evLimit = ruleTable.evLimit ?? 508;
-  const evMax = 32;
-  return {
-    task: canonicalTask,
-    executionPolicy: 'strict',
-    system: systemPrompt(canonicalTask, dex, evLimit, evMax),
-    user: userPrompt(canonicalTask, dex),
-    scaffold: teamBuildScaffoldRevision(canonicalTask.objective, canonicalTask.sheetPolicy, 'strict'),
-    showdownCommit: showdownCommit(psDir),
-  };
-}
-
 function actionForCandidateTeam(
   dex: DexLike,
   task: TeamBuildTask,
@@ -785,6 +887,139 @@ function actionForCandidateTeam(
       repairs: [],
     })),
   };
+}
+
+/** Replays a serialized valid construction through the current artifact schema and Showdown authority. */
+export function replayTeamBuildArtifact(
+  value: unknown,
+  options: Pick<TeamBuildRefereeOptions, 'psDir'> = {},
+): { artifact: TeamBuildArtifact; packed: string } {
+  const parsed = teamBuildArtifactSchema.safeParse(value);
+  if (!parsed.success) throw new Error(`construction artifact is malformed: ${z.prettifyError(parsed.error)}`);
+  const artifact = parsed.data as TeamBuildArtifact;
+  const task = artifact.task;
+  const action = artifact.action!;
+  const psDir = options.psDir ?? defaultPsDir();
+  validateTeamBuildTask(task);
+  if (
+    artifact.executionPolicy !== task.executionPolicy ||
+    artifact.scaffold !== teamBuildScaffoldRevision(task.objective, task.sheetPolicy, artifact.executionPolicy) ||
+    artifact.showdownCommit !== showdownCommit(psDir)
+  ) {
+    throw new Error('construction artifact is not bound to its task, policies, scaffold, and Showdown revision');
+  }
+  if (!Number.isSafeInteger(artifact.attempts) || artifact.attempts < 0 || artifact.validation.problems.length) {
+    throw new Error('construction artifact validation state is inconsistent');
+  }
+  const normalizedRationale = normalizeStageEvidence(artifact.evidence.rationale, undefined, {
+    currentNotebook: task.notebook,
+    rationaleLimit: TEAMBUILD_RATIONALE_LIMIT,
+    notebookLimit: TEAMBUILD_NOTEBOOK_LIMIT,
+  }).rationale;
+  const normalizedNotebook = normalizeStageEvidence(
+    undefined,
+    artifact.evidence.supplied.notebookUpdate ? artifact.evidence.notebook : undefined,
+    {
+      currentNotebook: task.notebook,
+      rationaleLimit: TEAMBUILD_RATIONALE_LIMIT,
+      notebookLimit: TEAMBUILD_NOTEBOOK_LIMIT,
+    },
+  ).notebook;
+  if (
+    artifact.evidence.rationale !== normalizedRationale ||
+    (!artifact.evidence.supplied.rationale && !artifact.fallback && artifact.evidence.rationale !== '') ||
+    artifact.evidence.notebook !== normalizedNotebook
+  ) {
+    throw new Error('construction artifact evidence is not normalized against its task notebook');
+  }
+  if (
+    task.constraint.teamSize !== 6 ||
+    action.selected.length !== 6 ||
+    action.sets.length !== 6 ||
+    new Set(action.selected).size !== 6
+  ) {
+    throw new Error('construction artifact must select exactly six unique roster ids and sets');
+  }
+  const candidates = new Map(task.constraint.candidates.map((candidate) => [candidate.id, candidate]));
+  const { Dex, Teams } = loadShowdown(psDir);
+  const format = Dex.formats.get(task.format);
+  const dex = Dex.mod(format.mod || 'base') as unknown as DexLike;
+  const entries: Array<{ mon: TeamBuildCandidate; set: RawSet }> = [];
+  for (const [index, id] of action.selected.entries()) {
+    const mon = candidates.get(id);
+    const view = action.sets[index]!;
+    if (!mon) throw new Error(`construction selected roster id ${JSON.stringify(id)} that its task does not own`);
+    const spriteId = dex.species.get(mon.forme ?? mon.species).spriteid;
+    if (view.species !== mon.name || view.spriteId !== spriteId) {
+      throw new Error(`construction set ${index + 1} is not bound to selected roster id ${JSON.stringify(id)}`);
+    }
+    entries.push({
+      mon,
+      set: {
+        id,
+        item: view.item,
+        ability: view.ability,
+        nature: view.nature,
+        moves: [...view.moves],
+        evs: { ...view.evs },
+        note: view.note ?? '',
+      },
+    });
+  }
+  const expectedRepairs = action.selected.flatMap((id, index) =>
+    action.sets[index]!.repairs.map((repair) => `${id}: ${repair}`),
+  );
+  if (
+    artifact.validation.repaired !== expectedRepairs.length > 0 ||
+    !isDeepStrictEqual(artifact.validation.repairs, expectedRepairs) ||
+    action.sets.some((set) => set.repaired !== set.repairs.length > 0)
+  ) {
+    throw new Error('construction artifact repair metadata is inconsistent with its action');
+  }
+  if (
+    artifact.executionPolicy === 'strict' &&
+    (artifact.fallback || artifact.validation.repaired || action.sets.some((set) => set.repaired))
+  ) {
+    throw new Error('strict construction artifact cannot contain a fallback or repaired action');
+  }
+  const unpacked = Teams.unpack(action.packed);
+  if (unpacked?.length !== 6) {
+    throw new Error('construction packed team must unpack to exactly six sets');
+  }
+  if (Teams.pack(unpacked) !== action.packed) {
+    throw new Error('construction packed team is not an exact Showdown pack/unpack normalization');
+  }
+  if (normalizePackedTeam(action.packed, psDir, task.format) !== action.packed) {
+    throw new Error('construction packed team is not normalized for its format');
+  }
+  const reconstructed = packCandidateTeam(dex, entries, psDir);
+  if (reconstructed !== action.packed) {
+    throw new Error('construction packed species and sets do not exactly match action.selected and action.sets');
+  }
+  for (const [index, set] of unpacked.entries()) {
+    const { mon, set: view } = entries[index]!;
+    const species = dex.species.get(mon.species).name;
+    const evs = Object.fromEntries(STATS.map((stat) => [stat, set.evs?.[stat] ?? 0]));
+    const ivs = Object.fromEntries(STATS.map((stat) => [stat, set.ivs?.[stat] ?? 31]));
+    if (
+      set.name !== species ||
+      set.species !== species ||
+      set.item !== view.item ||
+      set.ability !== view.ability ||
+      set.nature !== view.nature ||
+      !isDeepStrictEqual(set.moves, view.moves) ||
+      !isDeepStrictEqual(evs, view.evs) ||
+      Object.values(ivs).some((iv) => iv !== 31) ||
+      (set.gender ?? '') !== '' ||
+      set.level !== 50 ||
+      set.shiny ||
+      set.teraType
+    ) {
+      throw new Error(`construction packed set ${index + 1} is inconsistent with its exact registered set`);
+    }
+  }
+  validateTeam(action.packed, task.format, psDir);
+  return { artifact, packed: action.packed };
 }
 
 /**
@@ -867,10 +1102,13 @@ function fallbackEvidence(rationale: string, notebook: string): StageEvidence {
   return { ...noStageEvidence(notebook), rationale };
 }
 
-export async function runTeamBuild(task: TeamBuildTask, options: TeamBuildOptions): Promise<TeamBuildResult> {
+async function runLeagueTeamBuild(task: TeamBuildTask, options: TeamBuildOptions): Promise<TeamBuildResult> {
   validateTeamBuildTask(task);
-  const executionPolicy = task.executionPolicy ?? 'strict';
-  const canonicalTask: TeamBuildTask = { ...task, executionPolicy };
+  if (task.executionPolicy !== 'league-resilient') {
+    throw new Error('provider orchestration is reserved for league-resilient team building');
+  }
+  const executionPolicy = 'league-resilient' as const;
+  const normalizedTask = canonicalTask(task, executionPolicy);
   const psDir = options.psDir ?? defaultPsDir();
   const { Dex } = loadShowdown(psDir);
   const format = Dex.formats.get(task.format);
@@ -882,36 +1120,26 @@ export async function runTeamBuild(task: TeamBuildTask, options: TeamBuildOption
   fs.mkdirSync(options.logDir, { recursive: true });
   const logFile = attemptLogFile(task, options.logDir);
 
-  const rendered = executionPolicy === 'strict' ? renderTeamBuildTask(canonicalTask, { psDir }) : undefined;
-  const system = rendered?.system ?? systemPrompt(task, dex, evLimit, evMax);
-  const messages: ProviderMessage[] = [{ role: 'user', content: rendered?.user ?? userPrompt(task, dex) }];
+  const system = systemPrompt(normalizedTask, dex, evLimit, evMax);
+  const messages: ProviderMessage[] = [{ role: 'user', content: userPrompt(normalizedTask, dex) }];
   const reasoning = reasoningForModel(task.model, options);
-  const resolvedModel = resolveSpecOverride(task.model);
   const provider =
     task.model === 'random'
       ? undefined
       : (options.makeTeambuildProvider?.(task.model, options.apiKeys?.[task.model], reasoning) ??
-        makeProvider(parseSpec(resolvedModel), {
+        makeProvider(parseSpec(task.model), {
           ...(reasoning === undefined ? {} : { reasoning }),
-          ...(resolvedModel === task.model && options.apiKeys?.[task.model] !== undefined
-            ? { apiKey: options.apiKeys[task.model] }
-            : {}),
+          ...(options.apiKeys?.[task.model] === undefined ? {} : { apiKey: options.apiKeys[task.model] }),
         }));
 
   const owned = new Map(task.constraint.candidates.map((mon) => [mon.id, mon]));
   const runCreatedAt = options.createdAt ?? new Date().toISOString();
   let accepted: ParsedTeamBuild | undefined;
-  let strictAccepted: Extract<TeamBuildSubmissionValidation, { status: 'accepted' }> | undefined;
-  let strictRejected: Extract<TeamBuildSubmissionValidation, { status: 'rejected' }> | undefined;
   let lastParsed: ParsedTeamBuild | undefined;
   let attemptsUsed = 0;
   let lastError = '';
 
-  for (
-    let attempt = 1;
-    provider && attempt <= TEAMBUILD_PROMPT_POLICY.attempts && !accepted && !strictAccepted;
-    attempt += 1
-  ) {
+  for (let attempt = 1; provider && attempt <= TEAMBUILD_PROMPT_POLICY.attempts && !accepted; attempt += 1) {
     options.signal?.throwIfAborted();
     attemptsUsed = attempt;
     const promptForAttempt = messages[messages.length - 1]!.content ?? '';
@@ -940,44 +1168,18 @@ export async function runTeamBuild(task: TeamBuildTask, options: TeamBuildOption
         const salvaged = parseSets(completion.reasoning, task);
         if (typeof salvaged !== 'string') response = completion.reasoning;
       }
-      if (executionPolicy === 'strict') {
-        const validation = validateTeamBuildSubmission(canonicalTask, response, {
-          psDir,
-          attempts: attempt,
-          createdAt: runCreatedAt,
-        });
-        if (validation.status === 'accepted') {
-          strictAccepted = validation;
-        } else {
-          error = truncated
-            ? 'the reply used its whole token budget before finishing the team'
-            : validation.problems.join('\n');
-          strictRejected = truncated
-            ? {
-                ...validation,
-                problems: [error],
-                artifact: {
-                  ...validation.artifact,
-                  validation: { ...validation.artifact.validation, problems: [error] },
-                },
-              }
-            : validation;
-          lastError = error;
-        }
+      const parsed = parseSets(response, normalizedTask);
+      if (typeof parsed === 'string') {
+        error = truncated ? 'the reply used its whole token budget before finishing the team' : parsed;
+        lastError = error;
       } else {
-        const parsed = parseSets(response, task);
-        if (typeof parsed === 'string') {
-          error = truncated ? 'the reply used its whole token budget before finishing the team' : parsed;
+        const problems = validateCandidate(dex, normalizedTask.format, parsed.sets, owned, psDir);
+        if (problems.length) {
+          error = problems.join('\n');
           lastError = error;
+          lastParsed = parsed;
         } else {
-          const problems = validateCandidate(dex, task.format, parsed.sets, owned, psDir);
-          if (problems.length) {
-            error = problems.join('\n');
-            lastError = error;
-            lastParsed = parsed;
-          } else {
-            accepted = parsed;
-          }
+          accepted = parsed;
         }
       }
       if (error) {
@@ -1030,20 +1232,6 @@ export async function runTeamBuild(task: TeamBuildTask, options: TeamBuildOption
       await options.recovery?.pause(task.model, pauseFailure, options.signal);
       attempt -= 1;
     }
-  }
-
-  if (executionPolicy === 'strict') {
-    if (strictAccepted) return { packed: strictAccepted.packed, artifact: strictAccepted.artifact };
-    if (strictRejected) return { packed: null, artifact: strictRejected.artifact };
-    const problem = provider ? 'no valid team was returned' : 'strict team building has no provider action';
-    const evidence = noStageEvidence(canonicalTask.notebook);
-    return {
-      packed: null,
-      artifact: refereeArtifact(canonicalTask, psDir, null, evidence, [problem], {
-        attempts: attemptsUsed,
-        createdAt: runCreatedAt,
-      }),
-    };
   }
 
   const noParseRationale = provider
@@ -1113,12 +1301,12 @@ export async function runTeamBuild(task: TeamBuildTask, options: TeamBuildOption
   const packed = normalizePackedTeam(packCandidateTeam(dex, repaired, psDir), psDir, task.format);
   validateTeam(packed, task.format, psDir);
   const scaffold = teamBuildScaffoldRevision(task.objective, task.sheetPolicy, executionPolicy);
-  const createdAt = new Date().toISOString();
+  const createdAt = runCreatedAt;
   const allRepairs = repaired.flatMap((entry) => entry.repairs.map((repair) => `${entry.mon.id}: ${repair}`));
   const artifact: TeamBuildArtifact = {
     schemaVersion: 1,
     status: 'valid',
-    task: canonicalTask,
+    task: normalizedTask,
     executionPolicy,
     scaffold,
     showdownCommit: showdownCommit(psDir),
@@ -1168,7 +1356,7 @@ export async function runTeambuild(request: TeambuildRequest, options: Teambuild
       opponent: request.opponent,
     },
   };
-  const result = await runTeamBuild(task, options);
+  const result = await runLeagueTeamBuild(task, options);
   const action = result.artifact.action;
   if (!result.packed || !action || result.artifact.status !== 'valid') {
     throw new Error('league-resilient team building ended without a valid team');
@@ -1184,14 +1372,7 @@ export async function runTeambuild(request: TeambuildRequest, options: Teambuild
   };
   fs.appendFileSync(
     path.join(options.logDir, 'teambuild.jsonl'),
-    `${JSON.stringify({
-      model: request.model,
-      team_name: request.franchiseName,
-      ...view,
-      packed: result.packed,
-      artifact: result.artifact,
-      timestamp: result.artifact.createdAt,
-    })}\n`,
+    `${JSON.stringify({ artifact: result.artifact })}\n`,
     'utf8',
   );
   return { packed: result.packed, artifact: result.artifact, view };

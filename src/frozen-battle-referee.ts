@@ -5,7 +5,7 @@ import { loadShowdown } from './showdown.js';
 import { finishUpdateRouting, routeUpdateLines } from './sim.js';
 import type { BattleRequest, Pid } from './types.js';
 
-export const FROZEN_BATTLE_REFEREE_PROTOCOL_VERSION = 2 as const;
+export const FROZEN_BATTLE_REFEREE_PROTOCOL_VERSION = 1 as const;
 
 export interface FrozenBattleSeat {
   pid: Pid;
@@ -80,35 +80,13 @@ interface RouteState {
   turns: number;
 }
 
-interface FrozenBattleSnapshotRouting extends RouteState {
-  battleLog: number;
-  povCursors: Record<Pid, number>;
-}
-
-export interface FrozenBattleSnapshot {
-  protocolVersion: typeof FROZEN_BATTLE_REFEREE_PROTOCOL_VERSION;
-  options: {
-    format: string;
-    seed: [number, number, number, number];
-    seats: FrozenBattleSeat[];
-  };
-  battle: unknown;
-  stateHash: string;
-  revision: number;
-  stagedActions: Partial<Record<Pid, string>>;
-  submittedActions: FrozenSubmittedAction[];
-  routing: FrozenBattleSnapshotRouting;
-  winnerPid: Pid | null;
-}
-
 export type FrozenBattleRefereeErrorCode =
   | 'unknown-seat'
   | 'stale-revision'
   | 'stale-state'
   | 'duplicate-submission'
   | 'not-requested'
-  | 'illegal-action'
-  | 'snapshot-protocol';
+  | 'illegal-action';
 
 export class FrozenBattleRefereeError extends Error {
   constructor(
@@ -139,7 +117,11 @@ function exactPid(value: unknown): Pid | null {
   return value === 'p1' || value === 'p2' ? value : null;
 }
 
-function copiedOptions(options: FrozenBattleRefereeOptions): FrozenBattleSnapshot['options'] {
+function copiedOptions(options: FrozenBattleRefereeOptions): {
+  format: string;
+  seed: [number, number, number, number];
+  seats: FrozenBattleSeat[];
+} {
   if (!options.format) throw new Error('format must be explicit');
   if (options.seed.length !== 4 || options.seed.some((part) => !Number.isInteger(part) || part < 0 || part > 0xffff)) {
     throw new Error('seed must contain four unsigned 16-bit integers');
@@ -189,26 +171,6 @@ function cloneRequest(request: Battle['p1']['activeRequest']): BattleRequest | n
   return request ? (structuredClone(request) as unknown as BattleRequest) : null;
 }
 
-function copyRouteState(state: RouteState): RouteState {
-  return {
-    pov: { p1: [...state.pov.p1], p2: [...state.pov.p2] },
-    log: [...state.log],
-    publicLog: [...state.publicLog],
-    pendingSplit: [...state.pendingSplit],
-    winner: state.winner,
-    turns: state.turns,
-  };
-}
-
-function assertSnapshotProtocol(snapshot: FrozenBattleSnapshot): void {
-  if (snapshot.protocolVersion !== FROZEN_BATTLE_REFEREE_PROTOCOL_VERSION) {
-    throw new FrozenBattleRefereeError(
-      'snapshot-protocol',
-      `snapshot protocol ${String(snapshot.protocolVersion)} is not supported`,
-    );
-  }
-}
-
 export class FrozenBattleReferee {
   readonly format: string;
   readonly seed: readonly [number, number, number, number];
@@ -245,63 +207,6 @@ export class FrozenBattleReferee {
     }
     this.winnerTracker = installWinnerTracker(this.battle, null);
     this.drainBattleLog();
-  }
-
-  static restore(
-    snapshot: FrozenBattleSnapshot,
-    mechanics: FrozenBattleMechanics = loadShowdown(),
-  ): FrozenBattleReferee {
-    assertSnapshotProtocol(snapshot);
-    const referee = new FrozenBattleReferee(snapshot.options, mechanics);
-    const battle = mechanics.Battle.fromJSON(structuredClone(snapshot.battle) as Record<string, unknown>);
-    battle.restart(() => {});
-    const restoredHash = stateHashOf(battle);
-    if (restoredHash !== snapshot.stateHash) {
-      throw new FrozenBattleRefereeError('snapshot-protocol', 'snapshot state hash does not match its battle');
-    }
-    const routeState: RouteState = {
-      pov: { p1: [...snapshot.routing.pov.p1], p2: [...snapshot.routing.pov.p2] },
-      log: [...snapshot.routing.log],
-      publicLog: [...snapshot.routing.publicLog],
-      pendingSplit: [...snapshot.routing.pendingSplit],
-      winner: snapshot.routing.winner,
-      turns: snapshot.routing.turns,
-    };
-    if (
-      snapshot.routing.battleLog !== battle.log.length ||
-      snapshot.routing.povCursors.p1 < 0 ||
-      snapshot.routing.povCursors.p2 < 0 ||
-      snapshot.routing.povCursors.p1 > routeState.pov.p1.length ||
-      snapshot.routing.povCursors.p2 > routeState.pov.p2.length
-    ) {
-      throw new FrozenBattleRefereeError('snapshot-protocol', 'snapshot contains invalid routing cursors');
-    }
-    const reconstructed = emptyRouteState();
-    routeUpdateLines(
-      battle.log.filter((line) => !line.startsWith('|t:|')),
-      reconstructed,
-    );
-    if (JSON.stringify(reconstructed) !== JSON.stringify(routeState)) {
-      throw new FrozenBattleRefereeError('snapshot-protocol', 'snapshot routing does not match its battle log');
-    }
-    const stagedActions = structuredClone(snapshot.stagedActions);
-    const pending = new Set(pendingSides(battle));
-    for (const [rawPid, command] of Object.entries(stagedActions)) {
-      const pid = exactPid(rawPid);
-      if (!pid || typeof command !== 'string' || !pending.has(pid)) {
-        throw new FrozenBattleRefereeError('snapshot-protocol', 'snapshot contains an invalid staged action');
-      }
-    }
-    referee.battle = battle;
-    referee.winnerTracker = installWinnerTracker(battle, snapshot.winnerPid);
-    referee.routeState = routeState;
-    referee.battleLogCursor = snapshot.routing.battleLog;
-    referee.povCursors.p1 = snapshot.routing.povCursors.p1;
-    referee.povCursors.p2 = snapshot.routing.povCursors.p2;
-    referee.revision = snapshot.revision;
-    referee.stagedActions = stagedActions;
-    referee.submittedActions = structuredClone(snapshot.submittedActions);
-    return referee;
   }
 
   observe(pid: Pid): FrozenBattleObservation {
@@ -400,27 +305,8 @@ export class FrozenBattleReferee {
     };
   }
 
-  snapshot(): FrozenBattleSnapshot {
-    this.drainBattleLog();
-    return {
-      protocolVersion: FROZEN_BATTLE_REFEREE_PROTOCOL_VERSION,
-      options: {
-        format: this.format,
-        seed: [...this.seed],
-        seats: this.seats.map((seat) => ({ ...seat })),
-      },
-      battle: this.battle.toJSON(),
-      stateHash: stateHashOf(this.battle),
-      revision: this.revision,
-      stagedActions: structuredClone(this.stagedActions),
-      submittedActions: structuredClone(this.submittedActions),
-      routing: {
-        ...copyRouteState(this.routeState),
-        battleLog: this.battleLogCursor,
-        povCursors: { ...this.povCursors },
-      },
-      winnerPid: this.winnerTracker.pid,
-    };
+  currentState(): { revision: number; stateHash: string } {
+    return { revision: this.revision, stateHash: stateHashOf(this.battle) };
   }
 
   terminalEvidence(): FrozenBattleTerminalEvidence | null {

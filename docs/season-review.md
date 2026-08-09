@@ -1,7 +1,8 @@
 # Season review
 
-Every coach writes one retrospective at the moment its own season ends, and it
-is published on that team's page.
+Every coach writes one retrospective at the moment its own season ends. Access
+follows the evidence projection in
+[Architecture](architecture.md#state-evidence-and-trust).
 
 ## What this records
 
@@ -19,8 +20,12 @@ preregistered observable rubric, identity-stripped traces, several independent
 graders, reported disagreement, and blinded human audit.
 
 Nothing the review says changes the completed season or reaches another seat
-during play. Publication and prompt context can still shape the text, so the
-artifact is never treated as incentive-free ground truth.
+during play. There is no later action in that coach's current season, so the
+review cannot demonstrate a notebook handoff, behavioral change, learning, or
+causal transfer. Prompt context and expected later review can still shape the
+text, so the artifact is never treated as incentive-free ground truth. A
+reflection intervention must be separately versioned and bind a complete
+reflection-to-later-prompt-to-action chain.
 
 ## When it fires
 
@@ -60,7 +65,8 @@ Reply shape:
 
 ## Persistence
 
-`season.jsonl` in the run dir, one row per coach, with the per-seat prompt and
-response traces under `season/`. A resumed league replays rows already written
-rather than re-buying a retrospective whose season is already closed. The GUI
-reads the log directly, so reviews appear on team pages as they are written.
+`season.jsonl` in the run dir holds one row per coach, with per-seat prompt and
+response-attempt traces under `season/`. A resumed league replays rows already
+written rather than re-buying a retrospective whose season is already closed.
+Storage does not change the projection or publication boundary defined in
+[Architecture](architecture.md#state-evidence-and-trust).

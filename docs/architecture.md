@@ -10,13 +10,18 @@ renders typed API data and is never an alternate scoring authority.
 assets, and server-sent events; `src/gui/client/` contains the client. Shared API
 shapes belong in `src/gui/api.ts`.
 
-The GUI opens on **Overview**, which states the position method, the draft
-circuit stages, and what the server actually holds. **Position Lab** shows
-validated public position artifacts, provenance, gates, and decision evidence.
-**Draft leagues** is the exploratory season archive; there is no runnable Draft
-Circuit. **Live run**, **Tournaments**, and **New run** are operational paths.
-Private scores, snapshots, opponent requests, or sealed panels must never be
-served to a model or browser.
+The **Research** routes are **Home**, **Method**, and **Docs**. Home and Method
+render one server-loaded projection of the hash-bound selected artifact. The
+**Workspace** routes are **Draft leagues**, **Live**, **Tournaments**, and **New
+run**. Draft leagues is an exploratory season archive, not a connected
+evaluation circuit.
+
+Anonymous and authorized operational views are different API projections.
+Private position scores, snapshots, opponent requests, and sealed panels remain
+offline and are never browser data. Raw run evidence is available only in a
+trusted local workspace or to an authorized owner/operator; the anonymous view
+is the facts-only projection specified under [State, evidence, and
+trust](#state-evidence-and-trust).
 
 ## Local experiment protocols
 
@@ -40,7 +45,7 @@ the battle engine or Showdown boundary.
   formes under exclusivity, Species Clause, roster-size, and point constraints.
   Before every series a coach selects six roster members and builds complete
   sets. Showdown validates format legality; league rules enforce draft-specific
-  constraints such as Mega locks. The current league also supports one
+  constraints such as Mega locks. The protocol includes one
   mid-season transaction window and terminal season reviews; see
   [Trade window](trade-window.md) and [Season review](season-review.md).
 - **Exhibition** (`src/seat.ts`) exposes one seat over a loopback bearer-token
@@ -54,6 +59,13 @@ series notebook. Round-robin builds are blind to other round-robin results;
 playoff coaches may receive their own prior builds, results, and final notes.
 Franchise names are presentation metadata and never enter competitive prompts.
 
+The default round robin runs blind, concurrency-limited batches: every scheduled
+series through the configured transaction week completes before the window, and
+the remaining series form the next batch. With no window, all round-robin series
+share one batch. `--sequential-weeks` is a distinct execution option, and
+`--through-week` implies it. Scheduling changes the information/timing condition
+and must be recorded rather than pooled silently.
+
 ## Decision contract
 
 A local `LLMEngine` seat receives only its authorized view:
@@ -66,7 +78,14 @@ A local `LLMEngine` seat receives only its authorized view:
   damage from the live request and visible sheets.
 
 Tools calculate mechanics; they do not recommend choices or trust a model to
-supply hidden battle state. The model returns one JSON object:
+supply hidden battle state. A common model-visible format-authority notice also
+appears in draft, construction, transaction, battle decision/reflection, and
+season-review roles. It neutrally tells seats to treat the prompt and pinned
+simulator as authoritative when Champions postdates their training data; it
+contains no matchup strategy. Its bytes are part of each affected scaffold
+identity.
+
+The model returns one JSON object:
 
 ```json
 {"choices":[0,2],"rationale":"optional evidence","notebook":"optional complete replacement"}
@@ -112,17 +131,35 @@ Evaluation manifests bind the Showdown SHA, reference
 configuration, action encoding, source corpus, executed evaluator, seeds, and
 content digests.
 
-Position artifacts have three physically separate classes:
+Position artifacts use exactly two physically separate roots:
 
-1. **Public tasks:** neutral point-of-view prompts and numbered
-   Showdown-accepted candidate actions.
-2. **Private scores:** qualification evidence and frozen action values.
-3. **Sealed grader state:** snapshots, opponent requests, draws, and rectangular
-   action-value matrices.
+1. **Public:** the v1 candidate manifest plus neutral point-of-view tasks and
+   numbered Showdown-accepted candidate actions.
+2. **Private:** score and qualification rows together with sealed snapshots,
+   opponent requests, draws, and rectangular action-value matrices.
 
-Model-facing and browser loaders accept only public tasks. Candidate files are
-immutable and remain `release_ready: false`; freezing a candidate does not waive
-the release gates in [Evaluation plan](evaluation-plan.md).
+Model-facing and browser loaders accept only the public root. Candidate files are
+immutable, and their release status is owned only by the
+[Evaluation plan](evaluation-plan.md#program-status); constructing them does not
+waive any release gate.
+
+The TypeScript matchday task-source freezer is a separate private artifact
+path. Its contract validates accepted constructions through the referee and
+writes a private `manifest.json` plus `task-source.jsonl`. Publication requires
+one trusted producer and an immutable repository, build, and runtime tree from
+process start through publication. The authority snapshot detects changes only
+after capture, loaded
+JavaScript module bytes are not independently attested, the reviewed raw-byte
+digest assumes the supported POSIX/LF build, and Node provides no portable
+atomic directory `NOREPLACE` against a concurrent same-privilege writer.
+Freezing is not source review or release approval.
+
+For `circuit-trace-v1`, `manifest.json` binds the raw curated and full JSON bytes.
+The clean-checkout checker verifies manifest paths and hashes and scans the raw
+manifest, curated, and full bytes for credentials and private locators. The
+runtime loader, not the generic checker, validates every field and cross-event
+join rendered by Home and Method and refuses a hash mismatch. Artifact status
+and source gaps belong in the [Evaluation plan](evaluation-plan.md#program-status).
 
 ## TypeScript, Python, and verifiers
 
@@ -133,16 +170,17 @@ models, and Python must not duplicate its domain rules.
 
 Keep three package boundaries distinct:
 
-- The planned public `vgc-positions-v1` package is a static native-v1 Python
-  `Taskset`. TypeScript will export frozen tables; Python will strictly parse one
-  action and perform a deterministic lookup, with no Node service at rollout
-  time. It is not implemented or released.
-- The implemented `vgc-frozen-matchday-v0` package is internal and unpublished.
-  Its native-v1 `Taskset` plus `Env` adapts only the already accepted
-  strict-construction-to-Bo3 matchday slice.
-- The future `vgc-draft-circuit-v1` is a connected multi-seat `Env` spanning the
-  draft, schedule, regular season, playoffs, and a frozen circuit return. Those
-  connections and semantics are absent from the internal matchday package.
+- `vgc-positions-v1` is specified as a static native-v1 Python `Taskset`.
+  TypeScript exports frozen tables; Python strictly parses one action and performs
+  a deterministic lookup, with no Node service at rollout time.
+- `vgc-frozen-matchday-v0` is limited to a native-v1 `Taskset` plus `Env` adapter
+  for the strict-construction-to-Bo3 matchday slice.
+- `vgc-draft-circuit-v1` is specified as a connected multi-seat `Env` spanning
+  the draft, schedule, regular season, playoffs, and a frozen circuit return.
+  Matchday-only behavior cannot supply those connections or semantics.
+
+Implementation, release, and compatibility status for all three belongs only in
+the [Evaluation plan](evaluation-plan.md#program-status).
 
 In a dynamic adapter, verifiers owns model calls, agents, runtimes, traces, and
 episode control. It replaces the local `LLMEngine` and top-level orchestration,
@@ -154,20 +192,12 @@ verifiers Env -> provisioned runtime -> versioned JSON-lines referee
                                       -> TypeScript domain -> Pokémon Showdown
 ```
 
-The frozen wire tuple is exactly JSONL protocol 1, matchday protocol 2, and
-battle protocol 2. `src/frozen-battle-referee.ts` is the single-game authority.
+The frozen wire tuple is exactly JSONL protocol 1, matchday protocol 1, and
+battle protocol 1. `src/frozen-battle-referee.ts` is the single-game authority.
 `src/frozen-matchday-referee.ts` accepts two strict construction artifacts,
 rejects noncanonical or illegal registrations, and runs up to three seeded
 native Champions games. The registered six stay fixed for the Bo3 while native
 team preview supplies a fresh bring four and lead two each game.
-
-Matchday-v2 observations have seat-specific top-level `povLines` queues. When a
-game ends, each seat's unread final native POV delta enters its own queue; an
-observation drains only that seat's queue, so one seat cannot consume the
-other's final lines. Snapshot restoration replays completed games, validates
-that each stored completed-game POV cursor was an observable cursor, and checks
-the remaining per-seat queues against valid native suffixes. Nested battle
-observations continue to carry the live game's seat-specific deltas.
 
 `src/frozen-matchday-protocol.ts` and `tools/frozen-matchday-referee.ts` expose
 the matchday as JSON lines over stdio. The binding covers `episodeId`, an opaque
@@ -177,24 +207,10 @@ teams. The session is a trusted referee interface rather than seat
 authentication; snapshots remain sealed referee state and private evidence stays
 seat-private.
 
-The internal Python adapter provisions entrant, opponent, and referee roles with
-three distinct nonempty live runtime IDs and one homogeneous runtime type. It
-forces all roles nontrainable, opens the compiled TypeScript referee in the
-referee role through `Runtime.open_process`, and uses a fresh one-turn
-interaction for every requested action and between-game notebook opportunity.
-Authorized POV history and the referee-retained current notebook are explicitly
-reinserted into each fresh seat prompt; the notebook can mediate later choices
-but never directly changes referee state, legality, RNG, score, or outcome.
-Python produces only matchday traces, joins, and the descriptive terminal
-`matchday_outcome_v0`; it implements no draft, connected circuit, circuit return,
-or training policy.
-
-See the [internal package README](../environments/vgc_frozen_matchday_v0/README.md)
-for its detailed construction, runtime, failure, and evidence contracts. Local
-source and subprocess verification do not establish isolated-image, provider,
-Docker, Hub, hosted, or training support. The three named, non-comparable rollout
-profiles and their isolation rules remain canonical in
-[Measurement](measurement.md).
+The [internal package README](../environments/vgc_frozen_matchday_v0/README.md)
+owns the detailed role, runtime, notebook, trace, and failure contracts. The
+[Evaluation plan](evaluation-plan.md#program-status) owns support and release
+status.
 
 ## State, evidence, and trust
 
@@ -204,11 +220,12 @@ Local evidence is file-based:
 - `records/results.jsonl`: one append-only row per completed series;
 - `teams/` and `boards/`: immutable input snapshots.
 
-`status.json` is a best-effort lifecycle marker (`done`, `failed`, `stopped`, or
-a running owner PID), not an exclusive lease. The first scheduler failure aborts
-queued and active work while completed evidence remains. Raw submissions,
-referee transitions, and attempt/supersession events are append-only; summaries
-are observational projections and never feed legality or reward.
+`status.json` is a best-effort mutable lifecycle marker (`running`, `paused`,
+`done`, `failed`, or `stopped`), not an exclusive lease or a release approval.
+The first scheduler failure aborts queued and active work while completed
+evidence remains. Raw submissions, referee transitions, and
+attempt/supersession events are append-only; summaries are observational
+projections and never feed legality or reward.
 
 Hosted SQLite stores users, sessions, OAuth flows, ownership, experiments, and
 audit events. Series/game/decision evidence remains in files. Imports validate
@@ -217,10 +234,38 @@ before writing, write support files before result rows, and are idempotent by
 
 Local mode binds to loopback. Hosted mode accepts one configured public origin;
 anonymous users are read-only and GitHub OAuth grants contributor/operator
-roles. Browser-supplied provider keys stay in server memory for the run and are
-never written to state or evidence. Hosted runs use a separate heap-bounded
-process. Public spectators receive only Showdown's public split-log branch;
-private battle data is owner/operator-only.
+roles. Executable inference is limited to the fixed OpenRouter and Prime
+Inference endpoints plus the random baseline. Browser-supplied
+`OPENROUTER_API_KEY` and `PRIME_API_KEY` values stay in server memory for the run
+and are never written to state or evidence. Hosted runs use a separate
+heap-bounded process.
+
+Every anonymous generic-run response is facts-only for every mutable lifecycle
+state; `done` never unlocks raw trace. The allowlist includes run/mode/protocol
+and timing facts, entrants, public draft picks and rosters, standings, brackets,
+series/game scores and winners, started matchup-six membership, and official
+open-sheet fields (species, item, ability, nature, and moves) when that run uses
+open sheets. During a live run, only a resolved game's separately captured
+Showdown public split-log branch may be shown, after scrubbing. Stored archive game files contain an owner-side branch,
+not the public branch, so anonymous archived game DTOs return no log rather than
+trying to sanitize private input into public history. Live unresolved logs and
+all snapshots are absent.
+
+The anonymous projection excludes seeds, errors, pauses, notices, ownership and
+control fields, sample-team pastes, external-run identifiers, exact stat
+allocation, rationales, notebooks, build attempts and repair evidence, tool and
+spend details, submitted actions, decision/reflection counts or contents,
+season-review text, private HP/state, decision/context traces, opponent-private
+requests, snapshots, and all
+grader state. Unsafe storage fails closed; missing legacy config/status is
+accepted only when terminal result rows already establish contextual public
+facts. To build the projection, the trusted server may open and parse named,
+bounded artifact files that also contain private fields. Anonymous DTO builders
+structurally allowlist their output and never return those private fields or raw
+source objects; this is a response boundary, not a claim that the server never
+reads the source bytes. Trusted local users and authorized owners/operators
+retain the operational view. A separately reviewed immutable bundle is a
+distinct publication artifact and does not change this rule.
 
 See [Deployment](deployment.md) for service configuration and
 [Usage](usage.md) for operator commands.

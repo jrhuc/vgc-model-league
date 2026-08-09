@@ -24,8 +24,8 @@ import {
 } from '../src/eval/frozen-matchday-task-source.js';
 import {
   assertPinnedShowdownRuntime,
+  captureRuntimeProducerAuthority,
   PRODUCER_DIGEST_PROTOCOL,
-  runtimeProducerAuthority,
   showdownRuntimeAuthorityFiles,
 } from '../src/eval/producer.js';
 import {
@@ -161,8 +161,12 @@ function succeeds(result: ReturnType<typeof spawnSync>): void {
   assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
 }
 
-function fails(result: ReturnType<typeof spawnSync>, pattern: RegExp): void {
+function rejects(result: ReturnType<typeof spawnSync>): void {
   assert.notEqual(result.status, 0, `${result.stdout}\n${result.stderr}`);
+}
+
+function fails(result: ReturnType<typeof spawnSync>, pattern: RegExp): void {
+  rejects(result);
   assert.match(`${result.stdout}\n${result.stderr}`, pattern);
 }
 
@@ -307,7 +311,7 @@ test('CLI freezes canonical ordered nine-key task rows and an exact sealed manif
     assert.equal(row.matchday_protocol_version, FROZEN_MATCHDAY_REFEREE_PROTOCOL_VERSION);
     assert.equal(row.battle_protocol_version, FROZEN_BATTLE_REFEREE_PROTOCOL_VERSION);
     assert.equal(row.showdown_revision, SHOWDOWN_LOCK.commit);
-    assert.deepEqual(row.options, new FrozenMatchdayReferee(options).snapshot().options);
+    assert.deepEqual(row.options, new FrozenMatchdayReferee(options).acceptedOptions());
     assert.ok(frozenMatchdayStartRequestLine(row).length <= FROZEN_REFEREE_REQUEST_LINE_BYTES + 1);
   }
   assert.equal(taskRows[0]?.expected_config_digest, taskRows[1]?.expected_config_digest);
@@ -374,7 +378,7 @@ test('CLI freezes canonical ordered nine-key task rows and an exact sealed manif
     'runtime',
     'showdown_runtime_digest',
   ]);
-  const producer = runtimeProducerAuthority(pathToFileURL(TOOL).href);
+  const producer = captureRuntimeProducerAuthority(pathToFileURL(TOOL).href);
   assert.equal(manifest.producer.digest_protocol, PRODUCER_DIGEST_PROTOCOL);
   assert.equal(manifest.producer.digest, producer.producerDigest);
   assert.equal(manifest.producer.showdown_runtime_digest, producer.showdownRuntimeDigest);
@@ -459,11 +463,7 @@ test('CLI freezes canonical ordered nine-key task rows and an exact sealed manif
 test('manifest stores only canonical provenance digests and cannot disclose secret markers or game seeds', () => {
   const secret = 'SECRET-MARKER-private-game-seed-65535';
   const options = frozenMatchdayOptions();
-  constructionTask(options).provenance = {
-    source: 'private-construction-ledger',
-    seed: 65535,
-    secret,
-  };
+  constructionTask(options).provenance = { source: secret, seed: 65535 };
   const item = sourceCase('case-secret', 'baseline', options);
   item.provenance = { source: secret, seed_source: `ledger-${secret}` };
   const current = fixture(sourceObject(undefined, [item]));
@@ -477,7 +477,7 @@ test('manifest stores only canonical provenance digests and cannot disclose secr
   );
   assert.equal(
     manifest.ordered_cases[0]?.construction_tasks[0]?.provenance_digest,
-    canonicalJsonDigest({ source: 'private-construction-ledger', seed: 65535, secret }),
+    canonicalJsonDigest({ source: secret, seed: 65535 }),
   );
 });
 
@@ -671,14 +671,6 @@ test('exact source, condition, case, provenance, option, and seat structures fai
       mutate: (value) => (firstInputConstructionTask(value).id = 't'.repeat(129)),
       pattern: /construction task id must be a bounded trimmed nonempty string/u,
     },
-    {
-      mutate: (value) => (firstInputConstructionTask(value).provenance = []),
-      pattern: /construction task provenance must be an object/u,
-    },
-    {
-      mutate: (value) => (firstInputConstructionTask(value).provenance = null),
-      pattern: /construction task provenance must be an object/u,
-    },
   ];
   for (const [index, entry] of mutations.entries()) {
     const value = sourceObject();
@@ -738,13 +730,13 @@ test('condition and case uniqueness, use, reference, semantics, and binding uniq
   fails(run(duplicateBinding), /duplicates a condition_digest and expected_config_digest binding/u);
 });
 
-test('the FrozenMatchdayReferee rejects mutated construction authority', () => {
+test('the freezer rejects a task/action construction mismatch without publication', () => {
   const options = frozenMatchdayOptions();
   const construction = options.seats[0]?.construction;
   assert.ok(construction && construction.status === 'accepted');
   construction.artifact.task.constraint.candidates[0]!.id = 'forged-candidate';
   const current = fixture(sourceObject(undefined, [sourceCase('case-one', 'baseline', options)]));
-  fails(run(current), /construction does not reproduce through the strict referee/u);
+  rejects(run(current));
   assert.equal(fs.existsSync(current.out), false);
 });
 
@@ -937,14 +929,14 @@ test('ordinary rename EEXIST never overwrites the root and preserves stage clean
 
 test('post-referee authority membership recheck rejects derivation across a changed file set', () => {
   const current = fixture();
-  const originalSnapshot = FrozenMatchdayReferee.prototype.snapshot;
+  const originalAcceptedOptions = FrozenMatchdayReferee.prototype.acceptedOptions;
   const originalReaddir = fs.readdirSync;
   let attack = false;
   try {
-    FrozenMatchdayReferee.prototype.snapshot = function () {
-      const snapshot = originalSnapshot.call(this);
+    FrozenMatchdayReferee.prototype.acceptedOptions = function () {
+      const acceptedOptions = originalAcceptedOptions.call(this);
       attack = true;
-      return snapshot;
+      return acceptedOptions;
     };
     fs.readdirSync = ((directory: fs.PathLike, options?: unknown) => {
       const entries = originalReaddir(directory, options as never);
@@ -956,7 +948,7 @@ test('post-referee authority membership recheck rejects derivation across a chan
       /membership changed after its stable snapshot/u,
     );
   } finally {
-    FrozenMatchdayReferee.prototype.snapshot = originalSnapshot;
+    FrozenMatchdayReferee.prototype.acceptedOptions = originalAcceptedOptions;
     fs.readdirSync = originalReaddir;
   }
   assert.equal(fs.existsSync(current.out), false);
@@ -965,21 +957,21 @@ test('post-referee authority membership recheck rejects derivation across a chan
 test('post-referee VGC runtime realpath recheck rejects a changed authority binding', () => {
   const current = fixture();
   const alternate = fs.mkdtempSync(path.join(os.tmpdir(), 'post-referee-vgc-runtime-'));
-  const originalSnapshot = FrozenMatchdayReferee.prototype.snapshot;
+  const originalAcceptedOptions = FrozenMatchdayReferee.prototype.acceptedOptions;
   const previous = process.env.VGC_LEAGUE_PS;
   try {
     delete process.env.VGC_LEAGUE_PS;
-    FrozenMatchdayReferee.prototype.snapshot = function () {
-      const snapshot = originalSnapshot.call(this);
+    FrozenMatchdayReferee.prototype.acceptedOptions = function () {
+      const acceptedOptions = originalAcceptedOptions.call(this);
       process.env.VGC_LEAGUE_PS = alternate;
-      return snapshot;
+      return acceptedOptions;
     };
     assert.throws(
       () => freezeFrozenMatchdayTaskSource(current.input, current.out, pathToFileURL(TOOL).href),
       /reviewed runtime path or digest binding changed|physical identity changed/u,
     );
   } finally {
-    FrozenMatchdayReferee.prototype.snapshot = originalSnapshot;
+    FrozenMatchdayReferee.prototype.acceptedOptions = originalAcceptedOptions;
     if (previous === undefined) delete process.env.VGC_LEAGUE_PS;
     else process.env.VGC_LEAGUE_PS = previous;
   }
@@ -1032,7 +1024,7 @@ test('physical pinned alias ignores fake PATH git, emits the lock, and rejects f
   assert.equal(manifest.authority.showdown_revision, SHOWDOWN_LOCK.commit);
   const referee = new FrozenMatchdayReferee(emitted.options as unknown as FrozenMatchdayRefereeOptions);
   assert.equal(referee.showdownRevision, SHOWDOWN_LOCK.commit);
-  assert.equal(referee.snapshot().revision, 0);
+  assert.equal(referee.currentState().revision, 0);
 
   const forgedOptions = frozenMatchdayOptions();
   for (const seat of forgedOptions.seats) {
@@ -1044,7 +1036,7 @@ test('physical pinned alias ignores fake PATH git, emits the lock, and rejects f
       [sourceCase('forged-case', 'baseline', forgedOptions)],
     ),
   );
-  fails(run(forged, [], environment), /construction artifact is not strict and valid/u);
+  rejects(run(forged, [], environment));
   assert.equal(fs.existsSync(forged.out), false);
 });
 

@@ -7,14 +7,13 @@ import { AuthService } from './auth.js';
 import { GuiServer } from './gui/server.js';
 import { AUTH_DB_PATH, makeRunDirectory, prepareDataDirectories, RESULTS_PATH, RUNS_DIR, TEAMS_DIR } from './paths.js';
 import type { ReasoningLevel } from './providers.js';
-import { nitroSpec, REASONING_LEVELS } from './providers.js';
+import { isReasoningLevel, nitroSpec } from './providers.js';
 import type { SeriesRecord } from './records.js';
-import { loadRows, scopeRows, TEST_POOL } from './records.js';
+import { loadSeriesRecords, scopeRows, TEST_POOL } from './records.js';
 import { RecoveryGate } from './recovery.js';
 import { writeReport } from './report.js';
-import { restartGui, stopGui } from './restart.js';
 import { runRotation } from './rotation.js';
-import { assertRunCanResume, withRunStatus } from './run-status.js';
+import { withRunStatus } from './run-status.js';
 import type { Team } from './teams.js';
 import { parseTimerScale } from './timer.js';
 import type { TimerScale } from './types.js';
@@ -40,9 +39,6 @@ const HELP = `Usage: vgcleague <command>
 
 Commands:
   gui [--port <n>] [--host <address>] [--origin <url>]  serve the browser GUI
-  restart [--port <n>] [--host <address>] [--force] [--skip-build]
-      rebuild, stop any GUI on the port, and start a fresh detached one (refuses while a run is active)
-  stop [--port <n>] [--force]         stop the GUI on the port (refuses while a run is active)
   selfcheck                           run one random-vs-random series through the simulator
   rotation --models <spec> <spec>...  run the controlled team-rotation protocol
       [--series-per-pair <n>] [--pool <name>] [--seed <n>] [--concurrency <n>] [--reasoning <level>]
@@ -56,7 +52,7 @@ Commands:
       --resume continues a stopped bracket: finished series stand; only an eligible interrupted series
       with matching native requests replays recorded decisions without provider calls. Random-seat,
       timer-autodefault, and other ineligible cases may restart or continue live (models, pool, seed,
-      and provenance come from the run's config, so a seat rewired there plays on under its new spec)
+      and provenance come from the run's recorded config)
   draft --models <spec> <spec>...     snake-draft rosters from a board, then a weekly round robin and playoffs
       each coach drafts 10 within a 100-point budget, then picks 6 and builds every set before each match
       [--board <name>] [--seed <n>] [--concurrency <n>] [--reasoning <level>] [--timer-scale <n|off>]
@@ -72,11 +68,16 @@ Commands:
   exhibition --opponent <spec>        host one bo3 where a terminal agent plays a seat over a local bridge
       [--seat p1|p2] [--name <label>] [--pool <name>] [--seed <n>] [--port <n>] [--reasoning <level>]
       [--agent-dir <path>]
+      opponent specs: openrouter:<model-id>, prime:<model-id>, or random
   outcomes [--pool <name>]            print contextual per-series outcomes without an aggregate ranking
   report [--out <path>] [--pool <name>]  write an HTML report
   publish [--to <origin>] [--run <id>]... [--pool <name>] [--include-test] [--dry-run]
       send completed local series, their decision logs, and any missing team pool to a deployment
       --run publishes exactly those runs, whatever their mode or pool; repeat it for several
+
+Model specs are exactly openrouter:<model-id>, prime:<model-id>, or random.
+CLI calls read OPENROUTER_API_KEY or PRIME_API_KEY for the selected provider.
+Prime model IDs are entered manually; OpenRouter model discovery is available in the GUI.
 
 Runs stay alive through transient provider failures (rate limits, upstream
 outages, exhausted quotas): the affected seat pauses, then retries with backoff
@@ -85,12 +86,6 @@ instead of failing the run. Credential and request errors still fail fast.
 --nitro adds the :nitro throughput-routing variant to every OpenRouter spec that
 does not already carry a routing variant. Faster, usually pricier; skip it when
 slower seats set the pace anyway.
-
-While a run is live, writing {"models": {"<spec>": "<replacement>"}} to
-<run-dir>/overrides.json reroutes that seat's calls to the replacement provider
-from its next decision on — no restart, nothing replayed. Meant for moving the
-same model to a healthier route (a rerouted seat uses environment API keys);
-records keep the seat's original spec. Delete the entry to route it back.
 
 publish needs VGC_LEAGUE_PUBLISH_ORIGIN (or --to) and VGC_LEAGUE_IMPORT_TOKEN, which must
 match the token the deployment runs with. It is idempotent: series the deployment already
@@ -115,11 +110,8 @@ function optionalInteger(name: string, value: string | undefined): number | unde
 
 function reasoningLevel(value: string | undefined): ReasoningLevel | undefined {
   if (value === undefined) return undefined;
-  const level = value as ReasoningLevel;
-  if (!REASONING_LEVELS.includes(level)) {
-    throw new Error(`--reasoning must be one of: ${REASONING_LEVELS.join(', ')}`);
-  }
-  return level;
+  if (!isReasoningLevel(value)) throw new Error('--reasoning must be one of: minimal, low, medium, high, xhigh');
+  return value;
 }
 
 function timerScaleOption(value: string | undefined): TimerScale | undefined {
@@ -153,10 +145,6 @@ function experimentExecution(values: ExperimentCliValues) {
     ...(timerScale === undefined ? {} : { timerScale }),
     recovery: autoResumeGate(),
   };
-}
-
-function armModelOverrides(runDir: string): void {
-  process.env.VGC_MODEL_OVERRIDES ??= path.join(runDir, 'overrides.json');
 }
 
 function autoResumeGate(): RecoveryGate {
@@ -199,20 +187,6 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
   prepareDataDirectories();
   const [command, ...rest] = argv;
   if (command === 'selfcheck') return selfcheck();
-  if (command === 'restart' || command === 'stop') {
-    const { values } = parseArgs({
-      args: rest,
-      options: {
-        port: { type: 'string', default: process.env.PORT ?? '8484' },
-        host: { type: 'string' },
-        force: { type: 'boolean', default: false },
-        'skip-build': { type: 'boolean', default: false },
-      },
-    });
-    const port = positiveInteger('port', values.port);
-    if (command === 'stop') return stopGui({ port, force: values.force });
-    return restartGui({ port, host: values.host, force: values.force, build: !values['skip-build'] });
-  }
   if (command === 'gui') {
     const { values } = parseArgs({
       args: rest,
@@ -298,7 +272,6 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
     const models = experimentModels(command, values.models, positionals, values.nitro);
     const execution = experimentExecution(values);
     const runDir = makeRunDirectory();
-    armModelOverrides(runDir);
     const rows = await withRunStatus(runDir, () =>
       runRotation(models, positiveInteger('series-per-pair', values['series-per-pair']), runDir, {
         pool: values.pool,
@@ -364,8 +337,6 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
     if (provenance !== 'disclosed' && provenance !== 'blind')
       throw new Error('--provenance must be "disclosed" or "blind"');
     const runDir = resumeDir ?? makeRunDirectory();
-    if (resumeDir) assertRunCanResume(runDir);
-    armModelOverrides(runDir);
     const rows = await withRunStatus(runDir, () =>
       runTournament(models, runDir, {
         ...(storedTeams
@@ -453,8 +424,6 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
             ? null
             : { afterWeek: positiveInteger('trade-window', values['trade-window']), tradesAllowed: 1 };
     const runDir = resumeDir ?? makeRunDirectory();
-    if (resumeDir) assertRunCanResume(runDir);
-    armModelOverrides(runDir);
     let lastTeambuilds = 0;
     const rows = await withRunStatus(runDir, () =>
       runDraftLeague(models, runDir, {
@@ -602,7 +571,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
       return 0;
     }
     if (values.pool === undefined) console.log(`All pools except ${JSON.stringify(TEST_POOL)}; use --pool for one.\n`);
-    printOutcomes(scopeRows(loadRows(RESULTS_PATH), values.pool));
+    printOutcomes(scopeRows(loadSeriesRecords(RESULTS_PATH), values.pool));
     return 0;
   }
   console.error(HELP);

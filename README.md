@@ -27,14 +27,9 @@ The project separates two questions:
    Semantic plan-fidelity claims require a published rubric, agreement checks,
    and human audit; generated explanations are not private beliefs.
 
-The working local league already produces exploratory trajectories and the
-TypeScript prototype can replay, fork, and export position panels. No public
-position package, validated benchmark, whole-regulation build comparison, or
-connected multi-agent Draft Circuit environment has been released. An
-[internal, unpublished matchday-only adapter](environments/vgc_frozen_matchday_v0/README.md)
-implements the strict-construction-to-Bo3 slice; it is neither the connected
-circuit nor a public benchmark. The current artifact status and mandatory
-release gates live in the [evaluation plan](docs/evaluation-plan.md).
+Implementation and release status changes independently of the measurement
+contract. The [Evaluation plan](docs/evaluation-plan.md#program-status) is the
+only status inventory; no other document or GUI page should be read as one.
 
 ## Contribution boundary
 
@@ -47,18 +42,19 @@ diagnostic. It reuses Pokémon Showdown as referee and treats
 external baselines rather than copying generic clients or policies. See
 [Related work](docs/related-work.md) for the claim boundary.
 
-The planned controlled release path uses
-[Prime Intellect verifiers](https://github.com/PrimeIntellect-ai/verifiers).
-For static positions, TypeScript exports frozen public tasks and private value
-tables; a thin Python `Taskset` will parse one choice and look up its score. The
-internal matchday-only adapter already drives the strict-construction-to-Bo3
-referee through a versioned protocol; a later dynamic `Env` will connect the
-whole Draft Circuit. Verifiers owns model calls, runtimes, traces, evaluation,
-and training integration; it never becomes the VGC rules or scoring authority.
+Controlled evaluation packages use
+[Prime Intellect verifiers](https://github.com/PrimeIntellect-ai/verifiers) for
+model calls, runtimes, traces, and episode control while TypeScript and Showdown
+remain the domain authorities. [Architecture](docs/architecture.md) owns that
+boundary; the [Evaluation plan](docs/evaluation-plan.md#program-status) alone
+owns implementation and release status.
 
 ## Run locally
 
-Requires Node.js 24.18.1, pnpm 11.11.0, and credentials for selected providers.
+Requires Node.js 24.18.1 and pnpm 11.11.0. Executable model specs are exactly
+`openrouter:<model-id>`, `prime:<model-id>`, and `random`. Set
+`OPENROUTER_API_KEY` or `PRIME_API_KEY` for CLI runs that use that provider; the
+GUI accepts the same credentials as run-only browser input.
 
 ```sh
 pnpm install --frozen-lockfile
@@ -80,6 +76,4 @@ must be reported as such. See [Usage](docs/usage.md) for commands.
 - [Deployment](docs/deployment.md)
 - [Trade window](docs/trade-window.md)
 - [Season review](docs/season-review.md)
-- [Human controls](docs/human-controls.md) (planned official-event source,
-  reconstruction, and release protocol)
 - [Related work](docs/related-work.md)

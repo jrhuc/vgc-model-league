@@ -8,16 +8,14 @@ order. [Measurement](measurement.md) defines what their results may mean.
 | Track | Unit | Status |
 | --- | --- | --- |
 | `vgc-positions-v1` | one battle choice | TypeScript replay/fork/export prototype exists; Python package and model runner do not |
-| `vgc-whole-reg-build-v0` | one complete team build | internal vertical-slice proposal only |
-| `vgc-frozen-matchday-v0` | one strict-construction-to-Bo3 matchday | internal, unpublished matchday-only native-v1 `Taskset` + `Env`; exact `verifiers==0.3.0` local source suite, compiled package suite with the real referee on v0.3 `SubprocessRuntime`, exact local wheel build, and clean Python import/plugin smoke passed; GitHub CI steps are configured and await their first green run; it is not the whole-reg build or Draft Circuit; real provider/model, isolated image, Docker, Prime runtime, Hub, Hosted, and training are unsupported |
+| `vgc-frozen-matchday-v0` | one strict-construction-to-Bo3 matchday | internal and unpublished; local source, compiled-Episode, wheel, and import smokes passed; no real-model, isolated, or hosted support |
 | `vgc-draft-circuit-v1` | one shared multi-seat circuit episode | referee and internal matchday adapter exist; full connected circuit `Env`, draft, schedule, playoffs, and circuit return are absent |
 | local league | exploratory full runs | working |
 
 The public program deliberately separates an inexpensive controlled choice from
 the delayed draft-to-battle problem. Positions come first. The connected Draft
 Circuit is the long-horizon target, not a draft-only task with an invented roster
-reward. The whole-regulation build arm is only an internal exercise of shared
-construction and battle interfaces.
+reward.
 
 The current branch can replay a game from its format, Showdown revision, seed,
 teams, and actions; refuse mismatched logs; reopen snapshots; enumerate legal
@@ -37,32 +35,28 @@ request, snapshot, scores, and panel draws. Every evaluated model receives the
 same neutral position scaffold rather than another model's memory.
 
 The first package is static: no Node process, HTTP service, tunnel, or secret at
-rollout time. TypeScript must score every accepted action from the frozen
-candidate protocol before freezing and write three physically separated artifact
-classes:
+rollout time. TypeScript must score every accepted action under the candidate
+protocol and write exactly two physically separated roots:
 
-- public prompts and canonical action maps;
-- private score vectors, qualification uncertainty, and eligibility evidence;
-- sealed snapshots, draw identities, and rectangular action-value matrices.
+- one public root for prompts, canonical action maps, and the candidate manifest;
+- one private root for score vectors, qualification evidence, snapshots, draw
+  identities, and rectangular action-value matrices.
 
-Every manifest binds the full Showdown SHA, format, scaffold/reference versions,
-sampling seeds, source corpus, action encoding, executed evaluator, canonical
-bytes, and checksums. Public loaders reject private roots.
+The current candidate manifest and artifact rows use schema v1. The manifest
+binds the full Showdown SHA, format, scaffold/reference versions, sampling seeds,
+source corpus, action encoding, executed evaluator, canonical bytes, and
+checksums. Public loaders reject the private root.
 
 Two independent common-draw qualification panels decide eligibility. A third,
 untouched common-draw measurement panel supplies final rewards. A failed matrix
-cell rejects the panel; actions never receive unequal sample counts. Qualification
-thresholds, near-duplicate policy, split seed/fraction, and total/per-stratum
-balance tolerances come from a reviewed schema-v2 policy calibrated against a
-separate canonical manifest.
-
-`freeze-position-splits` keeps every source-series/near-duplicate connected
-component intact and uses deterministic greedy stratification. That is a
-reproducible allocation, not a global optimum. A missing split, balance failure,
-or qualification-eligible row without a usable measurement panel fails the
-whole candidate. Public and private target roots are immutable: an identical
-rerun is a no-op; different bytes require new roots. Candidate manifests remain
-`release_ready: false`.
+cell rejects the panel; actions never receive unequal sample counts.
+Qualification thresholds, near-duplicate/source grouping, and corpus-balance
+requirements must come from a separately reviewed eligibility policy calibrated
+outside the candidate corpus. A balance failure or qualification-eligible row
+without a usable measurement panel fails the whole candidate. The public and
+private target roots are immutable: an identical rerun is a no-op; different
+bytes require new roots. Release status belongs only to the program-status table,
+not a candidate-manifest field.
 
 The planned Python `Taskset` strictly parses one choice and looks up its frozen
 measurement value. For legal action `a`, the proposed normalized reward is:
@@ -71,13 +65,13 @@ measurement value. For legal action `a`, the proposed normalized reward is:
 (mean_value(a) - min_value) / (max_value - min_value)
 ```
 
-Zero-span tasks are ineligible under the frozen policy. Invalid output receives
+Zero-span tasks are ineligible under the eligibility policy. Invalid output receives
 `-1` and is reported separately from the worst legal action, whose reward is
 zero. Preserve parsing, legality, raw value, uncertainty, span, phase, and
 normalized reward as separate metrics.
 
-The table is reproducible but inspectable. Keep train and evaluation splits
-separate, record exposure, and never claim contamination resistance merely
+The table is reproducible but inspectable. Keep calibration and held-out
+evaluation corpora separate, record exposure, and never claim contamination resistance merely
 because values came from a simulator. The initial source distribution is
 “VGCML-generated positions,” not human or tournament VGC.
 
@@ -101,7 +95,7 @@ these gates pass:
 
 1. **Replay:** every item exactly reproduces its bound source game.
 2. **Sampling stability:** independent qualification panels are assessed under
-   an externally calibrated frozen policy; measurement values never choose
+   an externally calibrated eligibility policy; measurement values never choose
    inclusion.
 3. **Horizon sensitivity:** report longer horizons and full-game results on a
    tractable subset.
@@ -112,58 +106,37 @@ these gates pass:
 6. **Prompt parity and leakage:** prove no opponent-private request, source
    identity/action, score, or grader state reaches model-visible tasks.
 7. **Artifact integrity:** verify canonical manifests/digests, immutable and
-   physically separate public/private roots, split balance, and duplicate/source
+   physically separate public/private roots, corpus balance, and duplicate/source
    isolation.
 8. **Packaging:** install the wheel and load/score it in a clean container; pass
    a local native-v1 evaluation.
 9. **Hosted compatibility:** run separate real smoke tests for Environment Hub,
    Hosted Evaluation, and Hosted Training rather than inferring support.
 
-Candidate freezing completes none of the criterion, horizon, hidden-information,
+Candidate export completes none of the criterion, horizon, hidden-information,
 packaging, or hosted gates by itself.
-
-## Internal `vgc-whole-reg-build-v0`
-
-This proposed ablation removes drafting and asks for exactly one complete legal
-Regulation M-B team of six. It must reuse the Draft Circuit's `TeamBuildTask`,
-`StageEvidence`, Showdown validation, preview adapter, battle adapter, and
-evidence schema. It adds no separate builder, repair/default path, or reflection.
-An invalid or incomplete comparative build remains invalid.
-
-Candidate and frozen human-reference builds would face a frozen opponent suite
-on the same rectangular cross-product of opponent, side, seed, two preview
-controllers, and two battle controllers. Every cell must complete. The statistic
-is the candidate schedule mean minus the mean human-reference value on identical
-cells; uncertainty clusters by build episode. Meta-judges may label diagnostic
-style or failure modes but never determine reward or inclusion.
-
-Build only the vertical slice needed to verify the shared contracts. Do not
-publish a Regulation M-B comparison until exact current human packs have usable
-licences and provenance, opponent and human suites are frozen and disjoint, and
-controller coverage is complete. Public or reconstructed teams are not evidence
-of de novo construction; an official stream without spreads is not an exact
-pack.
 
 ## Internal `vgc-frozen-matchday-v0`
 
 This implemented native-v1 `Taskset` plus `Env` is an unpublished control-flow
 adapter for one strict-construction-to-Bo3 matchday. One Episode provisions the
 entrant, opponent, and non-agent referee roles, runs the exact JSONL 1 / matchday
-2 / battle 2 TypeScript protocol, and records a descriptive seat outcome only
+1 / battle 1 TypeScript protocol, and records a descriptive seat outcome only
 after its within-matchday action and notebook joins are complete. It does not
-construct a whole-regulation team, draft, schedule a season, run playoffs, define
-a circuit return, or implement training.
+draft, schedule a season, run playoffs, define a circuit return, or implement
+training.
 
-The exact `verifiers==0.3.0` local source suite, the locally run compiled
-package suite (including the real referee on v0.3 `SubprocessRuntime`), the exact
-local wheel build, and its clean Python import/plugin smoke have passed. The
-GitHub CI workflow and package steps are configured but pending their first
-green GitHub run. Subprocess mode is debug evidence, not role isolation. No
-real provider/model or isolated runtime image has been tested, and Docker,
-Prime runtime, Environment Hub, Hosted Evaluation, Hosted Training, and
-training use remain unsupported. See the [package README](../environments/vgc_frozen_matchday_v0/README.md)
-for the detailed adapter contract and the compatibility table below for the
-canonical support status.
+The private TypeScript task-source freezer is implemented and tested. It derives
+referee-accepted cases into `task-source.jsonl` plus a manifest. It assumes a
+single trusted producer and an immutable repository/build/runtime tree from
+process start through publication; its
+post-capture authority checks, unattested loaded-module bytes, POSIX/LF raw-byte
+scope, and lack of portable directory `NOREPLACE` are explicit bounds. Freezing
+is not review or release approval.
+
+The [package README](../environments/vgc_frozen_matchday_v0/README.md) owns the
+detailed adapter contract. Verified and unsupported execution paths are recorded
+once in the [support table](#verifiers-boundary-and-target-architecture) below.
 
 ## `vgc-draft-circuit-v1`
 
@@ -221,10 +194,23 @@ result until all these gates pass:
 ### Stage-linked trace analysis
 
 The internal matchday adapter implements complete joins from action Traces to
-accepted referee actions and from notebook Traces to referee receipts before it
-records an outcome. Draft-to-construction-to-battle joins, their mechanical
-projection, and the connected circuit semantics remain planned and are release
-gates for the Draft Circuit.
+accepted referee actions and from between-game notebook Traces to referee
+receipts before it records an outcome. Its deterministic full-`Env` debug smoke
+exercises those joins, but is not a quality evaluation.
+
+The committed selected trace bundle is a different exploratory artifact. It links eight
+selected draft, construction, preview, action, transaction, and terminal-review
+events while labeling recorded facts separately from release-time
+reconstruction. It is not a complete connected-circuit projection: the legacy
+source did not record the application revision or exact battle system prompt,
+and the public bundle omits the complete terminal-game → between-game reflection
+→ next-game prompt chain. The immutable v1 bundle will not be rewritten to add a
+causal-transfer claim. Any notebook-handoff intervention must be a new
+versioned artifact with source-time bindings and a later action on which an
+effect could be tested.
+
+A complete mechanical draft-to-construction-to-battle projection and the
+connected circuit semantics remain planned release gates for the Draft Circuit.
 
 Architecture owns the
 [Showdown authority](architecture.md#pokémon-showdown-authority) and
@@ -234,17 +220,6 @@ Architecture owns the
 projection export, a semantic-label pilot, and preregistered controlled forks
 are separate analyses. Semantic labeling is not a prerequisite for controlled
 forks.
-
-### Official-event human controls (planned, gated)
-
-No human corpus has been ingested. The bounded inventory in
-[Human controls](human-controls.md) identified no official Reg M-B match corpus
-through 2026-08-08; that document owns the dated source inventory,
-reconstruction and admission, human-reference treatment, and rights and release
-gates. Worlds is a prospective official-event source and can be assigned to
-Reg M-B only after an official Worlds-specific rules source is retained. NAIC
-Reg M-A may calibrate annotation and reconstruction machinery only; it does not
-validate Reg M-B.
 
 ### Long-horizon interpretation gate
 
@@ -260,12 +235,7 @@ and episode control. TypeScript and Showdown remain authoritative for candidate
 generation, native action acceptance, state, battle reconstruction, and domain
 outcomes.
 
-`vgc-positions-v1` remains a planned static `Taskset`.
-`vgc-frozen-matchday-v0` is an implemented internal matchday-only `Taskset` plus
-`Env`. The future Draft Circuit will be a different connected `Env`; it must add
-draft, schedule, playoff, and circuit-return control flow rather than treating
-the internal matchday as a complete circuit. See
-[Architecture](architecture.md) for the component boundary.
+[Architecture](architecture.md) owns the package and component boundaries.
 
 Compatibility is evidence, not assumption. This is the current support table for
 `vgc-frozen-matchday-v0`:
@@ -273,7 +243,7 @@ Compatibility is evidence, not assumption. This is the current support table for
 | Path | Current evidence and status |
 | --- | --- |
 | local source suite | Passed locally against exact `verifiers==0.3.0` |
-| compiled package suite | Passed locally, including the real compiled referee through v0.3 `SubprocessRuntime`; debug-only, with no isolation or provider claim |
+| compiled package suite | Passed locally, including private-source freezing and one deterministic three-game full-Episode lifecycle through a real v0.3 `EnvServer`, scripted local OpenAI-compatible endpoint, real compiled referee, and debug-labeled runtime objects; no real provider/model or isolation claim |
 | local wheel build and clean Python smoke | Exact local wheel build plus clean-environment Python import and native plugin registry discovery passed |
 | GitHub CI | Workflow and package steps are configured; pending the first green GitHub run |
 | real provider/model | Not run; unsupported |
@@ -286,18 +256,19 @@ Compatibility is evidence, not assumption. This is the current support table for
 
 ## Work order
 
-1. Use the existing exporter and freezer to produce separate calibration and
-   candidate artifacts, review the frozen policy, and pass the remaining gates.
+1. Use the existing grader and exporter to produce candidate artifacts, establish
+   separate calibration evidence, review the eligibility policy, and pass the
+   remaining gates.
 2. Build the small native-v1 static `Taskset` with strict parsing, lookup reward,
    leakage tests, and a tool-less/null harness.
-3. Run a controlled pilot over one frozen split; publish samples, uncertainty,
+3. Run a controlled pilot over one held-out candidate corpus; publish samples, uncertainty,
    cost, and full configuration rather than a leaderboard alone.
 4. Obtain the first green GitHub CI run for the configured Python package
    suite, wheel build, and clean import/plugin smoke; their exact local
    equivalents already pass.
 5. Build an isolated runtime image containing the compiled pinned referee, then
    run the internal matchday package with a real provider and model. Local
-   `SubprocessRuntime` evidence does not pass this gate.
+   debug-runtime evidence does not pass this gate.
 6. Run separate Docker, Prime runtime, Environment Hub, and Hosted Evaluation
    smokes for the exact wheel and image. Keep Hosted Training unsupported while
    the package is matchday-only and nontrainable.
@@ -309,9 +280,7 @@ Compatibility is evidence, not assumption. This is the current support table for
    replay and join-completeness gate.
 9. Run the semantic-label pilot and preregistered controlled forks as separate
    parallel or later analyses; neither is conditional on the other.
-10. Calibrate the human-control machinery on NAIC Reg M-A and collect Worlds only
-    after the applicable source and rights gates pass.
-11. Add GUI reporting last and only from versioned evaluation outputs; it must
+10. Add GUI reporting last and only from versioned evaluation outputs; it must
     not invent scores from natural league games.
 
 Do not add another generic Showdown client, copy external baselines, derive a

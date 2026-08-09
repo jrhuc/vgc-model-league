@@ -114,8 +114,20 @@ function TournamentGame({
 }) {
   const path = `/api/tournament/game?run=${encodeURIComponent(archive.runId)}&series=${seriesIndex}&game=${game}`;
   const { view, error } = useMatchGame(path, 4_000);
-  if (error) return <div class="message error">Could not load this game: {error}</div>;
-  if (!view) return <p class="muted">Loading the game…</p>;
+  if (error)
+    return (
+      <div>
+        <h1>Tournament game unavailable</h1>
+        <div class="message error">Could not load this game: {error}</div>
+      </div>
+    );
+  if (!view)
+    return (
+      <div>
+        <h1>Tournament game</h1>
+        <p class="muted">Loading the game…</p>
+      </div>
+    );
 
   const first = archive.entrants[view.sides[0]];
   const second = archive.entrants[view.sides[1]];

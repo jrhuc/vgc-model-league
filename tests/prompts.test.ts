@@ -1,8 +1,27 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { renderDecision, SYSTEM, TIMED_SYSTEM } from '../src/prompts.js';
+import {
+  DRAFT_SERIES_REFLECTION_SYSTEM,
+  FORMAT_AUTHORITY_NOTICE,
+  REFLECTION_SYSTEM,
+  renderDecision,
+  SERIES_REFLECTION_SYSTEM,
+  SYSTEM,
+  TIMED_SYSTEM,
+} from '../src/prompts.js';
+
+const LEGACY_FORMAT_CORRECTION = /This game is newer than your training data|There is no Terastallisation/i;
+
+function assertFormatAuthority(prompt: string): void {
+  assert.equal(prompt.split(FORMAT_AUTHORITY_NOTICE).length - 1, 1);
+  assert.doesNotMatch(prompt, LEGACY_FORMAT_CORRECTION);
+}
 
 test('system prompt names the tools and reserves timer policy for timed play', () => {
+  assert.equal(
+    FORMAT_AUTHORITY_NOTICE,
+    'Pokémon Champions and this regulation may postdate your training data. Treat the rules in this prompt and the pinned Pokémon Showdown simulator as authoritative. Do not import mechanics from other Pokémon games or formats. If a mechanic is absent from the rules and legal actions, treat it as unavailable rather than trying to correct the format.',
+  );
   assert.match(SYSTEM, /lookup_matchup/);
   assert.match(SYSTEM, /estimate_damage/);
   assert.match(SYSTEM, /compare_action_order/);
@@ -10,6 +29,15 @@ test('system prompt names the tools and reserves timer policy for timed play', (
   assert.match(TIMED_SYSTEM, /battle timer/);
   assert.match(TIMED_SYSTEM, /two reference calculations plus one action-order comparison/);
   assert.ok(TIMED_SYSTEM.startsWith(SYSTEM.split('\n').slice(0, -1).join('\n')));
+  for (const prompt of [
+    SYSTEM,
+    TIMED_SYSTEM,
+    REFLECTION_SYSTEM,
+    SERIES_REFLECTION_SYSTEM,
+    DRAFT_SERIES_REFLECTION_SYSTEM,
+  ]) {
+    assertFormatAuthority(prompt);
+  }
 });
 
 test('decision prompt leads with merged state and keeps mechanics compact', () => {

@@ -93,7 +93,7 @@
 .league-card-meta { color: var(--muted); font: 700 10px/1 var(--mono); letter-spacing: 0.04em; text-transform: uppercase; }
 .franchise-card-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
 .franchise-card-head b { display: block; font: 800 17px/1.1 var(--display); letter-spacing: 0.02em; margin-bottom: 5px; }
-.franchise-card-head .model-link { color: var(--muted); font: 700 10px/1 var(--mono); }
+.franchise-card-head .model-fact { color: var(--muted); font: 700 10px/1 var(--mono); }
 .franchise-card-record { text-align: right; }
 .franchise-card-record b { display: block; font: 800 17px/1 var(--display); }
 .franchise-card-record small { color: var(--muted); font: 700 9px/1.4 var(--mono); text-transform: uppercase; letter-spacing: 0.05em; }
@@ -112,7 +112,7 @@
 .build-changes { margin: 0 0 12px; padding: 10px 12px 10px 26px; border: 1px solid var(--line); background: #fff9dc; font-size: 12.5px; }
 .build-changes li + li { margin-top: 4px; }
 .team-lede { display: grid; gap: 8px; justify-items: end; }
-.team-lede .model-link { font: 700 12px/1 var(--mono); }
+.team-lede .model-fact { font: 700 12px/1 var(--mono); }
 .usage-strip { display: flex; flex-wrap: wrap; gap: 8px 22px; padding: 0 24px 12px; font: 500 11px/1.4 var(--mono); color: var(--muted); }
 .usage-strip b { color: var(--ink); }
 .usage-scroll { max-height: 430px; overflow-y: auto; }

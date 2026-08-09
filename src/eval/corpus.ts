@@ -2,13 +2,17 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
+import { readJsonlObjects } from '../jsonl.js';
 import { SAFE_SEGMENT } from '../path-safety.js';
 import { defaultPsDir, REPO_ROOT, RESULTS_PATH, RUNS_DIR } from '../paths.js';
+import { resolveAttemptLineage } from '../series.js';
 import { showdownCommit } from '../showdown.js';
 import type { JsonObject, Pid } from '../types.js';
+import { isRecord } from '../value.js';
 import type { GameSource, Replay } from './fork.js';
 import { replayGame } from './fork.js';
 import { type RunScaffold, readRunScaffold } from './scaffold.js';
+import { canonicalJson } from './serialization.js';
 
 export interface GameRecord {
   runId: string;
@@ -67,19 +71,67 @@ function packedDigest(packed: string): string {
 
 function exactTeams(seriesDir: string): Record<Pid, string> | null {
   const series = readJson(path.join(seriesDir, 'series.json'));
-  const packed = series?.packed_teams as Partial<Record<Pid, unknown>> | undefined;
-  if (typeof packed?.p1 !== 'string' || typeof packed.p2 !== 'string') return null;
+  if (series?.schema_version !== 3 || !isRecord(series.identity)) return null;
+  const packed = series.identity.packed_teams;
+  if (!isRecord(packed) || typeof packed.p1 !== 'string' || typeof packed.p2 !== 'string') return null;
   return { p1: packed.p1, p2: packed.p2 };
 }
 
-function gameDecisions(seriesDir: string, gameNumber: number): Record<Pid, JsonObject[]> {
-  const decisions: Record<Pid, JsonObject[]> = { p1: [], p2: [] };
-  for (const pid of ['p1', 'p2'] as const) {
-    decisions[pid] = readRows(path.join(seriesDir, `${pid}-decisions.jsonl`)).filter(
-      (row) => row.kind === 'decision' && Number(row.game_number) === gameNumber,
-    );
+function gameDecisions(
+  seriesDir: string,
+  seriesId: string,
+  gameNumber: number,
+  completingAttemptId: string,
+): Record<Pid, JsonObject[]> {
+  const empty: Record<Pid, JsonObject[]> = { p1: [], p2: [] };
+  const attempts = readJsonlObjects(path.join(seriesDir, 'series-attempts.jsonl'));
+  const completions = attempts
+    .map((row, index) => ({ row, index }))
+    .filter(({ row }) => row.kind === 'attempt_completed' && row.attempt_id === completingAttemptId);
+  if (completions.length !== 1) return empty;
+  const completion = completions[0]!;
+  const cutoff = completion.index + 1;
+  const completedGames = completion.row.completed_games;
+  const completingStart = attempts
+    .slice(0, cutoff)
+    .find((row) => row.kind === 'attempt_started' && row.attempt_id === completingAttemptId);
+  if (
+    completion.row.series_id !== seriesId ||
+    !Number.isSafeInteger(completedGames) ||
+    Number(completedGames) < gameNumber ||
+    completingStart?.series_id !== seriesId ||
+    !resolveAttemptLineage(attempts, completingAttemptId, cutoff)
+  ) {
+    return empty;
   }
-  return decisions;
+  const marker = readJson(path.join(seriesDir, `game-${gameNumber}.complete.json`));
+  if (
+    marker?.kind !== 'game_complete' ||
+    marker.series_id !== seriesId ||
+    marker.game_number !== gameNumber ||
+    typeof marker.attempt_id !== 'string'
+  ) {
+    return empty;
+  }
+  const markerStart = attempts
+    .slice(0, cutoff)
+    .find((row) => row.kind === 'attempt_started' && row.attempt_id === marker.attempt_id);
+  const lineage = resolveAttemptLineage(attempts, marker.attempt_id, cutoff);
+  if (markerStart?.series_id !== seriesId || !lineage) return empty;
+  const active = new Set(lineage);
+  return Object.fromEntries(
+    (['p1', 'p2'] as const).map((pid) => [
+      pid,
+      readRows(path.join(seriesDir, `${pid}-decisions.jsonl`)).filter(
+        (row) =>
+          active.has(String(row.attempt_id)) &&
+          row.kind === 'decision' &&
+          Number(row.game_number) === gameNumber &&
+          row.outcome === 'accepted' &&
+          typeof row.action === 'string',
+      ),
+    ]),
+  ) as Record<Pid, JsonObject[]>;
 }
 
 export function loadGameRecords(options: CorpusOptions = {}): GameRecord[] {
@@ -93,8 +145,9 @@ export function loadGameRecords(options: CorpusOptions = {}): GameRecord[] {
     if (options.modes && !options.modes.includes(mode)) continue;
     const runId = String(row.run_id ?? '');
     const seriesId = String(row.series_id ?? '');
+    const attemptId = String(row.attempt_id ?? '');
     const players = row.players as Record<Pid, string>;
-    if (!runId || !players) continue;
+    if (!runId || !attemptId || !players) continue;
     if (!SAFE_SEGMENT.test(runId) || !SAFE_SEGMENT.test(seriesId)) {
       throw new Error('source record run_id and series_id must be path-safe identifiers');
     }
@@ -152,13 +205,6 @@ export function loadGameRecords(options: CorpusOptions = {}): GameRecord[] {
         records.push(incomplete('unknown-action-provenance'));
         continue;
       }
-      const answeredForPlayer = provenance.some((counts) =>
-        Object.values(counts as Record<string, number>).some((value) => Number(value) > 0),
-      );
-      if (answeredForPlayer) {
-        records.push(incomplete('answered-for-player'));
-        continue;
-      }
 
       const candidates: Record<Pid, string[]> = { p1: [], p2: [] };
       const storedTeams = exactTeams(path.dirname(logPath));
@@ -174,7 +220,7 @@ export function loadGameRecords(options: CorpusOptions = {}): GameRecord[] {
         continue;
       }
       for (const pid of ['p1', 'p2'] as const) candidates[pid] = [storedTeams[pid]];
-      const decisions = gameDecisions(path.dirname(logPath), gameNumber);
+      const decisions = gameDecisions(path.dirname(logPath), seriesId, gameNumber, attemptId);
       if (!decisions.p1.length || !decisions.p2.length) {
         records.push(incomplete('no-decisions'));
         continue;
@@ -185,10 +231,29 @@ export function loadGameRecords(options: CorpusOptions = {}): GameRecord[] {
   return records;
 }
 
-export interface VerifiedGame {
+interface VerifiedGame {
   record: GameRecord;
   source: GameSource;
   replay: Replay;
+}
+
+export function gameRecordCorpusDigest(records: readonly GameRecord[]): string {
+  const hash = crypto.createHash('sha256').update('vgc-game-record-corpus-v1\0', 'utf8');
+  for (const record of records) {
+    const serialized = canonicalJson(record);
+    hash.update(`${Buffer.byteLength(serialized)}:`, 'utf8').update(serialized, 'utf8');
+  }
+  return hash.digest('hex');
+}
+
+export function assertGameRecordCorpusDigest(
+  records: readonly GameRecord[],
+  expected: string,
+  label = 'source corpus',
+): void {
+  if (!/^[0-9a-f]{64}$/u.test(expected) || gameRecordCorpusDigest(records) !== expected) {
+    throw new Error(`${label} digest does not match`);
+  }
 }
 
 export function verifyGame(record: GameRecord, psDir?: string): VerifiedGame | null {

@@ -125,7 +125,7 @@ export function requestActionCandidateEntries(request: BattleRequest): LegalActi
     if (!actions.has(command)) actions.set(command, { number: -1, choices, command, label });
   }
   return [...actions.values()]
-    .sort((a, b) => Buffer.from(a.command).compare(Buffer.from(b.command)))
+    .sort((a, b) => Buffer.compare(Buffer.from(a.command), Buffer.from(b.command)))
     .map((entry, number) => ({ ...entry, number }));
 }
 

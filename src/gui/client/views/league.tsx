@@ -1,6 +1,14 @@
 import { useMemo } from 'preact/hooks';
 
-import type { DraftView, RunSnapshot, TeambuildView } from '../../api';
+import type {
+  DraftView,
+  PublicDraftView,
+  PublicTeambuildView,
+  PublicTeamSheetSetView,
+  RunView,
+  TeambuildSetView,
+  TeambuildView,
+} from '../../api';
 import { BoardBrowser, STAT_ORDER, useBoard } from '../components/boardbrowser';
 import { Mark } from '../components/mark';
 import { Sprite } from '../components/sprite';
@@ -13,59 +21,83 @@ const PHASE_LABELS: Record<DraftView['phase'], string> = {
   done: 'Complete',
 };
 
-function coachLabel(draft: DraftView, entrant: number): string {
+function coachLabel(draft: DraftView | PublicDraftView, entrant: number): string {
   return draft.teamNames[entrant] || draft.entrants[entrant] || `Coach ${entrant + 1}`;
 }
 
-function TeambuildCard({ build, draft }: { build: TeambuildView; draft: DraftView }) {
-  const repaired = build.sets.filter((set) => set.repaired).length;
+function isPrivateSet(set: PublicTeamSheetSetView): set is TeambuildSetView {
+  return 'evs' in set;
+}
+
+function TeambuildCard({
+  build,
+  draft,
+}: {
+  build: TeambuildView | PublicTeambuildView;
+  draft: DraftView | PublicDraftView;
+}) {
+  const privateBuild = 'sets' in build;
+  const sets = privateBuild ? build.sets : (build.teamSheet ?? []);
+  const repaired = privateBuild ? build.sets.filter((set) => set.repaired).length : 0;
   return (
     <details class="teambuild-card">
       <summary>
         <b>{coachLabel(draft, build.entrant)}</b> vs {coachLabel(draft, build.opponent)}
-        <span class="muted">
-          {' '}
-          · {build.attempts} attempt{build.attempts === 1 ? '' : 's'}
-          {repaired ? ` · ${repaired} repaired` : ''}
-        </span>
+        {privateBuild ? (
+          <span class="muted">
+            {' '}
+            · {build.attempts} attempt{build.attempts === 1 ? '' : 's'}
+            {repaired ? ` · ${repaired} repaired` : ''}
+          </span>
+        ) : null}
       </summary>
-      <p class="teambuild-plan">{build.rationale}</p>
+      {privateBuild && build.rationale ? <p class="teambuild-plan">{build.rationale}</p> : null}
       <div class="teambuild-sets">
-        {build.sets.map((set, index) => (
-          <div class={`teambuild-set ${set.repaired ? 'repaired' : ''}`} key={`${set.species}-${index}`}>
-            <div class="teambuild-set-head">
-              <Sprite id={set.spriteId} size={26} />
-              <b>{set.species}</b>
-              {set.item ? <span>@ {set.item}</span> : null}
-            </div>
-            <small>
-              {set.ability} · {set.nature}
-            </small>
-            <ul>
-              {set.moves.map((move) => (
-                <li key={move}>{move}</li>
-              ))}
-            </ul>
-            <small class="teambuild-evs">
-              {STAT_ORDER.filter((stat) => set.evs[stat])
-                .map((stat) => `${set.evs[stat]} ${stat}`)
-                .join(' / ') || 'no EVs'}
-            </small>
-            {set.repairs.length > 0 && (
-              <ul class="teambuild-repairs">
-                {set.repairs.map((repair) => (
-                  <li key={repair}>{repair}</li>
+        {sets.map((set, index) => {
+          const privateSet = isPrivateSet(set);
+          return (
+            <div
+              class={`teambuild-set ${privateSet && set.repaired ? 'repaired' : ''}`}
+              key={`${set.species}-${index}`}
+            >
+              <div class="teambuild-set-head">
+                <Sprite id={set.spriteId} size={26} />
+                <b>{set.species}</b>
+                {set.item ? <span>@ {set.item}</span> : null}
+              </div>
+              <small>
+                {set.ability} · {set.nature}
+              </small>
+              <ul>
+                {set.moves.map((move) => (
+                  <li key={move}>{move}</li>
                 ))}
               </ul>
-            )}
-          </div>
-        ))}
+              {privateSet ? (
+                <>
+                  <small class="teambuild-evs">
+                    {STAT_ORDER.filter((stat) => set.evs[stat])
+                      .map((stat) => `${set.evs[stat]} ${stat}`)
+                      .join(' / ') || 'no EVs'}
+                  </small>
+                  {set.repairs.length > 0 ? (
+                    <ul class="teambuild-repairs">
+                      {set.repairs.map((repair) => (
+                        <li key={repair}>{repair}</li>
+                      ))}
+                    </ul>
+                  ) : null}
+                </>
+              ) : null}
+            </div>
+          );
+        })}
       </div>
     </details>
   );
 }
 
-export function DraftRoomView({ run }: { run: RunSnapshot }) {
+export function DraftRoomView({ run }: { run: RunView }) {
   const draft = run.draft!;
   const { board: fullBoard, error: boardError } = useBoard(draft.boardId);
   const byId = useMemo(() => new Map((fullBoard?.mons ?? []).map((mon) => [mon.id, mon] as const)), [fullBoard]);
@@ -82,6 +114,13 @@ export function DraftRoomView({ run }: { run: RunSnapshot }) {
   const spent = (entrant: number) => draft.budget - (draft.budgets[entrant] ?? 0);
   return (
     <div class="league-view">
+      <header class="page-heading league-heading">
+        <div>
+          <p class="eyebrow">Live run / draft league</p>
+          <h1>Draft room.</h1>
+        </div>
+        <p class="lede">Follow the franchises, submitted team builds, board, and recorded picks.</p>
+      </header>
       <section class="panel">
         <div class="section-head">
           <div>
@@ -194,9 +233,9 @@ export function DraftRoomView({ run }: { run: RunSnapshot }) {
               <div class="draft-feed-item" key={pick.pick}>
                 <span class="draft-feed-head">
                   #{pick.pick} · {coachLabel(draft, pick.entrant)} → {byId.get(pick.mon)?.name ?? pick.mon}
-                  {pick.fallback ? ' · fallback' : ''}
+                  {'fallback' in pick && pick.fallback ? ' · fallback' : ''}
                 </span>
-                <p>{pick.rationale}</p>
+                {'rationale' in pick && pick.rationale ? <p>{pick.rationale}</p> : null}
               </div>
             ))}
           </div>

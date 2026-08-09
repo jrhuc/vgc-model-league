@@ -10,26 +10,14 @@ import {
 } from './counterfactual.js';
 import { POSITION_ELIGIBILITY_METRICS_VERSION, positionEligibilityMetrics } from './eligibility.js';
 import { acceptedBattleActionEntries, pendingSides } from './fork.js';
-import { type CandidatePosition, stratumOf } from './positions.js';
 import { canonicalJson, canonicalJsonDigest } from './serialization.js';
 import { validateTaskScoreJoin } from './task.js';
 
-const TASK_KEYS = [
-  'actions',
-  'format',
-  'phase',
-  'prompt',
-  'response_schema',
-  'schema_version',
-  'split',
-  'task_id',
-  'turn',
-];
+const TASK_KEYS = ['actions', 'format', 'phase', 'prompt', 'response_schema', 'schema_version', 'task_id', 'turn'];
 const SCORE_KEYS = [
   'actions',
   'diagnostic_flags',
   'eligibility_metrics',
-  'eligibility_status',
   'max_value',
   'measurement_panel',
   'measurement_ready',
@@ -48,9 +36,7 @@ const SEALED_KEYS = [
   'schema_version',
   'snapshot',
   'source',
-  'source_group',
   'source_id',
-  'selection_stratum',
   'table',
   'task_id',
 ];
@@ -91,19 +77,7 @@ const POSITION_PROMPT_PREFIX =
   'Choose one listed joint action for this controlled Pokemon VGC position.\nSelect the number for the complete joint action, not one part of it.\n\n';
 const POSITION_PROMPT_RESPONSE =
   'Return exactly one JSON object {"choice":N}, where N is a zero-based action number above. Include no other keys or prose.';
-const POSITION_ELIGIBILITY_STATUSES = ['pilot-thresholds-not-frozen', 'eligible-under-frozen-policy'] as const;
-
-export const POSITION_PANEL_ARTIFACT_SCHEMA_VERSION = 3;
-
-export const POSITION_SOURCE_GROUP_PROTOCOL = {
-  version: 1,
-  scope: 'whole-source-series',
-  identity: 'canonical-run-id-series-id-tuple',
-} as const;
-
-export function positionSourceGroup(source: JsonObject): string {
-  return canonicalJsonDigest(['position-source-series-v1', source.run_id, source.series_id]);
-}
+export const POSITION_PANEL_ARTIFACT_SCHEMA_VERSION = 1;
 
 export function exactPublicPositionFingerprint(task: JsonObject): string {
   const actions = Array.isArray(task.actions)
@@ -169,14 +143,13 @@ function nullableFinite(value: unknown, location: string): number | null {
   return value === null ? null : finite(value, location);
 }
 
-export function validatePublicPositionTask(row: JsonObject, index = 0): void {
+function validatePublicPositionTask(row: JsonObject, index = 0): void {
   const location = `task[${index}]`;
   exactKeys(row, TASK_KEYS, location);
   if (row.schema_version !== POSITION_PANEL_ARTIFACT_SCHEMA_VERSION)
     throw new Error(`${location} has unsupported schema version`);
   string(row.task_id, `${location}.task_id`);
   string(row.format, `${location}.format`);
-  if (!['pilot', 'train', 'eval'].includes(String(row.split))) throw new Error(`${location}.split is invalid`);
   if (!['team_preview', 'forced_switch', 'turn'].includes(String(row.phase)))
     throw new Error(`${location}.phase is invalid`);
   integer(row.turn, `${location}.turn`);
@@ -294,7 +267,7 @@ function validateEligibilityMetrics(value: unknown, location: string): JsonObjec
   return metrics;
 }
 
-export function validatePrivatePositionScore(row: JsonObject, index = 0): void {
+function validatePrivatePositionScore(row: JsonObject, index = 0): void {
   const location = `score[${index}]`;
   exactKeys(row, SCORE_KEYS, location);
   if (row.schema_version !== POSITION_PANEL_ARTIFACT_SCHEMA_VERSION)
@@ -304,9 +277,6 @@ export function validatePrivatePositionScore(row: JsonObject, index = 0): void {
   if (typeof row.measurement_ready !== 'boolean') throw new Error(`${location}.measurement_ready must be boolean`);
   const structuralReasons = strings(row.structural_reasons, `${location}.structural_reasons`);
   const diagnosticFlags = strings(row.diagnostic_flags, `${location}.diagnostic_flags`);
-  const eligibilityStatus = string(row.eligibility_status, `${location}.eligibility_status`);
-  if (!POSITION_ELIGIBILITY_STATUSES.includes(eligibilityStatus as (typeof POSITION_ELIGIBILITY_STATUSES)[number]))
-    throw new Error(`${location}.eligibility_status is unsupported`);
   const metrics = validateEligibilityMetrics(row.eligibility_metrics, `${location}.eligibility_metrics`);
   const panel = object(row.measurement_panel, `${location}.measurement_panel`);
   exactKeys(panel, ['id', 'matrix_digest', 'n'], `${location}.measurement_panel`);
@@ -672,7 +642,8 @@ function validateExhaustiveTable(
   const ranked = (panel: JsonObject) =>
     [...(panel.actions as JsonObject[])].sort(
       (a, b) =>
-        Number(b.value) - Number(a.value) || Buffer.from(String(a.action)).compare(Buffer.from(String(b.action))),
+        Number(b.value) - Number(a.value) ||
+        Buffer.compare(Buffer.from(String(a.action)), Buffer.from(String(b.action))),
     );
   const selected = String(ranked(stabilityA)[0]?.action);
   const worst = String(ranked(stabilityA).at(-1)?.action);
@@ -715,11 +686,11 @@ function validateExhaustiveTable(
       best: entries
         .filter((entry) => entry.value === maximum)
         .map((entry) => entry.action)
-        .sort(),
+        .sort((a, b) => Buffer.compare(Buffer.from(String(a)), Buffer.from(String(b)))),
       worst: entries
         .filter((entry) => entry.value === minimum)
         .map((entry) => entry.action)
-        .sort(),
+        .sort((a, b) => Buffer.compare(Buffer.from(String(a)), Buffer.from(String(b)))),
     };
   };
   if (table.anchorAgreement !== (canonicalJson(anchors(stabilityA)) === canonicalJson(anchors(stabilityB))))
@@ -736,15 +707,14 @@ function validateExhaustiveTable(
   if (table.valueSpan !== measurement.span) throw new Error(`${location}.valueSpan differs from measurement`);
 }
 
-export function validateSealedPositionPanel(row: JsonObject, index = 0, psDir = defaultPsDir()): void {
+function validateSealedPositionPanel(row: JsonObject, index = 0, psDir = defaultPsDir()): void {
   const location = `sealed[${index}]`;
   exactKeys(row, SEALED_KEYS, location);
   if (row.schema_version !== POSITION_PANEL_ARTIFACT_SCHEMA_VERSION)
     throw new Error(`${location} has unsupported schema version`);
-  for (const key of ['task_id', 'source_id', 'source_group', 'exact_public_fingerprint'] as const)
+  for (const key of ['task_id', 'source_id', 'exact_public_fingerprint'] as const)
     string(row[key], `${location}.${key}`);
   const panelSeed = string(row.panel_seed, `${location}.panel_seed`);
-  string(row.selection_stratum, `${location}.selection_stratum`);
   const source = object(row.source, `${location}.source`);
   exactKeys(source, SOURCE_KEYS, `${location}.source`);
   for (const key of ['run_id', 'series_id', 'scaffold', 'played_by', 'played'] as const)
@@ -752,8 +722,6 @@ export function validateSealedPositionPanel(row: JsonObject, index = 0, psDir = 
   integer(source.game_number, `${location}.source.game_number`, 1);
   integer(source.position_index, `${location}.source.position_index`);
   if (!['p1', 'p2'].includes(String(source.pid))) throw new Error(`${location}.source.pid is invalid`);
-  if (row.source_group !== positionSourceGroup(source))
-    throw new Error(`${location}.source_group does not match its source series`);
   const snapshot = string(row.snapshot, `${location}.snapshot`);
   let parsedSnapshot: JsonObject;
   try {
@@ -849,29 +817,6 @@ export function validatePositionPanelArtifacts(
     const source = sealedRow.source as JsonObject;
     if (row.turn !== table.turn || source.pid !== table.pid)
       throw new Error(`task ${id} differs from its sealed position`);
-    const expectedStratum = stratumOf({
-      runId: '',
-      seriesId: '',
-      gameNumber: 0,
-      positionIndex: 0,
-      positionDigest: '',
-      pid: table.pid,
-      format: String(row.format),
-      scaffold: '',
-      phase: String(row.phase),
-      turn: table.turn,
-      legal: table.legal,
-      value: table.stateValue,
-      contrast: 0,
-      played: '',
-      discriminating: false,
-    } satisfies CandidatePosition);
-    if (sealedRow.selection_stratum !== expectedStratum)
-      throw new Error(`task ${id} selection stratum differs from its public and sealed position`);
-    const expectedEligibilityStatus =
-      row.split === 'pilot' ? 'pilot-thresholds-not-frozen' : 'eligible-under-frozen-policy';
-    if (score.eligibility_status !== expectedEligibilityStatus)
-      throw new Error(`score ${id} eligibility status differs from its public split`);
     const expectedStructuralReasons = table.stability.some((panel) => panel.span <= 0)
       ? ['zero_qualification_span']
       : [];

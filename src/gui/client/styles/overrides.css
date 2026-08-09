@@ -1,7 +1,6 @@
 /* biome-ignore-all format: one maintained selector per line */
 /* Late overrides that must win over the per-view sheets; imported last. */
 .lineup-side > .muted { grid-column: 1 / -1; margin: 0; }
-.audit-details > summary:hover { color: var(--ink); border-color: #67809e; }
 .builder-intro .button { border-color: var(--yellow); background: var(--yellow); color: var(--ink); white-space: nowrap; }
 .tournament-card .table-scroll { padding: 0 24px 24px; }
 .live-tournament-heading .lede { color: #c6d5e6; }
