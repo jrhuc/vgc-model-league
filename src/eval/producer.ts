@@ -38,7 +38,7 @@ interface StableFileSetSnapshot {
 }
 
 const PINNED_SHOWDOWN_RUNTIME_DIGESTS: Readonly<Record<string, string>> = {
-  '6a1836dd71c0718e923206f3d089e61074410868': '9744c463d0ac5dbb4b8be92424d2fa55d9cd3e69fc0281a192b235c22cc92c6c',
+  '6a1836dd71c0718e923206f3d089e61074410868': 'f13dc660b05704cb843adc9f39368c5fa5f8d2ffdc1b44fc76317cef71625881',
 };
 
 function bytes(value: Buffer | string): Buffer {
