@@ -181,9 +181,16 @@ copying, and replay; it is not a defense against malicious arbitrary host code
 that can read the environment-private HMAC key.
 
 Operators must pin the required runtimes and a source file in their run
-configuration. A compiled local referee integration fixture and full
-provider/model smoke coverage are tracked separately from this unpublished
-package.
+configuration. Compiled coverage includes both the direct referee protocol
+smoke and a full debug-subprocess lifecycle smoke. The latter invokes the compiled TypeScript
+fixture and private task-source freezer, reconstructs its emitted rows through a
+real v0.3 `EnvServer`, and runs complete two- and three-game Episodes against a
+local scripted OpenAI-compatible chat-completions server. It exercises and
+verifies one deterministic local full-Episode/controller/framework/referee-process
+path using a scripted endpoint and debug subprocess runtimes. It does **not** prove a real provider or
+model, process isolation, Docker or image behavior, Prime VM, Hosted, Hub, or
+training compatibility, model quality, or benchmark/ranking validity. No
+provider credential is used, and all roles remain nontrainable.
 
 ## Development
 
