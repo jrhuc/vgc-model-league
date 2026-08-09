@@ -1,49 +1,114 @@
+import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
-import path from 'node:path';
-
+import { z } from 'zod';
+import { appendJsonlObject, readJsonlObjects } from './jsonl.js';
+import { acquireLease, LeaseBusyError } from './run-status.js';
 import type { ExperimentMode, JsonObject, Pid, TimerScale } from './types.js';
 
 export interface SeriesRecord extends JsonObject {
-  mode?: ExperimentMode;
-  protocol_version?: number;
-  scaffold?: string;
-  draft_scaffold?: string;
-  teambuild_scaffold?: string;
-  window_scaffold?: string;
-  season_scaffold?: string;
-  run_id?: string;
-  series_index?: number;
-  pool?: string;
-  timer_scale?: TimerScale;
-  trade_window?: { after_week: number; trades_allowed?: number } | null;
-  contributor?: { provider: 'github'; subject: string; login: string };
+  mode?: ExperimentMode | undefined;
+  protocol_version?: number | undefined;
+  scaffold?: string | undefined;
+  draft_scaffold?: string | undefined;
+  teambuild_scaffold?: string | undefined;
+  window_scaffold?: string | undefined;
+  season_scaffold?: string | undefined;
+  run_id?: string | undefined;
+  series_index?: number | undefined;
+  pool?: string | undefined;
+  timer_scale?: TimerScale | undefined;
+  trade_window?: { after_week: number; trades_allowed?: number | undefined } | null | undefined;
+  contributor?: { provider: 'github'; subject: string; login: string } | undefined;
   players: Record<Pid, string>;
-  winner?: string | null;
+  winner?: string | null | undefined;
 }
 
-/** Rows recorded before the timer-scale field existed all ran the standard 1x clock. */
-function rowSpeed(row: SeriesRecord): TimerScale {
-  return row.timer_scale === 'off' || typeof row.timer_scale === 'number' ? row.timer_scale : 1;
+export const SERIES_RECORD_SCHEMA_VERSION = 1 as const;
+
+const pidTextSchema = z.strictObject({ p1: z.string().min(1), p2: z.string().min(1) });
+const pidCountSchema = z.strictObject({
+  p1: z.number().int().nonnegative(),
+  p2: z.number().int().nonnegative(),
+});
+const gameSchema = z.looseObject({
+  number: z.number().int().positive(),
+  winner: z.string().min(1).nullable(),
+  winner_side: z.enum(['p1', 'p2']).nullable(),
+  turns: z.number().int().nonnegative(),
+  seed: z.tuple([
+    z.number().int().nonnegative().max(0xffff),
+    z.number().int().nonnegative().max(0xffff),
+    z.number().int().nonnegative().max(0xffff),
+    z.number().int().nonnegative().max(0xffff),
+  ]),
+});
+const seriesRecordSchema = z.strictObject({
+  schema_version: z.literal(SERIES_RECORD_SCHEMA_VERSION),
+  mode: z.enum(['rotation', 'exhibition', 'tournament', 'draft']),
+  protocol_version: z.number().int().positive(),
+  scaffold: z.string().min(1),
+  draft_scaffold: z.string().min(1).optional(),
+  teambuild_scaffold: z.string().min(1).optional(),
+  window_scaffold: z.string().min(1).optional(),
+  season_scaffold: z.string().min(1).optional(),
+  timestamp: z.string().min(1),
+  run_id: z.string().min(1),
+  series_id: z.string().min(1),
+  attempt_id: z.string().min(1).optional(),
+  series_index: z.number().int().nonnegative(),
+  format: z.string().min(1),
+  pool: z.string().min(1).optional(),
+  players: pidTextSchema,
+  teams: pidTextSchema,
+  packed_team_digests: z.strictObject({ p1: z.string().min(1), p2: z.string().min(1) }).optional(),
+  winner: z.string().min(1).nullable(),
+  winner_side: z.enum(['p1', 'p2']).nullable(),
+  score: pidCountSchema,
+  turns: z.number().int().nonnegative(),
+  games: z.array(gameSchema),
+  engine_seeds: z.partialRecord(z.enum(['p1', 'p2']), z.number().int()),
+  timer_scale: z.union([z.literal('off'), z.number().positive()]).optional(),
+  closed_sheets: z.literal(true).optional(),
+  reasoning: z.enum(['minimal', 'low', 'medium', 'high', 'xhigh']).nullable(),
+  reasoning_by_player: z
+    .strictObject({
+      p1: z.enum(['minimal', 'low', 'medium', 'high', 'xhigh']).nullable(),
+      p2: z.enum(['minimal', 'low', 'medium', 'high', 'xhigh']).nullable(),
+    })
+    .optional(),
+  decision_stats: z.strictObject({ p1: z.json(), p2: z.json() }),
+  contributor: z
+    .strictObject({ provider: z.literal('github'), subject: z.string().min(1), login: z.string().min(1) })
+    .optional(),
+  trade_window: z
+    .strictObject({
+      after_week: z.number().int().nonnegative(),
+      trades_allowed: z.number().int().nonnegative().optional(),
+    })
+    .nullable()
+    .optional(),
+  run_seed: z.number().int(),
+  ps_commit: z.union([z.string().regex(/^[0-9a-f]{40}$/u), z.literal('unknown')]),
+  seat: z.enum(['p1', 'p2']).optional(),
+  dual_seat: z.boolean().optional(),
+  execution_harnesses: z.json().optional(),
+  round: z.number().int().positive().optional(),
+  entrant_count: z.number().int().positive().optional(),
+  seeds: z.json().optional(),
+  provenance: z.json().optional(),
+  advanced: z.string().min(1).optional(),
+  stage: z.enum(['roundrobin', 'playoff']).optional(),
+  board: z.string().min(1).optional(),
+  origin: z.strictObject({ source: z.literal('import'), at: z.string().min(1) }).optional(),
+});
+
+export function parseSeriesRecord(value: unknown, label: string): SeriesRecord {
+  const parsed = seriesRecordSchema.safeParse(value);
+  if (!parsed.success) throw new Error(`${label} is not a current series record: ${z.prettifyError(parsed.error)}`);
+  return parsed.data;
 }
 
-export function speedLabel(scale: TimerScale): string {
-  return scale === 'off' ? 'Untimed' : `${scale}x clock`;
-}
-
-export function speedGroups(rows: SeriesRecord[]): Array<{ scale: TimerScale; rows: SeriesRecord[] }> {
-  const groups = new Map<TimerScale, SeriesRecord[]>();
-  for (const row of rows) {
-    const scale = rowSpeed(row);
-    const bucket = groups.get(scale);
-    if (bucket) bucket.push(row);
-    else groups.set(scale, [row]);
-  }
-  return [...groups.entries()]
-    .map(([scale, grouped]) => ({ scale, rows: grouped }))
-    .sort((a, b) => (a.scale === 'off' ? -1 : b.scale === 'off' ? 1 : a.scale - b.scale));
-}
-
-/** Ratings merge provider aliases and routing variants by normalized model id. */
+/** Normalizes provider-qualified specs when joining one model across archived evidence. */
 export function modelKey(spec: string): string {
   const model = spec.slice(spec.indexOf(':') + 1);
   return model
@@ -58,51 +123,58 @@ export function scopeRows(rows: SeriesRecord[], pool?: string): SeriesRecord[] {
   return pool === undefined ? rows.filter((row) => row.pool !== TEST_POOL) : rows.filter((row) => row.pool === pool);
 }
 
-function playedRows(rows: SeriesRecord[]): SeriesRecord[] {
-  return rows.filter(
-    (row) =>
-      (row.mode ?? 'rotation') === 'rotation' &&
-      typeof row.players?.p1 === 'string' &&
-      typeof row.players.p2 === 'string',
-  );
+const rowCache = new Map<string, { mtimeMs: number; size: number; rows: SeriesRecord[] }>();
+
+export class RecordsBusyError extends Error {}
+
+interface RecordsMutation {
+  load: () => SeriesRecord[];
+  append: (row: JsonObject) => void;
+  replace: (rows: readonly SeriesRecord[]) => void;
 }
 
-export interface Standing {
-  spec: string;
-  series: number;
-  w: number;
-  l: number;
-  t: number;
-  winrate: number;
-  elo: number;
-}
-
-export type HeadToHead = Record<string, Record<string, [number, number, number]>>;
-
-export interface RatingPoint {
-  series: number;
-  spec: string;
-  elo: number;
-}
-
-export interface RatingGroup {
-  scale: TimerScale;
-  label: string;
-  count: number;
-  standings: Standing[];
-  h2h: HeadToHead;
-  trajectory: RatingPoint[];
+/** Holds the one records journal lease across a complete append, import, or removal transaction. */
+export function mutateRecords<T>(file: string, task: (mutation: RecordsMutation) => T): T {
+  let release: () => void;
+  try {
+    release = acquireLease(`${file}.lease`);
+  } catch (error) {
+    if (error instanceof LeaseBusyError) throw new RecordsBusyError(error.message);
+    throw error;
+  }
+  const mutation: RecordsMutation = {
+    load: () => loadSeriesRecords(file),
+    append: (row) => {
+      appendJsonlObject(file, parseSeriesRecord(row, `record appended to ${file}`));
+      rowCache.delete(file);
+    },
+    replace: (rows) => {
+      const staged = `${file}.${randomUUID()}.tmp`;
+      try {
+        fs.writeFileSync(staged, rows.length ? `${rows.map((row) => JSON.stringify(row)).join('\n')}\n` : '', {
+          encoding: 'utf8',
+          flag: 'wx',
+        });
+        fs.renameSync(staged, file);
+        rowCache.delete(file);
+      } finally {
+        fs.rmSync(staged, { force: true });
+      }
+    },
+  };
+  try {
+    return task(mutation);
+  } finally {
+    release();
+  }
 }
 
 export function appendRow(file: string, row: JsonObject): void {
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.appendFileSync(file, `${JSON.stringify(row)}\n`, 'utf8');
+  mutateRecords(file, ({ append }) => append(row));
 }
 
-const rowCache = new Map<string, { mtimeMs: number; size: number; rows: SeriesRecord[] }>();
-
 /** Cached by mtime and size; callers must treat the returned rows as immutable. */
-export function loadRows(file: string): SeriesRecord[] {
+export function loadSeriesRecords(file: string): SeriesRecord[] {
   let stat: fs.Stats;
   try {
     stat = fs.statSync(file);
@@ -112,119 +184,7 @@ export function loadRows(file: string): SeriesRecord[] {
   }
   const cached = rowCache.get(file);
   if (cached && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size) return cached.rows;
-  const rows = fs
-    .readFileSync(file, 'utf8')
-    .split('\n')
-    .filter((line) => line.trim())
-    .map((line) => JSON.parse(line) as SeriesRecord);
+  const rows = readJsonlObjects(file).map((row, index) => parseSeriesRecord(row, `${file} row ${index + 1}`));
   rowCache.set(file, { mtimeMs: stat.mtimeMs, size: stat.size, rows });
   return rows;
-}
-
-function scheduled(rows: SeriesRecord[]): SeriesRecord[] {
-  return rows
-    .map((row, index) => ({ row, index }))
-    .sort((a, b) => {
-      const run = String(a.row.run_id ?? '').localeCompare(String(b.row.run_id ?? ''));
-      if (run) return run;
-      const aIndex = Number.isInteger(a.row.series_index) ? a.row.series_index! : a.index;
-      const bIndex = Number.isInteger(b.row.series_index) ? b.row.series_index! : b.index;
-      return aIndex - bIndex || a.index - b.index;
-    })
-    .map((item) => item.row);
-}
-
-function normalizedPlayers(row: SeriesRecord): { p1: string; p2: string; winner: string | null } {
-  const { p1, p2 } = row.players;
-  const winner = row.winner === p1 ? modelKey(p1) : row.winner === p2 ? modelKey(p2) : null;
-  return { p1: modelKey(p1), p2: modelKey(p2), winner };
-}
-
-function computeRatings(rows: SeriesRecord[]): { standings: Standing[]; trajectory: RatingPoint[] } {
-  const ordered = scheduled(playedRows(rows)).map(normalizedPlayers);
-  const specs = [...new Set(ordered.flatMap(({ p1, p2 }) => [p1, p2]))].sort();
-  const ratings: Record<string, number> = Object.fromEntries(specs.map((spec) => [spec, 1000]));
-  const totals: Record<string, { series: number; w: number; l: number; t: number }> = Object.fromEntries(
-    specs.map((spec) => [spec, { series: 0, w: 0, l: 0, t: 0 }]),
-  );
-  const trajectory: RatingPoint[] = [];
-  for (const [index, { p1, p2, winner }] of ordered.entries()) {
-    const score1 = winner === null ? 0.5 : Number(winner === p1);
-    if (p1 !== p2) {
-      const expected1 = 1 / (1 + 10 ** ((ratings[p2]! - ratings[p1]!) / 400));
-      const old1 = ratings[p1]!;
-      const old2 = ratings[p2]!;
-      ratings[p1] = old1 + 24 * (score1 - expected1);
-      ratings[p2] = old2 + 24 * (1 - score1 - (1 - expected1));
-    }
-    trajectory.push({ series: index + 1, spec: p1, elo: ratings[p1]! });
-    if (p2 !== p1) trajectory.push({ series: index + 1, spec: p2, elo: ratings[p2]! });
-    totals[p1]!.series += 1;
-    totals[p2]!.series += 1;
-    if (winner === null) {
-      totals[p1]!.t += 1;
-      totals[p2]!.t += 1;
-    } else {
-      totals[winner]!.w += 1;
-      totals[winner === p1 ? p2 : p1]!.l += 1;
-    }
-  }
-  const table = specs
-    .map((spec) => {
-      const total = totals[spec]!;
-      return {
-        spec,
-        ...total,
-        winrate: total.series ? (total.w + 0.5 * total.t) / total.series : 0,
-        elo: ratings[spec]!,
-      };
-    })
-    .sort((a, b) => b.elo - a.elo || a.spec.localeCompare(b.spec));
-  return { standings: table, trajectory };
-}
-
-export function standings(rows: SeriesRecord[]): Standing[] {
-  return computeRatings(rows).standings;
-}
-
-export function h2h(input: SeriesRecord[]): HeadToHead {
-  const rows = playedRows(input).map(normalizedPlayers);
-  const specs = [...new Set(rows.flatMap(({ p1, p2 }) => [p1, p2]))].sort();
-  const matrix: HeadToHead = Object.fromEntries(
-    specs.map((a) => [a, Object.fromEntries(specs.map((b) => [b, [0, 0, 0]]))]),
-  );
-  for (const { p1, p2, winner } of rows) {
-    if (p1 === p2) {
-      const cell = matrix[p1]![p1]!;
-      if (winner === null) cell[2] += 2;
-      else {
-        cell[0] += 1;
-        cell[1] += 1;
-      }
-    } else if (winner === null) {
-      matrix[p1]![p2]![2] += 1;
-      matrix[p2]![p1]![2] += 1;
-    } else if (winner === p1) {
-      matrix[p1]![p2]![0] += 1;
-      matrix[p2]![p1]![1] += 1;
-    } else {
-      matrix[p1]![p2]![1] += 1;
-      matrix[p2]![p1]![0] += 1;
-    }
-  }
-  return matrix;
-}
-
-export function ratingGroups(rows: SeriesRecord[]): RatingGroup[] {
-  return speedGroups(rows).map(({ scale, rows: grouped }) => {
-    const { standings: table, trajectory } = computeRatings(grouped);
-    return {
-      scale,
-      label: speedLabel(scale),
-      count: grouped.length,
-      standings: table,
-      h2h: h2h(grouped),
-      trajectory,
-    };
-  });
 }

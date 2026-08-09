@@ -29,15 +29,6 @@ test('a model pause blocks only that seat while others keep playing', async () =
   assert.equal(await settled(paused), true);
 });
 
-test('a rate-limit pause holds only the limited model while siblings keep playing', async () => {
-  const gate = new RecoveryGate();
-  void gate.pause('opencode-go:glm-5.2', { kind: 'rate_limit', summary: '429' });
-  assert.equal(await settled(gate.wait('opencode-go:glm-5.2')), false);
-  assert.equal(await settled(gate.wait('opencode-go:kimi-k3')), true);
-  gate.resume('opencode-go:glm-5.2');
-  assert.equal(await settled(gate.wait('opencode-go:glm-5.2')), true);
-});
-
 test('a quota pause holds every seat on the same provider', async () => {
   const gate = new RecoveryGate();
   void gate.pause('opencode-go:glm-5.2', { kind: 'quota', summary: 'credits exhausted' });

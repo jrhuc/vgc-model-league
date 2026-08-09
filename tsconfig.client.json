@@ -15,5 +15,5 @@
     "skipLibCheck": true,
     "noEmit": true
   },
-  "include": ["src/gui/client", "src/gui/api.ts", "src/types.ts"]
+  "include": ["src/gui/client", "src/gui/api.ts", "src/types.ts", "vite.config.ts"]
 }

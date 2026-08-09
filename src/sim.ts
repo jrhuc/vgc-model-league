@@ -1,10 +1,20 @@
+import { randomUUID } from 'node:crypto';
 import type { BattleStream } from 'pokemon-showdown';
 import { defaultPsDir } from './paths.js';
 import type { RecoveryGate } from './recovery.js';
 import { loadShowdown } from './showdown.js';
 import type { TimerEvent } from './timer.js';
 import { DEFAULT_TIMER_SCALE, TimerAdapter } from './timer.js';
-import type { BattleAgent, BattleOutcome, BattleRequest, Pid, PlayerOptions, TimerScale } from './types.js';
+import type {
+  ActionSubmission,
+  BattleAgent,
+  BattleOutcome,
+  BattleRequest,
+  Pid,
+  PlayerOptions,
+  SubmissionOutcome,
+  TimerScale,
+} from './types.js';
 
 interface RouteState {
   pov: Record<Pid, string[]>;
@@ -23,19 +33,18 @@ export function routeUpdateLines(lines: string[], state: RouteState): void {
   for (let index = 0; index < lines.length; ) {
     const line = lines[index]!;
     if (line.startsWith('|split|')) {
+      const owner = line.split('|', 3)[2];
+      if (owner !== 'p1' && owner !== 'p2') throw new Error(`unknown split owner: ${owner ?? '(missing)'}`);
       if (index + 2 >= lines.length) {
         state.pendingSplit.push(...lines.slice(index));
         return;
       }
-      const owner = line.split('|', 3)[2] as Pid;
       const secret = lines[index + 1]!;
       const publicLine = lines[index + 2]!;
-      if (owner === 'p1' || owner === 'p2') {
-        state.pov[owner].push(secret);
-        state.log.push(secret);
-        if (publicLine) state.publicLog.push(publicLine);
-        if (publicLine) state.pov[owner === 'p1' ? 'p2' : 'p1'].push(publicLine);
-      }
+      state.pov[owner].push(secret);
+      state.log.push(secret);
+      if (publicLine) state.publicLog.push(publicLine);
+      if (publicLine) state.pov[owner === 'p1' ? 'p2' : 'p1'].push(publicLine);
       index += 3;
       continue;
     }
@@ -50,6 +59,12 @@ export function routeUpdateLines(lines: string[], state: RouteState): void {
   }
 }
 
+export function finishUpdateRouting(state: RouteState): void {
+  if (state.pendingSplit.length) {
+    throw new Error(`simulator ended with an incomplete split triple (${state.pendingSplit.length} of 3 lines)`);
+  }
+}
+
 interface PendingAction {
   token: symbol;
   promise: Promise<ActionEvent>;
@@ -59,7 +74,7 @@ interface ActionEvent {
   kind: 'action';
   pid: Pid;
   token: symbol;
-  choice?: string;
+  submission?: ActionSubmission | null;
   error?: unknown;
 }
 
@@ -82,6 +97,8 @@ export class SimBattle {
     seed?: number | [number, number, number, number],
     psDir = defaultPsDir(),
     private readonly timerScale: TimerScale = DEFAULT_TIMER_SCALE,
+    private readonly now: () => number = () => performance.now(),
+    private readonly submissionNamespace: string = randomUUID(),
   ) {
     this.psDir = psDir;
     if (Array.isArray(seed)) {
@@ -122,6 +139,8 @@ export class SimBattle {
     const pendingError: Record<Pid, string | undefined> = { p1: undefined, p2: undefined };
     const suppressRequest: Record<Pid, boolean> = { p1: false, p2: false };
     const pending = new Map<Pid, PendingAction>();
+    const inflight = new Map<Pid, ActionSubmission>();
+    const submissionSequence: Record<Pid, number> = { p1: 0, p2: 0 };
     signal?.throwIfAborted();
     let abortPromise: Promise<never> | undefined;
     let onAbort: (() => void) | undefined;
@@ -141,13 +160,27 @@ export class SimBattle {
       }
     };
 
+    const nextSubmissionId = (pid: Pid) => `${this.submissionNamespace}:${pid}:${++submissionSequence[pid]}`;
+    const resolveSubmission = (pid: Pid, outcome: SubmissionOutcome = 'accepted', showdownError?: string) => {
+      const submission = inflight.get(pid);
+      if (!submission) return;
+      inflight.delete(pid);
+      agents[pid].resolveSubmission(submission, outcome, showdownError);
+    };
+    const submitDefault = (pid: Pid, source: 'simulator-default' | 'timer-default') => {
+      inflight.set(pid, { submissionId: nextSubmissionId(pid), choice: 'default', source });
+    };
+
     const timerEvent = (pid: Pid, event: TimerEvent) => {
       const action = pending.get(pid);
       if (action) {
         pending.delete(pid);
         agents[pid].abandonDecision?.();
       }
-      if (event === 'autodefault') timerAutodefaults[pid] += 1;
+      if (event === 'autodefault') {
+        timerAutodefaults[pid] += 1;
+        submitDefault(pid, 'timer-default');
+      }
       const line = `|timer|${event}`;
       state.pov[pid].push(line);
       state.log.push(line);
@@ -161,7 +194,17 @@ export class SimBattle {
     for (const pid of ['p1', 'p2'] as const) stream.write(`>player ${pid} ${JSON.stringify(this.players[pid])}`);
     const timer = new TimerAdapter(this.format, stream, timerEvent, this.psDir, this.timerScale);
     for (const pid of ['p1', 'p2'] as const) timer.setPlayer(pid, this.players[pid].name);
+    let recoveryPausedAt: number | undefined;
     const recoveryChanged = (paused: boolean) => {
+      const changedAt = this.now();
+      if (paused) {
+        recoveryPausedAt ??= changedAt;
+      } else if (recoveryPausedAt !== undefined) {
+        for (const pid of ['p1', 'p2'] as const) {
+          if (lastRequest[pid]) requestAt[pid] += changedAt - Math.max(recoveryPausedAt, requestAt[pid]);
+        }
+        recoveryPausedAt = undefined;
+      }
       const lines = paused ? timer.pauseForRecovery() : timer.resumeAfterRecovery();
       if (lines.length) onUpdate?.(lines, lines);
     };
@@ -170,7 +213,7 @@ export class SimBattle {
 
     const schedule = (pid: Pid, request: BattleRequest, error?: string) => {
       if (pending.has(pid)) throw new Error(`received another request while ${pid} is still deciding`);
-      const elapsed = error && request.timer ? (performance.now() - requestAt[pid]) / 1000 : 0;
+      const elapsed = error && request.timer ? (this.now() - requestAt[pid]) / 1000 : 0;
       const currentRequest =
         request.timer && elapsed > 0
           ? {
@@ -195,14 +238,16 @@ export class SimBattle {
       const lines = state.pov[pid].slice(povCursor[pid]);
       povCursor[pid] = state.pov[pid].length;
       const token = Symbol(pid);
-      let action: Promise<string>;
+      const submissionId = nextSubmissionId(pid);
+      const agentContext = { povLines: lines, ...(error ? { error } : {}), submissionId };
+      let action: Promise<ActionSubmission | null>;
       try {
-        action = Promise.resolve(agents[pid].act(currentRequest, { povLines: lines, ...(error ? { error } : {}) }));
+        action = Promise.resolve(agents[pid].submit(currentRequest, agentContext));
       } catch (caught) {
         action = Promise.reject(caught);
       }
       const promise = action.then<ActionEvent, ActionEvent>(
-        (choice) => ({ kind: 'action', pid, token, choice }),
+        (submission) => ({ kind: 'action', pid, token, submission }),
         (caught) => ({ kind: 'action', pid, token, error: caught }),
       );
       pending.set(pid, { token, promise });
@@ -216,12 +261,17 @@ export class SimBattle {
           errors[pid] += 1;
           retryCount[pid] += 1;
           pendingError[pid] = line;
+          resolveSubmission(pid, 'rejected', line);
           if (retryCount[pid] >= 3) {
-            void Promise.resolve(timer.choose(pid, 'default')).catch(() => {});
-            const stopLine = `|-vgctimerstop|${pid}`;
-            onUpdate?.([stopLine], [stopLine]);
+            const unavailable = line.includes('[Unavailable choice]');
+            suppressRequest[pid] = unavailable;
+            if (!unavailable) {
+              submitDefault(pid, 'simulator-default');
+              void Promise.resolve(timer.choose(pid, 'default')).catch(() => {});
+              const stopLine = `|-vgctimerstop|${pid}`;
+              onUpdate?.([stopLine], [stopLine]);
+            }
             simulatorSubstitutions[pid] += 1;
-            suppressRequest[pid] = line.includes('[Unavailable choice]');
             pendingError[pid] = undefined;
           } else if (!line.includes('[Unavailable choice]') && lastRequest[pid]) {
             schedule(pid, lastRequest[pid], line);
@@ -232,11 +282,16 @@ export class SimBattle {
           if (!payload) continue;
           const request = JSON.parse(payload) as BattleRequest;
           lastRequest[pid] = request;
-          requestAt[pid] = performance.now();
+          requestAt[pid] = this.now();
           if (suppressRequest[pid]) {
             suppressRequest[pid] = false;
+            submitDefault(pid, 'simulator-default');
+            void Promise.resolve(timer.choose(pid, 'default')).catch(() => {});
+            const stopLine = `|-vgctimerstop|${pid}`;
+            onUpdate?.([stopLine], [stopLine]);
             continue;
           }
+          resolveSubmission(pid);
           const error = pendingError[pid];
           if (!error) retryCount[pid] = 0;
           pendingError[pid] = undefined;
@@ -267,18 +322,24 @@ export class SimBattle {
           if (!current || current.token !== event.token) continue;
           pending.delete(event.pid);
           if (event.error !== undefined) throw event.error;
-          await timer.choose(event.pid, event.choice ?? '');
+          if (event.submission) inflight.set(event.pid, event.submission);
+          await timer.choose(event.pid, event.submission?.choice ?? '');
           const stopLine = `|-vgctimerstop|${event.pid}`;
           onUpdate?.([stopLine], [stopLine]);
           continue;
         }
-        if (event.message === null) throw new Error('simulator produced no output for 60 seconds');
+        if (event.message === null) {
+          finishUpdateRouting(state);
+          throw new Error('simulator produced no output for 60 seconds');
+        }
         nextStream = streamEvent(stream);
         const message = timer.receive(event.message);
         const lines = message.split('\n');
         if (lines[0] === 'update') route(lines.slice(1));
         else if (lines[0] === 'sideupdate') handleSideUpdate(lines.slice(1));
         else if (lines[0] === 'end') {
+          finishUpdateRouting(state);
+          for (const pid of ['p1', 'p2'] as const) resolveSubmission(pid);
           if (lines[1]) {
             const data = JSON.parse(lines.slice(1).join('\n')) as { winner?: string; turns?: number };
             state.winner = data.winner || state.winner;

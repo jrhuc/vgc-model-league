@@ -4,8 +4,8 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { buildLeague, buildLeagueGame, buildLeagues, buildModelProfile } from '../src/archive.js';
-import { appendRow, loadRows, type SeriesRecord } from '../src/records.js';
+import { buildLeague, buildLeagueGame, buildLeagues } from '../src/archive.js';
+import type { SeriesRecord } from '../src/records.js';
 
 const RUN_ID = 'league-run-1';
 
@@ -291,7 +291,10 @@ test('live league games expose battlefield sprites before the series is recorded
   );
   fs.writeFileSync(
     path.join(seriesDir, 'series.json'),
-    JSON.stringify({ players: { p1: 'openai:alpha', p2: 'openai:beta' }, series_index: 0 }),
+    JSON.stringify({
+      schema_version: 3,
+      identity: { players: { p1: 'openai:alpha', p2: 'openai:beta' }, series_index: 0 },
+    }),
   );
   fs.writeFileSync(path.join(seriesDir, 'game-1.log'), '');
   fs.writeFileSync(
@@ -366,7 +369,10 @@ test('an in-progress semifinal advances the live archive to playoffs', () => {
   );
   fs.writeFileSync(
     path.join(seriesDir, 'series.json'),
-    JSON.stringify({ players: { p1: 'openai:model0', p2: 'openai:model3' }, series_index: 15 }),
+    JSON.stringify({
+      schema_version: 3,
+      identity: { players: { p1: 'openai:model0', p2: 'openai:model3' }, series_index: 15 },
+    }),
   );
   fs.writeFileSync(path.join(seriesDir, 'game-1.log'), '');
   const roundRobin = leagueRow({
@@ -470,13 +476,23 @@ test('archived leagues overlay post-window rosters without rewriting the draft',
     writeLeagueFixture(runsDir);
     const runDir = path.join(runsDir, RUN_ID);
     const config = JSON.parse(fs.readFileSync(path.join(runDir, 'config.json'), 'utf8')) as Record<string, unknown>;
-    config.trade_window = { after_week: 1 };
+    config.trade_window = { after_week: 1, trades_allowed: 0 };
     fs.writeFileSync(path.join(runDir, 'config.json'), JSON.stringify(config));
+    fs.writeFileSync(
+      path.join(runDir, 'window.jsonl'),
+      `${JSON.stringify({ kind: 'offer', from: 0, to: 1, give: 'pikachu', get: 'eevee' })}\n`,
+    );
+    assert.equal(
+      buildLeague(LEAGUE_ROWS, runsDir, RUN_ID)?.tradeWindow,
+      null,
+      'an offer journal is not a verified free-agency timeline',
+    );
     fs.writeFileSync(
       path.join(runDir, 'window.json'),
       JSON.stringify({
         after_week: 1,
         order: [0, 1],
+        offers: [],
         decisions: [
           {
             entrant: 0,
@@ -497,6 +513,7 @@ test('archived leagues overlay post-window rosters without rewriting the draft',
         ],
         rosters: [
           {
+            entrant: 0,
             model: 'openai:alpha',
             team_name: 'Alpha Aces',
             budget_left: 20,
@@ -504,6 +521,7 @@ test('archived leagues overlay post-window rosters without rewriting the draft',
             roster: [{ id: 'raichu', name: 'Raichu', cost: 80 }],
           },
           {
+            entrant: 1,
             model: 'compat:beta:nitro',
             team_name: 'Beta Bandits',
             budget_left: 40,
@@ -526,58 +544,6 @@ test('archived leagues overlay post-window rosters without rewriting the draft',
   } finally {
     fs.rmSync(runsDir, { recursive: true, force: true });
   }
-});
-
-test('buildModelProfile aggregates every mode with per-mode records and run links', () => {
-  const runsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-archive-'));
-  writeLeagueFixture(runsDir);
-  const rotation: SeriesRecord = {
-    mode: 'rotation',
-    run_id: 'rot-run',
-    series_id: 'ccc333',
-    timestamp: '2026-07-21T10:00:00.000Z',
-    pool: 'majors',
-    players: { p1: 'openrouter:lab/alpha', p2: 'openai:beta' },
-    winner: 'openrouter:lab/alpha',
-    winner_side: 'p1',
-    score: { p1: 2, p2: 0 },
-    games: [{ number: 1 }, { number: 2 }],
-    decision_stats: {
-      p1: { decisions: 5, fallbacks: 1, move_selections: 8, switch_selections: 2, team_previews: 2 },
-      p2: { decisions: 4 },
-    },
-  } as SeriesRecord;
-  const profile = buildModelProfile([...LEAGUE_ROWS, rotation], runsDir, 'alpha');
-  assert.ok(profile);
-  assert.deepEqual(profile.providers, ['openai:alpha', 'openrouter:lab/alpha'], 'aliases merge by model key');
-  assert.equal(profile.series, 3);
-  assert.equal(profile.games, 7);
-  assert.equal(profile.decisions, 27);
-  assert.equal(profile.totalTokens, 100, 'only logs for the sides this model played');
-  assert.equal(profile.reasoningTokens, 40);
-  assert.equal(profile.cost, 0.5);
-  assert.equal(profile.rates.switch, 2 / 10);
-  const modes = Object.fromEntries(profile.modes.map((mode) => [mode.mode, mode]));
-  assert.deepEqual([modes.draft!.w, modes.draft!.l], [1, 1]);
-  assert.deepEqual([modes.rotation!.w, modes.rotation!.l], [1, 0]);
-  assert.equal(modes.draft!.runs[0]!.runId, RUN_ID);
-  assert.equal(modes.rotation!.runs.length, 0, 'only draft and tournament runs link out');
-  assert.equal(buildModelProfile([rotation], runsDir, 'nobody'), null);
-  const testPool = { ...rotation, pool: 'test' } as SeriesRecord;
-  assert.equal(buildModelProfile([testPool], runsDir, 'alpha'), null, 'the test pool stays out of profiles');
-  fs.rmSync(runsDir, { recursive: true, force: true });
-});
-
-test('loadRows caches by mtime and size but sees appended rows', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-records-cache-'));
-  const file = path.join(dir, 'results.jsonl');
-  appendRow(file, { players: { p1: 'a', p2: 'b' } });
-  const first = loadRows(file);
-  assert.equal(first.length, 1);
-  assert.equal(loadRows(file), first, 'unchanged files return the cached array');
-  appendRow(file, { players: { p1: 'c', p2: 'd' } });
-  assert.equal(loadRows(file).length, 2);
-  fs.rmSync(dir, { recursive: true, force: true });
 });
 
 test('a finished semifinal is not mistaken for the final while the bracket is unresolved', () => {

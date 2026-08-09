@@ -30,13 +30,37 @@ export interface BattleRequest extends JsonObject {
 
 export type TimerScale = number | 'off';
 
+export type SubmissionSource =
+  | 'model'
+  | 'automatic'
+  | 'random'
+  | 'model-default'
+  | 'simulator-default'
+  | 'timer-default';
+
+export interface ActionSubmission {
+  submissionId: string;
+  choice: string;
+  source: SubmissionSource;
+}
+
+export type SubmissionOutcome = 'accepted' | 'rejected';
+
 export interface AgentContext {
   povLines: string[];
   error?: string;
 }
 
+export interface SubmissionContext extends AgentContext {
+  submissionId: string;
+}
+
 export interface BattleAgent {
-  act(request: BattleRequest, context: AgentContext): Promise<string> | string;
+  submit(
+    request: BattleRequest,
+    context: SubmissionContext,
+  ): Promise<ActionSubmission | null> | ActionSubmission | null;
+  resolveSubmission(submission: ActionSubmission, outcome: SubmissionOutcome, showdownError?: string): void;
   observe(lines: string[]): Promise<void> | void;
   abandonDecision?(): void;
 }
@@ -61,7 +85,7 @@ export interface ToolCall {
   id: string;
   name: string;
   arguments: JsonObject;
-  /** Provider metadata that must be replayed with the call (e.g. Gemini 3 thought signatures). */
+  /** Provider metadata that must be replayed with the call. */
   providerMetadata?: JsonObject;
 }
 
@@ -72,7 +96,7 @@ export interface Completion {
   finishReason?: string;
   reasoning?: string;
   provider?: string;
-  /** AI SDK response messages, replayed verbatim so provider metadata (e.g. Gemini thought signatures) survives. */
+  /** AI SDK response messages, replayed verbatim so provider metadata survives. */
   responseMessages?: JsonObject[];
 }
 

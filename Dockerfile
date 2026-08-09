@@ -35,6 +35,7 @@ COPY --from=build --chown=node:node /app/node_modules ./node_modules
 COPY --from=build --chown=node:node /app/dist ./dist
 COPY --from=build --chown=node:node /app/teams ./teams
 COPY --from=build --chown=node:node /app/boards ./boards
+COPY --chown=node:node artifacts/public/landing/circuit-trace-v1/manifest.json artifacts/public/landing/circuit-trace-v1/curated.json artifacts/public/landing/circuit-trace-v1/full.json ./artifacts/public/landing/circuit-trace-v1/
 COPY --from=build --chown=node:node /app/pokemon-showdown/package.json ./pokemon-showdown/package.json
 COPY --from=build --chown=node:node /app/pokemon-showdown/dist ./pokemon-showdown/dist
 COPY --from=build --chown=node:node /app/pokemon-showdown/node_modules ./pokemon-showdown/node_modules

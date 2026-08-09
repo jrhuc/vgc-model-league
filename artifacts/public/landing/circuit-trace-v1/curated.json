@@ -1,0 +1,101 @@
+{
+  "schemaVersion": 1,
+  "kind": "draft-circuit-worked-example",
+  "traceId": "coach-c-sand-pivot",
+  "seatAlias": "Coach C",
+  "format": "champions-reg-mb",
+  "truthLabel": "exploratory-authentic-replay-verified",
+  "visibilityBoundary": "postrun-publication-preserves-inrun-access",
+  "stages": {
+    "draft": {
+      "status": "model-generated-statements-recorded-nonfallback",
+      "picks": [
+        {
+          "name": "Tyranitar",
+          "quote": {
+            "text": "Tyranitar at 14 is exceptional value, filling three needs at once: Sand Stream weather setter, premier physical attacker (134 base Attack), and a bulky Rock/Dark defensive backbone that gets a SpD boost in its own sand.",
+            "statementType": "model-generated"
+          }
+        },
+        {
+          "name": "Excadrill",
+          "quote": {
+            "text": "Excadrill completes the sand core with Tyranitar's Sand Stream, giving me a fast Ground/Steel sweeper under Sand Rush that threatens the Fire, Steel, and Electric types across opponent rosters.",
+            "statementType": "model-generated"
+          }
+        }
+      ]
+    },
+    "construction": {
+      "status": "model-response-matched-showdown-valid-used",
+      "registered": [
+        "Mega Gengar",
+        "Gholdengo",
+        "Excadrill",
+        "Tyranitar",
+        "Grimmsnarl",
+        "Paldean Tauros Aqua"
+      ]
+    },
+    "teamPreview": {
+      "status": "submitted-replay-verified",
+      "lead": [
+        "Tyranitar",
+        "Excadrill"
+      ],
+      "back": [
+        "Gholdengo",
+        "Mega Gengar"
+      ]
+    },
+    "battle": {
+      "status": "submitted-replay-verified",
+      "actions": [
+        "Tyranitar — Rock Slide (both foes)",
+        "Excadrill — High Horsepower into Metagross"
+      ]
+    },
+    "transactionWindow": {
+      "offer": {
+        "give": "Absol",
+        "get": "Altaria",
+        "status": "declined",
+        "quote": {
+          "text": "Straight 1-for-1 swap: I get Altaria for its Ground immunity and Water resist to patch my sand team's biggest holes.",
+          "statementType": "model-generated"
+        }
+      },
+      "changes": [
+        {
+          "drop": "Chandelure",
+          "add": "Hydrapple"
+        },
+        {
+          "drop": "Absol",
+          "add": "Houndoom"
+        },
+        {
+          "drop": "Sandaconda",
+          "add": "Rotom"
+        }
+      ],
+      "quote": {
+        "text": "Three targeted upgrades: Hydrapple replaces Chandelure with a Water/Ground-resistant Regenerator pivot (Giga Drain 4x SE on Swampert-Mega, Earth Power 2x SE on Metagross-Mega) — critical for the rain matchup while still hitting Steel types. Houndoom replaces the dead-weight Absol at equal cost with Dark/Fire typing, Flash Fire immunity, and Flamethrower/Heat Wave coverage (2x SE on Klefki). Rotom replaces Sandaconda with Levitate Ground immunity — the team's biggest structural hole — while adding Electric STAB (4x SE on Pelipper) and Ghost typing for the spam core.",
+        "statementType": "model-generated"
+      }
+    },
+    "terminalReview": {
+      "status": "generated-recorded",
+      "epistemicStatus": "statement-not-belief-evidence",
+      "quote": {
+        "text": "I would consolidate the three weakest budget picks (Absol 1, Sandaconda 2, Chandelure 6 = 9 points) into one better Pokémon at the draft rather than waiting for the trade window to fix them — a 9-point Water resist like Gyarados or Milotic would have addressed the rain hole from day one.",
+        "statementType": "model-generated"
+      }
+    }
+  },
+  "release": {
+    "fullArtifactUrl": null,
+    "methodologyUrl": null,
+    "feedbackUrl": null
+  }
+}

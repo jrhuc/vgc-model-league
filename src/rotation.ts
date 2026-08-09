@@ -1,9 +1,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { scaffoldRevision } from './llm-engine.js';
+import { scaffoldComponents, scaffoldRevision } from './llm-engine.js';
 import { defaultPsDir, RESULTS_PATH } from './paths.js';
-import { validateModelExecution } from './providers.js';
+import { parseRoutingPreferences, validateModelExecution } from './providers.js';
 import type { Rng } from './random.js';
 import { resolveSeed, seededRng, seriesEntropy } from './random.js';
 import type { SeriesRecord } from './records.js';
@@ -68,6 +68,8 @@ export async function runRotation(
   const seed = resolveSeed(options.seed);
   const timerScale = options.timerScale ?? DEFAULT_TIMER_SCALE;
   const scaffold = scaffoldRevision();
+  const scaffoldParts = scaffoldComponents();
+  const openRouterRouting = parseRoutingPreferences();
   const plans = makePlans(models, seriesPerPair, pool.teams, seededRng(seed));
   options.onEvent?.({
     mode: 'rotation',
@@ -84,6 +86,8 @@ export async function runRotation(
         mode: 'rotation',
         protocol_version: ROTATION_PROTOCOL_VERSION,
         scaffold,
+        scaffold_components: scaffoldParts,
+        ...(openRouterRouting ? { openrouter_routing: openRouterRouting } : {}),
         models,
         series_per_pair: seriesPerPair,
         seed,

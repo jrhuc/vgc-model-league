@@ -17,14 +17,13 @@ import { MatchMenu, MatchMenuRow } from '../components/matchmenu';
 import { SetCard } from '../components/setcard';
 import { Sprite } from '../components/sprite';
 import { api, apiFresh } from '../http';
-import { displaySpec, when } from '../lib/labels';
+import { displaySpec, modelName, when } from '../lib/labels';
 
-function modelKeyOf(spec: string): string {
-  const model = spec.slice(spec.indexOf(':') + 1);
-  return model
-    .slice(model.lastIndexOf('/') + 1)
-    .toLowerCase()
-    .replace(/:(?:nitro|floor|free)$/, '');
+/** Franchise names are display flavor; the model identity is never hidden behind them. */
+function franchiseLabel(league: LeagueResponse, entrant: number): string {
+  const franchise = league.franchises[entrant];
+  if (!franchise) return `Coach ${entrant + 1}`;
+  return franchise.teamName || modelName(franchise.model);
 }
 
 export function teamSlug(name: string): string {
@@ -122,12 +121,10 @@ function FranchiseCard({
   franchise,
   spriteFor,
   onOpenTeam,
-  onOpenModel,
 }: {
   franchise: LeagueFranchiseView;
   spriteFor: (id: string) => string;
   onOpenTeam: () => void;
-  onOpenModel: () => void;
 }) {
   const [openSlot, setOpenSlot] = useState<string | null>(null);
   const slot = franchise.roster.find((entry) => entry.id === openSlot);
@@ -136,10 +133,10 @@ function FranchiseCard({
       <header class="franchise-card-head">
         <div>
           <b>{franchise.teamName}</b>
-          <button type="button" class="model-link" onClick={onOpenModel}>
+          <span class="model-fact">
             <Mark spec={franchise.model} size={14} />
             <span>{displaySpec(franchise.model)}</span>
-          </button>
+          </span>
         </div>
         <div class="franchise-card-record">
           <b>
@@ -212,7 +209,7 @@ function ScheduleTable({
   onOpenTeam: (entrant: number, seriesIndex?: number) => void;
   onOpenGame: (seriesIndex: number, game: number) => void;
 }) {
-  const name = (entrant: number) => league.franchises[entrant]?.teamName ?? `Coach ${entrant + 1}`;
+  const name = (entrant: number) => franchiseLabel(league, entrant);
   return (
     <div class="table-scroll">
       <table class="data-table schedule-table">
@@ -329,18 +326,33 @@ function GamePage({
   const path = `/api/league/game?run=${encodeURIComponent(league.runId)}&series=${seriesIndex}&game=${game}`;
   const { view, error } = useMatchGame(path, 10_000);
   const series = league.series.find((entry) => entry.seriesIndex === seriesIndex);
-  if (error) return <div class="message error">Could not load this game: {error}</div>;
-  if (!view) return <p class="muted">Loading the game…</p>;
+  if (error)
+    return (
+      <div>
+        <h1>League game unavailable</h1>
+        <div class="message error">Could not load this game: {error}</div>
+      </div>
+    );
+  if (!view)
+    return (
+      <div>
+        <h1>League game</h1>
+        <p class="muted">Loading the game…</p>
+      </div>
+    );
 
   const firstModel = league.franchises[view.sides[0]]?.model;
   const secondModel = league.franchises[view.sides[1]]?.model;
   const players: [string, string] = [firstModel ?? view.teamNames[0], secondModel ?? view.teamNames[1]];
   const details: [string, string] | undefined =
     firstModel && secondModel ? [displaySpec(firstModel), displaySpec(secondModel)] : undefined;
-  const teams = ([0, 1] as const).map(
-    (side) =>
-      league.teambuilds.find((entry) => entry.seriesIndex === seriesIndex && entry.entrant === view.sides[side])?.sets,
-  ) as [LeagueTeambuildView['sets'] | undefined, LeagueTeambuildView['sets'] | undefined];
+  const teams = ([0, 1] as const).map((side) => {
+    const build = league.teambuilds.find(
+      (entry) => entry.seriesIndex === seriesIndex && entry.entrant === view.sides[side],
+    );
+    if (!build) return undefined;
+    return build.sets;
+  });
 
   return (
     <MatchGame
@@ -356,11 +368,11 @@ function GamePage({
       titles={view.teamNames}
       players={players}
       {...(details ? { details } : {})}
-      teams={teams}
+      teams={teams as [(typeof teams)[number], (typeof teams)[number]]}
       onOpenGame={(number) => onOpenGame(seriesIndex, number)}
       actions={view.sides.map((entrant) => (
         <button key={entrant} type="button" class="text-link" onClick={() => onOpenTeam(entrant)}>
-          {league.franchises[entrant]?.teamName ?? `Coach ${entrant + 1}`} →
+          {franchiseLabel(league, entrant)} →
         </button>
       ))}
     />
@@ -513,7 +525,6 @@ function TeamPage({
   onBack,
   onOpenGame,
   onOpenTeam,
-  onOpenModel,
 }: {
   league: LeagueResponse;
   franchise: LeagueFranchiseView;
@@ -522,7 +533,6 @@ function TeamPage({
   onBack: () => void;
   onOpenGame: (seriesIndex: number, game: number) => void;
   onOpenTeam: (entrant: number) => void;
-  onOpenModel: () => void;
 }) {
   const focused = useRef<HTMLDetailsElement | null>(null);
   useEffect(() => {
@@ -533,7 +543,7 @@ function TeamPage({
     .sort((a, b) => a.seriesIndex - b.seriesIndex);
   const bySeries = new Map(league.series.map((series) => [series.seriesIndex, series] as const));
   const picks = [...franchise.draftRoster].sort((a, b) => (a.pick ?? 99) - (b.pick ?? 99));
-  const name = (entrant: number) => league.franchises[entrant]?.teamName ?? `Coach ${entrant + 1}`;
+  const name = (entrant: number) => franchiseLabel(league, entrant);
   const liveSeries = league.liveSeries.filter((entry) => entry.sides?.includes(franchise.entrant));
   const windowDecision = league.tradeWindow?.decisions.find((entry) => entry.entrant === franchise.entrant);
   const tradeOffers = (league.tradeWindow?.offers ?? []).filter(
@@ -557,10 +567,10 @@ function TeamPage({
           <h1>{franchise.teamName}.</h1>
         </div>
         <div class="lede team-lede">
-          <button type="button" class="model-link" onClick={onOpenModel}>
+          <span class="model-fact">
             <Mark spec={franchise.model} size={16} />
             <span>{displaySpec(franchise.model)}</span>
-          </button>
+          </span>
           <span>
             {franchise.overallRecord.w}-{franchise.overallRecord.l} in series, {franchise.overallRecord.gw}-
             {franchise.overallRecord.gl} in games · regular season {franchise.roundRobinRecord.w}-
@@ -864,14 +874,12 @@ function LeaguePage({
   team,
   series,
   onOpenTeam,
-  onOpenModel,
   onBack,
 }: {
   league: LeagueResponse;
   team: string | undefined;
   series: number | undefined;
   onOpenTeam: (slug: string, series?: number) => void;
-  onOpenModel: (id: string) => void;
   onBack: () => void;
 }) {
   const { board } = useBoard(league.board ?? '');
@@ -926,7 +934,6 @@ function LeaguePage({
         onBack={onBack}
         onOpenGame={openGame}
         onOpenTeam={openEntrant}
-        onOpenModel={() => onOpenModel(modelKeyOf(selected.model))}
       />
     );
   }
@@ -998,7 +1005,6 @@ function LeaguePage({
             franchise={franchise}
             spriteFor={spriteFor}
             onOpenTeam={() => onOpenTeam(teamSlug(franchise.teamName))}
-            onOpenModel={() => onOpenModel(modelKeyOf(franchise.model))}
           />
         ))}
       </div>
@@ -1107,7 +1113,7 @@ function LeaguePage({
             board={board.mons}
             owners={owners}
             picks={pickNumbers}
-            coach={(entrant) => league.franchises[entrant]?.teamName ?? `Coach ${entrant + 1}`}
+            coach={(entrant) => franchiseLabel(league, entrant)}
           />
         </section>
       ) : null}
@@ -1124,7 +1130,6 @@ export function LeaguesView({
   series,
   onOpenLeague,
   onOpenTeam,
-  onOpenModel,
   onBack,
 }: {
   boards: BoardInfo[];
@@ -1135,7 +1140,6 @@ export function LeaguesView({
   series: number | undefined;
   onOpenLeague: (runId: string) => void;
   onOpenTeam: (runId: string, slug: string, series?: number) => void;
-  onOpenModel: (id: string) => void;
   onBack: () => void;
 }) {
   const [list, setList] = useState<LeaguesResponse | null>(null);
@@ -1188,15 +1192,26 @@ export function LeaguesView({
   }, [active, run, league?.runId, league?.live]);
 
   if (run) {
-    if (error) return <div class="message error">Could not load this league: {error}</div>;
-    if (!league || league.runId !== run) return <p class="muted">Loading the league…</p>;
+    if (error)
+      return (
+        <div>
+          <h1>Draft league unavailable</h1>
+          <div class="message error">Could not load this league: {error}</div>
+        </div>
+      );
+    if (!league || league.runId !== run)
+      return (
+        <div>
+          <h1>Draft league</h1>
+          <p class="muted">Loading the league…</p>
+        </div>
+      );
     return (
       <LeaguePage
         league={league}
         team={team}
         series={series}
         onOpenTeam={(slug, focus) => onOpenTeam(run, slug, focus)}
-        onOpenModel={onOpenModel}
         onBack={() => (team ? onOpenLeague(run) : onBack())}
       />
     );

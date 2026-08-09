@@ -1,17 +1,18 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 import type { BracketView } from './gui/api.js';
-import { scaffoldRevision } from './llm-engine.js';
+import { scaffoldComponents, scaffoldRevision } from './llm-engine.js';
 import { defaultPsDir, RESULTS_PATH } from './paths.js';
 import type { ModelReasoningConfig } from './providers.js';
-import { validateModelExecution } from './providers.js';
+import { parseRoutingPreferences, validateModelExecution } from './providers.js';
 import { resolveSeed, seededRng, seriesEntropy, shuffle } from './random.js';
 import type { SeriesRecord } from './records.js';
-import { appendRow, loadRows } from './records.js';
+import { appendRow, loadSeriesRecords } from './records.js';
 import type { RecoveryGate } from './recovery.js';
 import type { RotationEvent } from './rotation.js';
-import type { ExperimentOptions } from './series.js';
-import { playRecordedSeries } from './series.js';
+import type { ExperimentOptions, RecordedSeriesContext } from './series.js';
+import { playRecordedSeries, readCompletedSeriesEvidence } from './series.js';
 import { showdownCommit } from './showdown.js';
 import type { PoolEvent, Team } from './teams.js';
 import { loadPool, validatePool, validateTeam } from './teams.js';
@@ -146,6 +147,8 @@ export async function runTournament(
   const timerScale = options.timerScale ?? DEFAULT_TIMER_SCALE;
   const random = seededRng(seed);
   const scaffold = scaffoldRevision();
+  const scaffoldParts = scaffoldComponents();
+  const openRouterRouting = parseRoutingPreferences();
 
   let format: string;
   let poolId: string | null;
@@ -226,6 +229,8 @@ export async function runTournament(
           mode: 'tournament',
           protocol_version: TOURNAMENT_PROTOCOL_VERSION,
           scaffold,
+          scaffold_components: scaffoldParts,
+          ...(openRouterRouting ? { openrouter_routing: openRouterRouting } : {}),
           models,
           seed,
           concurrency: options.concurrency ?? 2,
@@ -274,13 +279,77 @@ export async function runTournament(
   };
   for (const match of rounds[0]!) if (match.seriesIndex === null) propagate(match);
 
+  const validateStoredMatch = (match: BracketMatch, row: SeriesRecord): Pid => {
+    const index = match.seriesIndex!;
+    const sides: Record<Pid, Entrant> = { p1: entrants[match.slots[0]!]!, p2: entrants[match.slots[1]!]! };
+    const evidenceContext: RecordedSeriesContext = {
+      players: { p1: sides.p1.model, p2: sides.p2.model },
+      teams: { p1: sides.p1.team, p2: sides.p2.team },
+      seriesIndex: index,
+      gameSeeds: seriesSeeds[index]!.gameSeeds,
+      engineSeeds: seriesSeeds[index]!.engineSeeds,
+      format,
+      psDir,
+      runDir,
+      requireWinner: true,
+      ...(briefing === undefined ? {} : { briefings: { p1: briefing, p2: briefing } }),
+      ...(options.reasoningByModel === undefined ? {} : { reasoningByModel: options.reasoningByModel }),
+      ...(options.reasoning === undefined ? {} : { reasoning: options.reasoning }),
+      timerScale,
+    };
+    const canonical = readCompletedSeriesEvidence(evidenceContext);
+    if (!canonical.winnerSide) {
+      throw new Error(`run ${runId} tournament series ${index} has no canonical winner`);
+    }
+    const storedFields = {
+      series_id: row.series_id,
+      attempt_id: row.attempt_id,
+      format: row.format,
+      players: row.players,
+      teams: row.teams,
+      packed_team_digests: row.packed_team_digests,
+      winner: row.winner,
+      winner_side: row.winner_side,
+      score: row.score,
+      turns: row.turns,
+      games: row.games,
+      engine_seeds: row.engine_seeds,
+      timer_scale: row.timer_scale,
+      ...(row.closed_sheets === undefined ? {} : { closed_sheets: row.closed_sheets }),
+      reasoning: row.reasoning,
+      ...(row.reasoning_by_player === undefined ? {} : { reasoning_by_player: row.reasoning_by_player }),
+    };
+    const winner = match.slots[canonical.winnerSide === 'p1' ? 0 : 1]!;
+    if (
+      row.schema_version !== 1 ||
+      row.mode !== 'tournament' ||
+      row.protocol_version !== TOURNAMENT_PROTOCOL_VERSION ||
+      row.scaffold !== scaffold ||
+      row.series_index !== index ||
+      row.round !== match.round + 1 ||
+      row.entrant_count !== entrants.length ||
+      !isDeepStrictEqual(row.seeds, { p1: match.slots[0], p2: match.slots[1] }) ||
+      row.provenance !== provenance ||
+      row.pool !== (poolId ?? undefined) ||
+      row.advanced !== entrants[winner]!.model ||
+      row.run_seed !== seed ||
+      row.ps_commit !== showdownCommit(psDir) ||
+      !isDeepStrictEqual(storedFields, canonical.fields)
+    ) {
+      throw new Error(`run ${runId} tournament series ${index} does not match its canonical completed series evidence`);
+    }
+    return canonical.winnerSide;
+  };
+
   const results: SeriesRecord[] = [];
   const started = new Set<BracketMatch>();
   if (stored) {
     const recorded = new Map<number, SeriesRecord>();
-    for (const row of loadRows(recordsPath)) {
+    for (const row of loadSeriesRecords(recordsPath)) {
       if (row.run_id !== runId || row.mode !== 'tournament') continue;
-      recorded.set(row.series_index as number, row);
+      const index = row.series_index as number;
+      if (recorded.has(index)) throw new Error(`run ${runId} repeats tournament series ${index}; it cannot resume`);
+      recorded.set(index, row);
     }
     let settled = true;
     while (settled) {
@@ -290,16 +359,7 @@ export async function runTournament(
         if (match.slots[0] === null || match.slots[1] === null) continue;
         const row = recorded.get(match.seriesIndex);
         if (!row) continue;
-        const seeds = row.seeds as Record<Pid, unknown> | undefined;
-        if (seeds?.p1 !== match.slots[0] || seeds.p2 !== match.slots[1]) {
-          throw new Error(
-            `run ${runId} series ${match.seriesIndex} was played by other seats than the rebuilt bracket pairs; it cannot resume`,
-          );
-        }
-        const winnerSide = row.winner_side as Pid | null | undefined;
-        if (winnerSide !== 'p1' && winnerSide !== 'p2') {
-          throw new Error(`run ${runId} series ${match.seriesIndex} recorded no winner; it cannot resume`);
-        }
+        const winnerSide = validateStoredMatch(match, row);
         match.winner = match.slots[winnerSide === 'p1' ? 0 : 1]!;
         started.add(match);
         results.push(row);

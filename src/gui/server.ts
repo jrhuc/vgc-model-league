@@ -6,34 +6,29 @@ import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import {
-  buildLeague,
-  buildLeagueGame,
-  buildLeagues,
-  buildModelProfile,
-  findLiveCliRun,
-  snapshotBattle,
-} from '../archive.js';
+import { buildLeague, buildLeagueGame, buildLeagues, findLiveCliRun, snapshotBattle } from '../archive.js';
 import type { AuthService, AuthSession, AuthUser } from '../auth.js';
 import { AuthError } from '../auth.js';
 import { describeBoardMon, listBoards, loadBoard } from '../draft.js';
 import type { DraftLeagueEvent } from '../draftleague.js';
 import { DRAFT_PROTOCOL_VERSION, roundRobinWeeks, runDraftLeague } from '../draftleague.js';
-import { buildEvidence, buildTournamentGame, buildTournaments } from '../evidence.js';
-import { ImportError, importSeries, isImported, removeImportedRun } from '../import.js';
+import { buildTournamentGame, buildTournaments } from '../evidence.js';
+import { ImportBusyError, ImportError, importSeries, removeImportedRun } from '../import.js';
 import { discoverModels } from '../model-catalog.js';
-import { DATA_DIR, makeRunDirectory, prepareDataDirectories, RESULTS_PATH, RUNS_DIR, TEAMS_DIR } from '../paths.js';
+import {
+  DATA_DIR,
+  defaultPsDir,
+  makeRunDirectory,
+  prepareDataDirectories,
+  RESULTS_PATH,
+  RUNS_DIR,
+  TEAMS_DIR,
+} from '../paths.js';
+import type { DiscoveredModel } from '../provider-registry.js';
 import { PROVIDER_OPTIONS, providerOption } from '../provider-registry.js';
 import type { ModelReasoningConfig, ReasoningLevel } from '../providers.js';
-import {
-  classifyProviderFailure,
-  nitroSpec,
-  parseSpec,
-  REASONING_LEVELS,
-  reasoningLevels,
-  validateReasoning,
-} from '../providers.js';
-import { loadRows, ratingGroups, scopeRows } from '../records.js';
+import { classifyProviderFailure, isReasoningLevel, nitroSpec, parseSpec, validateReasoning } from '../providers.js';
+import { loadSeriesRecords } from '../records.js';
 import type { RecoveryPause } from '../recovery.js';
 import { RecoveryGate } from '../recovery.js';
 import { ROTATION_PROTOCOL_VERSION, runRotation } from '../rotation.js';
@@ -42,36 +37,39 @@ import { redactSecrets } from '../sanitize.js';
 import { loadShowdown } from '../showdown.js';
 import { BattleState } from '../state.js';
 import type { Team, TeamDraft } from '../teams.js';
-import { createPool, inspectTeam, listPools, loadPool, packTeam, validateTeam } from '../teams.js';
+import { createPool, exportTeam, inspectTeam, listPools, loadPool, packTeam, validateTeam } from '../teams.js';
 import { parseTimerScale } from '../timer.js';
 import type { ProvenanceMode } from '../tournament.js';
 import { runTournament, TOURNAMENT_PROTOCOL_VERSION } from '../tournament.js';
-import type { TradeWindowConfig } from '../trade-window.js';
+import { DEFAULT_TRADE_WINDOW, MAX_TRADE_OFFERS, type TradeWindowConfig } from '../trade-window.js';
 import type { ExperimentMode, JsonObject, Pid, TimerScale } from '../types.js';
 import { isRecord } from '../value.js';
 import type {
   AppState,
+  AppStateResponse,
   BattleMessage,
+  BattleView,
   BoardResponse,
   BracketView,
   DecisionView,
   DraftView,
-  EvidenceResponse,
   FormatInfo,
   ImportRequest,
   ModelInfo,
   ModelsResponse,
   PoolTeamsResponse,
-  RecordsResponse,
+  PublicRunSnapshot,
   RunPauseView,
   RunSnapshot,
+  RunView,
   SampleTeam,
   SeriesRowView,
   ServerEvent,
-  TournamentsResponse,
 } from './api.js';
 import { BattleLog } from './battlelog.js';
+import { buildPublicBattleMessage, projectPublicBracket, projectPublicDraft } from './public.js';
 import type { RunWorkerInput, RunWorkerOutput, RunWorkerStart } from './run-worker-protocol.js';
+import { loadSelectedTrace } from './selected-trace.js';
 
 type SeriesRow = Omit<SeriesRowView, 'turn'>;
 
@@ -101,13 +99,6 @@ const MAX_RATE_BUCKETS = 4096;
 const DEFAULT_MAX_RUN_MS = 4 * 60 * 60 * 1000;
 const SHUTDOWN_ERROR = 'run interrupted by server shutdown';
 const TIMEOUT_ERROR = 'run exceeded its maximum duration';
-
-/** Sustained league traffic on a personal Anthropic API key can trip Anthropic's account-level
- * abuse safeguards (it has suspended an org over it), so the GUI never offers direct Anthropic
- * seats — Claude models route through OpenRouter instead. CLI runs are unaffected. */
-const GUI_DISABLED_PROVIDERS = new Set(['anthropic']);
-const GUI_DISABLED_PROVIDER_ERROR =
-  'Direct Anthropic seats are disabled here to protect your account — use openrouter:anthropic/<model> instead';
 
 interface GuiServerOptions {
   teamsDir?: string;
@@ -144,6 +135,9 @@ function configuredOrigin(value: string | undefined): URL | undefined {
   if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.origin !== value) {
     throw new Error('VGC_LEAGUE_PUBLIC_ORIGIN must be an exact http(s) origin without a path');
   }
+  if (url.protocol === 'http:' && !LOCAL_HOSTNAMES[url.hostname.toLowerCase()]) {
+    throw new Error('VGC_LEAGUE_PUBLIC_ORIGIN must use HTTPS for non-loopback hosts');
+  }
   return url;
 }
 
@@ -173,7 +167,7 @@ interface EventViewer {
 
 interface PendingServerEvent {
   privateEvent: ServerEvent;
-  publicEvent: ServerEvent;
+  publicEvent?: ServerEvent;
 }
 
 interface RunConfig extends ModelReasoningConfig {
@@ -238,9 +232,12 @@ class ActiveRun {
   detached = false;
   readonly battles = new Map<number, Map<number, GameBattle>>();
   readonly publicBattles = new Map<number, Map<number, GameBattle>>();
+  readonly publicTeamPreviewed = new Set<number>();
   readonly decisions = new Map<number, DecisionView[]>();
   readonly spend = new Map<number, Record<Pid, { ms: number; tokens: number }>>();
   readonly battleRevisions = new Map<number, number>();
+  readonly publicBattleRevisions = new Map<number, number>();
+  readonly publiclyResolvedGames = new Set<string>();
   readonly controller = new AbortController();
   readonly recovery = new RecoveryGate();
   resumeAction: (() => void) | undefined;
@@ -299,6 +296,7 @@ export class GuiServer {
   private flushTimer: NodeJS.Timeout | undefined;
   private heartbeatTimer: NodeJS.Timeout | undefined;
   private sampleTeamsCache: { pool: string; teams: SampleTeam[] } | undefined;
+  private readonly selectedTrace = loadSelectedTrace();
 
   constructor(options: GuiServerOptions = {}) {
     this.options = options;
@@ -536,12 +534,18 @@ export class GuiServer {
 
     if (method === 'GET' && !url.pathname.startsWith('/api/') && this.serveStatic(url.pathname, response)) return;
     if (key === 'GET /api/state') this.json(response, 200, this.stateBody(session));
-    else if (key === 'GET /api/records') this.json(response, 200, this.recordsBody(url.searchParams.get('pool')));
-    else if (key === 'GET /api/evidence') this.json(response, 200, this.evidenceBody(url.searchParams.get('pool')));
-    else if (key === 'GET /api/tournaments')
-      this.json(response, 200, this.tournamentsBody(url.searchParams.get('pool')));
-    else if (key === 'GET /api/leagues') this.json(response, 200, this.leaguesBody());
-    else if (key === 'GET /api/league') this.json(response, 200, this.leagueBody(url.searchParams.get('run') ?? ''));
+    else if (key === 'GET /api/selected-trace') this.json(response, 200, this.selectedTrace.view);
+    else if (key === 'GET /api/selected-trace/full.json') {
+      response.writeHead(200, {
+        'cache-control': 'public, max-age=3600',
+        'content-type': 'application/json; charset=utf-8',
+      });
+      response.end(this.selectedTrace.fullJson);
+    } else if (key === 'GET /api/tournaments')
+      this.json(response, 200, this.tournamentsBody(url.searchParams.get('pool'), session));
+    else if (key === 'GET /api/leagues') this.json(response, 200, this.leaguesBody(session));
+    else if (key === 'GET /api/league')
+      this.json(response, 200, this.leagueBody(url.searchParams.get('run') ?? '', session));
     else if (key === 'GET /api/tournament/game')
       this.json(
         response,
@@ -550,6 +554,7 @@ export class GuiServer {
           url.searchParams.get('run') ?? '',
           url.searchParams.get('series') ?? '',
           url.searchParams.get('game') ?? '',
+          session,
         ),
       );
     else if (key === 'GET /api/league/game')
@@ -560,30 +565,31 @@ export class GuiServer {
           url.searchParams.get('run') ?? '',
           url.searchParams.get('series') ?? '',
           url.searchParams.get('game') ?? '',
+          session,
         ),
       );
-    else if (key === 'GET /api/model') this.json(response, 200, this.modelBody(url.searchParams.get('id') ?? ''));
     else if (key === 'GET /api/board') {
       const board = this.boardBody(url.searchParams.get('id') ?? '');
       response.setHeader('cache-control', 'public, max-age=3600');
       this.json(response, 200, board);
     } else if (key === 'GET /api/pool/teams') {
+      if (!this.canReadPrivateTeams(session?.user)) throw new HttpError(403, 'private team data is unavailable');
       this.json(response, 200, this.poolTeamsBody(url.searchParams.get('name') ?? ''));
-    } else if (key === 'GET /api/reasoning') {
-      this.json(response, 200, this.reasoningBody(url.searchParams.get('spec') ?? ''));
     } else if (key === 'GET /api/events/public') {
       this.openEvents(response, undefined, true);
     } else if (key === 'GET /api/events') {
       this.requireAuthenticatedViewer(session);
       this.openEvents(response, sessionToken, false);
     } else if (key === 'GET /api/battle/public') {
-      this.json(response, 200, this.battleBody(Number(url.searchParams.get('index')), true, gameParam(url)));
+      this.json(response, 200, this.publicBattleBody(Number(url.searchParams.get('index')), gameParam(url)));
     } else if (key === 'GET /api/battle') {
       this.requireAuthenticatedViewer(session);
       this.json(
         response,
         200,
-        this.battleBody(Number(url.searchParams.get('index')), !this.canViewPrivateRun(session?.user), gameParam(url)),
+        this.canViewPrivateRun(session?.user)
+          ? this.battleBody(Number(url.searchParams.get('index')), gameParam(url))
+          : this.publicBattleBody(Number(url.searchParams.get('index')), gameParam(url)),
       );
     } else if (key === 'POST /api/logout') {
       this.options.auth?.logout(
@@ -669,15 +675,31 @@ export class GuiServer {
       if (!session) throw new HttpError(401, 'authentication required');
       return;
     }
-    if (this.publicOrigin && this.options.mutationsEnabled !== true) {
-      throw new HttpError(403, 'private run data is unavailable');
-    }
+    if (this.publicOrigin) throw new HttpError(403, 'private run data is unavailable');
   }
 
   private canViewPrivateRun(user: AuthUser | undefined): boolean {
-    if (!this.options.auth) return !this.publicOrigin || this.options.mutationsEnabled === true;
-    if (!user) return false;
-    return !this.run || user.role === 'operator' || this.run.owner?.id === user.id;
+    if (!this.options.auth) return !this.publicOrigin;
+    if (!user || user.role === 'reader') return false;
+    return user.role === 'operator' || !this.run || this.run.owner?.id === user.id;
+  }
+
+  private canReadPrivateTeams(user: AuthUser | undefined): boolean {
+    if (!this.options.auth) return !this.publicOrigin;
+    return Boolean(user && user.role !== 'reader');
+  }
+
+  private canViewPrivateArchive(user: AuthUser | undefined, runId: string): boolean {
+    if (!this.options.auth) return !this.publicOrigin;
+    if (!user || user.role === 'reader') return false;
+    if (user.role === 'operator' || (this.run?.runId === runId && this.run.owner?.id === user.id)) return true;
+    return this.options.auth.canControlExperiment(user, runId);
+  }
+
+  private hidesActiveArchive(user: AuthUser | undefined, runId: string): boolean {
+    return Boolean(
+      this.run?.runId === runId && isActiveRunState(this.run.state) && !this.canViewPrivateArchive(user, runId),
+    );
   }
 
   private eventViewerUser(viewer: EventViewer): AuthUser | undefined {
@@ -687,7 +709,9 @@ export class GuiServer {
 
   private controlsCurrentRun(user: AuthUser | undefined): boolean {
     if (!this.options.auth) return !this.publicOrigin || this.options.mutationsEnabled === true;
-    return Boolean(this.run && user && (user.role === 'operator' || this.run.owner?.id === user.id));
+    return Boolean(
+      this.run && user && user.role !== 'reader' && (user.role === 'operator' || this.run.owner?.id === user.id),
+    );
   }
 
   private json(response: http.ServerResponse, status: number, body: unknown): void {
@@ -762,11 +786,13 @@ export class GuiServer {
     if (!source) return [];
     if (this.sampleTeamsCache?.pool !== source) {
       try {
-        const { Teams } = loadShowdown();
-        const teams = loadPool(source, this.options.teamsDir ?? TEAMS_DIR).teams.slice(0, 2);
+        const pool = loadPool(source, this.options.teamsDir ?? TEAMS_DIR);
         this.sampleTeamsCache = {
           pool: source,
-          teams: teams.map((team) => ({ name: team.id, paste: Teams.export(Teams.unpack(team.packed) ?? []) })),
+          teams: pool.teams.slice(0, 2).map((team) => ({
+            name: team.id,
+            paste: exportTeam(team.packed, pool.format),
+          })),
         };
       } catch {
         this.sampleTeamsCache = { pool: source, teams: [] };
@@ -775,48 +801,33 @@ export class GuiServer {
     return this.sampleTeamsCache.teams;
   }
 
-  private modelInfo(providerId: string, model: { id: string; displayName?: string }): ModelInfo {
+  private modelInfo(model: DiscoveredModel): ModelInfo {
     return {
       id: model.id,
       label: model.displayName ?? model.id,
-      reasoningLevels: reasoningLevels(parseSpec(`${providerId}:${model.id}`)),
+      reasoningLevels: model.supportsReasoning ? ['minimal', 'low', 'medium', 'high', 'xhigh'] : [],
     };
   }
 
-  private reasoningBody(value: string): { levels: ReasoningLevel[] } {
-    try {
-      const spec = parseSpec(value);
-      if (this.publicOrigin && spec.provider === 'compat') {
-        throw new Error('OpenAI-compatible custom endpoints are disabled in hosted mode');
-      }
-      return { levels: reasoningLevels(spec) };
-    } catch (error) {
-      throw new HttpError(400, error instanceof Error ? error.message : String(error));
-    }
-  }
-
-  private stateBody(session: AuthSession | undefined): AppState {
+  private stateBody(session: AuthSession | undefined): AppStateResponse {
     const pools = listPools(this.options.teamsDir ?? TEAMS_DIR);
-    return {
+    const privateView = this.canViewPrivateRun(session?.user);
+    const trustedSetup = this.canReadPrivateTeams(session?.user);
+    const common = {
       pools,
-      reasoningLevels: [...REASONING_LEVELS],
       defaultFormat: pools[0]?.format ?? 'gen9championsvgc2026regmbbo3',
       formats: championsFormats(),
-      sampleTeams: this.sampleTeamsBody(pools),
       boards: listBoards(),
-      providers: PROVIDER_OPTIONS.filter(
-        (option) => !GUI_DISABLED_PROVIDERS.has(option.id) && (!this.publicOrigin || option.id !== 'compat'),
-      ).map((option) => ({
+      providers: PROVIDER_OPTIONS.map((option) => ({
         id: option.id,
         label: option.label,
         description: option.description,
         discovery: option.discovery,
         requiresKey: option.requiresKey,
-        models: (option.models ?? []).map((model) => this.modelInfo(option.id, model)),
       })),
       auth: this.options.auth
         ? {
-            mode: 'github',
+            mode: 'github' as const,
             user: session
               ? {
                   login: session.user.login,
@@ -826,8 +837,22 @@ export class GuiServer {
               : null,
             csrfToken: session?.csrfToken ?? null,
           }
-        : { mode: this.publicOrigin ? 'read-only' : 'local', user: null, csrfToken: null },
-      run: this.runBody(!this.canViewPrivateRun(session?.user)),
+        : { mode: this.publicOrigin ? ('read-only' as const) : ('local' as const), user: null, csrfToken: null },
+    };
+    if (!privateView) {
+      const publicState = { ...common, run: this.runBody(true) };
+      return trustedSetup
+        ? {
+            ...publicState,
+            sampleTeams: this.sampleTeamsBody(pools),
+            externalRun: this.externalRunBody(),
+          }
+        : publicState;
+    }
+    return {
+      ...common,
+      sampleTeams: this.sampleTeamsBody(pools),
+      run: this.runBody(false) as RunSnapshot | null,
       externalRun: this.externalRunBody(),
     };
   }
@@ -856,27 +881,12 @@ export class GuiServer {
     if (!listPools(teamsDir).some((entry) => entry.name === name)) {
       throw new HttpError(400, `unknown team pool ${JSON.stringify(name)}`);
     }
-    const { Teams } = loadShowdown();
     const pool = loadPool(name, teamsDir);
     return {
       name: pool.id,
       format: pool.format,
-      teams: pool.teams.map((team) => {
-        const unpacked = Teams.unpack(team.packed);
-        if (!unpacked) throw new Error(`stored team ${JSON.stringify(team.id)} is invalid`);
-        return { name: team.id, paste: Teams.export(unpacked) };
-      }),
+      teams: pool.teams.map((team) => ({ name: team.id, paste: exportTeam(team.packed, pool.format) })),
     };
-  }
-
-  private recordsBody(poolParam: string | null): RecordsResponse {
-    const all = loadRows(this.options.recordsPath ?? RESULTS_PATH);
-    const pool = poolParam?.trim() || null;
-    const rows = scopeRows(all, pool ?? undefined);
-    const rated = rows.filter((row) => (row.mode ?? 'rotation') === 'rotation');
-    const pools = [...new Set(all.map((row) => (typeof row.pool === 'string' ? row.pool : '')))].filter(Boolean).sort();
-    const groups = ratingGroups(rated);
-    return { count: rows.length, pool, pools, groups, imported: rows.filter(isImported).length };
   }
 
   private authorizeImport(request: http.IncomingMessage): void {
@@ -890,6 +900,9 @@ export class GuiServer {
   }
 
   private importRemoveBody(body: Record<string, unknown>): JsonObject {
+    if (this.run && isActiveRunState(this.run.state)) {
+      throw new HttpError(409, 'stop the active run before removing imported results');
+    }
     try {
       const result = removeImportedRun(String(body.runId ?? ''), {
         recordsPath: this.options.recordsPath ?? RESULTS_PATH,
@@ -905,6 +918,7 @@ export class GuiServer {
       });
       return result as unknown as JsonObject;
     } catch (error) {
+      if (error instanceof ImportBusyError) throw new HttpError(409, error.message);
       if (error instanceof ImportError) throw new HttpError(400, error.message);
       throw error;
     }
@@ -932,106 +946,153 @@ export class GuiServer {
     }
   }
 
-  private evidenceBody(poolParam: string | null): EvidenceResponse {
-    const all = loadRows(this.options.recordsPath ?? RESULTS_PATH);
+  private tournamentsBody(poolParam: string | null, session: AuthSession | undefined): JsonObject {
+    const all = loadSeriesRecords(this.options.recordsPath ?? RESULTS_PATH);
     const pool = poolParam?.trim() || null;
-    return buildEvidence(all, this.options.runsDir ?? RUNS_DIR, pool);
+    const view = buildTournaments(all, this.options.runsDir ?? RUNS_DIR, pool, this.options.teamsDir ?? TEAMS_DIR);
+    const tournaments = view.tournaments.filter((archive) => !this.hidesActiveArchive(session?.user, archive.runId));
+    const matches = tournaments.reduce(
+      (total, archive) =>
+        total + archive.rounds.flat().filter((match) => match.seriesIndex !== null && match.score !== null).length,
+      0,
+    );
+    return {
+      ...view,
+      tournaments,
+      summary: {
+        tournaments: tournaments.filter((archive) => archive.rounds.flat().some((match) => match.score)).length,
+        matches,
+      },
+    } as unknown as JsonObject;
   }
 
-  private tournamentsBody(poolParam: string | null): TournamentsResponse {
-    const all = loadRows(this.options.recordsPath ?? RESULTS_PATH);
-    const pool = poolParam?.trim() || null;
-    return buildTournaments(all, this.options.runsDir ?? RUNS_DIR, pool, this.options.teamsDir ?? TEAMS_DIR);
+  private leaguesBody(session: AuthSession | undefined): JsonObject {
+    const view = buildLeagues(
+      loadSeriesRecords(this.options.recordsPath ?? RESULTS_PATH),
+      this.options.runsDir ?? RUNS_DIR,
+    );
+    return {
+      leagues: view.leagues.filter((archive) => !this.hidesActiveArchive(session?.user, archive.runId)),
+    } as unknown as JsonObject;
   }
 
-  private leaguesBody(): JsonObject {
-    const all = loadRows(this.options.recordsPath ?? RESULTS_PATH);
-    return buildLeagues(all, this.options.runsDir ?? RUNS_DIR) as unknown as JsonObject;
-  }
-
-  private leagueBody(run: string): JsonObject {
-    const all = loadRows(this.options.recordsPath ?? RESULTS_PATH);
-    const league = buildLeague(all, this.options.runsDir ?? RUNS_DIR, run.trim());
+  private leagueBody(run: string, session: AuthSession | undefined): JsonObject {
+    const runId = run.trim();
+    const league = this.hidesActiveArchive(session?.user, runId)
+      ? null
+      : buildLeague(
+          loadSeriesRecords(this.options.recordsPath ?? RESULTS_PATH),
+          this.options.runsDir ?? RUNS_DIR,
+          runId,
+        );
     if (!league) throw new HttpError(404, `no stored draft league ${JSON.stringify(run)}`);
     return league as unknown as JsonObject;
   }
 
-  private leagueGameBody(run: string, series: string, game: string): JsonObject {
+  private leagueGameBody(run: string, series: string, game: string, session: AuthSession | undefined): JsonObject {
     const seriesIndex = Number(series);
     const gameNumber = Number(game);
     if (!Number.isInteger(seriesIndex) || seriesIndex < 0 || !Number.isInteger(gameNumber) || gameNumber < 1) {
       throw new HttpError(400, 'series and game must be non-negative integers');
     }
-    const all = loadRows(this.options.recordsPath ?? RESULTS_PATH);
-    const view = buildLeagueGame(all, this.options.runsDir ?? RUNS_DIR, run.trim(), seriesIndex, gameNumber);
+    const runId = run.trim();
+    const view = this.hidesActiveArchive(session?.user, runId)
+      ? null
+      : buildLeagueGame(
+          loadSeriesRecords(this.options.recordsPath ?? RESULTS_PATH),
+          this.options.runsDir ?? RUNS_DIR,
+          runId,
+          seriesIndex,
+          gameNumber,
+        );
     if (!view) throw new HttpError(404, `no stored game ${game} for series ${series} of ${JSON.stringify(run)}`);
     return view as unknown as JsonObject;
   }
 
-  private tournamentGameBody(run: string, series: string, game: string): JsonObject {
+  private tournamentGameBody(run: string, series: string, game: string, session: AuthSession | undefined): JsonObject {
     const seriesIndex = Number(series);
     const gameNumber = Number(game);
     if (!Number.isInteger(seriesIndex) || seriesIndex < 0 || !Number.isInteger(gameNumber) || gameNumber < 1) {
       throw new HttpError(400, 'series and game must be non-negative integers');
     }
-    const all = loadRows(this.options.recordsPath ?? RESULTS_PATH);
-    const view = buildTournamentGame(
-      all,
-      this.options.runsDir ?? RUNS_DIR,
-      run.trim(),
-      seriesIndex,
-      gameNumber,
-      this.options.teamsDir ?? TEAMS_DIR,
-    );
+    const runId = run.trim();
+    const view = this.hidesActiveArchive(session?.user, runId)
+      ? null
+      : buildTournamentGame(
+          loadSeriesRecords(this.options.recordsPath ?? RESULTS_PATH),
+          this.options.runsDir ?? RUNS_DIR,
+          runId,
+          seriesIndex,
+          gameNumber,
+          this.options.teamsDir ?? TEAMS_DIR,
+        );
     if (!view) throw new HttpError(404, `no stored game ${game} for series ${series} of ${JSON.stringify(run)}`);
     return view as unknown as JsonObject;
   }
 
-  private modelBody(id: string): JsonObject {
-    const all = loadRows(this.options.recordsPath ?? RESULTS_PATH);
-    const profile = buildModelProfile(all, this.options.runsDir ?? RUNS_DIR, id.trim());
-    if (!profile) throw new HttpError(404, `no recorded series for model ${JSON.stringify(id)}`);
-    return profile as unknown as JsonObject;
-  }
-
-  private runBody(publicView = false): RunSnapshot | null {
+  private runBody(publicView: true): PublicRunSnapshot | null;
+  private runBody(publicView?: false): RunSnapshot | null;
+  private runBody(publicView = false): RunView | null {
     const run = this.run;
     if (!run) return null;
     const battles = publicView ? run.publicBattles : run.battles;
+    const rows = run.rows.map((row, index) => ({
+      ...row,
+      players: { ...row.players },
+      score: { ...row.score },
+      turn: latestBattle(battles.get(index))?.entry.state.turn ?? 0,
+    }));
+    if (publicView) {
+      const active = isActiveRunState(run.state);
+      const started = new Set([
+        ...run.publicTeamPreviewed,
+        ...rows.flatMap((row, index) => (row.status === 'done' ? [index] : [])),
+      ]);
+      return {
+        visibility: 'public',
+        mode: run.config.mode,
+        protocolVersion: run.config.protocolVersion,
+        runId: run.runId,
+        state: run.state,
+        pool: run.config.pool,
+        models: [...run.config.models],
+        startTime: run.startTime,
+        endTime: run.endTime ?? null,
+        rows,
+        bracket: active ? projectPublicBracket(run.bracket, run.config.closedSheets === true) : (run.bracket ?? null),
+        draft: active ? projectPublicDraft(run.draft, run.config.closedSheets === true, started) : (run.draft ?? null),
+        board: run.config.board ?? null,
+      };
+    }
     return {
       mode: run.config.mode,
       protocolVersion: run.config.protocolVersion,
       runId: run.runId,
       state: run.state,
-      error: publicView && run.error ? 'run failed' : run.error,
+      error: run.error,
       pause: run.pause ?? null,
-      notices: publicView ? [] : run.notices.slice(-3),
+      notices: run.notices.slice(-3),
       seed: run.seed ?? null,
       pool: run.config.pool,
       models: run.config.models,
       startTime: run.startTime,
       owner: run.owner?.login ?? null,
       endTime: run.endTime ?? null,
-      canControl: !publicView && !run.settling,
-      rows: run.rows.map((row, index) => ({
-        ...row,
-        turn: latestBattle(battles.get(index))?.entry.state.turn ?? 0,
-      })),
+      canControl: !run.settling,
+      rows,
       bracket: run.bracket ?? null,
       draft: run.draft ?? null,
       board: run.config.board ?? null,
     };
   }
 
-  private battleBody(index: number, publicView = false, game?: number): BattleMessage {
-    const games = (publicView ? this.run?.publicBattles : this.run?.battles)?.get(index);
+  private battleBody(index: number, game?: number): BattleMessage {
+    const games = this.run?.battles.get(index);
     const latest = latestBattle(games);
     if (!games || !latest) return { index, game: 0, games: [], revision: 0, snapshot: null };
     const shown = game !== undefined && games.has(game) ? game : latest.game;
     const entry = games.get(shown) as GameBattle;
-    const decisions = publicView
-      ? []
-      : (this.run?.decisions.get(index) ?? []).filter((decision) => decision.game === shown);
+    const decisions = (this.run?.decisions.get(index) ?? []).filter((decision) => decision.game === shown);
     return {
       index,
       game: shown,
@@ -1047,17 +1108,28 @@ export class GuiServer {
     };
   }
 
+  private publicBattleBody(index: number, game?: number): BattleView {
+    const games = this.run?.publicBattles.get(index);
+    const resolved = games
+      ? [...games.entries()]
+          .filter(([, entry]) => entry.log.entries.some((line) => line.kind === 'win'))
+          .map(([number]) => number)
+          .sort((a, b) => a - b)
+      : [];
+    const shown = game !== undefined && resolved.includes(game) ? game : resolved[resolved.length - 1];
+    const revision = this.run?.publicBattleRevisions.get(index) ?? 0;
+    if (shown === undefined) return buildPublicBattleMessage(index, game ?? 0, resolved, revision, []);
+    return buildPublicBattleMessage(index, shown, resolved, revision, games!.get(shown)!.log.entries);
+  }
+
   private async modelsBody(providerId: string, apiKey: string): Promise<ModelsResponse> {
     const option = providerOption(providerId);
-    if (!option || (this.publicOrigin && option.id === 'compat')) {
-      throw new HttpError(400, `unknown provider ${JSON.stringify(providerId)}`);
-    }
-    if (GUI_DISABLED_PROVIDERS.has(option.id)) throw new HttpError(400, GUI_DISABLED_PROVIDER_ERROR);
+    if (!option) throw new HttpError(400, `unknown provider ${JSON.stringify(providerId)}`);
     try {
       const models = await discoverModels(option, apiKey.trim() || undefined, {
         signal: AbortSignal.timeout(20_000),
       });
-      return { models: models.map((model) => this.modelInfo(option.id, model)) };
+      return { models: models.map((model) => this.modelInfo(model)) };
     } catch (error) {
       throw new HttpError(400, redactSecrets(error instanceof Error ? error.message : String(error), [apiKey]));
     }
@@ -1075,27 +1147,30 @@ export class GuiServer {
     if (!mode) throw new HttpError(400, 'unknown run mode');
     const rawModels = Array.isArray(body.models) ? body.models.map(String).filter(Boolean) : [];
     const models = body.nitro === true ? rawModels.map(nitroSpec) : rawModels;
+    const effectiveModel = (model: string): string =>
+      models.includes(model) ? model : rawModels.includes(model) && body.nitro === true ? nitroSpec(model) : model;
     const maximumModels = this.publicOrigin && mode === 'rotation' ? 4 : 8;
     if (models.length < 2) throw new HttpError(400, 'a run needs at least two model specs');
     if (models.length > maximumModels) {
       throw new HttpError(400, `a run supports at most ${maximumModels} model specs`);
     }
-    const reasoning = body.reasoning ? (String(body.reasoning) as ReasoningLevel) : undefined;
-    if (reasoning && !REASONING_LEVELS.includes(reasoning)) {
-      throw new HttpError(400, `reasoning must be one of: ${REASONING_LEVELS.join(', ')}`);
+    const reasoningValue = body.reasoning ? String(body.reasoning) : undefined;
+    if (reasoningValue && !isReasoningLevel(reasoningValue)) {
+      throw new HttpError(400, 'reasoning must be one of: minimal, low, medium, high, xhigh');
     }
+    const reasoning = reasoningValue as ReasoningLevel | undefined;
     if (body.reasoningByModel !== undefined && !isRecord(body.reasoningByModel)) {
       throw new HttpError(400, 'reasoningByModel must be an object');
     }
     const reasoningByModel: Record<string, ReasoningLevel> = {};
-    for (const [model, value] of Object.entries(isRecord(body.reasoningByModel) ? body.reasoningByModel : {})) {
-      const level = String(value) as ReasoningLevel;
-      if (!models.includes(model)) throw new HttpError(400, `reasoning configured for unselected model ${model}`);
+    for (const [rawModel, value] of Object.entries(isRecord(body.reasoningByModel) ? body.reasoningByModel : {})) {
+      const model = effectiveModel(rawModel);
+      if (!models.includes(model)) throw new HttpError(400, `reasoning configured for unselected model ${rawModel}`);
       if (model === 'random') throw new HttpError(400, 'random does not support configurable reasoning');
-      if (!REASONING_LEVELS.includes(level)) {
-        throw new HttpError(400, `reasoning for ${model} must be one of: ${REASONING_LEVELS.join(', ')}`);
+      if (!isReasoningLevel(value)) {
+        throw new HttpError(400, `reasoning for ${rawModel} must be one of: minimal, low, medium, high, xhigh`);
       }
-      reasoningByModel[model] = level;
+      reasoningByModel[model] = value;
     }
     if (reasoning && Object.keys(reasoningByModel).length) {
       throw new HttpError(400, 'choose either shared reasoning or per-model reasoning, not both');
@@ -1103,18 +1178,16 @@ export class GuiServer {
     const suppliedKeys = isRecord(body.apiKeys) ? body.apiKeys : {};
     const apiKeys: Record<string, string> = {};
     const missing: string[] = [];
-    for (const model of models) {
+    for (const [index, model] of models.entries()) {
       if (model === 'random') continue;
       try {
         const spec = parseSpec(model);
-        if (this.publicOrigin && spec.provider === 'compat') {
-          throw new Error('OpenAI-compatible custom endpoints are disabled in hosted mode');
-        }
-        if (GUI_DISABLED_PROVIDERS.has(spec.provider)) throw new Error(GUI_DISABLED_PROVIDER_ERROR);
         validateReasoning(spec, reasoningByModel[model] ?? reasoning);
-        const apiKey = typeof suppliedKeys[model] === 'string' ? suppliedKeys[model].trim() : '';
+        const suppliedKey = suppliedKeys[model] ?? suppliedKeys[rawModels[index]!];
+        const apiKey = typeof suppliedKey === 'string' ? suppliedKey.trim() : '';
         const option = providerOption(spec.provider);
-        if (!apiKey && (option?.requiresKey ?? spec.provider !== 'compat')) {
+        const requiresKey = option?.requiresKey ?? true;
+        if (!apiKey && requiresKey) {
           missing.push(`${option?.label ?? spec.provider} (${model})`);
         } else {
           apiKeys[model] = apiKey || 'none';
@@ -1150,7 +1223,7 @@ export class GuiServer {
           throw new HttpError(400, `team ${index + 1} must be a non-empty paste under 20k characters`);
         }
         try {
-          const packed = packTeam(paste);
+          const packed = packTeam(paste, defaultPsDir(), format!);
           validateTeam(packed, format!);
           return { id: `paste-${index + 1}`, packed };
         } catch (error) {
@@ -1181,7 +1254,7 @@ export class GuiServer {
     if (mode === 'draft') {
       const weeks = roundRobinWeeks(models.length).length;
       if (body.tradeWindow === undefined) {
-        tradeWindow = { afterWeek: Math.min(3, weeks), tradesAllowed: 1 };
+        tradeWindow = { afterWeek: Math.min(3, weeks), tradesAllowed: DEFAULT_TRADE_WINDOW.tradesAllowed };
       } else if (body.tradeWindow === null) {
         tradeWindow = null;
       } else if (isRecord(body.tradeWindow)) {
@@ -1189,9 +1262,12 @@ export class GuiServer {
         if (!Number.isSafeInteger(afterWeek) || afterWeek < 1 || afterWeek > weeks) {
           throw new HttpError(400, `trade window week must be between 1 and ${weeks}`);
         }
-        const tradesAllowed = body.tradeWindow.tradesAllowed === undefined ? 1 : Number(body.tradeWindow.tradesAllowed);
-        if (!Number.isSafeInteger(tradesAllowed) || tradesAllowed < 0) {
-          throw new HttpError(400, 'trade window tradesAllowed must be a non-negative integer');
+        const tradesAllowed =
+          body.tradeWindow.tradesAllowed === undefined
+            ? DEFAULT_TRADE_WINDOW.tradesAllowed
+            : Number(body.tradeWindow.tradesAllowed);
+        if (!Number.isSafeInteger(tradesAllowed) || tradesAllowed < 0 || tradesAllowed > MAX_TRADE_OFFERS) {
+          throw new HttpError(400, `trade window tradesAllowed must be an integer between 0 and ${MAX_TRADE_OFFERS}`);
         }
         tradeWindow = { afterWeek, tradesAllowed };
       } else {
@@ -1620,6 +1696,7 @@ export class GuiServer {
       }
     } else if (event.type === 'game-update') {
       if (!run.rows[event.index]) return;
+      if (event.publicLines.includes('|start')) run.publicTeamPreviewed.add(event.index);
       for (const [store, lines] of [
         [run.battles, event.lines],
         [run.publicBattles, event.publicLines],
@@ -1640,7 +1717,17 @@ export class GuiServer {
       const row = run.rows[event.index];
       if (row && row.status === 'running') row.game = event.game;
       run.battleRevisions.set(event.index, (run.battleRevisions.get(event.index) ?? 0) + 1);
-      this.queueBattle(event.index);
+      const publicGame = run.publicBattles.get(event.index)?.get(event.game);
+      const resolvedKey = `${event.index}:${event.game}`;
+      const newlyResolved =
+        publicGame?.log.entries.some((entry) => entry.kind === 'win') && !run.publiclyResolvedGames.has(resolvedKey);
+      if (newlyResolved) {
+        run.publiclyResolvedGames.add(resolvedKey);
+        run.publicBattleRevisions.set(event.index, (run.publicBattleRevisions.get(event.index) ?? 0) + 1);
+        this.queueBattle(event.index);
+      } else {
+        this.queuePrivateBattle(event.index);
+      }
     } else if (event.type === 'decision') {
       if (!run.rows[event.index]) return;
       const row = event.row;
@@ -1659,7 +1746,7 @@ export class GuiServer {
         run.spend.set(event.index, totals);
         if (row.kind === 'game_reflection') {
           run.battleRevisions.set(event.index, (run.battleRevisions.get(event.index) ?? 0) + 1);
-          this.queueBattle(event.index);
+          this.queuePrivateBattle(event.index);
         }
       }
       if (row.kind === 'decision') {
@@ -1681,7 +1768,7 @@ export class GuiServer {
         if (list.length > 400) list.splice(0, list.length - 400);
         run.decisions.set(event.index, list);
         run.battleRevisions.set(event.index, (run.battleRevisions.get(event.index) ?? 0) + 1);
-        this.queueBattle(event.index);
+        this.queuePrivateBattle(event.index);
       }
       return;
     } else if (event.type === 'game-end') {
@@ -1707,8 +1794,15 @@ export class GuiServer {
     this.queue(
       `battle:${index}`,
       () => ({ type: 'battle', ...this.battleBody(index) }),
-      () => ({ type: 'battle', ...this.battleBody(index, true) }),
+      () => ({ type: 'battle', ...this.publicBattleBody(index) }),
     );
+  }
+
+  private queuePrivateBattle(index: number): void {
+    this.pending.set(`private-battle:${index}`, () => ({
+      privateEvent: { type: 'battle', ...this.battleBody(index) },
+    }));
+    this.scheduleFlush();
   }
 
   private queueRun(): void {
@@ -1744,11 +1838,11 @@ export class GuiServer {
 
   private broadcast(message: PendingServerEvent): void {
     const privateData = `data: ${JSON.stringify(message.privateEvent)}\n\n`;
-    const publicData = `data: ${JSON.stringify(message.publicEvent)}\n\n`;
+    const publicData = message.publicEvent ? `data: ${JSON.stringify(message.publicEvent)}\n\n` : undefined;
     for (const [client, viewer] of this.clients) {
-      const data =
-        !viewer.publicOnly && this.canViewPrivateRun(this.eventViewerUser(viewer)) ? privateData : publicData;
-      this.writeEvent(client, data);
+      const privateViewer = !viewer.publicOnly && this.canViewPrivateRun(this.eventViewerUser(viewer));
+      if (!privateViewer && publicData === undefined) continue;
+      this.writeEvent(client, privateViewer ? privateData : publicData!);
     }
   }
 
@@ -1787,7 +1881,12 @@ export class GuiServer {
     const viewer: EventViewer = { sessionToken, publicOnly, backpressured: false };
     const publicView = publicOnly || !this.canViewPrivateRun(this.eventViewerUser(viewer));
     this.clients.set(response, viewer);
-    if (!this.writeEvent(response, `data: ${JSON.stringify({ type: 'run', run: this.runBody(publicView) })}\n\n`)) {
+    if (
+      !this.writeEvent(
+        response,
+        `data: ${JSON.stringify({ type: 'run', run: publicView ? this.runBody(true) : this.runBody() })}\n\n`,
+      )
+    ) {
       return;
     }
     if (!this.heartbeatTimer) {

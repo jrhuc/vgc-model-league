@@ -24,7 +24,7 @@ class CaptureEngine extends RandomEngine {
   }
 }
 
-export async function captureRequests(): Promise<void> {
+async function captureRequests(): Promise<void> {
   const pool = loadPool();
   const captured: Record<string, BattleRequest> = {};
   for (let seed = 1; seed <= 8; seed += 1) {

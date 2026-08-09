@@ -1,6 +1,13 @@
 import { useRef, useState } from 'preact/hooks';
 
-import type { AppState, CreatePoolResponse, PoolInfo, TeamMemberView, ValidateResponse } from '../../api';
+import type {
+  AppState,
+  ContributorAppState,
+  CreatePoolResponse,
+  PoolInfo,
+  TeamMemberView,
+  ValidateResponse,
+} from '../../api';
 import { Dropdown } from '../components/dropdown';
 import { api } from '../http';
 
@@ -13,7 +20,7 @@ interface Draft {
 }
 
 interface PoolsProps {
-  app: AppState;
+  app: AppState | ContributorAppState;
   onPools: (pools: PoolInfo[]) => void;
 }
 
@@ -22,9 +29,7 @@ function newDraft(key: number): Draft {
 }
 
 function Member({ member }: { member: TeamMemberView }) {
-  const line = [member.item, member.ability, member.teraType ? `Tera ${member.teraType}` : '']
-    .filter(Boolean)
-    .join(' · ');
+  const line = [member.item, member.ability].filter(Boolean).join(' · ');
   return (
     <div class="member">
       <b>{member.species}</b>
@@ -80,7 +85,7 @@ export function PoolsView({ app, onPools }: PoolsProps) {
   };
 
   const createPool = () => {
-    setMessage({ text: 'Validating every team and writing the snapshot…', cls: '' });
+    setMessage({ text: 'Validating every team and saving the pool…', cls: '' });
     setCreating(true);
     api<CreatePoolResponse>('/api/pool', {
       name: poolName.trim(),
@@ -101,23 +106,23 @@ export function PoolsView({ app, onPools }: PoolsProps) {
     <>
       <div class="page-heading">
         <div>
-          <p class="eyebrow">Team pools / immutable snapshots</p>
-          <h1>
+          <p class="eyebrow">Reusable team pools</p>
+          <h2>
             Create a
             <br />
             team pool.
-          </h1>
+          </h2>
         </div>
         <p class="lede">
-          Paste Showdown teambuilder exports, validate them against the pinned simulator, and write an immutable pool
-          directory. A metagame refresh is a new pool, never an edit, so old records stay reproducible.
+          Paste Showdown teambuilder exports, validate them, and save a team pool for future runs. Create a new pool
+          when teams change so earlier runs keep their original teams.
         </p>
       </div>
       <div class="pool-layout">
         <aside class="panel pool-rail">
           <div class="section-head">
             <div>
-              <h2>Pool archive</h2>
+              <h3>Saved pools</h3>
               <p>Available to new runs.</p>
             </div>
           </div>
@@ -141,12 +146,12 @@ export function PoolsView({ app, onPools }: PoolsProps) {
           <div class="builder-intro">
             <div>
               <p class="eyebrow" style="color:#f3ce39">
-                Validated by the pinned Showdown build
+                Validated with Pokémon Showdown
               </p>
-              <h2>Team intake</h2>
+              <h3>Team intake</h3>
               <p>
-                Build each team in the official teambuilder and paste its Import/Export text here. Every set is
-                validated against the pool's format before any file is written.
+                Build each team in the official teambuilder and paste its Import/Export text here. Every set is checked
+                against the selected format before the pool is saved.
               </p>
             </div>
             <a class="button" href="https://play.pokemonshowdown.com/teambuilder" target="_blank" rel="noreferrer">
@@ -267,7 +272,7 @@ export function PoolsView({ app, onPools }: PoolsProps) {
               Add team
             </button>
             <button type="button" class="button primary" disabled={creating} onClick={createPool}>
-              Create immutable pool
+              Create pool
             </button>
             {message.text && (
               <div class={`message ${message.cls}`} role="status">

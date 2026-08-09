@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "kind": "circuit-trace-public-bundle-manifest",
+  "traceId": "coach-c-sand-pivot",
+  "artifactSchemaVersion": 1,
+  "status": "exploratory-research-artifact",
+  "artifacts": {
+    "curated": {
+      "path": "curated.json",
+      "sha256": "5fc109c6c0fa6e624036145ded1d0056a8864e348351c2a9096a146edaaa39e2",
+      "schemaVersion": 1
+    },
+    "full": {
+      "path": "full.json",
+      "sha256": "4d398346cf7efe55cce50536d731e974e8bcceb4b2a6d9492382ecec0fdd2180",
+      "schemaVersion": 1
+    }
+  }
+}

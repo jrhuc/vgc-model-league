@@ -7,12 +7,11 @@ import { AuthService } from './auth.js';
 import { GuiServer } from './gui/server.js';
 import { AUTH_DB_PATH, makeRunDirectory, prepareDataDirectories, RESULTS_PATH, RUNS_DIR, TEAMS_DIR } from './paths.js';
 import type { ReasoningLevel } from './providers.js';
-import { nitroSpec, REASONING_LEVELS } from './providers.js';
+import { isReasoningLevel, nitroSpec } from './providers.js';
 import type { SeriesRecord } from './records.js';
-import { loadRows, ratingGroups, scopeRows, TEST_POOL } from './records.js';
+import { loadSeriesRecords, scopeRows, TEST_POOL } from './records.js';
 import { RecoveryGate } from './recovery.js';
 import { writeReport } from './report.js';
-import { restartGui, stopGui } from './restart.js';
 import { runRotation } from './rotation.js';
 import { withRunStatus } from './run-status.js';
 import type { Team } from './teams.js';
@@ -40,9 +39,6 @@ const HELP = `Usage: vgcleague <command>
 
 Commands:
   gui [--port <n>] [--host <address>] [--origin <url>]  serve the browser GUI
-  restart [--port <n>] [--host <address>] [--force] [--skip-build]
-      rebuild, stop any GUI on the port, and start a fresh detached one (refuses while a run is active)
-  stop [--port <n>] [--force]         stop the GUI on the port (refuses while a run is active)
   selfcheck                           run one random-vs-random series through the simulator
   rotation --models <spec> <spec>...  run the controlled team-rotation protocol
       [--series-per-pair <n>] [--pool <name>] [--seed <n>] [--concurrency <n>] [--reasoning <level>]
@@ -51,10 +47,12 @@ Commands:
       [--pool <name>] [--seed <n>] [--concurrency <n>] [--reasoning <level>] [--timer-scale <n|off>]
       [--nitro] [--provenance <disclosed|blind>] [--resume <run-dir>]
       a pool that seeds its teams keeps the real bracket order instead of drawing positions at random
-      --provenance disclosed (default) names the event and both teams' finishes; blind withholds both
-      --resume continues a stopped bracket: finished series stand, the interrupted one replays its
-      recorded games and decisions at no provider cost (models, pool, seed, and provenance come from
-      the run's config, so a seat rewired there plays on under its new spec)
+      --provenance disclosed (default) may name the event and teams; placements/finishes stay withheld
+      blind withholds the event context too
+      --resume continues a stopped bracket: finished series stand; only an eligible interrupted series
+      with matching native requests replays recorded decisions without provider calls. Random-seat,
+      timer-autodefault, and other ineligible cases may restart or continue live (models, pool, seed,
+      and provenance come from the run's recorded config)
   draft --models <spec> <spec>...     snake-draft rosters from a board, then a weekly round robin and playoffs
       each coach drafts 10 within a 100-point budget, then picks 6 and builds every set before each match
       [--board <name>] [--seed <n>] [--concurrency <n>] [--reasoning <level>] [--timer-scale <n|off>]
@@ -65,15 +63,21 @@ Commands:
       round-robin series run concurrently with blind teambuilds; --sequential-weeks restores
       week-by-week play (implied by --through-week); --closed-sheets hides opposing team sheets
       the free-agent window defaults to week 3 (or the last week in shorter leagues); pass off for locked rosters
-      (models, board, seed, and trade window come from the run's config on resume)
+      (models, board, and seed come from the run's config; the trade window does too only after season
+      settings were fixed—draft-only resumes choose and fix it when season play begins)
   exhibition --opponent <spec>        host one bo3 where a terminal agent plays a seat over a local bridge
       [--seat p1|p2] [--name <label>] [--pool <name>] [--seed <n>] [--port <n>] [--reasoning <level>]
       [--agent-dir <path>]
-  standings [--pool <name>]           print standings and head-to-head from recorded results
+      opponent specs: openrouter:<model-id>, prime:<model-id>, or random
+  outcomes [--pool <name>]            print contextual per-series outcomes without an aggregate ranking
   report [--out <path>] [--pool <name>]  write an HTML report
   publish [--to <origin>] [--run <id>]... [--pool <name>] [--include-test] [--dry-run]
       send completed local series, their decision logs, and any missing team pool to a deployment
       --run publishes exactly those runs, whatever their mode or pool; repeat it for several
+
+Model specs are exactly openrouter:<model-id>, prime:<model-id>, or random.
+CLI calls read OPENROUTER_API_KEY or PRIME_API_KEY for the selected provider.
+Prime model IDs are entered manually; OpenRouter model discovery is available in the GUI.
 
 Runs stay alive through transient provider failures (rate limits, upstream
 outages, exhausted quotas): the affected seat pauses, then retries with backoff
@@ -83,19 +87,13 @@ instead of failing the run. Credential and request errors still fail fast.
 does not already carry a routing variant. Faster, usually pricier; skip it when
 slower seats set the pace anyway.
 
-While a run is live, writing {"models": {"<spec>": "<replacement>"}} to
-<run-dir>/overrides.json reroutes that seat's calls to the replacement provider
-from its next decision on — no restart, nothing replayed. Meant for moving the
-same model to a healthier route (a rerouted seat uses environment API keys);
-records keep the seat's original spec. Delete the entry to route it back.
-
 publish needs VGC_LEAGUE_PUBLISH_ORIGIN (or --to) and VGC_LEAGUE_IMPORT_TOKEN, which must
 match the token the deployment runs with. It is idempotent: series the deployment already
 holds are reported and skipped.
 
-Without --pool, standings and report cover every pool except the disposable "test" pool
-and keep only rotation rows; pass --pool <name> to inspect everything in one pool.
-Draft, exhibition, and tournament rows record their mode and never rate the rotation ladder.`;
+Without --pool, outcomes and report retain all rows except the disposable "test" pool;
+pass --pool <name> to inspect every row in one pool. All modes remain contextual rows
+and are never aggregated into a ranking.`;
 
 function positiveInteger(name: string, value: string): number {
   const parsed = Number(value);
@@ -112,11 +110,8 @@ function optionalInteger(name: string, value: string | undefined): number | unde
 
 function reasoningLevel(value: string | undefined): ReasoningLevel | undefined {
   if (value === undefined) return undefined;
-  const level = value as ReasoningLevel;
-  if (!REASONING_LEVELS.includes(level)) {
-    throw new Error(`--reasoning must be one of: ${REASONING_LEVELS.join(', ')}`);
-  }
-  return level;
+  if (!isReasoningLevel(value)) throw new Error('--reasoning must be one of: minimal, low, medium, high, xhigh');
+  return value;
 }
 
 function timerScaleOption(value: string | undefined): TimerScale | undefined {
@@ -150,10 +145,6 @@ function experimentExecution(values: ExperimentCliValues) {
     ...(timerScale === undefined ? {} : { timerScale }),
     recovery: autoResumeGate(),
   };
-}
-
-function armModelOverrides(runDir: string): void {
-  process.env.VGC_MODEL_OVERRIDES ??= path.join(runDir, 'overrides.json');
 }
 
 function autoResumeGate(): RecoveryGate {
@@ -196,20 +187,6 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
   prepareDataDirectories();
   const [command, ...rest] = argv;
   if (command === 'selfcheck') return selfcheck();
-  if (command === 'restart' || command === 'stop') {
-    const { values } = parseArgs({
-      args: rest,
-      options: {
-        port: { type: 'string', default: process.env.PORT ?? '8484' },
-        host: { type: 'string' },
-        force: { type: 'boolean', default: false },
-        'skip-build': { type: 'boolean', default: false },
-      },
-    });
-    const port = positiveInteger('port', values.port);
-    if (command === 'stop') return stopGui({ port, force: values.force });
-    return restartGui({ port, host: values.host, force: values.force, build: !values['skip-build'] });
-  }
   if (command === 'gui') {
     const { values } = parseArgs({
       args: rest,
@@ -295,7 +272,6 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
     const models = experimentModels(command, values.models, positionals, values.nitro);
     const execution = experimentExecution(values);
     const runDir = makeRunDirectory();
-    armModelOverrides(runDir);
     const rows = await withRunStatus(runDir, () =>
       runRotation(models, positiveInteger('series-per-pair', values['series-per-pair']), runDir, {
         pool: values.pool,
@@ -361,7 +337,6 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
     if (provenance !== 'disclosed' && provenance !== 'blind')
       throw new Error('--provenance must be "disclosed" or "blind"');
     const runDir = resumeDir ?? makeRunDirectory();
-    armModelOverrides(runDir);
     const rows = await withRunStatus(runDir, () =>
       runTournament(models, runDir, {
         ...(storedTeams
@@ -449,7 +424,6 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
             ? null
             : { afterWeek: positiveInteger('trade-window', values['trade-window']), tradesAllowed: 1 };
     const runDir = resumeDir ?? makeRunDirectory();
-    armModelOverrides(runDir);
     let lastTeambuilds = 0;
     const rows = await withRunStatus(runDir, () =>
       runDraftLeague(models, runDir, {
@@ -584,7 +558,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
     }
     return 0;
   }
-  if (command === 'standings' || command === 'report') {
+  if (command === 'outcomes' || command === 'report') {
     const { values } = parseArgs({
       args: rest,
       options: {
@@ -597,7 +571,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
       return 0;
     }
     if (values.pool === undefined) console.log(`All pools except ${JSON.stringify(TEST_POOL)}; use --pool for one.\n`);
-    printStandings(scopeRows(loadRows(RESULTS_PATH), values.pool));
+    printOutcomes(scopeRows(loadSeriesRecords(RESULTS_PATH), values.pool));
     return 0;
   }
   console.error(HELP);
@@ -637,37 +611,31 @@ function renderTable(head: string[], rows: string[][]): string {
   return [line(head), rule, ...rows.map(line)].join('\n');
 }
 
-function printStandings(rows: SeriesRecord[]): void {
-  for (const [index, { label, count, standings: table, h2h: matrix }] of ratingGroups(rows).entries()) {
-    if (index) console.log('');
-    console.log(`${label} (${count} series)`);
-    console.log(
-      renderTable(
-        ['Model', 'Series', 'W', 'L', 'T', 'Win rate', 'Elo'],
-        table.map((item) => [
-          item.spec,
-          String(item.series),
-          String(item.w),
-          String(item.l),
-          String(item.t),
-          `${(100 * item.winrate).toFixed(1)}%`,
-          item.elo.toFixed(1),
-        ]),
-      ),
-    );
-    const specs = Object.keys(matrix);
-    if (specs.length < 2) continue;
-    console.log('');
-    console.log(
-      renderTable(
-        ['W-L-T', ...specs],
-        specs.map((model) => [
-          model,
-          ...specs.map((opponent) => (model === opponent ? '-' : matrix[model]![opponent]!.join('-'))),
-        ]),
-      ),
-    );
-  }
+function printOutcomes(rows: SeriesRecord[]): void {
+  console.log(
+    `${rows.length} contextual series records. Outcomes are not aggregated into a model ranking; compare only declared like-for-like protocols.`,
+  );
+  if (!rows.length) return;
+  console.log(
+    renderTable(
+      ['Mode', 'Pool', 'Clock', 'p1', 'p2', 'Score', 'Winner', 'Scaffold', 'Run / series'],
+      rows.map((row) => {
+        const score = row.score as Record<string, number> | undefined;
+        const clock = row.timer_scale === 'off' ? 'off' : `${row.timer_scale ?? 1}x`;
+        return [
+          row.mode ?? 'legacy',
+          row.pool ?? 'unrecorded',
+          clock,
+          row.players.p1,
+          row.players.p2,
+          score ? `${score.p1 ?? '?'}-${score.p2 ?? '?'}` : '?',
+          row.winner ?? 'tie',
+          String(row.scaffold ?? 'unrecorded'),
+          `${String(row.run_id ?? '?')} / ${String(row.series_id ?? '?')}`,
+        ];
+      }),
+    ),
+  );
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

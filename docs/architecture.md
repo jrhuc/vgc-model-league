@@ -1,254 +1,271 @@
 # Architecture
 
-VGC Model League has two user surfaces. The CLI runs headless experiments and
-reports. The GUI manages experiments and displays live and stored evidence.
-There is no terminal UI.
+VGC Model League has a headless CLI and a browser GUI; there is no terminal UI.
+The server owns validation, files, and contextual evidence. The Preact client
+renders typed API data and is never an alternate scoring authority.
 
 ## Application surfaces
 
-`src/cli.ts` defines the CLI commands. `src/gui/server.ts` provides the GUI
-server, JSON API, static assets, and server-sent events. The Preact client is in
-`src/gui/client/`.
+`src/cli.ts` defines commands. `src/gui/server.ts` serves the JSON API, static
+assets, and server-sent events; `src/gui/client/` contains the client. Shared API
+shapes belong in `src/gui/api.ts`.
 
-The server is authoritative. It owns game rules, validation, file access,
-standings, and rating calculations. The client only renders API data.
+The **Research** routes are **Home**, **Method**, and **Docs**. Home and Method
+render one server-loaded projection of the hash-bound selected artifact. The
+**Workspace** routes are **Draft leagues**, **Live**, **Tournaments**, and **New
+run**. Draft leagues is an exploratory season archive, not a connected
+evaluation circuit.
 
-Declare all client and server data shapes in `src/gui/api.ts`. Both sides
-import these types. Keep one file for each top-level view. Extract a shared
-component only when more than one view uses it.
+Anonymous and authorized operational views are different API projections.
+Private position scores, snapshots, opponent requests, and sealed panels remain
+offline and are never browser data. Raw run evidence is available only in a
+trusted local workspace or to an authorized owner/operator; the anonymous view
+is the facts-only projection specified under [State, evidence, and
+trust](#state-evidence-and-trust).
 
-## Experiment protocols
+## Local experiment protocols
 
-`ExperimentMode` contains `rotation`, `tournament`, `draft`, and `exhibition`.
-Each run configuration, live snapshot, and result row records its mode and
-protocol version. Change the protocol version when evaluation rules make old
-and new results incompatible.
+Every result records its mode, protocol version, Showdown revision, and the
+model-visible `scaffold`: prompts, renderers, tool schemas, decision policy, and
+context policy. Provider routing, sampling, execution adapter, timer, and resume
+attempts are separate provenance. Change a protocol or scaffold version when a
+model-visible condition changes, not for evidence-only logging.
 
-Each result also records `scaffold`. This value identifies the prompts, tool
-schemas, and sampling parameters that shaped model behavior.
+`src/series.ts` runs the shared best-of-three flow. Experiment modes do not alter
+the battle engine or Showdown boundary.
 
-`src/series.ts` runs the common best-of-three flow for rotation, tournament,
-and draft modes. Battle engines and the Showdown integration do not depend on
-an experiment mode.
+- **Rotation** (`src/rotation.ts`) mirrors model/team assignments. Its rows are
+  controlled contextual outcomes, not a rating.
+- **Tournament** gives each entrant one validated team for a single-elimination
+  bracket. Seeded event pools preserve their bracket slots; models are shuffled
+  across teams. A draw advances the higher seed while remaining a draw in the
+  result. Resume reconstructs the stored draw and adopts only valid recorded
+  evidence.
+- **Draft league** (`src/draft.ts`, `src/teambuild.ts`) snake-drafts species or
+  formes under exclusivity, Species Clause, roster-size, and point constraints.
+  Before every series a coach selects six roster members and builds complete
+  sets. Showdown validates format legality; league rules enforce draft-specific
+  constraints such as Mega locks. The protocol includes one
+  mid-season transaction window and terminal season reviews; see
+  [Trade window](trade-window.md) and [Season review](season-review.md).
+- **Exhibition** (`src/seat.ts`) exposes one seat over a loopback bearer-token
+  bridge. Its owner-only workspace modes protect tokens from other users, not
+  processes under the same UID. It provides no filesystem, process, credential,
+  network, egress, or delegation isolation and is never a controlled comparison.
 
-### Rotation
+Within a draft league, a private full-replacement roster note carries across
+picks and the transaction window. Each matchup plan initializes a separate
+series notebook. Round-robin builds are blind to other round-robin results;
+playoff coaches may receive their own prior builds, results, and final notes.
+Franchise names are presentation metadata and never enter competitive prompts.
 
-`src/rotation.ts` owns the schedule, mirrored assignments, run configuration,
-events, and result persistence. Only rotation results enter the rating.
+The default round robin runs blind, concurrency-limited batches: every scheduled
+series through the configured transaction week completes before the window, and
+the remaining series form the next batch. With no window, all round-robin series
+share one batch. `--sequential-weeks` is a distinct execution option, and
+`--through-week` implies it. Scheduling changes the information/timing condition
+and must be recorded rather than pooled silently.
 
-### Tournament
+## Decision contract
 
-Tournament entrants receive different teams from a pool or provide validated
-team pastes. An entrant keeps the same team through the bracket. Ready matches
-run up to the selected concurrency. A draw advances the higher seed but keeps
-`winner: null` in the result.
+A local `LLMEngine` seat receives only its authorized view:
 
-A bracket resumes like a league: the run's seed rebuilds the same draw, the
-stored config's entrants are its seat-to-team identity, recorded results settle
-their matches and advance their winners, and each series carries its schedule
-slot into `src/series.ts` so an interrupted one adopts its directory and
-replays what it already played.
+- public field state and timers, exact own-Pokémon state, and both open team
+  sheets when the format uses them;
+- its bounded private timeline and series notebook;
+- numbered request-derived joint-action candidates and matchup references;
+- optional bounded mechanics tools for dex data, exact format-aware stats, and
+  damage from the live request and visible sheets.
 
-A pool may reproduce a real event. Its manifest carries the event and gives
-each team a seed and the finish it earned, and `tools/build-event-pool.ts`
-builds it. Seeded teams hold their bracket positions instead of drawing at
-random, so the field meets in the pairings it earned; the models are still
-shuffled across the teams. `--provenance disclosed`, the default, tells each
-seat which event this is and that both teams in the match came out of that cut,
-and says outright when the stat points were rebuilt rather than published. It
-withholds the finishing order: holding the team that lost the final is a fact
-about a game these models did not play, and it would steer play rather than
-inform it. `blind` withholds all of it and is the control arm. Player names
-never enter a competitive prompt; they appear only in the GUI and the pool
-manifest.
-
-### Draft League
-
-`src/draft.ts` owns the draft. `src/teambuild.ts` owns team construction. A
-board entry represents a species or forme, not a complete set. The `base`
-field enforces Species Clause. Mega formes are separate entries and lock their
-Mega Stones.
-
-Pick validation enforces exclusivity, one entry for each base species, and the
-point budget. It also reserves enough points to fill the remaining roster
-slots.
-
-Each drafter maintains a private, full-replacement roster note across its own
-picks. The current note is supplied to every matchup build as revisable
-context; a transaction-window decision replaces it for later builds.
-
-Once every pick is complete, each non-random coach gets one isolated naming
-turn over its finished roster. The playful franchise name is stored separately
-from the draft transcript and is presentation metadata for the GUI, CLI,
-records, and archive. It never enters a competitive prompt or private note;
-draft, teambuild, trade, battle, reflection, and review context identify seats
-by their model specifications instead. Historical drafts that recorded a name
-on the first pick still load without exposing that name to later decisions.
-
-Before each series, a coach selects six roster members and builds their sets.
-Showdown validates format rules. The league validates rules that Showdown does
-not know, such as the Mega lock. A failed team build gets another attempt. The
-league makes a minimal repair after the final failed attempt and records each
-repair.
-
-The draft and team builder use the same bounded dex tools as the battle engine.
-The league records each lookup. The stat tool delegates exact spread
-calculation to the selected Showdown format, including Champions Stat Points
-and fixed IVs.
-
-Round-robin matchups are built blind and may run concurrently. A matchup's
-teambuild plan initializes its private battle notebook and persists across the
-games in that series. Round-robin builds, sets, results, and final battle notes
-are stored in `coaching.jsonl`, but enter model context only for coaches that
-reach the playoffs. Later playoff rounds also receive earlier playoff context.
-
-### Exhibition
-
-`src/seat.ts` exposes one `LLMEngine` seat through a token-authenticated local
-bridge. The host keeps both private battle-log views, the opponent engine, and
-the opponent credentials. The external agent receives only its own view.
-
-Exhibition results do not enter the rating.
-
-## Model decision path
-
-For each decision, `LLMEngine` sends the model:
-
-- the public field state and timers;
-- the exact state of its own Pokémon;
-- both open team sheets;
-- its private timeline and series notebook;
-- numbered menus for each legal joint action;
-- references for the active matchup.
-
-Optional tools provide species, move, item, ability, nature, type, exact
-format-aware stats, and damage information. In battle, damage calls are bound
-to the live request and open team sheets rather than trusting model-supplied
-state. Explicit item and ability lookups return the simulator's full mechanics
-descriptions. The tools expose only information that is legal in the match.
+Tools calculate mechanics; they do not recommend choices or trust a model to
+supply hidden battle state. A common model-visible format-authority notice also
+appears in draft, construction, transaction, battle decision/reflection, and
+season-review roles. It neutrally tells seats to treat the prompt and pinned
+simulator as authoritative when Champions postdates their training data; it
+contains no matchup strategy. Its bytes are part of each affected scaffold
+identity.
 
 The model returns one JSON object:
 
 ```json
-{
-  "choices": [0, 2],
-  "rationale": "short reason for the final choice",
-  "notebook": "private notes for this series"
-}
+{"choices":[0,2],"rationale":"optional evidence","notebook":"optional complete replacement"}
 ```
 
-Malformed decisions are retried according to the decision policy; an exhausted
-untimed decision produces a recorded model-choice default. Game evidence keeps
-model-choice defaults, simulator substitutions, and timer autodefaults
-separate. Provider failure during a timed decision abandons that decision and
-lets the Showdown timer act. Simulator, reference, and team validation failures
-stop the run.
+Only a legal `choices` array affects the referee. Rationale and notebook are
+optional evidence; malformed evidence cannot invalidate an otherwise legal
+action. Invalid choices follow the recorded decision retry/default policy.
+Model-choice defaults, Showdown substitutions, and room-timer defaults remain
+distinct. Provider failure under a timer leaves the decision to Showdown;
+simulator, reference, or team-validation failure stops the run.
 
-After each game, both models review the game and record an adjustment. This
-step occurs outside the battle clock. The final review remains in the evidence
-and has `series_over` set. In draft leagues the final review also receives the
-full ten-Pokémon roster with the registered six marked, and its instructions
-extend to the preparation itself: whether the six registered fit the opponent
-and whether anything left behind would have.
+Each seat also writes an append-only authorized context stream. That stream
+records observations and submissions, not accepted simulator transitions; join
+it with game/referee evidence for legality or outcome claims. Recovery appends a
+new attempt and reconstructs explicit state from evidence. It does not preserve
+a provider session, hidden memory, or concurrent-owner lock. Operators must not
+resume the same run concurrently.
 
-Reference opponents implement `BattleAgent`. They do not use model notebooks,
-reflections, or tools.
+## Pokémon Showdown authority
 
-## Pokémon Showdown boundary
+The application loads the pinned Showdown battle stream, dex, validator, and
+room timer directly; it does not run Showdown's HTTP server. Showdown alone
+decides battle legality, randomness, accepted transitions, and results. League
+validation covers only protocol rules Showdown does not know.
 
-The league loads Showdown's compiled battle stream, dex, validator, and room
-timer in the application process. It does not run the Showdown HTTP server.
-Showdown remains the authority for legality and results.
+`showdown.lock.json` accepts the official repository at a full commit SHA. Setup
+installs upstream dependencies without lifecycle scripts, compiles explicitly,
+and retains only required runtime code. Updating the pin builds and tests the
+league before keeping it. Every result records the actual revision.
 
-`showdown.lock.json` accepts only the official repository and a full commit
-SHA. Setup rejects non-registry or non-SHA-512 entries in the upstream npm
-lock, installs it with lifecycle scripts disabled, explicitly runs the
-compiler, and retains only `ts-chacha20`, the simulator's sole external runtime
-package. The update path builds and runs the league test suite before keeping a
-new pin.
+Battles are untimed unless a run selects a timer scale. A separate wall-clock
+guard stops runaway provider calls; limits are failure guards, not the baseline
+thinking budget.
 
-The Showdown room timer starts only when a run selects a timer scale. Decision
-token limits follow the active clock. A separate wall-clock limit stops
-runaway model calls in every mode.
+## Evaluation and artifact boundary
 
-Each result records the actual Showdown revision.
+The local league generates exploratory trajectories. The evaluator replays only
+games bound to exact teams and current provenance, and refuses any source that
+does not reproduce its stored log. `src/eval/fork.ts` owns snapshots, forks,
+request-menu candidate enumeration, and native Showdown acceptance filtering.
+Evaluation manifests bind the Showdown SHA, reference
+configuration, action encoding, source corpus, executed evaluator, seeds, and
+content digests.
 
-## Dependency boundary
+Position artifacts use exactly two physically separate roots:
 
-The root install uses the exact pnpm version declared in `package.json`, exact
-direct versions, and an integrity-bearing frozen lock. Project policy disables
-dependency lifecycle scripts, rejects exotic transitive sources, distrusts
-lockfile metadata until packages are checked, forbids version downgrades, and
-holds ordinary new releases for seven days. A narrowly versioned release-age
-exception may admit a security fix sooner; it does not admit a package range.
+1. **Public:** the v1 candidate manifest plus neutral point-of-view tasks and
+   numbered Showdown-accepted candidate actions.
+2. **Private:** score and qualification rows together with sealed snapshots,
+   opponent requests, draws, and rectangular action-value matrices.
 
-Explicit project scripts remain runnable. That distinction lets the repository
-compile its own code and the pinned Showdown source without granting install,
-preinstall, or postinstall hooks to downloaded packages.
+Model-facing and browser loaders accept only the public root. Candidate files are
+immutable, and their release status is owned only by the
+[Evaluation plan](evaluation-plan.md#program-status); constructing them does not
+waive any release gate.
 
-## Run state and evidence
+The TypeScript matchday task-source freezer is a separate private artifact
+path. Its contract validates accepted constructions through the referee and
+writes a private `manifest.json` plus `task-source.jsonl`. Publication requires
+one trusted producer and an immutable repository, build, and runtime tree from
+process start through publication. The authority snapshot detects changes only
+after capture, loaded
+JavaScript module bytes are not independently attested, the reviewed raw-byte
+digest assumes the supported POSIX/LF build, and Node provides no portable
+atomic directory `NOREPLACE` against a concurrent same-privilege writer.
+Freezing is not source review or release approval.
 
-Each run directory contains `status.json`. A running marker includes the owner
-process ID. Terminal states are `done`, `failed`, and `stopped`. A running
-marker with a dead process ID identifies an interrupted run.
+For `circuit-trace-v1`, `manifest.json` binds the raw curated and full JSON bytes.
+The clean-checkout checker verifies manifest paths and hashes and scans the raw
+manifest, curated, and full bytes for credentials and private locators. The
+runtime loader, not the generic checker, validates every field and cross-event
+join rendered by Home and Method and refuses a hash mismatch. Artifact status
+and source gaps belong in the [Evaluation plan](evaluation-plan.md#program-status).
 
-The scheduler uses one shared abort signal. The first failed series stops
-queued and active work. Completed series remain on disk before the scheduler
-reports the failure.
+## TypeScript, Python, and verifiers
 
-`records/results.jsonl` is append-only. Readers accept unknown fields and
-missing optional fields. They derive ratings and summaries from qualifying
-rows. They do not store Elo values.
+TypeScript and the pinned Showdown bundle remain the domain and referee layer.
+They validate teams and actions, advance state, reconstruct battles, calculate
+reference rewards, and emit canonical evidence. TypeScript itself does not run
+models, and Python must not duplicate its domain rules.
 
-Local evidence uses files:
+Keep three package boundaries distinct:
 
-- `runs/` stores configuration, decisions, traces, and mode-specific logs.
-- `records/results.jsonl` stores one row for each completed series.
-- `teams/` and `boards/` store immutable input snapshots.
+- `vgc-positions-v1` is specified as a static native-v1 Python `Taskset`.
+  TypeScript exports frozen tables; Python strictly parses one action and performs
+  a deterministic lookup, with no Node service at rollout time.
+- `vgc-frozen-matchday-v0` is limited to a native-v1 `Taskset` plus `Env` adapter
+  for the strict-construction-to-Bo3 matchday slice.
+- `vgc-draft-circuit-v1` is specified as a connected multi-seat `Env` spanning
+  the draft, schedule, regular season, playoffs, and a frozen circuit return.
+  Matchday-only behavior cannot supply those connections or semantics.
 
-`src/records.ts` caches parsed result rows by file modification time.
-`src/evidence.ts` derives data-room views and `src/archive.ts` derives the
-draft-league archive (`/api/leagues`, `/api/league`) and model profiles
-(`/api/model`) from result rows joined with run files. Decision log rows carry
-`total_tokens`, `reasoning_tokens`, and metered `cost` where the provider
-reports them.
+Implementation, release, and compatibility status for all three belongs only in
+the [Evaluation plan](evaluation-plan.md#program-status).
+
+In a dynamic adapter, verifiers owns model calls, agents, runtimes, traces, and
+episode control. It replaces the local `LLMEngine` and top-level orchestration,
+not Showdown, replay, or the TypeScript referee. A verifiers `Agent` is neither a
+Prime Agent nor an RLM subagent. The path is:
+
+```text
+verifiers Env -> provisioned runtime -> versioned JSON-lines referee
+                                      -> TypeScript domain -> Pokémon Showdown
+```
+
+The frozen wire tuple is exactly JSONL protocol 1, matchday protocol 1, and
+battle protocol 1. `src/frozen-battle-referee.ts` is the single-game authority.
+`src/frozen-matchday-referee.ts` accepts two strict construction artifacts,
+rejects noncanonical or illegal registrations, and runs up to three seeded
+native Champions games. The registered six stay fixed for the Bo3 while native
+team preview supplies a fresh bring four and lead two each game.
+
+`src/frozen-matchday-protocol.ts` and `tools/frozen-matchday-referee.ts` expose
+the matchday as JSON lines over stdio. The binding covers `episodeId`, an opaque
+caller-supplied `conditionDigest`, all three protocol versions, the Showdown SHA,
+and a `configDigest` committing to format, game seeds, seats, constructions, and
+teams. The session is a trusted referee interface rather than seat
+authentication; snapshots remain sealed referee state and private evidence stays
+seat-private.
+
+The [internal package README](../environments/vgc_frozen_matchday_v0/README.md)
+owns the detailed role, runtime, notebook, trace, and failure contracts. The
+[Evaluation plan](evaluation-plan.md#program-status) owns support and release
+status.
+
+## State, evidence, and trust
+
+Local evidence is file-based:
+
+- `runs/`: configuration, decisions, traces, games, and mode-specific logs;
+- `records/results.jsonl`: one append-only row per completed series;
+- `teams/` and `boards/`: immutable input snapshots.
+
+`status.json` is a best-effort mutable lifecycle marker (`running`, `paused`,
+`done`, `failed`, or `stopped`), not an exclusive lease or a release approval.
+The first scheduler failure aborts queued and active work while completed
+evidence remains. Raw submissions, referee transitions, and
+attempt/supersession events are append-only; summaries are observational
+projections and never feed legality or reward.
 
 Hosted SQLite stores users, sessions, OAuth flows, ownership, experiments, and
-audit events. Series, game, and decision evidence remains in append-only files.
-Use PostgreSQL only if multiple application instances need concurrent writes.
+audit events. Series/game/decision evidence remains in files. Imports validate
+before writing, write support files before result rows, and are idempotent by
+`run_id` plus `series_id`.
 
-The import path validates identifiers and evidence before it writes data. It
-writes supporting files before the result row. The pair of `run_id` and
-`series_id` makes imports idempotent. Imported rows record their origin.
+Local mode binds to loopback. Hosted mode accepts one configured public origin;
+anonymous users are read-only and GitHub OAuth grants contributor/operator
+roles. Executable inference is limited to the fixed OpenRouter and Prime
+Inference endpoints plus the random baseline. Browser-supplied
+`OPENROUTER_API_KEY` and `PRIME_API_KEY` values stay in server memory for the run
+and are never written to state or evidence. Hosted runs use a separate
+heap-bounded process.
 
-## Trust boundaries
+Every anonymous generic-run response is facts-only for every mutable lifecycle
+state; `done` never unlocks raw trace. The allowlist includes run/mode/protocol
+and timing facts, entrants, public draft picks and rosters, standings, brackets,
+series/game scores and winners, started matchup-six membership, and official
+open-sheet fields (species, item, ability, nature, and moves) when that run uses
+open sheets. During a live run, only a resolved game's separately captured
+Showdown public split-log branch may be shown, after scrubbing. Stored archive game files contain an owner-side branch,
+not the public branch, so anonymous archived game DTOs return no log rather than
+trying to sanitize private input into public history. Live unresolved logs and
+all snapshots are absent.
 
-Local mode binds to loopback and permits operator changes. Hosted mode accepts
-one configured public origin. Anonymous hosted users have read-only access.
-GitHub OAuth grants contributor and operator permissions.
+The anonymous projection excludes seeds, errors, pauses, notices, ownership and
+control fields, sample-team pastes, external-run identifiers, exact stat
+allocation, rationales, notebooks, build attempts and repair evidence, tool and
+spend details, submitted actions, decision/reflection counts or contents,
+season-review text, private HP/state, decision/context traces, opponent-private
+requests, snapshots, and all
+grader state. Unsafe storage fails closed; missing legacy config/status is
+accepted only when terminal result rows already establish contextual public
+facts. To build the projection, the trusted server may open and parse named,
+bounded artifact files that also contain private fields. Anonymous DTO builders
+structurally allowlist their output and never return those private fields or raw
+source objects; this is a response boundary, not a claim that the server never
+reads the source bytes. Trusted local users and authorized owners/operators
+retain the operational view. A separately reviewed immutable bundle is a
+distinct publication artifact and does not change this rule.
 
-The server applies these controls at the HTTP boundary:
-
-- exact host and origin checks;
-- JSON-only mutation requests;
-- path guards and bounded request bodies;
-- content security and transport headers;
-- bounded model-catalog requests and SSE clients.
-
-The browser supplies provider keys for GUI runs. The server keeps these keys in
-memory only for the run. It does not include keys in state, evidence, logs, or
-database rows. GUI runs do not fall back to server credentials.
-
-Hosted runs execute in a separate, heap-bounded process. A worker failure does
-not terminate the web server.
-
-Public spectators receive the public split-log branch from Showdown. Only the
-run owner and operators can receive private battle data.
-
-Only two evidence sources can enter public ratings: runs from the deployment
-and imports authorized by the operator token. Client submissions cannot enter
-ratings because replay cannot prove which model made the choices.
-
-See [Deployment](deployment.md) for service configuration, limits, and backup
-procedures. See [Use the league](usage.md) for local commands and evidence
-publication.
+See [Deployment](deployment.md) for service configuration and
+[Usage](usage.md) for operator commands.

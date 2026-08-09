@@ -1,4 +1,4 @@
-import type { BracketEntrantView } from '../../api';
+import type { BracketEntrantView, PublicBracketEntrantView } from '../../api';
 import { modelName } from '../lib/labels';
 import { Mark } from './mark';
 
@@ -16,7 +16,7 @@ export function roundName(index: number, count: number): string {
   return `Round ${index + 1}`;
 }
 
-function seedLabel(entrant: BracketEntrantView | undefined): string {
+function seedLabel(entrant: BracketEntrantView | PublicBracketEntrantView | undefined): string {
   const place = entrant?.placement ?? entrant?.seed ?? null;
   return place === null ? '' : `#${place}`;
 }
@@ -29,7 +29,7 @@ export function BracketGrid<M extends BracketMatchLike>({
   onSelect,
   live,
 }: {
-  entrants: BracketEntrantView[];
+  entrants: Array<BracketEntrantView | PublicBracketEntrantView>;
   rounds: M[][];
   scoreFor: (match: M, side: 0 | 1) => string;
   selected?: number | null;

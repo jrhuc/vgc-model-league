@@ -1,4 +1,4 @@
-import type { BracketEntrantView } from '../../api';
+import type { BracketEntrantView, PublicBracketEntrantView } from '../../api';
 
 export function displaySpec(spec: string): string {
   return spec.replace(/:(?:nitro|floor|free)$/, '');
@@ -45,7 +45,7 @@ function ordinal(place: number): string {
   return `${place}${['th', 'st', 'nd', 'rd'][place % 10] ?? 'th'}`;
 }
 
-export function entrantOrigin(entrant: BracketEntrantView | undefined): string {
+export function entrantOrigin(entrant: BracketEntrantView | PublicBracketEntrantView | undefined): string {
   if (!entrant) return '';
   const place = entrant.placement ?? null;
   const who = entrant.player || (entrant.team ? formatTeamSlug(entrant.team) : '');

@@ -1,8 +1,21 @@
+import fs from 'node:fs';
+import path from 'node:path';
+
 import type { MenuHints, SlotMenu } from './choices.js';
 import { buildMenus } from './choices.js';
 import type { Rng } from './random.js';
 import { seededRng } from './random.js';
-import type { AgentContext, BattleAgent, BattleRequest, JsonObject, Pid } from './types.js';
+import type {
+  ActionSubmission,
+  AgentContext,
+  BattleAgent,
+  BattleRequest,
+  JsonObject,
+  Pid,
+  SubmissionContext,
+  SubmissionOutcome,
+  SubmissionSource,
+} from './types.js';
 
 export interface GameStart {
   gameId: string;
@@ -25,9 +38,26 @@ export interface ChoiceSubstitution {
 }
 
 export abstract class BaseEngine implements BattleAgent {
-  constructor(readonly pid: Pid) {}
+  private submissionGameId = 'battle';
+  private submissionGameNumber = 0;
+  private submissionSeriesId: string | null = null;
+  private activeSubmissionId: string | undefined;
+  private submitted: ActionSubmission | undefined;
+  private readonly pendingEvidence = new Map<string, JsonObject | null>();
 
-  beginGame(_context: GameStart): void {}
+  constructor(
+    readonly pid: Pid,
+    private readonly decisionLog?: DecisionLog,
+  ) {}
+
+  beginGame(context: GameStart): void {
+    this.submissionGameId = context.gameId;
+    this.submissionGameNumber = context.gameNumber;
+    this.submissionSeriesId = context.seriesId;
+    this.activeSubmissionId = undefined;
+    this.submitted = undefined;
+    this.pendingEvidence.clear();
+  }
   endGame(_context: GameEnd): Promise<void> | void {}
   observe(_lines: string[]): void {}
   abandonDecision(): void {}
@@ -36,6 +66,18 @@ export abstract class BaseEngine implements BattleAgent {
   }
   coachingNote(): string {
     return '';
+  }
+
+  async submit(request: BattleRequest, context: SubmissionContext): Promise<ActionSubmission | null> {
+    this.submitted = undefined;
+    this.activeSubmissionId = context.submissionId;
+    try {
+      const choice = await this.act(request, context);
+      const submitted = this.submitted as ActionSubmission | undefined;
+      return submitted?.choice === choice ? submitted : null;
+    } finally {
+      this.activeSubmissionId = undefined;
+    }
   }
 
   async act(request: BattleRequest, context: AgentContext): Promise<string> {
@@ -54,9 +96,31 @@ export abstract class BaseEngine implements BattleAgent {
       [choices, parts] = BaseEngine.defaults(menus);
       automatic = false;
     }
-    this.actionCommitted(request, context, menus, choices, parts, automatic, substitution);
-    if (parts.includes('forfeit')) return 'forfeit';
-    return request.teamPreview ? `team ${parts.join('')}` : parts.join(', ');
+    const choice = parts.includes('forfeit')
+      ? 'forfeit'
+      : request.teamPreview
+        ? `team ${parts.join('')}`
+        : parts.join(', ');
+    if (this.activeSubmissionId !== undefined) {
+      const submission = this.newSubmission(choice, this.submissionSource(automatic, substitution));
+      this.submitted = submission;
+      this.actionSubmitted(request, context, menus, choices, parts, automatic, submission, substitution);
+    }
+    return choice;
+  }
+
+  resolveSubmission(submission: ActionSubmission, outcome: SubmissionOutcome, showdownError?: string): void {
+    const held = this.pendingEvidence.get(submission.submissionId);
+    const replayed = held === null && this.pendingEvidence.has(submission.submissionId);
+    this.pendingEvidence.delete(submission.submissionId);
+    if (replayed) return;
+    this.writeLog(this.decisionLog, {
+      ...(held ?? this.basicSubmissionRow(submission)),
+      submission_id: submission.submissionId,
+      submission_source: submission.source,
+      outcome,
+      ...(showdownError === undefined ? {} : { showdown_error: showdownError }),
+    });
   }
 
   protected abstract decideJoint(
@@ -64,17 +128,58 @@ export abstract class BaseEngine implements BattleAgent {
     request: BattleRequest,
     context: AgentContext,
   ): Promise<number[]> | number[];
-  protected actionCommitted(
+  protected actionSubmitted(
     _request: BattleRequest,
     _context: AgentContext,
     _menus: SlotMenu[],
     _choices: number[],
     _parts: string[],
     _automatic: boolean,
+    submission: ActionSubmission,
     _substitution?: ChoiceSubstitution,
-  ): void {}
+  ): void {
+    this.holdSubmissionEvidence(submission, this.basicSubmissionRow(submission));
+  }
+  protected submissionSource(automatic: boolean, substitution?: ChoiceSubstitution): SubmissionSource {
+    return substitution ? 'model-default' : automatic ? 'automatic' : 'model';
+  }
+  protected restoreSubmission(submission: ActionSubmission): void {
+    this.submitted = submission;
+    this.pendingEvidence.set(submission.submissionId, null);
+  }
+  protected holdSubmissionEvidence(submission: ActionSubmission, row: JsonObject): void {
+    this.pendingEvidence.set(submission.submissionId, row);
+  }
   protected menuHints(_request: BattleRequest): MenuHints | undefined {
     return undefined;
+  }
+
+  private newSubmission(choice: string, source: SubmissionSource): ActionSubmission {
+    if (this.activeSubmissionId === undefined) throw new Error('submissions require a simulator submission id');
+    return { submissionId: this.activeSubmissionId, choice, source };
+  }
+
+  private basicSubmissionRow(submission: ActionSubmission): JsonObject {
+    return {
+      kind: 'decision',
+      game_id: this.submissionGameId,
+      series_id: this.submissionSeriesId,
+      game_number: this.submissionGameNumber,
+      pid: this.pid,
+      action: submission.choice,
+      automatic: submission.source === 'automatic',
+      fallback: submission.source === 'model-default',
+    };
+  }
+
+  protected writeLog(output: DecisionLog | undefined, row: JsonObject): void {
+    if (!output) return;
+    if (typeof output === 'function') output(row);
+    else if (Array.isArray(output)) output.push(row);
+    else {
+      fs.mkdirSync(path.dirname(output), { recursive: true });
+      fs.appendFileSync(output, `${JSON.stringify(row)}\n`, 'utf8');
+    }
   }
 
   static parts(menus: SlotMenu[], choices: number[]): string[] {
@@ -138,9 +243,13 @@ export abstract class BaseEngine implements BattleAgent {
 export class RandomEngine extends BaseEngine {
   private readonly random: Rng;
 
-  constructor(pid: Pid, seed: string | number = Math.random()) {
-    super(pid);
+  constructor(pid: Pid, seed: string | number = Math.random(), decisionLog?: DecisionLog) {
+    super(pid, decisionLog);
     this.random = seededRng(seed);
+  }
+
+  protected override submissionSource(automatic: boolean, substitution?: ChoiceSubstitution): SubmissionSource {
+    return substitution ? 'model-default' : automatic ? 'automatic' : 'random';
   }
 
   protected decideJoint(menus: SlotMenu[]): number[] {

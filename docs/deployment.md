@@ -1,7 +1,8 @@
 # Deployment
 
-Deploy the repository with its `Dockerfile`. Use one long-running Railway
-service. Attach one persistent volume at `/data`.
+Deploy the browser/API results service with the repository `Dockerfile`. Use one
+long-running Railway service and attach one persistent volume at `/data`. This
+is the results-service image, not a matchday referee or model-runtime image.
 
 ## Configure the service
 
@@ -24,8 +25,10 @@ application firewall in front of the service. Proxy one canonical host.
 
 ## Configure authentication
 
-Without OAuth, a hosted service is read-only. Create a GitHub OAuth app to
-enable contributor access. Use this callback:
+Without OAuth, a hosted service is read-only for browser and contributor
+mutation requests, except for separately token-authenticated import API `POST`
+endpoints when configured. Create a GitHub OAuth app to enable contributor
+access. Use this callback:
 
 ```text
 https://<canonical-host>/auth/github/callback
@@ -47,14 +50,22 @@ Do not set `VGC_LEAGUE_ENABLE_MUTATIONS=true` on a public service. This setting
 permits unauthenticated changes. Use it only behind separate private access
 control.
 
+## Public result projection
+
+Anonymous and operator responses use the projections defined in
+[Architecture](architecture.md#state-evidence-and-trust). Importing a run or
+changing its lifecycle state never publishes raw trace. The selected immutable
+GUI artifact is a separate hash-checked projection.
+
 ## Configure runs and imports
 
 `VGC_LEAGUE_MAX_RUN_MINUTES` sets the run deadline. The valid range is 1 through
 1,440 minutes. The default is 240 minutes.
 
-`VGC_LEAGUE_IMPORT_TOKEN` enables `POST /api/import`. Set a long random value.
-Give the same value to operators who publish local results. The route returns
-404 when the variable is not set. Change the variable to rotate the token.
+`VGC_LEAGUE_IMPORT_TOKEN` enables `POST /api/import` and
+`POST /api/import/remove`. Set a long random value. Give the same value to
+operators who publish or remove local results. Both routes return 404 when the
+variable is not set. Change the variable to rotate the token.
 
 The service admits one run at a time. It applies these limits:
 
@@ -66,14 +77,15 @@ The service admits one run at a time. It applies these limits:
 
 Each hosted run can use at most two concurrent series. Each run uses a child
 process with a 768 MiB V8 heap limit and a restricted environment. The server
-terminates the process when the run deadline expires. Hosted mode rejects
-arbitrary OpenAI-compatible endpoints.
+terminates the process when the run deadline expires. Every mode accepts only the fixed OpenRouter and Prime Inference endpoints (plus
+the provider-free random baseline); no model spec can supply an endpoint.
 
 ## Monitor the service
 
-Railway checks `/readyz`. This endpoint checks static assets, writable data
-paths, SQLite, and the pinned simulator. Use `/healthz` only for process
-liveness.
+Railway checks `/readyz`. This endpoint checks static assets, writable roots,
+installed draft boards, and the pinned simulator. It checks SQLite readiness
+only when OAuth has configured `AuthService`; without OAuth, SQLite is not part
+of readiness. Use `/healthz` only for process liveness.
 
 The application sends an SSE heartbeat every 25 seconds. Configure the proxy
 timeout to keep these connections open.

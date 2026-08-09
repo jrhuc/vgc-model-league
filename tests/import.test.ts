@@ -6,7 +6,7 @@ import test from 'node:test';
 
 import { GuiServer } from '../src/gui/server.js';
 import { importSeries, removeImportedRun } from '../src/import.js';
-import { loadRows } from '../src/records.js';
+import { loadSeriesRecords } from '../src/records.js';
 
 const TOKEN = 'test-import-token';
 
@@ -27,16 +27,43 @@ function scratch(): Scratch {
 
 function bundleRow(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
+    schema_version: 1,
     mode: 'rotation',
+    protocol_version: 1,
+    scaffold: 'fixture',
     run_id: '20260725T000000.000000Z-abcd1234',
     series_id: 'aaaabbbbcccc',
     series_index: 0,
     pool: 'majors',
     timestamp: '2026-07-25T00:10:00.000Z',
+    format: 'test',
     players: { p1: 'google:gemini-3.5-flash-lite', p2: 'random' },
+    teams: { p1: 'team-a', p2: 'team-b' },
     winner: 'google:gemini-3.5-flash-lite',
+    winner_side: 'p1',
     score: { p1: 2, p2: 0 },
     turns: 21,
+    games: [
+      {
+        number: 1,
+        winner: 'google:gemini-3.5-flash-lite',
+        winner_side: 'p1',
+        turns: 10,
+        seed: [1, 2, 3, 4],
+      },
+      {
+        number: 2,
+        winner: 'google:gemini-3.5-flash-lite',
+        winner_side: 'p1',
+        turns: 11,
+        seed: [5, 6, 7, 8],
+      },
+    ],
+    engine_seeds: { p1: 1, p2: 2 },
+    reasoning: null,
+    decision_stats: { p1: {}, p2: {} },
+    run_seed: 1,
+    ps_commit: '0000000000000000000000000000000000000000',
     ...overrides,
   };
 }
@@ -56,7 +83,7 @@ test('importSeries stores a row with its decision logs and stamps provenance', (
     assert.deepEqual(result.logs, ['p1']);
     assert.equal(result.pool, null);
 
-    const rows = loadRows(store.paths.recordsPath);
+    const rows = loadSeriesRecords(store.paths.recordsPath);
     assert.equal(rows.length, 1);
     const origin = rows[0]!.origin as { source: string; at: string };
     assert.equal(origin.source, 'import');
@@ -79,7 +106,7 @@ test('importSeries stores a row with its decision logs and stamps provenance', (
       { imported: false, duplicate: true },
       'a series already held is reported, not appended twice',
     );
-    assert.equal(loadRows(store.paths.recordsPath).length, 1);
+    assert.equal(loadSeriesRecords(store.paths.recordsPath).length, 1);
   } finally {
     store.dispose();
   }
@@ -92,9 +119,19 @@ test('removeImportedRun deletes imported rows and mirrors but refuses local resu
     const runDir = path.join(store.paths.runsDir, '20260725T000000.000000Z-abcd1234');
     assert.ok(fs.existsSync(runDir));
 
+    const lease = `${store.paths.recordsPath}.lease`;
+    fs.writeFileSync(lease, JSON.stringify({ id: 'other-writer', pid: process.pid }));
+    assert.throws(
+      () => removeImportedRun('20260725T000000.000000Z-abcd1234', store.paths),
+      /records.*owned by live pid/,
+    );
+    assert.equal(loadSeriesRecords(store.paths.recordsPath).length, 1, 'another records writer leaves rows untouched');
+    assert.equal(fs.existsSync(runDir), true, 'another records writer leaves the imported mirror untouched');
+    fs.rmSync(lease);
+
     const result = removeImportedRun('20260725T000000.000000Z-abcd1234', store.paths);
     assert.equal(result.removed, 1);
-    assert.equal(loadRows(store.paths.recordsPath).length, 0);
+    assert.equal(loadSeriesRecords(store.paths.recordsPath).length, 0);
     assert.equal(fs.existsSync(runDir), false, 'the imported run mirror is deleted with its rows');
 
     assert.throws(() => removeImportedRun('20260725T000000.000000Z-abcd1234', store.paths), /no series held/);
@@ -106,7 +143,7 @@ test('removeImportedRun deletes imported rows and mirrors but refuses local resu
       () => removeImportedRun('20260725T111111.000000Z-eeee5678', store.paths),
       /refusing to remove locally recorded results/,
     );
-    assert.equal(loadRows(store.paths.recordsPath).length, 1, 'local rows survive');
+    assert.equal(loadSeriesRecords(store.paths.recordsPath).length, 1, 'local rows survive');
   } finally {
     store.dispose();
   }
@@ -211,7 +248,7 @@ test('importSeries rejects rows it cannot place on disk', () => {
     assert.throws(() => importSeries({ row: bundleRow({ players: { p1: 'a' } }) }, store.paths), /both seats/);
     assert.throws(() => importSeries({ row: bundleRow({ mode: 'ladder' }) }, store.paths), /unknown mode/);
     assert.throws(() => importSeries({ row: bundleRow(), logs: { p1: 'not json' } }, store.paths), /not JSON/);
-    assert.equal(loadRows(store.paths.recordsPath).length, 0, 'a rejected bundle writes nothing');
+    assert.equal(loadSeriesRecords(store.paths.recordsPath).length, 0, 'a rejected bundle writes nothing');
     assert.equal(fs.existsSync(store.paths.runsDir), false);
   } finally {
     store.dispose();
@@ -230,16 +267,22 @@ test('the import route answers only to the configured operator token', async () 
     });
   try {
     assert.equal((await post({}, { row: bundleRow() })).status, 401);
-    assert.equal((await post({ authorization: 'Bearer wrong' }, { row: bundleRow() })).status, 401);
+    const wrong = await post({ authorization: 'Bearer wrong-credential-value' }, { row: bundleRow() });
+    assert.equal(wrong.status, 401);
+    assert.doesNotMatch(await wrong.text(), /wrong-credential-value|test-import-token/);
     const rejected = await post({ authorization: `Bearer ${TOKEN}` }, { row: { players: {} } });
     assert.equal(rejected.status, 400);
     const accepted = await post({ authorization: `Bearer ${TOKEN}` }, { row: bundleRow() });
     assert.equal(accepted.status, 200);
     assert.equal(((await accepted.json()) as { imported: boolean }).imported, true);
 
-    const records = (await (await fetch(`${base}api/records?pool=majors`)).json()) as Record<string, unknown>;
-    assert.equal(records.count, 1);
-    assert.equal(records.imported, 1, 'the record book separates imported evidence from local runs');
+    const records = loadSeriesRecords(store.paths.recordsPath);
+    assert.equal(records.length, 1);
+    assert.equal(
+      (records[0]?.origin as { source?: string } | undefined)?.source,
+      'import',
+      'the authoritative row retains its import provenance',
+    );
   } finally {
     gui.close();
     store.dispose();

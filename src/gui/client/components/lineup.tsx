@@ -1,4 +1,4 @@
-import type { TeambuildSetView } from '../../api';
+import type { PublicTeamSheetSetView } from '../../api';
 import { Mark } from './mark';
 import { SetCard } from './setcard';
 
@@ -9,7 +9,7 @@ export function TeamLineup({
     key: string;
     model: string;
     label: string;
-    team: TeambuildSetView[] | undefined;
+    team: Array<PublicTeamSheetSetView> | undefined;
   }>;
 }) {
   return (

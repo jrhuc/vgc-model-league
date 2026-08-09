@@ -1,10 +1,5 @@
-import { appendFileSync, readFileSync, statSync } from 'node:fs';
-import { createAnthropic } from '@ai-sdk/anthropic';
-import { createDeepSeek } from '@ai-sdk/deepseek';
-import { createGoogleGenerativeAI } from '@ai-sdk/google';
-import { createOpenAI } from '@ai-sdk/openai';
-import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
-import { createXai } from '@ai-sdk/xai';
+import { appendFileSync } from 'node:fs';
+import { createOpenAICompatible, type MetadataExtractor } from '@ai-sdk/openai-compatible';
 import {
   APICallError,
   type JSONSchema7,
@@ -17,8 +12,7 @@ import {
   tool,
 } from 'ai';
 
-import { CliProvider } from './cli-provider.js';
-import { PROVIDER_OPTIONS, providerOption } from './provider-registry.js';
+import { providerOption } from './provider-registry.js';
 import { redactSecrets } from './sanitize.js';
 import type {
   CompleteOptions,
@@ -32,22 +26,11 @@ import type {
 
 import { isRecord } from './value.js';
 
-/** Gemini signs only the first of parallel function calls; the SDK's documented sentinel handles the rest,
- * so its per-part warning is noise. All other AI SDK warnings still log. */
-(globalThis as { AI_SDK_LOG_WARNINGS?: unknown }).AI_SDK_LOG_WARNINGS = (options: {
-  warnings: Array<{ message?: string }>;
-  provider: string;
-  model: string;
-}) => {
-  for (const warning of options.warnings) {
-    const message = warning.message ?? JSON.stringify(warning);
-    if (message.includes('skip_thought_signature_validator')) continue;
-    console.warn(`AI SDK Warning (${options.provider} / ${options.model}): ${message}`);
-  }
-};
+export type ReasoningLevel = 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
 
-export const REASONING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const;
-export type ReasoningLevel = (typeof REASONING_LEVELS)[number];
+export function isReasoningLevel(value: unknown): value is ReasoningLevel {
+  return value === 'minimal' || value === 'low' || value === 'medium' || value === 'high' || value === 'xhigh';
+}
 
 export interface ModelReasoningConfig {
   reasoning?: ReasoningLevel;
@@ -70,113 +53,31 @@ export function validateModelExecution(
   }
 }
 
-const USAGE =
-  'Usage: anthropic:<model>, openai:<model>, google:<model>, xai:<model>, deepseek:<model>, meta:<model>, kimi:<model>, zai:<model>, openrouter:<model>, opencode-go:<model>, opencode-zen:<model>, vercel:<model>, cerebras:<model>, compat:<base_url>:<model>, omp:<cli-model>, claude-cli:<model>, or random';
-export interface ProviderSpec {
-  provider: string;
+const USAGE = 'Usage: openrouter:<model-id>, prime:<model-id>, or random';
+interface ProviderSpec {
+  provider: 'openrouter' | 'prime' | 'random';
   model: string;
-  baseUrl?: string;
 }
 
 export function parseSpec(value: string): ProviderSpec {
   if (value === 'random') return { provider: 'random', model: 'random' };
-  if (value.startsWith('omp:') && value.length > 4) return { provider: 'omp', model: value.slice(4) };
-  if (value.startsWith('claude-cli:') && value.length > 11) return { provider: 'claude-cli', model: value.slice(11) };
-  for (const option of PROVIDER_OPTIONS) {
-    const provider = option.id;
-    if (provider === 'random' || provider === 'compat') continue;
-    if (!value.startsWith(`${provider}:`) || value.length <= provider.length + 1) continue;
-    const spec: ProviderSpec = { provider, model: value.slice(provider.length + 1) };
-    if (provider !== 'anthropic' && provider !== 'openai' && provider !== 'google') {
-      if (!option.baseUrl) throw new Error(USAGE);
-      spec.baseUrl = option.baseUrl;
-    }
-    return spec;
-  }
-  if (value.startsWith('compat:')) {
-    const rest = value.slice(7);
-    const schemeEnd = rest.indexOf('://') + 3;
-    const pathStart = rest.indexOf('/', schemeEnd);
-    const separator = pathStart >= 0 ? rest.indexOf(':', pathStart) : rest.lastIndexOf(':');
-    const baseUrl = rest.slice(0, separator);
-    const model = rest.slice(separator + 1);
-    if (separator > 0 && baseUrl.includes('://') && model) return { provider: 'compat', model, baseUrl };
+  for (const provider of ['openrouter', 'prime'] as const) {
+    const prefix = `${provider}:`;
+    if (!value.startsWith(prefix)) continue;
+    const model = value.slice(prefix.length);
+    if (model && !model.startsWith('-') && !/[\s\p{Cc}]/u.test(model)) return { provider, model };
+    break;
   }
   throw new Error(USAGE);
 }
 
-export function reasoningLevels(spec: ProviderSpec): ReasoningLevel[] {
-  const model = spec.model.toLowerCase();
-  if (spec.provider === 'omp') return [...REASONING_LEVELS];
-  if (spec.provider === 'claude-cli') return [];
-  if (spec.provider === 'meta' && model.includes('muse-spark'))
-    return ['off', 'minimal', 'low', 'medium', 'high', 'xhigh'];
-  if (spec.provider === 'anthropic') {
-    const opus = /opus-(\d+)[.-](\d+)/.exec(model);
-    const sonnet = /sonnet-(\d+)/.exec(model);
-    if (
-      (opus && (Number(opus[1]) > 4 || (Number(opus[1]) === 4 && Number(opus[2]) >= 7))) ||
-      (sonnet && Number(sonnet[1]) >= 5) ||
-      model.includes('fable-5')
-    )
-      return ['low', 'medium', 'high', 'xhigh', 'max'];
-    if (['opus-4-6', 'opus-4.6', 'sonnet-4-6', 'sonnet-4.6'].some((name) => model.includes(name)))
-      return ['low', 'medium', 'high', 'max'];
-    return [];
-  }
-  if (spec.provider === 'openai') return openaiReasoningLevels(model);
-  if (spec.provider === 'google') {
-    if (model.includes('gemini-3')) {
-      if (model.includes('flash-image')) return ['minimal', 'high'];
-      if (model.includes('pro-image')) return ['high'];
-      if (model.includes('flash')) return ['minimal', 'low', 'medium', 'high'];
-      const minor = /gemini-3\.(\d+)/.exec(model);
-      return minor && Number(minor[1]) >= 1 ? ['low', 'medium', 'high'] : ['low', 'high'];
-    }
-    return model.includes('gemini-2.5') ? ['high', 'max'] : [];
-  }
-  if (spec.provider === 'xai') {
-    if (model.includes('grok-4.3')) return ['off', 'low', 'medium', 'high'];
-    if (model.includes('grok-4')) return ['low', 'medium', 'high'];
-    if (model.includes('grok-3-mini')) return ['low', 'high'];
-    return [];
-  }
-  if (spec.provider === 'deepseek' && model.includes('deepseek')) return ['off', 'high', 'max'];
-  if (spec.provider === 'cerebras') {
-    if (model.includes('gpt-oss')) return ['low', 'medium', 'high'];
-    if (model.includes('glm')) return ['off'];
-  }
-  return spec.provider === 'compat' ? [...REASONING_LEVELS] : [];
-}
-
-function openaiReasoningLevels(model: string): ReasoningLevel[] {
-  if (model.includes('deep-research')) return ['medium'];
-  if (!/(?:^|\/)gpt-5(?:[.-]|$)/.test(model))
-    return /(?:^|\/)(?:o1|o3|o4)(?:[.-]|$)/.test(model) ? ['low', 'medium', 'high'] : [];
-  const versionMatch = /(?:^|\/)gpt-5[.-](\d+)(?:[.-]|$)/.exec(model);
-  const version = versionMatch ? Number(versionMatch[1]) : undefined;
-  if (model.includes('-chat')) return version === undefined ? [] : ['medium'];
-  if (/(?:^|\/)gpt-5[.-]?pro(?:[.-]|$)/.test(model)) return ['high'];
-  if (/(?:^|\/)gpt-5[.-]\d+[.-]pro(?:[.-]|$)/.test(model)) return ['medium', 'high', 'xhigh'];
-  if (model.includes('codex')) {
-    if (version !== undefined && version >= 3) return ['off', 'low', 'medium', 'high', 'xhigh'];
-    if (model.includes('codex-max') || (version !== undefined && version >= 2))
-      return ['low', 'medium', 'high', 'xhigh'];
-    return ['low', 'medium', 'high'];
-  }
-  if (version === 1) return ['off', 'low', 'medium', 'high'];
-  if (version !== undefined && version >= 6) return ['off', 'low', 'medium', 'high', 'xhigh', 'max'];
-  if (version !== undefined && version >= 2) return ['off', 'low', 'medium', 'high', 'xhigh'];
-  return ['minimal', 'low', 'medium', 'high'];
-}
-
 export function validateReasoning(spec: ProviderSpec, level?: ReasoningLevel): void {
-  if (!level || spec.provider === 'random') return;
-  const supported = reasoningLevels(spec);
-  if (!supported.includes(level))
-    throw new Error(
-      `${spec.provider}:${spec.model} does not support reasoning=${level}; supported: ${supported.join(', ') || 'no configurable levels'}`,
-    );
+  if (!level) return;
+  if (!isReasoningLevel(level)) throw new Error(`invalid reasoning level ${JSON.stringify(level)}`);
+  if (spec.provider === 'random') return;
+  if (spec.provider !== 'openrouter') {
+    throw new Error(`${spec.provider}:${spec.model} has no advertised configurable reasoning levels`);
+  }
 }
 
 function parseToolArguments(value: unknown): JsonObject {
@@ -263,21 +164,8 @@ export function classifyProviderFailure(error: unknown, spec = 'provider'): Prov
   const status = error instanceof ApiError ? error.status : Number(/\b([45]\d\d)\b/.exec(message)?.[1] ?? 0);
   const provider = spec.split(':', 1)[0] || 'provider';
   const label =
-    (
-      {
-        anthropic: 'Anthropic',
-        cerebras: 'Cerebras',
-        deepseek: 'DeepSeek',
-        google: 'Google',
-        kimi: 'Kimi',
-        meta: 'Meta',
-        openai: 'OpenAI',
-        openrouter: 'OpenRouter',
-        'opencode-go': 'OpenCode Go',
-        xai: 'xAI',
-        zai: 'Z.ai',
-      } as Record<string, string>
-    )[provider] ?? provider.charAt(0).toUpperCase() + provider.slice(1);
+    ({ openrouter: 'OpenRouter', prime: 'Prime Inference' } as Record<string, string>)[provider] ??
+    provider.charAt(0).toUpperCase() + provider.slice(1);
   const suffix = status ? ` (${status})` : '';
   if (
     /Connect error (?:unauthenticated|unavailable|resource[_ -]?exhausted|internal|aborted|deadline[_ -]?exceeded)/i.test(
@@ -318,6 +206,17 @@ export function classifyProviderFailure(error: unknown, spec = 'provider'): Prov
     return {
       kind: 'truncation',
       summary: `${label} API spent the whole response budget on reasoning and returned no answer.`,
+      terminal: false,
+    };
+  }
+  if (
+    /^provider stopped the response for length after \d+ output tokens, below the requested \d+-token cap(?: before a choice was submitted)?$/i.test(
+      message.trim(),
+    )
+  ) {
+    return {
+      kind: 'truncation',
+      summary: `${label} API stopped the response for length below the requested output cap.`,
       terminal: false,
     };
   }
@@ -395,28 +294,19 @@ function openRouterErrorStatus(responseBody: string | undefined): number | undef
 const DEFAULT_TIMEOUT = 120;
 
 interface GatewayResponseMeta {
-  cost?: number | undefined;
-  provider?: string | undefined;
+  cost?: number;
+  provider?: string;
 }
 
-function parseRoutingPreferences(): JsonObject | undefined {
-  const raw = process.env.VGC_OPENROUTER_PROVIDER;
-  if (!raw) return undefined;
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    throw new Error('VGC_OPENROUTER_PROVIDER must be JSON, e.g. {"order":["deepinfra"],"ignore":["novita"]}');
-  }
-  if (!isRecord(parsed)) throw new Error('VGC_OPENROUTER_PROVIDER must be a JSON object of routing preferences');
-  return parsed;
+/** OpenRouter may choose among upstream stacks, but never silently falls back after making that choice. */
+export function parseRoutingPreferences(env: NodeJS.ProcessEnv = process.env): JsonObject {
+  const pinned = env.VGC_OPENROUTER_PIN?.trim();
+  if (!pinned) return { allow_fallbacks: false };
+  if (pinned.includes(',')) throw new Error('VGC_OPENROUTER_PIN accepts exactly one upstream provider');
+  return { order: [pinned], allow_fallbacks: false };
 }
 
-function openRouterFetch(
-  base: typeof fetch | undefined,
-  routing: JsonObject | undefined,
-  meta: GatewayResponseMeta,
-): typeof fetch {
+function openRouterFetch(base: typeof fetch | undefined, routing: JsonObject): typeof fetch {
   const inner = base ?? fetch;
   return async (input, init) => {
     let request = init;
@@ -424,164 +314,48 @@ function openRouterFetch(
       try {
         const body = JSON.parse(request.body) as JsonObject;
         body.usage = { include: true };
-        if (routing) body.provider = routing;
-        if (typeof body.model === 'string' && body.model.startsWith('anthropic/')) markCacheBreakpoints(body);
+        body.provider = routing;
         request = { ...request, body: JSON.stringify(body) };
       } catch {}
     }
-    const response = await inner(input, request);
-    const contentType = response.headers.get('content-type') ?? '';
-    if (response.ok && contentType.includes('json')) {
-      try {
-        const payload = (await response.clone().json()) as JsonObject;
-        collectGatewayMeta(payload, meta);
-      } catch {}
-    }
-    if (response.ok && contentType.includes('event-stream') && response.body) {
-      return new Response(response.body.pipeThrough(gatewayMetaScanner(meta)), {
-        status: response.status,
-        statusText: response.statusText,
-        headers: response.headers,
-      });
-    }
-    return response;
+    return inner(input, request);
   };
 }
 
-let overridesCache: { file: string; mtimeMs: number; models: Record<string, string> } | undefined;
-
-/** Reroutes a seat's calls to another provider spec while a run is live: the file named by
- * VGC_MODEL_OVERRIDES maps {"models": {"<spec>": "<replacement>"}} and is re-read whenever it
- * changes on disk. Meant for the same model on a different route; records keep the seat's spec. */
-export function resolveSpecOverride(spec: string): string {
-  const file = process.env.VGC_MODEL_OVERRIDES;
-  if (!file) return spec;
-  let mtimeMs: number;
-  try {
-    mtimeMs = statSync(file).mtimeMs;
-  } catch {
-    return spec;
-  }
-  if (!overridesCache || overridesCache.file !== file || overridesCache.mtimeMs !== mtimeMs) {
-    let models: Record<string, string> = {};
-    try {
-      const parsed = JSON.parse(readFileSync(file, 'utf8')) as JsonObject;
-      if (isRecord(parsed.models)) {
-        for (const [from, to] of Object.entries(parsed.models)) {
-          if (typeof to === 'string' && to) models[from] = to;
-        }
-      }
-    } catch (error) {
-      models = {};
-      console.error(`ignoring ${file}: ${error instanceof Error ? error.message : String(error)}`);
-    }
-    overridesCache = { file, mtimeMs, models };
-  }
-  return overridesCache.models[spec] ?? spec;
-}
-
-function collectGatewayMeta(payload: JsonObject, meta: GatewayResponseMeta): void {
+function collectGatewayMeta(payload: unknown, meta: GatewayResponseMeta): void {
+  if (!isRecord(payload)) return;
   if (typeof payload.provider === 'string' && payload.provider) meta.provider = payload.provider;
   if (isRecord(payload.usage) && typeof payload.usage.cost === 'number') meta.cost = payload.usage.cost;
 }
 
-/** OpenRouter reports cost and upstream provider inside SSE data lines, so a streaming response has to
- * be scanned as it passes through; the model consumer still receives the exact bytes it expects. */
-function gatewayMetaScanner(meta: GatewayResponseMeta): TransformStream<Uint8Array, Uint8Array> {
-  const decoder = new TextDecoder();
-  let pending = '';
-  const scanLine = (line: string): void => {
-    if (!line.startsWith('data:')) return;
-    const data = line.slice(5).trim();
-    if (!data || data === '[DONE]' || (!data.includes('"provider"') && !data.includes('"usage"'))) return;
-    try {
-      const payload = JSON.parse(data) as JsonObject;
-      collectGatewayMeta(payload, meta);
-    } catch {}
-  };
-  return new TransformStream<Uint8Array, Uint8Array>({
-    transform(chunk, controller) {
-      controller.enqueue(chunk);
-      pending += decoder.decode(chunk, { stream: true });
-      let newline = pending.indexOf('\n');
-      while (newline !== -1) {
-        scanLine(pending.slice(0, newline).trimEnd());
-        pending = pending.slice(newline + 1);
-        newline = pending.indexOf('\n');
-      }
-    },
-    flush() {
-      scanLine(pending.trimEnd());
-    },
-  });
+function gatewayMetadata(meta: GatewayResponseMeta) {
+  return Object.keys(meta).length ? { openrouter: { ...meta } } : undefined;
 }
+
+/** Uses the compatible provider's parsed chunks instead of implementing a second SSE parser. */
+const OPENROUTER_METADATA: MetadataExtractor = {
+  async extractMetadata({ parsedBody }) {
+    const meta: GatewayResponseMeta = {};
+    collectGatewayMeta(parsedBody, meta);
+    return gatewayMetadata(meta);
+  },
+  createStreamExtractor() {
+    const meta: GatewayResponseMeta = {};
+    return {
+      processChunk(chunk) {
+        collectGatewayMeta(chunk, meta);
+      },
+      buildMetadata() {
+        return gatewayMetadata(meta);
+      },
+    };
+  },
+};
 
 export function nitroSpec(spec: string): string {
   if (!spec.startsWith('openrouter:')) return spec;
   if (/:(?:nitro|floor|free)$/.test(spec)) return spec;
   return `${spec}:nitro`;
-}
-
-/** Anthropic caches nothing without explicit breakpoints; OpenRouter forwards them only as content-part fields. */
-function markCacheBreakpoints(body: JsonObject): void {
-  if (!Array.isArray(body.messages)) return;
-  const mark = (message: JsonObject): boolean => {
-    if (typeof message.content === 'string' && message.content) {
-      message.content = [{ type: 'text', text: message.content, cache_control: { type: 'ephemeral' } }];
-      return true;
-    }
-    if (Array.isArray(message.content)) {
-      for (let index = message.content.length - 1; index >= 0; index -= 1) {
-        const part = message.content[index];
-        if (isRecord(part) && part.type === 'text' && typeof part.text === 'string' && part.text) {
-          part.cache_control = { type: 'ephemeral' };
-          return true;
-        }
-      }
-    }
-    return false;
-  };
-  const messages = body.messages.filter(isRecord);
-  const system = messages.find((message) => message.role === 'system');
-  if (system) mark(system);
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const message = messages[index];
-    if (message && message !== system && message.role !== 'tool' && mark(message)) break;
-  }
-}
-
-const ANTHROPIC_CACHE_OPTIONS = { anthropic: { cacheControl: { type: 'ephemeral' } } };
-
-/** Anthropic drops replayed thinking blocks from requests that do not enable thinking, which desyncs
- * prompt-cache prefix hashing and silently disables cache reads and writes for the whole conversation. */
-function withoutReasoningParts(messages: ModelMessage[]): ModelMessage[] {
-  return messages.flatMap((message) => {
-    if (message.role !== 'assistant' || !Array.isArray(message.content)) return [message];
-    const content = message.content.filter((part) => part.type !== 'reasoning');
-    return content.length ? [{ ...message, content }] : [];
-  });
-}
-
-/** The ai package merges consecutive tool messages into one, keeping only the first message's
- * providerOptions, so a message-level breakpoint on the last tool result silently vanishes whenever
- * a round made more than one tool call; content parts survive the merge, so mark the last part. */
-function withCacheBreakpoint(messages: ModelMessage[]): ModelMessage[] {
-  const marked = [...messages];
-  const last = marked[marked.length - 1];
-  if (!last) return marked;
-  if (Array.isArray(last.content) && last.content.length) {
-    const parts = [...last.content];
-    const tail = parts[parts.length - 1]!;
-    parts[parts.length - 1] = { ...tail, providerOptions: ANTHROPIC_CACHE_OPTIONS } as typeof tail;
-    marked[marked.length - 1] = { ...last, content: parts } as ModelMessage;
-  } else {
-    marked[marked.length - 1] = { ...last, providerOptions: ANTHROPIC_CACHE_OPTIONS } as ModelMessage;
-  }
-  return marked;
-}
-
-function googleThinkingBudgetMax(model: string): number {
-  return model.includes('2.5') && model.includes('pro') && !model.includes('flash') ? 32_768 : 24_576;
 }
 
 function convertMessages(messages: ProviderMessage[]): ModelMessage[] {
@@ -628,49 +402,11 @@ function convertMessages(messages: ProviderMessage[]): ModelMessage[] {
   return converted;
 }
 
-function providerOptions(spec: ProviderSpec, reasoning?: ReasoningLevel) {
-  if (reasoning === undefined) return undefined;
-  if (spec.provider === 'anthropic') {
-    if (reasoning === 'off') return { anthropic: { thinking: { type: 'disabled' } } };
-    return { anthropic: { thinking: { type: 'adaptive' }, effort: reasoning } };
-  }
-  if (spec.provider === 'openai')
-    return {
-      openai: {
-        reasoningEffort: reasoning === 'off' ? 'none' : reasoning,
-        ...(reasoning === 'off' ? {} : { reasoningSummary: 'detailed' }),
-      },
-    };
-  if (spec.provider === 'xai') return { xai: { reasoningEffort: reasoning === 'off' ? 'none' : reasoning } };
-  if (spec.provider === 'deepseek') {
-    if (reasoning === 'off') return { deepseek: { thinking: { type: 'disabled' } } };
-    if (reasoning === 'high' || reasoning === 'max') return { deepseek: { reasoningEffort: reasoning } };
-    return undefined;
-  }
-  if (spec.provider === 'google') {
-    if (reasoning === 'off') return { google: { thinkingConfig: { thinkingBudget: 0, includeThoughts: false } } };
-    if (spec.model.toLowerCase().includes('2.5')) {
-      const budget = reasoning === 'high' ? 16_000 : googleThinkingBudgetMax(spec.model.toLowerCase());
-      return { google: { thinkingConfig: { thinkingBudget: budget, includeThoughts: true } } };
-    }
-    return {
-      google: {
-        thinkingConfig: { thinkingLevel: reasoning, includeThoughts: true },
-        thinkingSummaries: 'auto',
-      },
-    };
-  }
-  return { [spec.provider]: { reasoningEffort: reasoning === 'off' ? 'none' : reasoning } };
-}
-
-export class SdkProvider implements Provider {
+class SdkProvider implements Provider {
   readonly model: string;
   readonly reasoning?: ReasoningLevel | undefined;
   private readonly apiKey: string | undefined;
   private readonly fetch: typeof fetch | undefined;
-  private readonly gatewayMeta: GatewayResponseMeta | undefined;
-  private supportsTemperature = true;
-  private supportsToolChoice = true;
 
   constructor(
     private readonly spec: ProviderSpec,
@@ -679,48 +415,52 @@ export class SdkProvider implements Provider {
     this.model = spec.model;
     this.reasoning = options.reasoning;
     this.apiKey = options.apiKey;
-    if (spec.provider === 'openrouter') {
-      this.gatewayMeta = {};
-      this.fetch = openRouterFetch(options.fetch, parseRoutingPreferences(), this.gatewayMeta);
-    } else {
-      this.fetch = options.fetch;
-    }
+    this.fetch =
+      spec.provider === 'openrouter' ? openRouterFetch(options.fetch, parseRoutingPreferences()) : options.fetch;
   }
 
   private key(): string {
     const envKey = providerOption(this.spec.provider)?.envKey;
     if (!envKey) throw new Error(USAGE);
-    const apiKey = this.apiKey ?? process.env[envKey] ?? (envKey === 'OPENAI_COMPAT_API_KEY' ? 'none' : undefined);
+    const apiKey = this.apiKey ?? process.env[envKey];
     if (!apiKey) throw new Error(`Missing ${envKey}`);
     return apiKey;
   }
 
   private languageModel(apiKey: string): LanguageModel {
-    const settings = { apiKey, ...(this.fetch ? { fetch: this.fetch } : {}) };
-    if (this.spec.provider === 'anthropic') return createAnthropic(settings)(this.model);
-    if (this.spec.provider === 'openai') return createOpenAI(settings)(this.model);
-    if (this.spec.provider === 'google') return createGoogleGenerativeAI(settings)(this.model);
-    if (this.spec.provider === 'xai') return createXai(settings)(this.model);
-    if (this.spec.provider === 'deepseek') return createDeepSeek(settings)(this.model);
-    if (!this.spec.baseUrl)
-      throw new Error(this.spec.provider === 'compat' ? 'compat provider requires base_url' : USAGE);
+    const option = providerOption(this.spec.provider);
+    if (!option?.baseUrl) throw new Error(USAGE);
     return createOpenAICompatible({
       name: this.spec.provider,
-      baseURL: this.spec.baseUrl,
-      ...settings,
+      baseURL: option.baseUrl,
+      apiKey,
+      ...(this.fetch ? { fetch: this.fetch } : {}),
+      ...(this.spec.provider === 'openrouter' ? { metadataExtractor: OPENROUTER_METADATA } : {}),
     })(this.model);
   }
 
-  /** Providers deliver mid-stream failures as bare error values (OpenRouter's in-band `{code, message}`
-   * among them), which would dodge the ApiError classification that drives retry and pause decisions. */
-  private materializeStreamError(error: unknown, apiKey: string): unknown {
-    if (error instanceof Error) return error;
+  private secrets(apiKey: string): string[] {
+    return [apiKey, process.env.OPENROUTER_API_KEY ?? '', process.env.PRIME_API_KEY ?? ''];
+  }
+
+  private redactedError(error: unknown, secrets: readonly string[]): Error {
+    let detail: string;
+    if (error instanceof Error) detail = error.message;
+    else if (isRecord(error)) {
+      try {
+        detail = JSON.stringify(error);
+      } catch {
+        detail = 'provider transport failed';
+      }
+    } else detail = String(error);
+    const message = redactSecrets(detail, secrets) || 'provider transport failed';
+    if (error instanceof ApiError) return new ApiError(error.status, message);
+    if (error instanceof TypeError) return new TypeError(message);
     if (isRecord(error)) {
       const status = typeof error.code === 'number' ? error.code : typeof error.status === 'number' ? error.status : 0;
-      const detail = redactSecrets(typeof error.message === 'string' ? error.message : JSON.stringify(error), [apiKey]);
-      return new ApiError(status, `${this.spec.provider}:${this.model} ${status}: ${detail}`);
+      return new ApiError(status, message);
     }
-    return new Error(`${this.spec.provider}:${this.model} stream failed: ${String(error)}`);
+    return new Error(message);
   }
 
   async complete(system: string, messages: ProviderMessage[], options: CompleteOptions = {}): Promise<Completion> {
@@ -728,157 +468,113 @@ export class SdkProvider implements Provider {
     const timeout = AbortSignal.timeout(Math.max(100, Math.round(seconds * 1000)));
     const abortSignal = options.signal ? AbortSignal.any([timeout, options.signal]) : timeout;
     const apiKey = this.key();
-    const model = this.languageModel(apiKey);
-    const tools: ToolSet | undefined = options.tools?.length
-      ? (Object.fromEntries(
-          options.tools.map((definition) => [
-            definition.name,
-            tool({
-              description: definition.description,
-              inputSchema: jsonSchema(definition.parameters as JSONSchema7),
-            }),
-          ]),
-        ) as ToolSet)
-      : undefined;
-    let maxOutputTokens = options.maxTokens ?? 1200;
-    if (
-      this.spec.provider === 'google' &&
-      this.reasoning &&
-      this.reasoning !== 'off' &&
-      this.model.toLowerCase().includes('2.5')
-    ) {
-      const budget = this.reasoning === 'high' ? 16_000 : googleThinkingBudgetMax(this.model.toLowerCase());
-      maxOutputTokens = Math.max(maxOutputTokens, budget + 1200);
-    }
-    let sendTemperature =
-      this.supportsTemperature &&
-      (this.spec.provider === 'google' || this.reasoning === undefined || this.reasoning === 'off') &&
-      !(this.spec.provider === 'openai' && /^(?:gpt-5|o\d)/i.test(this.model));
-    const mappedProviderOptions = providerOptions(this.spec, this.reasoning);
-    if (this.gatewayMeta) {
-      this.gatewayMeta.cost = undefined;
-      this.gatewayMeta.provider = undefined;
-    }
-    while (true) {
-      const sendToolChoice = Boolean(options.toolChoice) && this.supportsToolChoice;
-      const suppressTools = options.toolChoice === 'none' && !this.supportsToolChoice;
-      try {
-        /** streamText parks stream failures in onError instead of rejecting, so the first captured
-         * error is rethrown here to reach the same classification path generateText errors took. */
-        let streamError: unknown;
-        const stream = streamText({
-          model,
-          system:
-            this.spec.provider === 'anthropic'
-              ? { role: 'system', content: system, providerOptions: ANTHROPIC_CACHE_OPTIONS }
-              : system,
-          messages:
-            this.spec.provider === 'anthropic'
-              ? withCacheBreakpoint(
-                  this.reasoning === undefined || this.reasoning === 'off'
-                    ? withoutReasoningParts(convertMessages(messages))
-                    : convertMessages(messages),
-                )
-              : convertMessages(messages),
-          ...(tools && !suppressTools ? { tools } : {}),
-          ...(tools && !suppressTools && sendToolChoice ? { toolChoice: options.toolChoice } : {}),
-          maxOutputTokens,
-          ...(sendTemperature ? { temperature: options.temperature ?? 0.2 } : {}),
-          ...(mappedProviderOptions ? { providerOptions: mappedProviderOptions } : {}),
-          maxRetries: 0,
-          abortSignal,
-          onError: ({ error }) => {
-            if (streamError === undefined) streamError = error;
-          },
-        });
-        await stream.consumeStream();
-        if (streamError !== undefined) throw this.materializeStreamError(streamError, apiKey);
-        abortSignal.throwIfAborted();
-        const [text, finishReason, usage, warnings, streamToolCalls, rawReasoningText, response] = await Promise.all([
+    const secrets = this.secrets(apiKey);
+    try {
+      const model = this.languageModel(apiKey);
+      const tools: ToolSet | undefined = options.tools?.length
+        ? (Object.fromEntries(
+            options.tools.map((definition) => [
+              definition.name,
+              tool({
+                description: definition.description,
+                inputSchema: jsonSchema(definition.parameters as JSONSchema7),
+              }),
+            ]),
+          ) as ToolSet)
+        : undefined;
+      /** streamText reports stream failures through onError rather than rejecting, so rethrow the first
+       * captured error after consumption and preserve the normal retry/failure evidence path. */
+      let streamError: unknown;
+      const stream = streamText({
+        model,
+        system,
+        messages: convertMessages(messages),
+        ...(tools ? { tools } : {}),
+        ...(tools && options.toolChoice ? { toolChoice: options.toolChoice } : {}),
+        maxOutputTokens: options.maxTokens ?? 1200,
+        temperature: options.temperature ?? 0.2,
+        ...(this.reasoning ? { reasoning: this.reasoning } : {}),
+        maxRetries: 0,
+        abortSignal,
+        onError: ({ error }) => {
+          if (streamError === undefined) streamError = error;
+        },
+      });
+      await stream.consumeStream();
+      if (streamError !== undefined) throw streamError;
+      abortSignal.throwIfAborted();
+      const [text, finishReason, usage, streamToolCalls, rawReasoningText, response, providerMetadata] =
+        await Promise.all([
           stream.text,
           stream.finishReason,
           stream.usage,
-          stream.warnings,
           stream.toolCalls,
           stream.reasoningText,
           stream.response,
+          stream.providerMetadata,
         ]);
-        if (warnings?.some((warning) => warning.type === 'unsupported' && warning.feature === 'temperature'))
-          this.supportsTemperature = false;
+      const debugTarget = process.env.VGC_DEBUG_PROVIDER_ERRORS;
+      if (debugTarget && !text.trim() && streamToolCalls.length === 0) {
+        let raw = '(unavailable)';
+        try {
+          raw = JSON.stringify((response as { body?: unknown }).body ?? null).slice(0, 2000);
+        } catch {}
+        raw = redactSecrets(raw, secrets);
+        const line = redactSecrets(
+          `[provider-debug] ${this.spec.provider}:${this.model} empty-response ` +
+            `finish=${finishReason} usage=${JSON.stringify(usage)} response=${raw}`,
+          secrets,
+        );
+        if (debugTarget === '1') console.error(line);
+        else appendFileSync(debugTarget, `${line}\n`);
+      }
+      const reasoningText = rawReasoningText?.trim() ?? '';
+      const reasoningTokens = usage.outputTokenDetails?.reasoningTokens ?? 0;
+      const gateway = isRecord(providerMetadata?.openrouter) ? providerMetadata.openrouter : undefined;
+      return {
+        text,
+        finishReason,
+        usage: {
+          input_tokens: usage.inputTokens ?? 0,
+          output_tokens: usage.outputTokens ?? 0,
+          ...(reasoningTokens > 0 ? { reasoning_tokens: reasoningTokens } : {}),
+          ...((usage.inputTokenDetails?.cacheReadTokens ?? 0) > 0
+            ? { cached_input_tokens: usage.inputTokenDetails?.cacheReadTokens as number }
+            : {}),
+          ...(typeof gateway?.cost === 'number' ? { cost: gateway.cost } : {}),
+        },
+        ...(typeof gateway?.provider === 'string' && gateway.provider ? { provider: gateway.provider } : {}),
+        toolCalls: streamToolCalls.map((call) => ({
+          id: call.toolCallId,
+          name: call.toolName,
+          arguments: parseToolArguments(call.input),
+          ...(call.providerMetadata ? { providerMetadata: call.providerMetadata as JsonObject } : {}),
+        })),
+        ...(reasoningText ? { reasoning: reasoningText } : {}),
+        ...(response.messages.length ? { responseMessages: response.messages as unknown as JsonObject[] } : {}),
+      };
+    } catch (error) {
+      if (options.signal?.aborted) throw error;
+      if (timeout.aborted)
+        throw new ApiError(0, `request to ${this.spec.provider}:${this.model} timed out after ${seconds}s`);
+      if (APICallError.isInstance(error)) {
+        const detail = redactSecrets(error.responseBody ?? error.message, secrets);
+        const inBandStatus =
+          this.spec.provider === 'openrouter' ? openRouterErrorStatus(error.responseBody) : undefined;
+        const status = inBandStatus ?? error.statusCode ?? 0;
         const debugTarget = process.env.VGC_DEBUG_PROVIDER_ERRORS;
-        if (debugTarget && !text.trim() && streamToolCalls.length === 0) {
-          let raw = '(unavailable)';
-          try {
-            raw = JSON.stringify((response as { body?: unknown }).body ?? null).slice(0, 2000);
-          } catch {}
-          const line =
-            `[provider-debug] ${this.spec.provider}:${this.model} empty-response ` +
-            `finish=${finishReason} usage=${JSON.stringify(usage)} response=${raw}`;
+        if (debugTarget) {
+          const body = error.requestBodyValues === undefined ? undefined : JSON.stringify(error.requestBodyValues);
+          const line = redactSecrets(
+            `[provider-debug] ${this.spec.provider}:${this.model} ${status} request=${body ?? '(unavailable)'}`,
+            secrets,
+          );
           if (debugTarget === '1') console.error(line);
           else appendFileSync(debugTarget, `${line}\n`);
         }
-        const reasoningText = rawReasoningText?.trim() ?? '';
-        const reasoningTokens = usage.outputTokenDetails?.reasoningTokens ?? 0;
-        return {
-          text,
-          finishReason,
-          usage: {
-            input_tokens: usage.inputTokens ?? 0,
-            output_tokens: usage.outputTokens ?? 0,
-            ...(reasoningTokens > 0 ? { reasoning_tokens: reasoningTokens } : {}),
-            ...((usage.inputTokenDetails?.cacheReadTokens ?? 0) > 0
-              ? { cached_input_tokens: usage.inputTokenDetails?.cacheReadTokens as number }
-              : {}),
-            ...(this.gatewayMeta?.cost !== undefined ? { cost: this.gatewayMeta.cost } : {}),
-          },
-          ...(this.gatewayMeta?.provider ? { provider: this.gatewayMeta.provider } : {}),
-          toolCalls: streamToolCalls.map((call) => ({
-            id: call.toolCallId,
-            name: call.toolName,
-            arguments: parseToolArguments(call.input),
-            ...(call.providerMetadata ? { providerMetadata: call.providerMetadata as JsonObject } : {}),
-          })),
-          ...(reasoningText ? { reasoning: reasoningText } : {}),
-          ...(response.messages.length ? { responseMessages: response.messages as unknown as JsonObject[] } : {}),
-        };
-      } catch (error) {
-        if (options.signal?.aborted) throw error;
-        if (timeout.aborted)
-          throw new ApiError(0, `request to ${this.spec.provider}:${this.model} timed out after ${seconds}s`);
-        if (APICallError.isInstance(error)) {
-          const errorText = `${error.message} ${error.responseBody ?? ''}`;
-          if (
-            error.statusCode === 400 &&
-            sendTemperature &&
-            (/temperature/i.test(errorText) || /Upstream request failed/i.test(errorText))
-          ) {
-            this.supportsTemperature = false;
-            sendTemperature = false;
-            continue;
-          }
-          if (
-            this.supportsToolChoice &&
-            /tool_choice/i.test(errorText) &&
-            (error.statusCode === 400 || openRouterErrorStatus(error.responseBody) === 400)
-          ) {
-            this.supportsToolChoice = false;
-            continue;
-          }
-          const detail = redactSecrets(error.responseBody ?? error.message, [apiKey]);
-          const inBandStatus =
-            this.spec.provider === 'openrouter' ? openRouterErrorStatus(error.responseBody) : undefined;
-          const status = inBandStatus ?? error.statusCode ?? 0;
-          const debugTarget = process.env.VGC_DEBUG_PROVIDER_ERRORS;
-          if (debugTarget) {
-            const body = error.requestBodyValues === undefined ? undefined : JSON.stringify(error.requestBodyValues);
-            const line = `[provider-debug] ${this.spec.provider}:${this.model} ${status} request=${(body ?? '(unavailable)').replaceAll(apiKey, '[redacted]')}`;
-            if (debugTarget === '1') console.error(line);
-            else appendFileSync(debugTarget, `${line}\n`);
-          }
-          throw new ApiError(status, `${this.spec.provider}:${this.model} ${status}: ${detail}`);
-        }
-        throw error;
+        throw new ApiError(status, `${this.spec.provider}:${this.model} ${status}: ${detail}`);
       }
+      throw this.redactedError(error, secrets);
     }
   }
 }
@@ -893,9 +589,5 @@ export function makeProvider(
 ): Provider {
   validateReasoning(spec, options.reasoning);
   if (spec.provider === 'random') throw new Error('random provider is handled separately');
-  if (spec.provider === 'omp' || spec.provider === 'claude-cli')
-    return new CliProvider(spec.provider, spec.model, options.reasoning);
-  if (spec.provider === 'compat' && !spec.baseUrl) throw new Error('compat provider requires base_url');
-  if (!providerOption(spec.provider)) throw new Error(USAGE);
   return new SdkProvider(spec, options);
 }

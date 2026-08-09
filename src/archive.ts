@@ -23,15 +23,13 @@ import type {
   LeagueTeambuildView,
   LeagueTradeWindowView,
   LeagueUsageView,
-  ModelProfileResponse,
-  ModeRecordView,
   MonView,
   QuartileView,
   TeambuildSetView,
 } from './gui/api.js';
 import { BattleLog } from './gui/battlelog.js';
 import { SAFE_SEGMENT } from './path-safety.js';
-import { modelKey, type SeriesRecord, TEST_POOL } from './records.js';
+import { modelKey, type SeriesRecord } from './records.js';
 import { loadShowdown } from './showdown.js';
 import { BattleState, type MonState } from './state.js';
 import { readCurrentRosterArtifact, readTradeWindow } from './trade-window.js';
@@ -149,16 +147,17 @@ export function isRunLive(runsDir: string, runId: string): boolean {
 }
 
 function draftRunDirs(runsDir: string): string[] {
-  let entries: string[];
+  let entries: fs.Dirent[];
   try {
-    entries = fs.readdirSync(runsDir);
+    entries = fs.readdirSync(runsDir, { withFileTypes: true });
   } catch {
     return [];
   }
-  return entries.filter((runId) => {
-    if (!SAFE_SEGMENT.test(runId)) return false;
+  return entries.flatMap((entry) => {
+    const runId = entry.name;
+    if (!entry.isDirectory() || entry.isSymbolicLink() || !SAFE_SEGMENT.test(runId)) return [];
     const config = readRunJson(runsDir, runId, 'config.json') as Record<string, unknown> | null;
-    return config?.mode === 'draft';
+    return config?.mode === 'draft' ? [runId] : [];
   });
 }
 
@@ -304,11 +303,15 @@ export function scanUnfinishedSeries(runsDir: string, runId: string, rows: Serie
       }
     }
     const meta = readRunJson(runsDir, runId, 'series', seriesId, 'series.json') as Record<string, unknown> | null;
-    const raw = (meta?.players ?? null) as Record<string, unknown> | null;
+    const storedIdentity =
+      meta?.schema_version === 3 && meta.identity && typeof meta.identity === 'object' && !Array.isArray(meta.identity)
+        ? (meta.identity as Record<string, unknown>)
+        : null;
+    const raw = (storedIdentity?.players ?? null) as Record<string, unknown> | null;
     const players = raw && typeof raw.p1 === 'string' && typeof raw.p2 === 'string' ? { p1: raw.p1, p2: raw.p2 } : null;
     found.push({
       seriesId,
-      seriesIndex: typeof meta?.series_index === 'number' ? meta.series_index : null,
+      seriesIndex: typeof storedIdentity?.series_index === 'number' ? storedIdentity.series_index : null,
       game: Math.max(1, game),
       turn,
       decisions,
@@ -529,11 +532,11 @@ function tradeWindowView(runsDir: string, runId: string): LeagueTradeWindowView 
   if (afterWeek === null) return null;
   const runDir = path.join(runsDir, runId);
   const artifact = readTradeWindow(runDir);
-  const decisions = artifact?.decisions ?? readRunLines(runsDir, runId, 'window.jsonl');
+  if (!artifact) return null;
   return {
     afterWeek,
-    complete: Boolean(artifact),
-    offers: (artifact?.offers ?? []).map((offer) => ({
+    complete: true,
+    offers: artifact.offers.map((offer) => ({
       from: offer.from,
       to: offer.to,
       give: offer.give,
@@ -543,21 +546,12 @@ function tradeWindowView(runsDir: string, runId: string): LeagueTradeWindowView 
       offerReasoning: offer.offerReasoning,
       responseReasoning: offer.responseReasoning,
     })),
-    decisions: decisions.map((value) => {
-      const row = value as Record<string, unknown>;
-      return {
-        entrant: count(row.entrant),
-        swaps: Array.isArray(row.swaps)
-          ? row.swaps.flatMap((swap) => {
-              if (typeof swap !== 'object' || swap === null || Array.isArray(swap)) return [];
-              const pair = swap as Record<string, unknown>;
-              return [{ drop: String(pair.drop ?? ''), add: String(pair.add ?? '') }];
-            })
-          : [],
-        reasoning: typeof row.reasoning === 'string' ? row.reasoning : '',
-        fallback: row.fallback === true,
-      };
-    }),
+    decisions: artifact.decisions.map((decision) => ({
+      entrant: decision.entrant,
+      swaps: decision.swaps.map(({ drop, add }) => ({ drop, add })),
+      reasoning: decision.reasoning,
+      fallback: decision.fallback,
+    })),
   };
 }
 
@@ -1016,122 +1010,6 @@ function summary(values: number[]): QuartileView | null {
   };
 }
 
-export function buildModelProfile(allRows: SeriesRecord[], runsDir: string, id: string): ModelProfileResponse | null {
-  const rows = allRows
-    .filter(
-      (row) =>
-        row.pool !== TEST_POOL &&
-        typeof row.players?.p1 === 'string' &&
-        typeof row.players?.p2 === 'string' &&
-        PIDS.some((pid) => modelKey(row.players[pid]) === id),
-    )
-    .sort((a, b) => String(a.timestamp ?? '').localeCompare(String(b.timestamp ?? '')));
-  if (rows.length === 0) return null;
-
-  const providers = new Set<string>();
-  const stats: Record<string, number> = {};
-  const latencies: number[] = [];
-  const tokenPoints: number[] = [];
-  let series = 0;
-  let games = 0;
-  let tokens = 0;
-  let reasoning = 0;
-  let reasoningSeen = false;
-  const modes = new Map<string, { series: number; w: number; l: number; runs: Map<string, string> }>();
-
-  for (const row of rows) {
-    const mode = String(row.mode ?? 'rotation');
-    const gameCount = Array.isArray(row.games)
-      ? row.games.length
-      : count((row.score as Record<Pid, number> | undefined)?.p1) +
-        count((row.score as Record<Pid, number> | undefined)?.p2);
-    for (const pid of PIDS) {
-      if (modelKey(row.players[pid]) !== id) continue;
-      providers.add(row.players[pid]);
-      series += 1;
-      games += gameCount;
-      const bucket = modes.get(mode) ?? { series: 0, w: 0, l: 0, runs: new Map() };
-      modes.set(mode, bucket);
-      bucket.series += 1;
-      const won = row.winner_side ? row.winner_side === pid : row.winner === row.players[pid];
-      if (won) bucket.w += 1;
-      else if (row.winner) bucket.l += 1;
-      if (mode === 'draft' || mode === 'tournament') {
-        const runId = String(row.run_id ?? '');
-        if (runId && !bucket.runs.has(runId)) bucket.runs.set(runId, String(row.timestamp ?? ''));
-      }
-      const sideStats = (row.decision_stats as Record<Pid, Record<string, unknown>> | undefined)?.[pid];
-      for (const [key, value] of Object.entries(sideStats ?? {})) {
-        stats[key] = (stats[key] ?? 0) + count(value);
-      }
-      const file = decisionLogPath(runsDir, String(row.run_id ?? ''), String(row.series_id ?? ''), pid);
-      if (!file) continue;
-      for (const entry of readDecisionLog(file)) {
-        if (entry.totalTokens !== null) tokens += entry.totalTokens;
-        if (entry.reasoningTokens !== null) {
-          reasoning += entry.reasoningTokens;
-          reasoningSeen = true;
-        }
-        if (entry.kind !== 'decision' || entry.automatic) continue;
-        if (entry.latencyMs !== null && entry.latencyMs > 0) latencies.push(entry.latencyMs);
-        if (entry.totalTokens !== null && entry.totalTokens > 0) tokenPoints.push(entry.totalTokens);
-      }
-    }
-  }
-
-  const decisions = stats.decisions ?? 0;
-  const selections = (stats.move_selections ?? 0) + (stats.switch_selections ?? 0);
-  const previews = stats.team_previews ?? 0;
-  const repeatChances = Math.max(0, previews - series);
-  const per = (value: number, base: number) => (base > 0 ? value / base : 0);
-  const timestamps = rows.map((row) => String(row.timestamp ?? '')).filter(Boolean);
-
-  return {
-    id,
-    providers: [...providers].sort(),
-    firstSeen: timestamps[0] ?? null,
-    lastSeen: timestamps[timestamps.length - 1] ?? null,
-    series,
-    games,
-    decisions,
-    reflections: stats.reflections ?? 0,
-    totalTokens: tokens,
-    reasoningTokens: reasoningSeen ? reasoning : null,
-    cost: (stats.cost ?? 0) > 0 ? Math.round(stats.cost! * 1e4) / 1e4 : null,
-    latency: summary(latencies),
-    tokensPerDecision: summary(tokenPoints),
-    rates: {
-      fallback: per(stats.fallbacks ?? 0, decisions),
-      parseFailure: per(stats.parse_failures ?? 0, decisions),
-      providerRetry: per(stats.provider_retries ?? 0, decisions),
-      abandoned: per(stats.abandoned_decisions ?? 0, decisions),
-      switch: per(stats.switch_selections ?? 0, selections),
-      protect: per(stats.protect_selections ?? 0, selections),
-      spread: per(stats.spread_move_selections ?? 0, stats.move_selections ?? 0),
-      allyTarget: per(stats.ally_target_selections ?? 0, stats.move_selections ?? 0),
-      megaPerGame: per(stats.mega_selections ?? 0, games),
-      toolLookups: per(stats.tool_lookups ?? 0, decisions),
-      repeatedActions: per(stats.repeated_joint_actions ?? 0, decisions),
-      bringChanges: repeatChances > 0 ? (stats.bring_changes ?? 0) / repeatChances : null,
-      leadChanges: repeatChances > 0 ? (stats.lead_changes ?? 0) / repeatChances : null,
-      reflectionFallback: (stats.reflections ?? 0) > 0 ? (stats.reflection_fallbacks ?? 0) / stats.reflections! : null,
-    },
-    modes: [...modes.entries()]
-      .map(
-        ([mode, bucket]): ModeRecordView => ({
-          mode,
-          series: bucket.series,
-          w: bucket.w,
-          l: bucket.l,
-          runs: [...bucket.runs.entries()]
-            .map(([runId, when]) => ({ runId, when }))
-            .sort((a, b) => b.when.localeCompare(a.when)),
-        }),
-      )
-      .sort((a, b) => b.series - a.series || a.mode.localeCompare(b.mode)),
-  };
-}
-
 function liveSeriesByIndex(
   runsDir: string,
   runId: string,
@@ -1147,8 +1025,12 @@ function liveSeriesByIndex(
   for (const seriesId of entries) {
     if (!SAFE_SEGMENT.test(seriesId)) continue;
     const meta = readRunJson(runsDir, runId, 'series', seriesId, 'series.json') as Record<string, unknown> | null;
-    if (meta?.series_index !== seriesIndex) continue;
-    const players = (meta.players ?? null) as Record<string, unknown> | null;
+    const storedIdentity =
+      meta?.schema_version === 3 && meta.identity && typeof meta.identity === 'object' && !Array.isArray(meta.identity)
+        ? (meta.identity as Record<string, unknown>)
+        : null;
+    if (storedIdentity?.series_index !== seriesIndex) continue;
+    const players = (storedIdentity.players ?? null) as Record<string, unknown> | null;
     if (typeof players?.p1 !== 'string' || typeof players.p2 !== 'string') continue;
     const a = entrantForSpec(identity, players.p1);
     const b = entrantForSpec(identity, players.p2);

@@ -5,14 +5,10 @@ import path from 'node:path';
 import { completeWithDexTools } from './dex-lookups.js';
 import type { DraftBoard, DraftBoardMon } from './draft.js';
 import type { DraftPickView, DraftTableRow } from './gui/api.js';
+import { appendJsonlObject, readJsonlObjects } from './jsonl.js';
+import { FORMAT_AUTHORITY_NOTICE } from './prompts.js';
 import type { ModelReasoningConfig, ReasoningLevel } from './providers.js';
-import {
-  classifyProviderFailure,
-  makeProvider,
-  parseSpec,
-  reasoningForModel,
-  resolveSpecOverride,
-} from './providers.js';
+import { classifyProviderFailure, makeProvider, parseSpec, reasoningForModel } from './providers.js';
 import type { RecoveryGate } from './recovery.js';
 import { ShowdownReference } from './reference.js';
 import { mapLimit } from './series.js';
@@ -23,6 +19,7 @@ import { clip } from './value.js';
 const SEASON_REVIEW_PROMPT_POLICY = {
   systemTemplate: [
     'You are {{model}}, a coach in a Pokémon VGC draft league played in the format {{format}}. Your season is over.',
+    FORMAT_AUTHORITY_NOTICE,
     '',
     'This is a retrospective, not a decision. Nothing you write changes a result; it is published on your team page.',
     '- Judge the whole season: the roster you drafted, what you did with coach trades and free agency, the six you registered for each series, and how you piloted them.',
@@ -258,19 +255,22 @@ function userPrompt(state: SeasonReviewState, entrant: number, outcome: string):
 /** Reviews already written are replayed rather than re-bought, so a resumed league never pays twice for a
  * retrospective whose season is already closed. */
 function replayReviews(file: string): SeasonReview[] {
-  let raw: string;
-  try {
-    raw = fs.readFileSync(file, 'utf8');
-  } catch {
-    return [];
-  }
-  const rows: SeasonReview[] = [];
-  for (const line of raw.split('\n')) {
-    if (!line.trim()) continue;
-    const { timestamp: _timestamp, ...review } = JSON.parse(line) as SeasonReview & { timestamp?: string };
-    rows.push(review as SeasonReview);
-  }
-  return rows;
+  return readJsonlObjects(file).map((row, index) => {
+    const { timestamp, ...review } = row;
+    const valid =
+      Number.isSafeInteger(review.entrant) &&
+      Number(review.entrant) >= 0 &&
+      typeof review.model === 'string' &&
+      typeof review.outcome === 'string' &&
+      typeof review.summary === 'string' &&
+      typeof review.did_well === 'string' &&
+      typeof review.did_poorly === 'string' &&
+      typeof review.would_change === 'string' &&
+      typeof review.fallback === 'boolean' &&
+      (timestamp === undefined || typeof timestamp === 'string');
+    if (!valid) throw new Error(`invalid season review row ${index + 1} in ${file}`);
+    return review as unknown as SeasonReview;
+  });
 }
 
 export async function runSeasonReview(
@@ -296,13 +296,11 @@ export async function runSeasonReview(
       const model = state.models[entrant]!;
       const make =
         options.makeReviewProvider ??
-        ((spec: string, apiKey: string | undefined, reasoning: ReasoningLevel | undefined) => {
-          const resolved = resolveSpecOverride(spec);
-          return makeProvider(parseSpec(resolved), {
+        ((spec: string, apiKey: string | undefined, reasoning: ReasoningLevel | undefined) =>
+          makeProvider(parseSpec(spec), {
             ...(reasoning === undefined ? {} : { reasoning }),
-            ...(resolved === spec && apiKey !== undefined ? { apiKey } : {}),
-          });
-        });
+            ...(apiKey === undefined ? {} : { apiKey }),
+          }));
       const provider =
         model === 'random' ? undefined : make(model, options.apiKeys?.[model], reasoningForModel(model, options));
       let parsed: ParsedSeasonReview | undefined;
@@ -388,15 +386,11 @@ export async function runSeasonReview(
         fallback = Boolean(provider);
       }
       const review: SeasonReview = { entrant, model, outcome, ...parsed, fallback };
-      fs.appendFileSync(transcript, `${JSON.stringify({ ...review, timestamp: new Date().toISOString() })}\n`, 'utf8');
+      appendJsonlObject(transcript, { ...review, timestamp: new Date().toISOString() });
       options.onReview?.(review);
       return review;
     },
   );
   reviews.push(...fresh);
   return reviews;
-}
-
-export function readSeasonReviews(runDir: string): SeasonReview[] {
-  return replayReviews(path.join(runDir, 'season.jsonl'));
 }

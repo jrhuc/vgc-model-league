@@ -19,10 +19,8 @@ function textToolCall(text: string): { name: string; arguments: JsonObject } | u
     return undefined;
   }
   if (!isRecord(parsed) || typeof parsed.name !== 'string') return undefined;
-  const name = parsed.name;
-  if (!DEX_TOOLS.some((tool) => tool.name === name)) return undefined;
   const args = parsed.args ?? parsed.arguments ?? parsed.parameters;
-  return isRecord(args) ? { name, arguments: args } : undefined;
+  return isRecord(args) ? { name: parsed.name, arguments: args } : undefined;
 }
 
 export interface DexToolPolicy {
@@ -44,6 +42,7 @@ export interface DexToolRequest {
   boardSearch?: BoardSearch;
   recovery?: RecoveryGate;
   signal?: AbortSignal;
+  sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
   onLookup?: (call: { name: string; arguments: JsonObject; result: string }) => void;
 }
 
@@ -79,20 +78,28 @@ async function completeOnce(request: DexToolRequest, options: { tools: boolean; 
       const failure = classifyProviderFailure(error, request.spec);
       const retryable = failure.retryable ?? !failure.terminal;
       if (!retryable || attempt >= request.policy.providerRetries - 1 || request.signal?.aborted) throw error;
-      await delay(request.policy.retryBaseMs * 2 ** attempt, request.signal);
+      await (request.sleep ?? delay)(request.policy.retryBaseMs * 2 ** attempt, request.signal);
     }
   }
 }
 
-export async function completeWithDexTools(request: DexToolRequest): Promise<Completion> {
+export interface DexToolCompletion extends Completion {
+  /** Whether the final generation reported at least the requested output cap before it stopped. */
+  outputLimitReached: boolean;
+}
+
+export async function completeWithDexTools(request: DexToolRequest): Promise<DexToolCompletion> {
   const usage: Record<string, number> = {};
   const seenToolResults = new Map<string, string>();
+  const offeredTools = request.boardSearch ? [...DEX_TOOLS, request.boardSearch.definition] : DEX_TOOLS;
+  const offeredNames = new Set(offeredTools.map((tool) => tool.name));
   const lookup = (name: string, args: JsonObject): string => {
     const seenKey = `${name} ${JSON.stringify(args)}`;
     const cached = seenToolResults.get(seenKey);
     if (cached !== undefined) return `[identical to an earlier call this reply] ${cached}`;
-    const result =
-      request.boardSearch && name === request.boardSearch.definition.name
+    const result = !offeredNames.has(name)
+      ? `Not executed: tool ${JSON.stringify(name)} was not offered in this stage.`
+      : request.boardSearch && name === request.boardSearch.definition.name
         ? request.boardSearch.run(args)
         : request.reference.lookup(name, args);
     seenToolResults.set(seenKey, result);
@@ -120,12 +127,13 @@ export async function completeWithDexTools(request: DexToolRequest): Promise<Com
         });
         continue;
       }
-      /** Some providers omit finishReason, so an exhausted output budget also means truncation. */
-      const spent = (completion.usage.output_tokens ?? 0) >= request.policy.maxTokens;
+      /** Some providers omit finishReason, so reported output reaching the requested cap is authoritative. */
+      const outputLimitReached = (completion.usage.output_tokens ?? 0) >= request.policy.maxTokens;
       return {
         ...completion,
         usage,
-        ...(spent || completion.finishReason === 'length' ? { finishReason: 'length' as const } : {}),
+        outputLimitReached,
+        ...(outputLimitReached ? { finishReason: 'length' as const } : {}),
       };
     }
 

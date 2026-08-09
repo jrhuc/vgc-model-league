@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import type {
   BattleLogEntryView,
-  BattleMessage,
+  BattleView,
   BracketView,
   DecisionView,
-  RunSnapshot,
+  PublicBracketView,
+  RunView,
   SeriesRowView,
 } from '../../api';
 import { Battlefield } from '../components/battlefield';
@@ -13,21 +14,21 @@ import { Mark } from '../components/mark';
 import { api } from '../http';
 import { latestFallback } from '../lib/labels';
 
-export type StoredBattle = BattleMessage & { receivedAt: number };
+export type StoredBattle = BattleView & { receivedAt: number };
 
 interface ArenaProps {
-  run: RunSnapshot | null;
+  run: RunView | null;
   externalRun: { runId: string; mode: 'draft' | 'tournament' } | null;
   battles: Record<number, StoredBattle>;
   selected: number | null;
   onSelect: (index: number) => void;
-  onLoadGame: (index: number, game: number) => Promise<BattleMessage>;
+  onLoadGame: (index: number, game: number) => Promise<BattleView>;
   onFetchBattle: (index: number) => void;
   onGoFixtures: () => void;
   onOpenLeague: (runId: string) => void;
 }
 
-function elapsedText(run: RunSnapshot): string {
+function elapsedText(run: RunView): string {
   const total = Math.max(0, Math.floor(((run.endTime ?? Date.now()) - run.startTime) / 1000));
   const hours = Math.floor(total / 3600);
   const minutes = Math.floor((total % 3600) / 60);
@@ -46,8 +47,8 @@ function Bracket({
   selected,
   onSelect,
 }: {
-  bracket: BracketView;
-  rows: RunSnapshot['rows'];
+  bracket: BracketView | PublicBracketView;
+  rows: RunView['rows'];
   selected: number | null;
   onSelect: (index: number) => void;
 }) {
@@ -328,7 +329,7 @@ export function ArenaView({
               <span class="live-dot" aria-hidden="true" />
             </div>
             <p class="eyebrow">League in progress</p>
-            <h2>A draft league is running from the CLI</h2>
+            <h1>A draft league is already in progress</h1>
             <p class="lede">Follow the draft board, teambuilds, and series as they land.</p>
             <button
               type="button"
@@ -347,7 +348,7 @@ export function ArenaView({
         <div class="no-run-inner">
           <div class="no-run-mark">VS</div>
           <p class="eyebrow">No active run</p>
-          <h2>No run in progress</h2>
+          <h1>No run in progress</h1>
           <p class="lede">Set up models and start a run. Live turns appear here as Showdown resolves them.</p>
           <button type="button" class="button primary" style="margin-top:22px" onClick={onGoFixtures}>
             Set up a run
@@ -369,6 +370,8 @@ export function ArenaView({
   const row = effective === null ? null : (run.rows[effective] ?? null);
   const entry = effective === null ? null : battles[effective];
   const shown = entry && pastGame?.index === effective && pastGame.game !== entry.game ? pastGame : entry;
+  const publicBattle = shown && 'visibility' in shown ? shown : null;
+  const privateBattle = shown && !('visibility' in shown) ? shown : null;
   const viewGame = (game: number) => {
     if (effective === null || !entry) return;
     if (game === entry.game) {
@@ -377,7 +380,9 @@ export function ArenaView({
     }
     onLoadGame(effective, game)
       .then((message) => {
-        if (message.snapshot) setPastGame({ ...message, receivedAt: Date.now() });
+        if (('visibility' in message && message.log.length > 0) || (!('visibility' in message) && message.snapshot)) {
+          setPastGame({ ...message, receivedAt: Date.now() });
+        }
       })
       .catch(() => {});
   };
@@ -424,7 +429,7 @@ export function ArenaView({
         <div>
           <p class="eyebrow">
             {runKind} · protocol v{run.protocolVersion} · {run.runId}
-            {run.seed === null ? '' : ` · seed ${run.seed}`}
+            {'seed' in run && run.seed !== null ? ` · seed ${run.seed}` : ''}
           </p>
           <div class="run-identity">
             <h1>{title}</h1>
@@ -441,7 +446,7 @@ export function ArenaView({
           <p class="kicker" style="text-align:right">
             {done} / {total} series · {elapsedText(run)}
           </p>
-          {run.canControl && (
+          {'canControl' in run && run.canControl ? (
             <div class="run-controls">
               {run.state === 'paused' && (
                 <button type="button" class="button primary" disabled={resuming || stopping} onClick={resume}>
@@ -452,19 +457,19 @@ export function ArenaView({
                 {stopping ? 'Stopping…' : 'Stop run'}
               </button>
             </div>
-          )}
+          ) : null}
         </div>
       </div>
-      {run.state === 'paused' && run.pause && (
+      {run.state === 'paused' && 'pause' in run && run.pause ? (
         <div class="message" role="status">
           {run.pause.model}: {run.pause.message}
         </div>
-      )}
-      {(run.error || stopError || resumeError) && (
+      ) : null}
+      {('error' in run ? run.error : '') || stopError || resumeError ? (
         <div class="message error" role="alert">
-          {run.error || stopError || resumeError}
+          {('error' in run ? run.error : '') || stopError || resumeError}
         </div>
-      )}
+      ) : null}
       {run.bracket && run.bracket.entrants.length > 2 && (
         <Bracket bracket={run.bracket} rows={run.rows} selected={effective} onSelect={onSelect} />
       )}
@@ -521,10 +526,10 @@ export function ArenaView({
             <div class="field-surface">
               <div class="field-empty" aria-live="polite">
                 <h2>Waiting for assignments</h2>
-                <p>The scheduler is building the series list.</p>
+                <p>The series list will appear here when it is ready.</p>
               </div>
             </div>
-          ) : !shown?.snapshot ? (
+          ) : !publicBattle?.log.length && !privateBattle?.snapshot ? (
             <>
               <div class="field-meta">
                 <span>Series {(effective ?? 0) + 1}</span>
@@ -539,57 +544,75 @@ export function ArenaView({
                 </div>
               </div>
             </>
-          ) : (
+          ) : publicBattle ? (
+            <>
+              <div class="field-meta">
+                <span>Game {publicBattle.game} · resolved public transitions</span>
+                <span class="series-score">
+                  {row.score.p1}-{row.score.p2}
+                </span>
+              </div>
+              <TurnLog
+                log={publicBattle.log}
+                decisions={[]}
+                players={row.players}
+                game={publicBattle.game}
+                games={entry?.games?.length ? entry.games : publicBattle.games}
+                onSelectGame={viewGame}
+              />
+            </>
+          ) : privateBattle?.snapshot ? (
             <>
               <div class="visually-hidden" role="status" aria-live="polite" aria-atomic="true">
-                Game {shown.game}. {shown.snapshot.turn ? `Turn ${shown.snapshot.turn}.` : 'Team preview.'} Score{' '}
+                Game {privateBattle.game}.{' '}
+                {privateBattle.snapshot.turn ? `Turn ${privateBattle.snapshot.turn}.` : 'Team preview.'} Score{' '}
                 {row.score.p1} to {row.score.p2}.
-                {shown.snapshot.log.length > 0
-                  ? ` ${shown.snapshot.log[shown.snapshot.log.length - 1]?.text ?? ''}`
+                {privateBattle.snapshot.log.length > 0
+                  ? ` ${privateBattle.snapshot.log[privateBattle.snapshot.log.length - 1]?.text ?? ''}`
                   : ''}
               </div>
               <Battlefield
-                snapshot={shown.snapshot}
-                receivedAt={shown.receivedAt}
+                snapshot={privateBattle.snapshot}
+                receivedAt={privateBattle.receivedAt}
                 warnings={{
                   p1: latestFallback(
-                    shown.snapshot.decisions,
+                    privateBattle.snapshot.decisions,
                     (d) => d.pid === 'p1',
                     (d) => d.error,
                   ),
                   p2: latestFallback(
-                    shown.snapshot.decisions,
+                    privateBattle.snapshot.decisions,
                     (d) => d.pid === 'p2',
                     (d) => d.error,
                   ),
                 }}
                 meta={
                   <>
-                    <span>Game {shown.game} · Bo3</span>
+                    <span>Game {privateBattle.game} · Bo3</span>
                     <span class="series-score">
                       {row.score.p1}-{row.score.p2}
                     </span>
                     <span class="turn-badge">
-                      {shown.snapshot.turn ? `Turn ${shown.snapshot.turn}` : 'Team preview'}
+                      {privateBattle.snapshot.turn ? `Turn ${privateBattle.snapshot.turn}` : 'Team preview'}
                     </span>
                   </>
                 }
               />
               <TurnLog
-                log={shown.snapshot.log ?? []}
-                decisions={shown.snapshot.decisions ?? []}
+                log={privateBattle.snapshot.log}
+                decisions={privateBattle.snapshot.decisions}
                 players={row.players}
-                game={shown.game}
-                games={entry?.games?.length ? entry.games : shown.games}
+                game={privateBattle.game}
+                games={entry?.games?.length ? entry.games : privateBattle.games}
                 onSelectGame={viewGame}
               />
             </>
-          )}
-          {run.notices.length > 0 && (
+          ) : null}
+          {'notices' in run && run.notices.length > 0 ? (
             <div class="notice-strip" aria-live="polite">
               {run.notices.join('\n')}
             </div>
-          )}
+          ) : null}
         </section>
       </div>
     </div>

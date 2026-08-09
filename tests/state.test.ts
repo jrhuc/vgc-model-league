@@ -123,6 +123,87 @@ test('battle damage binds open-sheet abilities and ignores fabricated caller sta
   assert.doesNotMatch(result, /Pressure|burned|attacker_stats\.atk 1/);
 });
 
+test('live damage derives spread reduction from Showdown targets and live actives', () => {
+  const reference = new ShowdownReference('gen9championsvgc2026regmb');
+  const request = (attacker: string, move: string, ally?: string): BattleRequest => ({
+    active: [
+      { moves: [{ move, id: move.toLowerCase().replaceAll(' ', ''), target: 'normal' }] },
+      ...(ally ? [{ moves: [{ move: 'Protect', id: 'protect', target: 'self' }] }] : []),
+    ],
+    side: {
+      pokemon: [
+        {
+          ident: `p1: ${attacker}`,
+          details: `${attacker}, L50`,
+          condition: '200/200',
+          active: true,
+          stats: { atk: 180, spa: 180 },
+          moves: [move],
+        },
+        ...(ally
+          ? [
+              {
+                ident: `p1: ${ally}`,
+                details: `${ally}, L50`,
+                condition: '200/200',
+                active: true,
+                stats: { atk: 120, spa: 120 },
+                moves: ['Protect'],
+              },
+            ]
+          : []),
+      ],
+    },
+  });
+
+  const foes = new BattleState('p1');
+  foes.feed(['|switch|p2a: Incineroar|Incineroar, L50|100/100']);
+  const oneFoe = foes.estimateDamage(
+    { attacker: 'Sylveon', defender: 'Incineroar', move: 'Hyper Voice', is_spread_hit: true },
+    request('Sylveon', 'Hyper Voice'),
+    reference,
+  );
+  assert.doesNotMatch(oneFoe, /spread \(0\.75x\)/);
+
+  foes.feed(['|switch|p2b: Farigiraf|Farigiraf, L50|100/100']);
+  const twoFoes = foes.estimateDamage(
+    { attacker: 'Sylveon', defender: 'Incineroar', move: 'Hyper Voice', is_spread_hit: false },
+    request('Sylveon', 'Hyper Voice'),
+    reference,
+  );
+  assert.match(twoFoes, /spread \(0\.75x\)/);
+  const singleTarget = foes.estimateDamage(
+    { attacker: 'Sylveon', defender: 'Incineroar', move: 'Shadow Ball', is_spread_hit: true },
+    request('Sylveon', 'Shadow Ball'),
+    reference,
+  );
+  assert.doesNotMatch(singleTarget, /spread \(0\.75x\)/);
+
+  const opposingAttacker = new BattleState('p1');
+  opposingAttacker.feed(['|switch|p2a: Sylveon|Sylveon, L50|100/100', '|switch|p2b: Farigiraf|Farigiraf, L50|100/100']);
+  const oneFoeFromEitherSide = opposingAttacker.estimateDamage(
+    { attacker: 'Sylveon', defender: 'Incineroar', move: 'Hyper Voice', is_spread_hit: true },
+    request('Incineroar', 'Protect'),
+    reference,
+  );
+  assert.doesNotMatch(oneFoeFromEitherSide, /spread \(0\.75x\)/);
+
+  const adjacent = new BattleState('p1');
+  adjacent.feed(['|switch|p2a: Incineroar|Incineroar, L50|100/100']);
+  const foeOnly = adjacent.estimateDamage(
+    { attacker: 'Garchomp', defender: 'Incineroar', move: 'Earthquake', is_spread_hit: true },
+    request('Garchomp', 'Earthquake'),
+    reference,
+  );
+  assert.doesNotMatch(foeOnly, /spread \(0\.75x\)/);
+  const allyAndFoe = adjacent.estimateDamage(
+    { attacker: 'Garchomp', defender: 'Incineroar', move: 'Earthquake', is_spread_hit: false },
+    request('Garchomp', 'Earthquake', 'Tinkaton'),
+    reference,
+  );
+  assert.match(allyAndFoe, /spread \(0\.75x\)/);
+});
+
 test('copied abilities are explained and reset from the open sheet on switch', () => {
   assert.deepEqual(
     summarizeBattleEvents(['|-ability|p2a: Gardevoir|Mega Launcher|Trace|[from] ability: Trace|[of] p1a: Blastoise']),

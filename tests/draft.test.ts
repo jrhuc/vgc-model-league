@@ -21,26 +21,32 @@ import {
 } from '../src/draft.js';
 import type { DraftLeagueEvent } from '../src/draftleague.js';
 import { DRAFT_PROTOCOL_VERSION, roundRobinWeeks, runDraftLeague } from '../src/draftleague.js';
-import { scaffoldRevision } from '../src/llm-engine.js';
+import { canonicalJson } from '../src/eval/serialization.js';
+import { readJsonlObjects } from '../src/jsonl.js';
 import { defaultPsDir } from '../src/paths.js';
+import { FORMAT_AUTHORITY_NOTICE } from '../src/prompts.js';
 import { ApiError } from '../src/providers.js';
-import { seededRng } from '../src/random.js';
-import { loadRows } from '../src/records.js';
+import { seededRng, seriesEntropy } from '../src/random.js';
+import { loadSeriesRecords } from '../src/records.js';
 import { RecoveryGate } from '../src/recovery.js';
-import { parseSeasonReview, readSeasonReviews, runSeasonReview, type SeasonReviewState } from '../src/season-review.js';
+import { parseSeasonReview, runSeasonReview, type SeasonReviewState } from '../src/season-review.js';
+import { foldSeriesGames } from '../src/series.js';
 import { loadShowdown } from '../src/showdown.js';
 import { runTeambuild, teambuildScaffoldRevision } from '../src/teambuild.js';
 import {
   applyTradeDecision,
   applyTradeOffer,
+  MAX_TRADE_OFFERS,
   parseTradeDecision,
   parseTradeOffer,
   parseTradeResponse,
+  readValidatedTradeWindow,
   runTradeWindow,
   type TradeWindowState,
   tradeWindowScaffoldRevision,
 } from '../src/trade-window.js';
 import type { Completion, Provider, ProviderMessage } from '../src/types.js';
+import { legalTeamResponse } from './fixtures/team-build.js';
 
 const BOARD = loadBoard('regmb-202607');
 const mon = (id: string): DraftBoardMon => {
@@ -48,6 +54,11 @@ const mon = (id: string): DraftBoardMon => {
   assert.ok(found, `board is missing ${id}`);
   return found;
 };
+
+function assertFormatAuthority(prompt: string): void {
+  assert.equal(prompt.split(FORMAT_AUTHORITY_NOTICE).length - 1, 1);
+  assert.doesNotMatch(prompt, /This game is newer than your training data|There is no Terastallisation/i);
+}
 
 function freshState(overrides: Partial<DraftState> = {}): DraftState {
   return {
@@ -60,14 +71,40 @@ function freshState(overrides: Partial<DraftState> = {}): DraftState {
   };
 }
 
-test('scaffold identities are distinct and stable', () => {
-  for (const revision of [draftScaffoldRevision(), teambuildScaffoldRevision(), tradeWindowScaffoldRevision()]) {
-    assert.match(revision, /^[0-9a-f]{12}$/);
+function transactionState(entrants = 2): TradeWindowState {
+  const rosters = Array.from({ length: entrants }, () => [] as DraftBoardMon[]);
+  const bases = new Set<string>();
+  let cursor = 0;
+  for (const candidate of [...BOARD.mons].sort((a, b) => a.cost - b.cost || a.id.localeCompare(b.id))) {
+    if (bases.has(candidate.base)) continue;
+    bases.add(candidate.base);
+    rosters[cursor]!.push(candidate);
+    if (rosters[cursor]!.length === BOARD.picks) cursor += 1;
+    if (cursor === entrants) break;
   }
-  assert.equal(draftScaffoldRevision(), draftScaffoldRevision());
-  assert.notEqual(draftScaffoldRevision(), scaffoldRevision());
-  assert.notEqual(draftScaffoldRevision(), teambuildScaffoldRevision());
-  assert.notEqual(tradeWindowScaffoldRevision(), draftScaffoldRevision());
+  assert.equal(cursor, entrants, 'fixture needs enough complete inexpensive rosters');
+  return {
+    board: BOARD,
+    models: Array.from({ length: entrants }, () => 'random'),
+    teamNames: Array.from({ length: entrants }, (_, entrant) => `Team ${entrant + 1}`),
+    rosters,
+    budgets: rosters.map((roster) => BOARD.budget - roster.reduce((sum, mon) => sum + mon.cost, 0)),
+    notebooks: Array.from({ length: entrants }, () => ''),
+    standings: Array.from({ length: entrants }, (_, entrant) => ({ entrant, w: 0, l: 0, gw: 0, gl: 0 })),
+    results: Array.from({ length: entrants }, () => []),
+    reflections: Array.from({ length: entrants }, () => []),
+  };
+}
+
+test('scaffold identities are distinct', () => {
+  const revisions = [
+    draftScaffoldRevision(),
+    teambuildScaffoldRevision(),
+    teambuildScaffoldRevision('closed'),
+    tradeWindowScaffoldRevision(),
+  ];
+  for (const revision of revisions) assert.match(revision, /^[0-9a-f]{12}$/);
+  assert.equal(new Set(revisions).size, revisions.length);
 });
 
 test('the bundled board fits eight coaches', () => {
@@ -283,13 +320,39 @@ test('coach trades validate both rosters and apply an accepted exchange atomical
     accept: true,
     reasoning: 'Worth it.',
     notebook: 'Plan around Charizard.',
+    evidence: {
+      rationale: 'Worth it.',
+      notebook: 'Plan around Charizard.',
+      supplied: { rationale: true, notebookUpdate: true },
+    },
   });
-  assert.match(String(parseTradeResponse('{"accept":true,"reasoning":"Worth it."}')), /notebook/);
+  assert.deepEqual(parseTradeResponse('{"accept":true}', 'Keep the old plan.'), {
+    accept: true,
+    reasoning: '',
+    notebook: 'Keep the old plan.',
+    evidence: {
+      rationale: '',
+      notebook: 'Keep the old plan.',
+      supplied: { rationale: false, notebookUpdate: false },
+    },
+  });
+  assert.deepEqual(parseTradeResponse('{"accept":false,"notebook":""}', 'Clear this plan.'), {
+    accept: false,
+    reasoning: '',
+    notebook: '',
+    evidence: {
+      rationale: '',
+      notebook: '',
+      supplied: { rationale: false, notebookUpdate: true },
+    },
+  });
   if (typeof parsed === 'string' || !parsed.offer) return;
   applyTradeOffer(state, {
     from: 0,
     ...parsed.offer,
     accepted: true,
+    proposerFallback: false,
+    responderFallback: false,
     offerReasoning: parsed.reasoning,
     responseReasoning: 'Worth it.',
   });
@@ -341,6 +404,9 @@ test('coach offers resolve before free agency and replay without model calls', a
           reasoning: 'The exchange fits.',
           notebook: 'Use the incoming role player.',
         }),
+        JSON.stringify({
+          offer: { to: 0, give: cheap[11]!.id, get: cheap[1]!.id, message: 'A separate second offer?' },
+        }),
         JSON.stringify({ swaps: [], reasoning: 'Done.', notebook: 'Use the incoming role player.' }),
       ],
     ],
@@ -352,19 +418,22 @@ test('coach offers resolve before free agency and replay without model calls', a
           reasoning: 'The exchange also fits us.',
           notebook: 'Weighed the incoming offer.',
         }),
+        JSON.stringify({ accept: false }),
         JSON.stringify({ offer: null, reasoning: 'No outbound offer.', notebook: 'Keep the trade.' }),
         JSON.stringify({ swaps: [], reasoning: 'Done.', notebook: 'Keep the trade.' }),
       ],
     ],
   ]);
   const prompts = new Map<string, string[]>();
+  const systems: string[] = [];
   const artifact = await runTradeWindow(createState(), {
     runDir: directory,
     psDir: defaultPsDir(),
     afterWeek: 1,
-    tradesAllowed: 1,
+    tradesAllowed: 2,
     makeTradeProvider: (spec) => ({
-      complete(_system: string, messages: ProviderMessage[]): Promise<Completion> {
+      complete(system: string, messages: ProviderMessage[]): Promise<Completion> {
+        systems.push(system);
         const response = queues.get(spec)?.shift();
         assert.ok(response, `unexpected call for ${spec}`);
         const asked = prompts.get(spec) ?? [];
@@ -375,17 +444,30 @@ test('coach offers resolve before free agency and replay without model calls', a
     }),
   });
   const answering = prompts.get(models[0]!)?.[0] ?? '';
+  assert.equal(systems.length, 7);
+  for (const system of systems) assertFormatAuthority(system);
   for (const evidence of ['best', models[0]!, models[1]!, cheap[10]!.id]) {
     assert.ok(answering.includes(evidence), `the counterparty answers without ${evidence}`);
   }
-  assert.equal(artifact.offers.length, 2, 'each seat has an offer-phase record');
+  assert.equal(artifact.offers.length, 3, 'the proposer may make multiple independent offers');
   assert.equal(artifact.offers[0]!.accepted, true);
-  assert.equal(artifact.offers[1]!.to, null);
+  assert.equal(artifact.offers[0]!.proposerFallback, false);
+  assert.equal(artifact.offers[0]!.responderFallback, false);
+  assert.equal(artifact.offers[1]!.accepted, false);
+  assert.equal(artifact.offers[1]!.proposerFallback, false);
+  assert.equal(artifact.offers[1]!.responderFallback, false);
+  assert.equal(artifact.offers[2]!.to, null);
+  assert.equal(artifact.offers[2]!.proposerFallback, false);
+  assert.equal(artifact.offers[2]!.responderFallback, null);
+  assert.deepEqual(
+    artifact.rosters.map((roster) => roster.entrant),
+    [0, 1],
+  );
   assert.equal(artifact.rosters[0]!.roster.at(-1)?.id, cheap[10]!.id);
   assert.equal(artifact.rosters[1]!.roster.at(-1)?.id, cheap[0]!.id);
   assert.deepEqual(
-    loadRows(path.join(directory, 'window.jsonl')).map((row) => row.kind),
-    ['offer', 'offer', 'free_agency', 'free_agency'],
+    readJsonlObjects(path.join(directory, 'window.jsonl')).map((row) => row.kind),
+    ['offer', 'offer', 'offer', 'free_agency', 'free_agency'],
   );
 
   let replayCalls = 0;
@@ -393,7 +475,7 @@ test('coach offers resolve before free agency and replay without model calls', a
     runDir: directory,
     psDir: defaultPsDir(),
     afterWeek: 1,
-    tradesAllowed: 1,
+    tradesAllowed: 2,
     makeTradeProvider: () => ({
       complete(): Promise<Completion> {
         replayCalls += 1;
@@ -403,6 +485,114 @@ test('coach offers resolve before free agency and replay without model calls', a
   });
   assert.equal(replayCalls, 0);
   assert.deepEqual(replayed, artifact);
+});
+
+test('offer artifacts distinguish exhausted parsing from deliberate and random decisions', async (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-trade-fallbacks-'));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const state = transactionState();
+  state.models = ['test:responder', 'test:proposer'];
+  const offer = {
+    offer: {
+      to: 0,
+      give: state.rosters[1]![0]!.id,
+      get: state.rosters[0]![0]!.id,
+      message: 'One independent offer.',
+    },
+  };
+  assert.notEqual(typeof parseTradeOffer(JSON.stringify(offer), state, 1), 'string');
+  const calls = new Map<string, number>();
+  const artifact = await runTradeWindow(state, {
+    runDir: directory,
+    psDir: defaultPsDir(),
+    afterWeek: 1,
+    tradesAllowed: 1,
+    makeTradeProvider: (spec) => ({
+      complete(): Promise<Completion> {
+        const call = (calls.get(spec) ?? 0) + 1;
+        calls.set(spec, call);
+        if (spec === 'test:proposer') {
+          return Promise.resolve({
+            text: JSON.stringify(call === 1 ? offer : { swaps: [] }),
+            usage: {},
+            toolCalls: [],
+          });
+        }
+        return Promise.resolve({
+          text: call <= 6 ? 'not json' : JSON.stringify({ swaps: [] }),
+          usage: {},
+          toolCalls: [],
+        });
+      },
+    }),
+  });
+
+  assert.deepEqual(
+    artifact.offers.map(({ from, accepted, proposerFallback, responderFallback }) => ({
+      from,
+      accepted,
+      proposerFallback,
+      responderFallback,
+    })),
+    [
+      { from: 1, accepted: false, proposerFallback: false, responderFallback: true },
+      { from: 0, accepted: null, proposerFallback: true, responderFallback: null },
+    ],
+  );
+  assert.equal(artifact.offers[0]!.responseReasoning, '', 'fallback rejection invents no private rationale');
+  assert.equal(artifact.offers[1]!.offerReasoning, '', 'fallback no-offer invents no private rationale');
+});
+
+test('trade-offer caps are enforced by direct, fresh-league, and stored-resume ingress', async (t) => {
+  const directDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-trade-cap-direct-'));
+  const leagueDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-trade-cap-league-'));
+  t.after(() => fs.rmSync(directDir, { recursive: true, force: true }));
+  t.after(() => fs.rmSync(leagueDir, { recursive: true, force: true }));
+  const invalid = MAX_TRADE_OFFERS + 1;
+  await assert.rejects(
+    runTradeWindow(transactionState(), {
+      runDir: directDir,
+      psDir: defaultPsDir(),
+      afterWeek: 1,
+      tradesAllowed: invalid,
+    }),
+    /between 0 and 3/,
+  );
+  assert.throws(
+    () => readValidatedTradeWindow(directDir, transactionState(), { afterWeek: 1, tradesAllowed: invalid }),
+    /between 0 and 3/,
+  );
+  await assert.rejects(
+    runDraftLeague(['random', 'random'], leagueDir, {
+      recordsPath: path.join(leagueDir, 'results.jsonl'),
+      seed: 7,
+      tradeWindow: { afterWeek: 1, tradesAllowed: invalid },
+    }),
+    /between 0 and 3/,
+  );
+
+  await runDraftLeague(['random', 'random'], leagueDir, {
+    recordsPath: path.join(leagueDir, 'results.jsonl'),
+    seed: 7,
+    draftOnly: true,
+  });
+  const configFile = path.join(leagueDir, 'config.json');
+  const config = JSON.parse(fs.readFileSync(configFile, 'utf8')) as Record<string, unknown>;
+  config.draft_only = false;
+  config.trade_window = { after_week: 1, trades_allowed: invalid };
+  fs.writeFileSync(
+    configFile,
+    `${JSON.stringify(config)}
+`,
+  );
+  await assert.rejects(
+    runDraftLeague(['random', 'random'], leagueDir, {
+      recordsPath: path.join(leagueDir, 'results.jsonl'),
+      seed: 7,
+      resume: true,
+    }),
+    /invalid trade window/,
+  );
 });
 
 test('the trade window runs lowest seed first and replays completed seats', async (t) => {
@@ -461,6 +651,7 @@ test('the trade window runs lowest seed first and replays completed seats', asyn
     runDir: directory,
     psDir: defaultPsDir(),
     afterWeek: 2,
+    tradesAllowed: 0,
     makeTradeProvider: (spec) => ({
       complete(system: string, messages: ProviderMessage[]): Promise<Completion> {
         calls.push(spec);
@@ -471,17 +662,19 @@ test('the trade window runs lowest seed first and replays completed seats', asyn
   });
   assert.deepEqual(artifact.order, [2, 1, 0]);
   assert.match(prompts.get(models[2]!) ?? '', /You are test:worst, a coach/);
+  assertFormatAuthority(prompts.get(models[2]!) ?? '');
   assert.doesNotMatch(prompts.get(models[2]!) ?? '', /Best|Middle|Worst/);
   assert.deepEqual(calls, [models[2], models[1], models[0]]);
   assert.equal(firstState.rosters[1]![9]?.id, initial[2]![0]!.id, 'an earlier drop becomes available immediately');
   assert.ok(fs.existsSync(path.join(directory, 'window.json')));
-  assert.equal(loadRows(path.join(directory, 'window.jsonl')).length, 3);
+  assert.equal(readJsonlObjects(path.join(directory, 'window.jsonl')).length, 3);
 
   let replayCalls = 0;
   const replayed = await runTradeWindow(createState(), {
     runDir: directory,
     psDir: defaultPsDir(),
     afterWeek: 2,
+    tradesAllowed: 0,
     makeTradeProvider: () => ({
       complete(): Promise<Completion> {
         replayCalls += 1;
@@ -598,6 +791,7 @@ test('drafters name their franchise only after every pick is complete', async (t
     .map((line) => JSON.parse(line) as Record<string, unknown>);
   assert.match(String(rows[0]!.error), /is not a board id/);
   assert.ok(String(rows[0]!.system).includes('DRAFT BOARD'), 'the board rides in the cacheable system prompt');
+  assertFormatAuthority(String(rows[0]!.system));
   assert.match(String(rows[0]!.system), /test transaction window opens after week 2/);
   assert.doesNotMatch(String(rows[0]!.system), /franchise name|Shadow Cabinet|Drought Dodgers/i);
 
@@ -608,10 +802,11 @@ test('drafters name their franchise only after every pick is complete', async (t
     .map((line) => JSON.parse(line) as Record<string, unknown>);
   assert.equal(transcript[0]!.team_name, undefined);
   assert.equal(transcript[0]!.rationale, 'Best ground type available.');
-  const names = loadRows(path.join(logDir, 'franchise-names.jsonl'));
+  const names = readJsonlObjects(path.join(logDir, 'franchise-names.jsonl'));
   assert.equal(names.find((row) => row.entrant === 0)?.team_name, 'Route 210 Garchomps');
-  const namingLog = loadRows(path.join(logDir, 'namer-0-fake-model.jsonl'));
+  const namingLog = readJsonlObjects(path.join(logDir, 'namer-0-fake-model.jsonl'));
   assert.match(String(namingLog[0]!.system), /The Shadow Cabinet/);
+  assertFormatAuthority(String(namingLog[0]!.system));
   assert.match(String(namingLog[0]!.user), /Garchomp/);
   assert.match(String(namingLog[0]!.user), /Farigiraf/);
 
@@ -677,6 +872,21 @@ test('picks do not request a franchise name and franchise names normalize separa
     teamName: 'Prankster Paradise',
   });
   assert.match(String(parseFranchiseName('{"team_name":""}')), /non-empty/);
+});
+
+test('a legal pick is not rejected when optional evidence is omitted', () => {
+  const state = freshState();
+  const legal = legalPicks(state, 0);
+  const id = legal[0]?.id;
+  assert.ok(id);
+  const parsed = parsePick(JSON.stringify({ pick: id }), legal, state, 0);
+  assert.notEqual(typeof parsed, 'string');
+  if (typeof parsed !== 'string') {
+    assert.equal(parsed.mon.id, id);
+    assert.equal(parsed.reasoning, '');
+    assert.equal(parsed.notebook, undefined);
+    assert.deepEqual(parsed.evidence.supplied, { rationale: false, notebookUpdate: false });
+  }
 });
 
 test('a pick may be written as the board id or the name shown beside it', () => {
@@ -823,7 +1033,7 @@ test('a pick cut off by its token budget is told so, not blamed for formatting',
     .trim()
     .split('\n')
     .map((line) => JSON.parse(line) as Record<string, unknown>);
-  assert.match(String(rows[0]!.error), /whole token budget before naming a pick/);
+  assert.match(String(rows[0]!.error), /whole 65536-token budget before naming a pick/);
 });
 
 test('a teambuild cut off by its token budget is told so', async (t) => {
@@ -911,12 +1121,17 @@ test('transient upstream failures never spend a compliance attempt', async (t) =
   const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-draft-transient-'));
   t.after(() => fs.rmSync(logDir, { recursive: true, force: true }));
   let calls = 0;
+  const backoffs: number[] = [];
   const outcome = await runDraft(
     ['fake:model', 'random'],
     { ...BOARD, picks: 4 },
     {
       logDir,
       rng: seededRng(5),
+      sleep: (ms) => {
+        backoffs.push(ms);
+        return Promise.resolve();
+      },
       makeDraftProvider: () => ({
         complete(): Promise<Completion> {
           calls += 1;
@@ -932,6 +1147,7 @@ test('transient upstream failures never spend a compliance attempt', async (t) =
   );
   assert.equal(outcome.picks[0]!.fallback, false, 'three 503s must not exhaust the model’s three attempts');
   assert.equal(outcome.rosters[0]![0]!.id, 'garchomp');
+  assert.deepEqual(backoffs, [2_000, 4_000, 8_000]);
 });
 
 test('a pick written only in the reasoning channel is salvaged without another attempt', async (t) => {
@@ -958,7 +1174,9 @@ test('a pick written only in the reasoning channel is salvaged without another a
   );
   assert.equal(outcome.rosters[0]![0]!.id, 'garchomp');
   assert.equal(outcome.picks[0]!.fallback, false, 'the pick inside the reasoning is used directly');
-  const firstPickAttempts = loadRows(path.join(logDir, 'drafter-0-fake-model.jsonl')).filter((row) => row.pick === 1);
+  const firstPickAttempts = readJsonlObjects(path.join(logDir, 'drafter-0-fake-model.jsonl')).filter(
+    (row) => row.pick === 1,
+  );
   assert.equal(firstPickAttempts.length, 1, 'the first pick salvages in one call');
 });
 
@@ -1046,7 +1264,7 @@ test('a resumed draft replays its transcript and continues from the next pick', 
   ];
   fs.writeFileSync(
     path.join(logDir, 'draft.jsonl'),
-    `${stored.map((row) => JSON.stringify(row)).join('\n')}\n`,
+    `${stored.map((row) => JSON.stringify(row)).join('\n')}\n{"pick":`,
     'utf8',
   );
   let calls = 0;
@@ -1094,6 +1312,62 @@ test('a resumed draft replays its transcript and continues from the next pick', 
   assert.equal(transcript.length, 6, 'replayed picks are not rewritten to the transcript');
 });
 
+test('an explicit empty draft notebook survives transcript replay', async (t) => {
+  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-draft-empty-notebook-'));
+  t.after(() => fs.rmSync(logDir, { recursive: true, force: true }));
+  const replies: Record<string, string[]> = {
+    'fake:a': [
+      '{"pick":"garchomp","reasoning":"Start here.","notebook":"Keep this until the final pick."}',
+      '{"pick":"incineroar","reasoning":"Roster complete.","notebook":""}',
+      '{"team_name":"Empty Notes"}',
+    ],
+    'fake:b': [
+      '{"pick":"sinistcha","reasoning":"Support.","notebook":"Tea mode."}',
+      '{"pick":"farigiraf","reasoning":"Speed control.","notebook":"Room mode."}',
+      '{"team_name":"Room Notes"}',
+    ],
+  };
+  const calls = new Map<string, number>();
+  const first = await runDraft(
+    ['fake:a', 'fake:b'],
+    { ...BOARD, picks: 2 },
+    {
+      logDir,
+      rng: seededRng(12),
+      makeDraftProvider: (spec) => ({
+        complete(): Promise<Completion> {
+          const call = calls.get(spec) ?? 0;
+          calls.set(spec, call + 1);
+          return Promise.resolve({ text: replies[spec]![call]!, usage: {}, toolCalls: [] });
+        },
+      }),
+    },
+  );
+  assert.equal(first.notebooks[0], '');
+  const transcript = readJsonlObjects(path.join(logDir, 'draft.jsonl'));
+  const cleared = transcript.find((row) => row.model === 'fake:a' && row.mon === 'incineroar')!;
+  assert.equal(cleared.notebook, '');
+  assert.deepEqual(cleared.evidence_supplied, { rationale: true, notebook_update: true });
+
+  let replayCalls = 0;
+  const replayed = await runDraft(
+    ['fake:a', 'fake:b'],
+    { ...BOARD, picks: 2 },
+    {
+      logDir,
+      rng: seededRng(12),
+      makeDraftProvider: () => ({
+        complete(): Promise<Completion> {
+          replayCalls += 1;
+          throw new Error('completed draft must replay without provider calls');
+        },
+      }),
+    },
+  );
+  assert.equal(replayCalls, 0);
+  assert.equal(replayed.notebooks[0], '', 'replay must not resurrect the earlier non-empty notebook');
+});
+
 const TEAMBUILD_ROSTER = [
   'garchomp',
   'incineroar',
@@ -1125,58 +1399,51 @@ function teambuildRequest(overrides: Record<string, unknown> = {}) {
   };
 }
 
-const GOOD_TEAM = JSON.stringify({
-  team_plan: 'Rain beats their sun core, so Pelipper leads with Charizard held back.',
-  sets: [
-    {
-      id: 'garchomp',
-      item: 'Life Orb',
-      ability: 'Rough Skin',
-      nature: 'Jolly',
-      moves: ['Earthquake', 'Dragon Claw', 'Rock Slide', 'Protect'],
-      evs: { hp: 2, atk: 32, def: 0, spa: 0, spd: 0, spe: 32 },
-    },
-    {
-      id: 'incineroar',
-      item: 'Sitrus Berry',
-      ability: 'Intimidate',
-      nature: 'Impish',
-      moves: ['Fake Out', 'Flare Blitz', 'Parting Shot', 'Darkest Lariat'],
-      evs: { hp: 32, atk: 0, def: 20, spa: 0, spd: 14, spe: 0 },
-    },
-    {
-      id: 'sinistcha',
-      item: 'Leftovers',
-      ability: 'Hospitality',
-      nature: 'Bold',
-      moves: ['Matcha Gotcha', 'Rage Powder', 'Life Dew', 'Protect'],
-      evs: { hp: 32, atk: 0, def: 20, spa: 0, spd: 14, spe: 0 },
-    },
-    {
-      id: 'farigiraf',
-      item: 'Colbur Berry',
-      ability: 'Armor Tail',
-      nature: 'Relaxed',
-      moves: ['Psychic', 'Trick Room', 'Helping Hand', 'Protect'],
-      evs: { hp: 32, atk: 0, def: 20, spa: 14, spd: 0, spe: 0 },
-    },
-    {
-      id: 'whimsicott',
-      item: 'Focus Sash',
-      ability: 'Prankster',
-      nature: 'Timid',
-      moves: ['Tailwind', 'Encore', 'Moonblast', 'Protect'],
-      evs: { hp: 2, atk: 0, def: 0, spa: 32, spd: 0, spe: 32 },
-    },
-    {
-      id: 'charizard-mega-y',
-      item: 'Charizardite Y',
-      ability: 'Blaze',
-      nature: 'Modest',
-      moves: ['Heat Wave', 'Solar Beam', 'Weather Ball', 'Protect'],
-      evs: { hp: 20, atk: 0, def: 0, spa: 32, spd: 0, spe: 14 },
-    },
-  ],
+const GOOD_TEAM = legalTeamResponse('Rain beats their sun core, so Pelipper leads with Charizard held back.');
+
+test('malformed set shapes and EV values are compliance rejections before a canonical noted team', async (t) => {
+  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-teambuild-compliance-'));
+  t.after(() => fs.rmSync(logDir, { recursive: true, force: true }));
+  const malformed = JSON.parse(GOOD_TEAM) as { sets: unknown[] };
+  malformed.sets[0] = null;
+  const stringEv = JSON.parse(GOOD_TEAM) as { sets: Array<{ evs: Record<string, unknown> }> };
+  stringEv.sets[0]!.evs.hp = '2';
+  const floatEv = JSON.parse(GOOD_TEAM) as { sets: Array<{ evs: Record<string, unknown> }> };
+  floatEv.sets[0]!.evs.atk = 1.5;
+  const negativeEv = JSON.parse(GOOD_TEAM) as { sets: Array<{ evs: Record<string, unknown> }> };
+  negativeEv.sets[0]!.evs.def = -1;
+  const noted = JSON.parse(GOOD_TEAM) as { sets: Array<Record<string, unknown>> };
+  noted.sets[0]!.note = 'Fast Ground pressure and spread damage.';
+
+  const result = await runTeambuild(teambuildRequest(), {
+    logDir,
+    rng: seededRng(19),
+    makeTeambuildProvider: () =>
+      scriptedProvider([
+        JSON.stringify(malformed),
+        JSON.stringify(stringEv),
+        JSON.stringify(floatEv),
+        JSON.stringify(negativeEv),
+        JSON.stringify(noted),
+      ]),
+  });
+
+  assert.equal(result.view.attempts, 5);
+  assert.equal(result.view.sets[0]!.note, 'Fast Ground pressure and spread damage.');
+  assert.ok(result.view.sets.every((set) => !set.repaired));
+  assert.equal(result.artifact.validation.repaired, false);
+  assert.equal(result.artifact.action?.sets[0]?.note, 'Fast Ground pressure and spread damage.');
+  const attempts = readJsonlObjects(path.join(logDir, 'series-1-e0-fake-model.jsonl'));
+  assert.equal(attempts.length, 5);
+  assert.match(String(attempts[0]!.error), /set 1 must be an object/);
+  for (const attempt of attempts.slice(1, 4)) {
+    assert.match(String(attempt.error), /finite, safe, non-negative integer/);
+  }
+  const stored = readJsonlObjects(path.join(logDir, 'teambuild.jsonl'))[0]!;
+  const artifact = stored.artifact as Record<string, unknown>;
+  const action = artifact.action as Record<string, unknown>;
+  assert.equal(action.packed, result.packed);
+  assert.deepEqual(Object.keys(stored), ['artifact']);
 });
 
 test('a legal teambuild is accepted as written and packs the base forme', async (t) => {
@@ -1200,6 +1467,20 @@ test('a legal teambuild is accepted as written and packs the base forme', async 
 
   const { Teams } = loadShowdown();
   assert.equal((Teams.unpack(packed) ?? []).length, 6);
+});
+
+test('canonical packing delegates punctuation handling to Showdown Teams.pack', async (t) => {
+  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-teambuild-showdown-pack-'));
+  t.after(() => fs.rmSync(logDir, { recursive: true, force: true }));
+  const team = JSON.parse(GOOD_TEAM) as { sets: Array<{ moves: string[] }> };
+  const { packed } = await runTeambuild(teambuildRequest(), {
+    logDir,
+    rng: seededRng(21),
+    makeTeambuildProvider: () => scriptedProvider([JSON.stringify(team)]),
+  });
+
+  assert.match(packed, /LifeOrb/);
+  assert.doesNotMatch(packed, /Life Orb/);
 });
 
 test('an accepted teambuild preserves fewer than four legal moves', async (t) => {
@@ -1230,6 +1511,8 @@ test('the teambuild prompt uses coach identities and never franchise names', asy
       },
     }),
   });
+  assert.match(prompt, /team sheets are open/, 'the prompt states the configured open-sheet policy');
+  assertFormatAuthority(prompt);
   assert.ok(prompt.includes('YOUR ROSTER'), 'the model sees its roster');
   assert.ok(prompt.includes('fake:rival'), 'and which coach it is playing');
   assert.doesNotMatch(prompt, /Test Tauros|Rival Rotoms/);
@@ -1243,6 +1526,28 @@ test('the teambuild prompt uses coach identities and never franchise names', asy
   );
   assert.ok(prompt.includes('cannot hold a Mega Stone'), 'and so is its inverse');
   assert.ok(!/moves:.*\bBounce\b/.test(prompt), 'the movepool must not offer moves the validator rejects');
+});
+
+test('closed-sheet teambuilding states and binds the hidden-information policy', async (t) => {
+  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-teambuild-closed-sheets-'));
+  t.after(() => fs.rmSync(logDir, { recursive: true, force: true }));
+  let system = '';
+  const result = await runTeambuild(teambuildRequest({ sheetPolicy: 'closed' }), {
+    logDir,
+    rng: seededRng(20),
+    makeTeambuildProvider: () => ({
+      complete(prompt): Promise<Completion> {
+        system = prompt;
+        return Promise.resolve({ text: GOOD_TEAM, usage: {}, toolCalls: [] });
+      },
+    }),
+  });
+
+  assert.match(system, /team sheets are closed/);
+  assert.doesNotMatch(system, /team sheets are open/);
+  assert.equal(result.artifact.task.sheetPolicy, 'closed');
+  assert.equal(result.artifact.scaffold, teambuildScaffoldRevision('closed'));
+  assert.notEqual(teambuildScaffoldRevision('closed'), teambuildScaffoldRevision('open'));
 });
 
 test('round-robin teambuilds do not receive other round-robin match context', async (t) => {
@@ -1425,18 +1730,31 @@ test('a full draft league drafts, plays weekly rounds, and crowns a champion', a
   const stored = JSON.parse(fs.readFileSync(path.join(directory, 'rosters.json'), 'utf8')) as Array<
     Record<string, unknown>
   >;
+  assert.deepEqual(
+    stored.map((entry) => entry.entrant),
+    [0, 1, 2, 3],
+  );
   for (const entry of stored) assert.ok((entry.spent as number) <= 100, 'no coach overspends');
   const window = JSON.parse(fs.readFileSync(path.join(directory, 'window.json'), 'utf8')) as {
     after_week: number;
     order: number[];
-    offers: Array<{ to: number | null }>;
+    offers: Array<{ to: number | null; proposerFallback: boolean; responderFallback: boolean | null }>;
     decisions: Array<{ swaps: unknown[] }>;
+    rosters: Array<{ entrant: number }>;
   };
   assert.equal(window.after_week, 3);
   assert.equal(window.decisions.length, 4);
   assert.equal(window.offers.length, 4);
-  assert.ok(window.offers.every((offer) => offer.to === null));
+  assert.ok(
+    window.offers.every(
+      (offer) => offer.to === null && offer.proposerFallback === false && offer.responderFallback === null,
+    ),
+  );
   assert.ok(window.decisions.every((decision) => decision.swaps.length === 0));
+  assert.deepEqual(
+    window.rosters.map((roster) => roster.entrant),
+    [0, 1, 2, 3],
+  );
   assert.equal(window.order.length, 4);
 
   const teambuilds = fs
@@ -1445,7 +1763,13 @@ test('a full draft league drafts, plays weekly rounds, and crowns a champion', a
     .split('\n')
     .map((line) => JSON.parse(line) as Record<string, unknown>);
   assert.equal(teambuilds.length, rows.length * 2, 'both coaches build before every series');
-  for (const build of teambuilds) assert.equal((build.brought as string[]).length, 6);
+  for (const build of teambuilds) {
+    const artifact = build.artifact as Record<string, unknown>;
+    const action = artifact.action as Record<string, unknown>;
+    assert.equal(artifact.status, 'valid');
+    assert.equal((action.selected as string[]).length, 6);
+    assert.deepEqual(Object.keys(build), ['artifact']);
+  }
   const coaching = fs
     .readFileSync(path.join(directory, 'coaching.jsonl'), 'utf8')
     .trim()
@@ -1465,7 +1789,18 @@ test('a full draft league drafts, plays weekly rounds, and crowns a champion', a
   assert.equal(finalDraft.phase, 'done');
   assert.equal(finalDraft.weeks, 3);
   assert.ok(finalDraft.teambuilds.length > 0);
-  assert.equal(loadRows(recordsPath).length, rows.length);
+  assert.equal(loadSeriesRecords(recordsPath).length, rows.length);
+  const resumed = await runDraftLeague(['random', 'random', 'random', 'random'], directory, {
+    recordsPath,
+    seed: 11,
+    concurrency: 2,
+    resume: true,
+  });
+  assert.deepEqual(
+    resumed.map((row) => row.series_id),
+    rows.map((row) => row.series_id),
+    'a completed final is adopted only after both exact constructions and series identity replay',
+  );
 });
 
 test('a draft league checkpoints after a week and resumes to a champion', async (t) => {
@@ -1483,20 +1818,6 @@ test('a draft league checkpoints after a week and resumes to a champion', async 
   assert.ok(first.every((row) => row.stage === 'roundrobin' && row.round === 1));
   assert.ok(!fs.existsSync(path.join(directory, 'window.jsonl')), 'pausing before the barrier does not open it');
 
-  const teambuildLog = path.join(directory, 'teambuild', 'teambuild.jsonl');
-  const storedBuilds = fs
-    .readFileSync(teambuildLog, 'utf8')
-    .trim()
-    .split('\n')
-    .map((line) => JSON.parse(line) as Record<string, unknown>);
-  for (let entrant = 0; entrant < 4; entrant += 1) {
-    const donor = storedBuilds.find((row) => row.entrant === entrant)!;
-    fs.appendFileSync(
-      teambuildLog,
-      `${JSON.stringify({ ...donor, seriesIndex: 2, opponent: (entrant + 1) % 4, rationale: 'prebuilt before the crash' })}\n`,
-    );
-  }
-
   const resumed = await runDraftLeague(models, directory, {
     recordsPath,
     seed: 11,
@@ -1505,22 +1826,470 @@ test('a draft league checkpoints after a week and resumes to a champion', async 
   });
   assert.equal(resumed.length, 6 + 1, 'the resumed league finishes the round robin and the final');
   assert.equal(new Set(resumed.map((row) => row.series_index)).size, 7, 'no series repeats');
-  assert.equal(loadRows(recordsPath).length, 7, 'each series is recorded exactly once');
+  assert.equal(loadSeriesRecords(recordsPath).length, 7, 'each series is recorded exactly once');
   const final = resumed[resumed.length - 1]!;
   assert.equal(final.stage, 'playoff');
   assert.ok(final.advanced, 'the resumed league crowns a champion');
   assert.ok(fs.existsSync(path.join(directory, 'window.json')), 'resume completes the default trade window');
+});
 
-  const buildsAfter = fs
-    .readFileSync(teambuildLog, 'utf8')
+test('the real league window updates the outer roster used by later construction', async (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-window-outer-roster-'));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const recordsPath = path.join(directory, 'results.jsonl');
+  const models = ['random', 'random'];
+  await runDraftLeague(models, directory, {
+    recordsPath,
+    seed: 41,
+    concurrency: 1,
+    throughWeek: 1,
+    tradeWindow: { afterWeek: 1, tradesAllowed: 0 },
+  });
+
+  const config = JSON.parse(fs.readFileSync(path.join(directory, 'config.json'), 'utf8')) as {
+    entrants: string[];
+    team_names: string[];
+    rosters: string[][];
+    draft_notes: string[];
+  };
+  const rosters = config.rosters.map((ids) => ids.map((id) => BOARD.mons.find((candidate) => candidate.id === id)!));
+  const result = loadSeriesRecords(recordsPath)[0]!;
+  const [a, b] = roundRobinWeeks(2)[0]![0]!;
+  const score = result.score as Record<'p1' | 'p2', number>;
+  const table = [
+    {
+      entrant: a,
+      w: result.winner_side === 'p1' ? 1 : 0,
+      l: result.winner_side === 'p2' ? 1 : 0,
+      gw: score.p1,
+      gl: score.p2,
+    },
+    {
+      entrant: b,
+      w: result.winner_side === 'p2' ? 1 : 0,
+      l: result.winner_side === 'p1' ? 1 : 0,
+      gw: score.p2,
+      gl: score.p1,
+    },
+  ].sort(
+    (first, second) =>
+      second.w - first.w ||
+      second.gw - second.gl - (first.gw - first.gl) ||
+      second.gw - first.gw ||
+      first.entrant - second.entrant,
+  );
+  const first = table.at(-1)!.entrant;
+  const state: TradeWindowState = {
+    board: BOARD,
+    models: config.entrants,
+    teamNames: config.team_names,
+    rosters,
+    budgets: rosters.map((roster) => BOARD.budget - roster.reduce((sum, candidate) => sum + candidate.cost, 0)),
+    notebooks: config.draft_notes,
+    standings: table,
+    results: models.map(() => []),
+    reflections: models.map(() => []),
+  };
+  const owned = new Set(rosters.flatMap((roster) => roster.map((candidate) => candidate.id)));
+  let replayed:
+    | {
+        drop: string;
+        add: string;
+        notebook: string;
+        reasoning: string;
+        supplied: { rationale: boolean; notebookUpdate: boolean };
+      }
+    | undefined;
+  for (const drop of rosters[first]!) {
+    for (const add of BOARD.mons) {
+      if (owned.has(add.id)) continue;
+      const parsed = parseTradeDecision(
+        JSON.stringify({ swaps: [{ drop: drop.id, add: add.id }], notebook: 'replayed roster plan' }),
+        state,
+        first,
+      );
+      if (typeof parsed === 'string') continue;
+      replayed = {
+        drop: parsed.swaps[0]!.drop,
+        add: parsed.swaps[0]!.add,
+        notebook: parsed.notebook,
+        reasoning: parsed.reasoning,
+        supplied: parsed.evidence.supplied,
+      };
+      break;
+    }
+    if (replayed) break;
+  }
+  assert.ok(replayed, 'the board must offer one legal post-draft swap');
+  fs.writeFileSync(
+    path.join(directory, 'window.jsonl'),
+    `${canonicalJson({
+      kind: 'free_agency',
+      entrant: first,
+      model: config.entrants[first],
+      swaps: [{ drop: replayed.drop, add: replayed.add }],
+      reasoning: replayed.reasoning,
+      notebook: replayed.notebook,
+      evidenceSupplied: replayed.supplied,
+      fallback: false,
+      timestamp: new Date(0).toISOString(),
+    })}\n`,
+  );
+  await runTradeWindow(state, {
+    runDir: directory,
+    psDir: defaultPsDir(),
+    afterWeek: 1,
+    tradesAllowed: 0,
+  });
+
+  const teambuildLog = path.join(directory, 'teambuild', 'teambuild.jsonl');
+  const donor = structuredClone(
+    readJsonlObjects(teambuildLog).find((row) => {
+      const artifact = row.artifact as { task?: { provenance?: Record<string, unknown> } } | undefined;
+      return artifact?.task?.provenance?.seriesIndex === 0 && artifact.task.provenance.entrant === first;
+    })!,
+  ) as Record<string, unknown>;
+  const donorArtifact = donor.artifact as {
+    task: { objective: { stage: string }; provenance: Record<string, unknown> };
+  };
+  donorArtifact.task.objective.stage = 'playoff';
+  donorArtifact.task.provenance.seriesIndex = 1;
+  donorArtifact.task.provenance.opponent = first === 0 ? 1 : 0;
+  fs.appendFileSync(teambuildLog, `${JSON.stringify(donor)}\n`);
+
+  await runDraftLeague(models, directory, { recordsPath, seed: 41, concurrency: 1, resume: true });
+  const postWindowBuilds = readJsonlObjects(teambuildLog).filter((row) => {
+    const artifact = row.artifact as { task?: { provenance?: Record<string, unknown> } } | undefined;
+    return artifact?.task?.provenance?.seriesIndex === 1 && artifact.task.provenance.entrant === first;
+  });
+  assert.equal(postWindowBuilds.length, 2, 'a stored build bound to the dropped candidate is rebuilt');
+  const playoffBuild = postWindowBuilds.at(-1)!;
+  const artifact = playoffBuild.artifact as { task: { constraint: { candidates: Array<{ id: string }> } } };
+  const candidates = artifact.task.constraint.candidates.map((candidate) => candidate.id);
+  assert.ok(candidates.includes(replayed.add));
+  assert.ok(!candidates.includes(replayed.drop));
+});
+
+test('durable journal and atomic final-artifact faults retry provider-free and commit once', async (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-window-atomic-'));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const state = transactionState();
+  state.models = ['random', 'test:coach'];
+  const initial = structuredClone(state);
+  const before = JSON.stringify(state);
+  const rosterReference = state.rosters;
+  const budgetReference = state.budgets;
+  const notebookReference = state.notebooks;
+  const owned = new Set(state.rosters.flatMap((roster) => roster.map((candidate) => candidate.id)));
+  let swap: { drop: string; add: string } | undefined;
+  for (const drop of state.rosters[1]!) {
+    for (const add of BOARD.mons) {
+      if (owned.has(add.id)) continue;
+      const parsed = parseTradeDecision(JSON.stringify({ swaps: [{ drop: drop.id, add: add.id }] }), state, 1);
+      if (typeof parsed === 'string' || !parsed.swaps[0]) continue;
+      swap = parsed.swaps[0];
+      break;
+    }
+    if (swap) break;
+  }
+  assert.ok(swap, 'fixture needs one legal durable swap');
+
+  const transcript = path.join(directory, 'window.jsonl');
+  const originalAppend = fs.appendFileSync;
+  let completions = 0;
+  let injected = false;
+  fs.appendFileSync = ((file: fs.PathOrFileDescriptor, ...args: unknown[]) => {
+    const result = (originalAppend as (...values: unknown[]) => unknown)(file, ...args);
+    if (!injected && String(file) === transcript) {
+      injected = true;
+      throw new Error('fault after durable append');
+    }
+    return result;
+  }) as typeof fs.appendFileSync;
+  try {
+    await assert.rejects(
+      runTradeWindow(state, {
+        runDir: directory,
+        psDir: defaultPsDir(),
+        afterWeek: 1,
+        tradesAllowed: 0,
+        makeTradeProvider: () => ({
+          complete(): Promise<Completion> {
+            completions += 1;
+            return Promise.resolve({
+              text: JSON.stringify({ swaps: [swap], notebook: 'durable plan' }),
+              usage: {},
+              toolCalls: [],
+            });
+          },
+        }),
+      }),
+      /fault after durable append/,
+    );
+  } finally {
+    fs.appendFileSync = originalAppend;
+  }
+  assert.equal(completions, 1);
+  assert.equal(JSON.stringify(state), before, 'durability failure does not mutate caller state');
+  assert.equal(fs.readFileSync(transcript, 'utf8').split('\n').length, 2, 'the first row reached durable storage');
+
+  const artifactFile = path.join(directory, 'window.json');
+  const originalRename = fs.renameSync;
+  fs.renameSync = ((source: fs.PathLike, destination: fs.PathLike) => {
+    const renamed = originalRename(source, destination);
+    if (String(destination) === artifactFile) throw new Error('fault after physical artifact rename');
+    return renamed;
+  }) as typeof fs.renameSync;
+  try {
+    await assert.rejects(
+      runTradeWindow(state, {
+        runDir: directory,
+        psDir: defaultPsDir(),
+        afterWeek: 1,
+        tradesAllowed: 0,
+        makeTradeProvider: () => ({
+          complete(): Promise<Completion> {
+            completions += 1;
+            throw new Error('durable decisions must not call providers');
+          },
+        }),
+      }),
+      /fault after physical artifact rename/,
+    );
+  } finally {
+    fs.renameSync = originalRename;
+  }
+  const journal = fs.readFileSync(transcript, 'utf8');
+  assert.equal(journal.split('\n').length, 3);
+  assert.ok(journal.endsWith('\n'));
+  assert.ok(fs.existsSync(artifactFile), 'the physical artifact survived the interrupted caller');
+  assert.equal(JSON.stringify(state), before, 'finalization failure remains caller-atomic');
+  assert.equal(completions, 1, 'the durable prefix was replayed');
+
+  const artifact = await runTradeWindow(state, {
+    runDir: directory,
+    psDir: defaultPsDir(),
+    afterWeek: 1,
+    tradesAllowed: 0,
+    makeTradeProvider: () => ({
+      complete(): Promise<Completion> {
+        completions += 1;
+        throw new Error('complete durable journal must not call providers');
+      },
+    }),
+  });
+  assert.equal(completions, 1);
+  assert.equal(fs.readFileSync(transcript, 'utf8'), journal, 'retry does not append committed decisions twice');
+  assert.strictEqual(state.rosters, rosterReference);
+  assert.strictEqual(state.budgets, budgetReference);
+  assert.strictEqual(state.notebooks, notebookReference);
+  assert.equal(state.rosters[1]!.filter((candidate) => candidate.id === swap.add).length, 1);
+  assert.ok(!state.rosters[1]!.some((candidate) => candidate.id === swap.drop));
+  assert.deepEqual(state.notebooks, ['', 'durable plan']);
+  assert.deepEqual(readValidatedTradeWindow(directory, initial, { afterWeek: 1, tradesAllowed: 0 }), artifact);
+});
+
+test('committed overlays fail closed when tampered or missing past the transaction barrier', async (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-window-barrier-'));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const recordsPath = path.join(directory, 'results.jsonl');
+  await runDraftLeague(['random', 'random'], directory, { recordsPath, seed: 73, concurrency: 1 });
+  const artifactFile = path.join(directory, 'window.json');
+  const original = fs.readFileSync(artifactFile, 'utf8');
+  const artifact = JSON.parse(original) as { rosters: Array<{ spent: number }> };
+  artifact.rosters[0]!.spent += 1;
+  fs.writeFileSync(artifactFile, `${JSON.stringify(artifact)}\n`);
+  await assert.rejects(
+    runDraftLeague(['random', 'random'], directory, { recordsPath, seed: 73, concurrency: 1, resume: true }),
+    /authoritative ordered replay/,
+  );
+
+  fs.writeFileSync(artifactFile, original);
+  fs.rmSync(artifactFile);
+  await assert.rejects(
+    runDraftLeague(['random', 'random'], directory, { recordsPath, seed: 73, concurrency: 1, resume: true }),
+    /evidence past its transaction barrier but lacks authoritative window artifacts/,
+  );
+  assert.ok(!fs.existsSync(artifactFile), 'resume does not regenerate a missing committed overlay');
+});
+
+test('transaction replay enforces one current schema, privacy shape, and phase order', async (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-window-schema-'));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  await runTradeWindow(transactionState(), {
+    runDir: directory,
+    psDir: defaultPsDir(),
+    afterWeek: 1,
+    tradesAllowed: 1,
+  });
+  const transcript = path.join(directory, 'window.jsonl');
+  const artifactFile = path.join(directory, 'window.json');
+  const journal = fs.readFileSync(transcript, 'utf8');
+  const artifact = fs.readFileSync(artifactFile, 'utf8');
+  const lines = journal.slice(0, -1).split('\n');
+  const scenarios: Array<{ name: string; write: () => void; error: RegExp }> = [
+    {
+      name: 'blank physical line',
+      write: () => fs.writeFileSync(transcript, `\n${journal}`),
+      error: /line 1 must be a nonblank JSON object/,
+    },
+    {
+      name: 'missing terminal newline',
+      write: () => fs.writeFileSync(transcript, journal.slice(0, -1)),
+      error: /must be nonblank and end with a newline/,
+    },
+    {
+      name: 'noncanonical duplicate key',
+      write: () =>
+        fs.writeFileSync(
+          transcript,
+          `${lines[0]!.replace('"kind":"offer"', '"kind":"ignored","kind":"offer"')}\n${lines.slice(1).join('\n')}\n`,
+        ),
+      error: /line 1 is not canonical JSON/,
+    },
+    {
+      name: 'no-offer private responder field',
+      write: () => {
+        const rows = lines.map((line) => JSON.parse(line) as Record<string, unknown>);
+        rows[0]!.responseNotebook = 'not applicable';
+        fs.writeFileSync(transcript, `${rows.map(canonicalJson).join('\n')}\n`);
+      },
+      error: /offer row must have exactly the current schema keys/,
+    },
+    {
+      name: 'interleaved phase',
+      write: () => fs.writeFileSync(transcript, `${[lines[0], lines[2], lines[1], lines[3]].join('\n')}\n`),
+      error: /interleaves an offer after free agency began/,
+    },
+    {
+      name: 'incomplete committed log',
+      write: () => fs.writeFileSync(transcript, `${lines.slice(0, -1).join('\n')}\n`),
+      error: /ordered log is incomplete/,
+    },
+    {
+      name: 'missing current artifact field',
+      write: () => {
+        const parsed = JSON.parse(artifact) as Record<string, unknown>;
+        delete parsed.offers;
+        fs.writeFileSync(artifactFile, `${JSON.stringify(parsed)}\n`);
+      },
+      error: /is not a complete transaction artifact/,
+    },
+  ];
+  for (const scenario of scenarios) {
+    fs.writeFileSync(transcript, journal);
+    fs.writeFileSync(artifactFile, artifact);
+    scenario.write();
+    assert.throws(
+      () => readValidatedTradeWindow(directory, transactionState(), { afterWeek: 1, tradesAllowed: 1 }),
+      scenario.error,
+      scenario.name,
+    );
+  }
+});
+
+test('season resume requires canonical stored series evidence before standings and bracket adoption', async (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-season-fold-'));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const recordsPath = path.join(directory, 'results.jsonl');
+  await runDraftLeague(['random', 'random'], directory, { recordsPath, seed: 29, concurrency: 1 });
+  const original = fs
+    .readFileSync(recordsPath, 'utf8')
     .trim()
     .split('\n')
     .map((line) => JSON.parse(line) as Record<string, unknown>);
-  assert.equal(
-    buildsAfter.filter((row) => row.seriesIndex === 2).length,
-    4,
-    'series with stored teambuilds reuse them instead of rebuilding',
+  const roundRobin = original.findIndex((row) => row.stage === 'roundrobin');
+  const playoff = original.findIndex((row) => row.stage === 'playoff');
+  assert.ok(roundRobin >= 0 && playoff >= 0);
+
+  const inventedTiebreak = structuredClone(original);
+  const playoffRow = inventedTiebreak[playoff]!;
+  const playoffIndex = Number(playoffRow.series_index);
+  const regulationSeeds = seriesEntropy(seededRng(`29:series:${playoffIndex}`)).gameSeeds;
+  const tiedRegulation = regulationSeeds.map((gameSeed, index) => ({
+    number: index + 1,
+    winner: null,
+    winner_side: null,
+    turns: 1,
+    seed: gameSeed,
+  }));
+  const tiebreakSeed = foldSeriesGames(regulationSeeds, tiedRegulation, { requireWinner: true }).nextSeed!;
+  const winnerSide = playoffRow.winner_side as 'p1' | 'p2';
+  const players = playoffRow.players as Record<'p1' | 'p2', string>;
+  playoffRow.games = [
+    ...tiedRegulation,
+    { number: 4, winner: players[winnerSide], winner_side: winnerSide, turns: 1, seed: tiebreakSeed },
+  ];
+  playoffRow.score = winnerSide === 'p1' ? { p1: 1, p2: 0 } : { p1: 0, p2: 1 };
+  playoffRow.winner = players[winnerSide];
+  playoffRow.turns = 4;
+  fs.writeFileSync(recordsPath, `${inventedTiebreak.map((row) => JSON.stringify(row)).join('\n')}\n`);
+  await assert.rejects(
+    runDraftLeague(['random', 'random'], directory, {
+      recordsPath,
+      seed: 29,
+      concurrency: 1,
+      resume: true,
+    }),
+    /canonical completed series evidence/,
+    'a fourth playoff game invented only in results.jsonl is not stored series evidence',
   );
+
+  const scenarios: Array<{ name: string; mutate: (rows: Array<Record<string, unknown>>) => void; error: RegExp }> = [
+    {
+      name: 'Bo3 cardinality',
+      mutate: (rows) => {
+        rows[roundRobin]!.games = [];
+      },
+      error: /canonical completed series evidence/,
+    },
+    {
+      name: 'players',
+      mutate: (rows) => {
+        rows[playoff]!.players = { p1: 'forged', p2: 'random' };
+      },
+      error: /canonical completed series evidence/,
+    },
+    {
+      name: 'seed',
+      mutate: (rows) => {
+        const games = rows[roundRobin]!.games as Array<Record<string, unknown>>;
+        games[0]!.seed = [1, 1, 1, 1];
+      },
+      error: /canonical completed series evidence/,
+    },
+    {
+      name: 'folded score',
+      mutate: (rows) => {
+        rows[roundRobin]!.score = { p1: 9, p2: 0 };
+      },
+      error: /canonical completed series evidence/,
+    },
+    {
+      name: 'pre-window prefix',
+      mutate: (rows) => {
+        const later = rows[playoff]!;
+        const prefix = rows[roundRobin]!;
+        rows.splice(0, rows.length, later, prefix);
+      },
+      error: /crosses the transaction barrier before the exact pre-window result prefix/,
+    },
+  ];
+  for (const scenario of scenarios) {
+    const rows = structuredClone(original);
+    scenario.mutate(rows);
+    fs.writeFileSync(recordsPath, `${rows.map((row) => JSON.stringify(row)).join('\n')}\n`);
+    await assert.rejects(
+      runDraftLeague(['random', 'random'], directory, {
+        recordsPath,
+        seed: 29,
+        concurrency: 1,
+        resume: true,
+      }),
+      scenario.error,
+      scenario.name,
+    );
+  }
 });
 
 test('a two-coach league plays one week and a single final', async (t) => {
@@ -1546,6 +2315,13 @@ test('a two-coach league plays one week and a single final', async (t) => {
     'short leagues clamp the default to their final week',
   );
   for (const row of rows) assert.equal(row.closed_sheets, true, 'series records carry the sheet rule');
+  const builds = readJsonlObjects(path.join(directory, 'teambuild', 'teambuild.jsonl'));
+  for (const build of builds) {
+    const artifact = build.artifact as Record<string, unknown>;
+    const task = artifact.task as Record<string, unknown>;
+    assert.equal(task.sheetPolicy, 'closed');
+    assert.equal(artifact.scaffold, teambuildScaffoldRevision('closed'));
+  }
   const gameLog = fs.readFileSync(path.join(directory, 'series', String(rows[0]!.series_id), 'game-1.log'), 'utf8');
   assert.ok(!gameLog.includes('|showteam|'), 'closed-sheet games publish no team sheets');
 });
@@ -1591,6 +2367,32 @@ test('a draft-only league stops at the rosters and resumes into a full season', 
   assert.ok(fs.existsSync(path.join(directory, 'window.json')), 'the chosen window opens');
   assert.equal(played[0]!.stage, 'roundrobin');
   assert.equal(played[1]!.stage, 'playoff');
+
+  const contaminated = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-draft-only-evidence-'));
+  t.after(() => fs.rmSync(contaminated, { recursive: true, force: true }));
+  const contaminatedRecords = path.join(contaminated, 'results.jsonl');
+  await runDraftLeague(['random', 'random'], contaminated, {
+    recordsPath: contaminatedRecords,
+    seed: 5,
+    draftOnly: true,
+  });
+  fs.writeFileSync(contaminatedRecords, `${JSON.stringify({ ...played[0], run_id: path.basename(contaminated) })}\n`);
+  for (const relative of ['teambuild/teambuild.jsonl', 'coaching.jsonl', 'season.jsonl']) {
+    fs.mkdirSync(path.dirname(path.join(contaminated, relative)), { recursive: true });
+    fs.writeFileSync(path.join(contaminated, relative), '{}\n');
+  }
+  fs.mkdirSync(path.join(contaminated, 'series', 'stale'), { recursive: true });
+  await assert.rejects(
+    runDraftLeague(['random', 'random'], contaminated, {
+      recordsPath: contaminatedRecords,
+      seed: 5,
+      resume: true,
+    }),
+    (error: Error) =>
+      ['stored results', 'teambuild/teambuild.jsonl', 'coaching.jsonl', 'season.jsonl', 'series/'].every((value) =>
+        error.message.includes(value),
+      ),
+  );
 });
 
 test('the board is published price-descending the way a draft league publishes one', () => {
@@ -1666,34 +2468,44 @@ test('season reviews are written once per coach and replayed on resume', async (
     did_poorly: 'The mega slot was idle.',
     would_change: 'Buy the backup mega.',
   });
+  const reviewOptions = {
+    runDir: directory,
+    psDir: defaultPsDir(),
+    makeReviewProvider: (spec: string) => ({
+      complete(system: string, messages: ProviderMessage[]): Promise<Completion> {
+        prompts.set(spec, `${system}\n${messages[0]?.content ?? ''}`);
+        return Promise.resolve({ text: reply, usage: {}, toolCalls: [] });
+      },
+    }),
+  };
+  const initial = await runSeasonReview([{ entrant: 1, outcome: 'You missed the playoffs.' }], state, reviewOptions);
+  assert.deepEqual(
+    initial.map((review) => review.entrant),
+    [1],
+  );
+  fs.appendFileSync(path.join(directory, 'season.jsonl'), '{"entrant":');
   const reviews = await runSeasonReview(
     [
       { entrant: 1, outcome: 'You missed the playoffs.' },
       { entrant: 0, outcome: 'You won the final.' },
     ],
     state,
-    {
-      runDir: directory,
-      psDir: defaultPsDir(),
-      makeReviewProvider: (spec) => ({
-        complete(system: string, messages: ProviderMessage[]): Promise<Completion> {
-          prompts.set(spec, `${system}\n${messages[0]?.content ?? ''}`);
-          return Promise.resolve({ text: reply, usage: {}, toolCalls: [] });
-        },
-      }),
-    },
+    reviewOptions,
   );
+
   assert.deepEqual(
     reviews.map((review) => review.entrant),
     [1, 0],
   );
   assert.ok(reviews.every((review) => !review.fallback));
   assert.match(prompts.get(models[0]!) ?? '', /Traded up\./);
+  assertFormatAuthority(prompts.get(models[0]!) ?? '');
+  assertFormatAuthority(prompts.get(models[1]!) ?? '');
   assert.match(prompts.get(models[1]!) ?? '', /You are test:eliminated, a coach/);
-  assert.doesNotMatch(prompts.get(models[1]!) ?? '', /Champion|Eliminated/);
+  assert.doesNotMatch(prompts.get(models[1]!) ?? '', /\b(?:Champion|Eliminated)\b/);
   assert.match(prompts.get(models[1]!) ?? '', /You made no swaps/);
   assert.match(prompts.get(models[1]!) ?? '', /Sand anchor\./);
-  assert.equal(loadRows(path.join(directory, 'season.jsonl')).length, 2);
+  assert.equal(readJsonlObjects(path.join(directory, 'season.jsonl')).length, 2);
 
   const replayed = await runSeasonReview([{ entrant: 0, outcome: 'You won the final.' }], state, {
     runDir: directory,
@@ -1706,7 +2518,6 @@ test('season reviews are written once per coach and replayed on resume', async (
   });
   const byEntrant = (rows: typeof reviews) => [...rows].sort((a, b) => a.entrant - b.entrant);
   assert.deepEqual(byEntrant(replayed), byEntrant(reviews));
-  assert.equal(readSeasonReviews(directory).length, 2);
 
   const started: number[] = [];
   let releaseFirst: (() => void) | undefined;

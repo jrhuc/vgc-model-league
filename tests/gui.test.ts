@@ -135,22 +135,14 @@ test('gui serves the built app shell and setup state', async () => {
     assert.equal(status, 200);
     const pools = data.pools as Array<{ name: string; teamCount: number }>;
     assert.ok(pools.some((pool) => pool.name === 'test' && pool.teamCount >= 2));
-    assert.equal((data.reasoningLevels as string[]).length, 7);
+    assert.equal('reasoningLevels' in data, false);
     const providers = data.providers as Array<Record<string, unknown>>;
-    assert.ok(providers.some((provider) => provider.id === 'openrouter'));
-    assert.ok(
-      providers.every((provider) => provider.id !== 'anthropic'),
-      'direct Anthropic seats must never be offered by the GUI',
+    assert.deepEqual(
+      providers.map((provider) => provider.id),
+      ['openrouter', 'prime', 'random'],
     );
     assert.ok(providers.every((provider) => !('envKey' in provider) && !('keyPresent' in provider)));
-    const meta = providers.find((provider) => provider.id === 'meta');
-    assert.deepEqual(meta?.models, [
-      {
-        id: 'muse-spark-1.1',
-        label: 'Muse Spark 1.1',
-        reasoningLevels: ['off', 'minimal', 'low', 'medium', 'high', 'xhigh'],
-      },
-    ]);
+    assert.ok(providers.every((provider) => !('models' in provider)));
     const formats = data.formats as Array<{ id: string; label: string }>;
     assert.ok(formats.some((format) => format.id === FORMAT));
     assert.ok(formats.every((format) => format.id.startsWith('gen9champions') && format.id.endsWith('bo3')));
@@ -160,13 +152,14 @@ test('gui serves the built app shell and setup state', async () => {
     assert.equal((await fetch(`${base}readyz`)).status, 200);
     const missing = await fetch(`${base}api/nothing`);
     assert.equal(missing.status, 404);
-    const serverKeyCatalog = await fetch(`${base}api/models?provider=openai`);
-    assert.equal(serverKeyCatalog.status, 404);
-    const browserKeyRequired = await apiJson(`${base}api/models`, { provider: 'openai', apiKey: '' });
-    assert.equal(browserKeyRequired.status, 400);
-    const disabledProvider = await apiJson(`${base}api/models`, { provider: 'anthropic', apiKey: 'browser-key' });
-    assert.equal(disabledProvider.status, 400);
-    assert.match(String(disabledProvider.data.error), /openrouter:anthropic/);
+    const catalogGet = await fetch(`${base}api/models?provider=openrouter`);
+    assert.equal(catalogGet.status, 404);
+    const manualPrime = await apiJson(`${base}api/models`, { provider: 'prime', apiKey: 'browser-key' });
+    assert.equal(manualPrime.status, 400);
+    assert.match(String(manualPrime.data.error), /manual model IDs/);
+    const removedProvider = await apiJson(`${base}api/models`, { provider: 'anthropic', apiKey: 'browser-key' });
+    assert.equal(removedProvider.status, 400);
+    assert.match(String(removedProvider.data.error), /unknown provider/);
   } finally {
     gui.close();
   }
@@ -255,7 +248,10 @@ test('hosted mode enforces its canonical origin and defaults to read-only', asyn
     assert.match(String(state.headers['content-security-policy']), /frame-ancestors 'none'/);
     assert.match(String(state.headers['strict-transport-security']), /max-age=31536000/);
     const providers = state.data.providers as Array<{ id: string }>;
-    assert.ok(!providers.some((provider) => provider.id === 'compat'));
+    assert.deepEqual(
+      providers.map((provider) => provider.id),
+      ['openrouter', 'prime', 'random'],
+    );
     assert.deepEqual(state.data.auth, { mode: 'read-only', user: null, csrfToken: null });
     assert.equal(await rawRequest(port, { path: '/api/state', headers: { host: 'evil.example' } }), 403);
     assert.equal(
@@ -286,9 +282,10 @@ test('gui validates teambuilder pastes and creates immutable pools', async () =>
   const base = await gui.listen(0);
   try {
     const pasteA = pasteFromPool('jpnats-mega-swampert.team');
+    const pasteAWithTera = pasteA.replace(/\nAbility:/g, '\nTera Type: Fire\nAbility:');
     const pasteB = pasteFromPool('wolfe-mega-raichu-y.team');
 
-    const legal = await apiJson(`${base}api/team/validate`, { paste: pasteA, format: FORMAT });
+    const legal = await apiJson(`${base}api/team/validate`, { paste: pasteAWithTera, format: FORMAT });
     assert.equal(legal.status, 200);
     assert.deepEqual(legal.data.problems, []);
     assert.equal((legal.data.species as string[]).length, 6);
@@ -297,7 +294,6 @@ test('gui validates teambuilder pastes and creates immutable pools', async () =>
       item: string;
       ability: string;
       moves: string[];
-      teraType: string;
     }>;
     assert.equal(members.length, 6);
     assert.deepEqual(
@@ -309,7 +305,7 @@ test('gui validates teambuilder pastes and creates immutable pools', async () =>
       assert.ok(member.item);
       assert.ok(member.ability);
       assert.ok(member.moves.length);
-      assert.equal(typeof member.teraType, 'string');
+      assert.equal('teraType' in member, false);
     }
 
     const illegal = await apiJson(`${base}api/team/validate`, {
@@ -327,7 +323,7 @@ test('gui validates teambuilder pastes and creates immutable pools', async () =>
       name: 'gui-pool',
       format: FORMAT,
       teams: [
-        { id: 'team-a', paste: pasteA },
+        { id: 'team-a', paste: pasteAWithTera },
         { id: 'team-b', paste: pasteB },
       ],
     });
@@ -345,6 +341,12 @@ test('gui validates teambuilder pastes and creates immutable pools', async () =>
     const pool = loadPool('gui-pool', teamsDir);
     assert.equal(pool.format, FORMAT);
     assert.equal(pool.teams.length, 2);
+    const servedPool = await apiJson(`${base}api/pool/teams?name=gui-pool`);
+    assert.equal(servedPool.status, 200);
+    assert.doesNotMatch(JSON.stringify(servedPool.data), /Tera Type|teraType/i);
+    const state = await apiJson(`${base}api/state`);
+    assert.equal(state.status, 200);
+    assert.doesNotMatch(JSON.stringify(state.data.sampleTeams), /Tera Type|teraType/i);
 
     const duplicateName = await apiJson(`${base}api/pool`, {
       name: 'gui-pool',
@@ -384,9 +386,44 @@ test('gui validates teambuilder pastes and creates immutable pools', async () =>
   }
 });
 
+test('gui exposes OpenRouter reasoning controls only from catalog capability data', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input, init) => {
+    if (String(input) === 'https://openrouter.ai/api/v1/models') {
+      return new Response(
+        JSON.stringify({
+          data: [
+            { id: 'vendor/reasoning', supported_parameters: ['reasoning'] },
+            { id: 'vendor/default-only', supported_parameters: ['tools'] },
+          ],
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    }
+    return originalFetch(input, init);
+  }) as typeof globalThis.fetch;
+  const gui = new GuiServer({ runsDir: RUNS_SCRATCH });
+  const base = await gui.listen(0);
+  try {
+    const response = await apiJson(`${base}api/models`, { provider: 'openrouter', apiKey: 'browser-key' });
+    assert.equal(response.status, 200, JSON.stringify(response.data));
+    assert.deepEqual(response.data.models, [
+      { id: 'vendor/default-only', label: 'vendor/default-only', reasoningLevels: [] },
+      {
+        id: 'vendor/reasoning',
+        label: 'vendor/reasoning',
+        reasoningLevels: ['minimal', 'low', 'medium', 'high', 'xhigh'],
+      },
+    ]);
+  } finally {
+    gui.close();
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('gui requires browser credentials and never exposes server keys', async () => {
-  const previous = process.env.OPENAI_API_KEY;
-  process.env.OPENAI_API_KEY = 'server-secret-must-not-be-used';
+  const previous = process.env.PRIME_API_KEY;
+  process.env.PRIME_API_KEY = 'server-secret-must-not-be-used';
   let receivedKeys: Record<string, string> | undefined;
   const gui = new GuiServer({
     runsDir: RUNS_SCRATCH,
@@ -397,16 +434,16 @@ test('gui requires browser credentials and never exposes server keys', async () 
   });
   const base = await gui.listen(0);
   try {
-    const disabled = await apiJson(`${base}api/run`, {
+    const removed = await apiJson(`${base}api/run`, {
       models: ['anthropic:test-model', 'random'],
       pool: 'test',
       apiKeys: { 'anthropic:test-model': 'browser-run-secret' },
     });
-    assert.equal(disabled.status, 400);
-    assert.match(String(disabled.data.error), /openrouter:anthropic/);
+    assert.equal(removed.status, 400);
+    assert.match(String(removed.data.error), /openrouter:<model-id>, prime:<model-id>, or random/);
 
     const missing = await apiJson(`${base}api/run`, {
-      models: ['openai:test-model', 'random'],
+      models: ['prime:test-model', 'random'],
       pool: 'test',
     });
     assert.equal(missing.status, 400);
@@ -414,22 +451,69 @@ test('gui requires browser credentials and never exposes server keys', async () 
     assert.doesNotMatch(JSON.stringify(missing.data), /server-secret/);
 
     const started = await apiJson(`${base}api/run`, {
-      models: ['openai:test-model', 'random'],
+      models: ['prime:test-model', 'random'],
       pool: 'test',
-      apiKeys: { 'openai:test-model': 'browser-run-secret' },
+      apiKeys: { 'prime:test-model': 'browser-run-secret' },
     });
     assert.equal(started.status, 200, JSON.stringify(started.data));
-    assert.deepEqual(receivedKeys, { 'openai:test-model': 'browser-run-secret' });
+    assert.deepEqual(receivedKeys, { 'prime:test-model': 'browser-run-secret' });
     const state = await apiJson(`${base}api/state`);
     assert.doesNotMatch(JSON.stringify(state.data), /browser-run-secret|server-secret/);
   } finally {
     gui.close();
-    if (previous === undefined) delete process.env.ANTHROPIC_API_KEY;
-    else process.env.ANTHROPIC_API_KEY = previous;
+    if (previous === undefined) delete process.env.PRIME_API_KEY;
+    else process.env.PRIME_API_KEY = previous;
   }
 });
 
-test('gui validates shared and per-model reasoning before launching', async () => {
+test('gui Nitro launch maps raw model credentials and reasoning to the effective spec', async () => {
+  let receivedModels: readonly string[] | undefined;
+  let receivedKeys: Readonly<Record<string, string>> | undefined;
+  let receivedReasoning: Readonly<Record<string, string>> | undefined;
+  const gui = new GuiServer({
+    runsDir: RUNS_SCRATCH,
+    runner: async (models, _seriesPerPair, _runDir, options = {}) => {
+      receivedModels = [...models];
+      receivedKeys = { ...options.apiKeys };
+      receivedReasoning = options.reasoningByModel ? { ...options.reasoningByModel } : undefined;
+      return [];
+    },
+  });
+  const base = await gui.listen(0);
+  const raw = 'openrouter:vendor/test-model';
+  const effective = `${raw}:nitro`;
+  try {
+    const started = await apiJson(`${base}api/run`, {
+      models: [raw, 'random'],
+      apiKeys: { [raw]: 'browser-nitro-key' },
+      reasoningByModel: { [raw]: 'high' },
+      nitro: true,
+      pool: 'test',
+    });
+    assert.equal(started.status, 200, JSON.stringify(started.data));
+    assert.deepEqual(receivedModels, [effective, 'random']);
+    assert.deepEqual(receivedKeys, { [effective]: 'browser-nitro-key' });
+    assert.deepEqual(receivedReasoning, { [effective]: 'high' });
+  } finally {
+    gui.close();
+  }
+});
+
+test('local GUI rejects removed CLI and direct provider specs', async () => {
+  const gui = new GuiServer({ runsDir: RUNS_SCRATCH });
+  const base = await gui.listen(0);
+  try {
+    for (const model of ['omp:provider/model', 'claude-cli:model', 'openai:model', 'compat:https://host/v1:model']) {
+      const rejected = await apiJson(`${base}api/run`, { models: [model, 'random'], pool: 'test' });
+      assert.equal(rejected.status, 400);
+      assert.match(String(rejected.data.error), /openrouter:<model-id>, prime:<model-id>, or random/);
+    }
+  } finally {
+    gui.close();
+  }
+});
+
+test('gui accepts only explicit OpenRouter reasoning levels', async () => {
   let received: Record<string, string> | undefined;
   const gui = new GuiServer({
     runsDir: RUNS_SCRATCH,
@@ -439,36 +523,35 @@ test('gui validates shared and per-model reasoning before launching', async () =
     },
   });
   const base = await gui.listen(0);
-  const models = ['deepseek:deepseek-chat', 'meta:muse-spark-1.1'];
+  const models = ['openrouter:vendor/model-a', 'openrouter:vendor/model-b'];
   const apiKeys = Object.fromEntries(models.map((model) => [model, 'browser-key']));
   try {
-    const capabilities = await apiJson(`${base}api/reasoning?spec=${encodeURIComponent('anthropic:claude-opus-4-10')}`);
-    assert.deepEqual(capabilities.data.levels, ['low', 'medium', 'high', 'xhigh', 'max']);
+    assert.equal((await fetch(`${base}api/reasoning?spec=openrouter%3Avendor%2Fmodel-a`)).status, 404);
 
-    const unsupportedShared = await apiJson(`${base}api/run`, {
+    const removedOff = await apiJson(`${base}api/run`, {
       models,
       apiKeys,
       pool: 'test',
-      reasoning: 'minimal',
+      reasoning: 'off',
     });
-    assert.equal(unsupportedShared.status, 400);
-    assert.match(String(unsupportedShared.data.error), /does not support reasoning=minimal/);
+    assert.equal(removedOff.status, 400);
+    assert.match(String(removedOff.data.error), /reasoning must be one of/);
 
-    const unsupportedIndividual = await apiJson(`${base}api/run`, {
-      models,
-      apiKeys,
+    const primeUnknown = await apiJson(`${base}api/run`, {
+      models: ['prime:model-a', 'random'],
+      apiKeys: { 'prime:model-a': 'browser-key' },
       pool: 'test',
-      reasoningByModel: { 'meta:muse-spark-1.1': 'max' },
+      reasoning: 'low',
     });
-    assert.equal(unsupportedIndividual.status, 400);
-    assert.match(String(unsupportedIndividual.data.error), /does not support reasoning=max/);
+    assert.equal(primeUnknown.status, 400);
+    assert.match(String(primeUnknown.data.error), /no advertised configurable reasoning/);
 
     const ambiguous = await apiJson(`${base}api/run`, {
       models,
       apiKeys,
       pool: 'test',
       reasoning: 'low',
-      reasoningByModel: { 'meta:muse-spark-1.1': 'minimal' },
+      reasoningByModel: { 'openrouter:vendor/model-b': 'minimal' },
     });
     assert.equal(ambiguous.status, 400);
     assert.match(String(ambiguous.data.error), /either shared reasoning or per-model reasoning/);
@@ -478,14 +561,14 @@ test('gui validates shared and per-model reasoning before launching', async () =
       apiKeys,
       pool: 'test',
       reasoningByModel: {
-        'deepseek:deepseek-chat': 'max',
-        'meta:muse-spark-1.1': 'minimal',
+        'openrouter:vendor/model-a': 'high',
+        'openrouter:vendor/model-b': 'minimal',
       },
     });
     assert.equal(started.status, 200, JSON.stringify(started.data));
     assert.deepEqual(received, {
-      'deepseek:deepseek-chat': 'max',
-      'meta:muse-spark-1.1': 'minimal',
+      'openrouter:vendor/model-a': 'high',
+      'openrouter:vendor/model-b': 'minimal',
     });
   } finally {
     gui.close();
@@ -529,7 +612,7 @@ test('hosted runs accept untimed just like local runs', async () => {
   const gui = new GuiServer({
     runsDir: RUNS_SCRATCH,
     host: '127.0.0.1',
-    publicOrigin: 'http://league.example',
+    publicOrigin: 'https://league.example',
     mutationsEnabled: true,
     runner: async (_models, _seriesPerPair, _runDir, options = {}) => {
       received = options.timerScale;
@@ -540,8 +623,18 @@ test('hosted runs accept untimed just like local runs', async () => {
   const address = gui.server.address();
   assert.ok(address && typeof address === 'object');
   const port = address.port;
-  const headers = { host: 'league.example', origin: 'http://league.example', 'content-type': 'application/json' };
+  const headers = { host: 'league.example', origin: 'https://league.example', 'content-type': 'application/json' };
   try {
+    for (const provider of ['omp', 'claude-cli', 'openai', 'compat']) {
+      const rejected = await rawJsonRequest(port, {
+        method: 'POST',
+        path: '/api/run',
+        headers,
+        body: JSON.stringify({ models: [`${provider}:model`, 'random'], pool: 'test' }),
+      });
+      assert.equal(rejected.status, 400);
+      assert.match(String(rejected.data.error), /openrouter:<model-id>, prime:<model-id>, or random/);
+    }
     const untimed = await rawJsonRequest(port, {
       method: 'POST',
       path: '/api/run',
@@ -612,8 +705,8 @@ test('recoverable provider failures pause and resume the same run', async () => 
         seed: 11,
       });
       const waiting = options.recovery!.pause(
-        'google:gemini-test',
-        { kind: 'quota', summary: 'Google API quota is exhausted.' },
+        'prime:test-model',
+        { kind: 'quota', summary: 'Prime Inference API quota is exhausted.' },
         options.signal,
       );
       paused.resolve();
@@ -631,9 +724,9 @@ test('recoverable provider failures pause and resume the same run', async () => 
     let run = (await apiJson(`${base}api/state`)).data.run as Record<string, unknown>;
     assert.equal(run.state, 'paused');
     const pause = run.pause as Record<string, unknown>;
-    assert.equal(pause.model, 'google:gemini-test');
+    assert.equal(pause.model, 'prime:test-model');
     assert.equal(pause.kind, 'quota');
-    assert.equal(pause.message, 'Google API quota is exhausted.');
+    assert.equal(pause.message, 'Prime Inference API quota is exhausted.');
     assert.equal(typeof pause.since, 'number');
 
     const rejected = await apiJson(`${base}api/run`, { models: ['random', 'random'], pool: 'test' });
@@ -799,7 +892,7 @@ test('hosted runs execute in a child process and return events to the server', a
   const gui = new GuiServer({
     runsDir: RUNS_SCRATCH,
     host: '127.0.0.1',
-    publicOrigin: 'http://league.example',
+    publicOrigin: 'https://league.example',
     mutationsEnabled: true,
     recordsPath: path.join(scratch, 'results.jsonl'),
     logger: (entry) => {
@@ -816,7 +909,7 @@ test('hosted runs execute in a child process and return events to the server', a
       path: '/api/run',
       headers: {
         host: 'league.example',
-        origin: 'http://league.example',
+        origin: 'https://league.example',
         'content-type': 'application/json',
       },
       body: '{"models":["random","random"],"pool":"test","seriesPerPair":1,"concurrency":1,"seed":1}',
@@ -828,7 +921,6 @@ test('hosted runs execute in a child process and return events to the server', a
     const run = state.data.run as Record<string, unknown>;
     assert.equal(run.state, 'done', String(run.error ?? ''));
     assert.equal((run.rows as unknown[]).length, 1);
-    assert.equal(await rawRequest(port, { path: '/healthz' }), 200);
   } finally {
     await gui.shutdown(1_000);
   }
@@ -839,7 +931,7 @@ test('a hung hosted worker is killed without taking down the web process', async
   const gui = new GuiServer({
     runsDir: RUNS_SCRATCH,
     host: '127.0.0.1',
-    publicOrigin: 'http://league.example',
+    publicOrigin: 'https://league.example',
     mutationsEnabled: true,
     maxRunMs: 1,
     workerStopGraceMs: 1,
@@ -858,7 +950,7 @@ test('a hung hosted worker is killed without taking down the web process', async
       path: '/api/run',
       headers: {
         host: 'league.example',
-        origin: 'http://league.example',
+        origin: 'https://league.example',
         'content-type': 'application/json',
       },
       body: '{"models":["random","random"],"pool":"test"}',
@@ -868,7 +960,8 @@ test('a hung hosted worker is killed without taking down the web process', async
     assert.equal(finished.state, 'failed');
     const state = await rawJsonRequest(port, { path: '/api/state', headers: { host: 'league.example' } });
     const run = state.data.run as Record<string, unknown>;
-    assert.equal(run.error, 'run exceeded its maximum duration');
+    assert.equal(run.state, 'failed');
+    assert.equal('error' in run, false, 'anonymous hosted state omits private failure details');
     assert.equal(await rawRequest(port, { path: '/healthz' }), 200);
   } finally {
     await gui.shutdown(1_000);
@@ -950,37 +1043,10 @@ test('gui runs a random-vs-random series and streams live battle state', async (
     assert.ok(firstSnapshot, 'game 1 stays viewable after the series ends');
     assert.ok(Number(firstSnapshot.turn) >= 1);
 
-    const overall = await apiJson(`${base}api/records`);
-    assert.equal(overall.status, 200);
-    assert.equal(overall.data.count, 0, 'the test pool must stay out of overall standings');
-    assert.equal(overall.data.pool, null);
-    assert.deepEqual(overall.data.pools, ['test']);
-
     const records = await apiJson(`${base}api/records?pool=test`);
-    assert.equal(records.status, 200);
-    assert.equal(records.data.count, 1);
-    assert.equal(records.data.pool, 'test');
-    const groups = records.data.groups as Array<Record<string, unknown>>;
-    assert.equal(groups.length, 1);
-    assert.equal(groups[0]!.scale, 'off', 'runs record the untimed default and rate in the untimed group');
-    const standings = groups[0]!.standings as Array<Record<string, unknown>>;
-    assert.equal(standings.length, 1);
-    assert.equal(standings[0]!.spec, 'random');
-    assert.equal(standings[0]!.series, 2);
-    const h2h = groups[0]!.h2h as Record<string, Record<string, [number, number, number]>>;
-    assert.ok(h2h.random!.random);
-
+    assert.equal(records.status, 404, 'the unused aggregate records endpoint stays unavailable');
     const evidence = await apiJson(`${base}api/evidence?pool=test`);
-    assert.equal(evidence.status, 200);
-    assert.equal(evidence.data.pool, 'test');
-    assert.equal(evidence.data.count, 1);
-    assert.deepEqual(evidence.data.models, [], 'reference agents leave no engine evidence');
-    const luckSeries = evidence.data.series as Array<Record<string, unknown>>;
-    assert.equal(luckSeries.length, 1);
-    assert.equal(luckSeries[0]!.p1, 'random');
-    assert.ok(typeof (luckSeries[0]!.luck as Record<string, number>).p1 === 'number');
-    const emptyEvidence = await apiJson(`${base}api/evidence`);
-    assert.equal(emptyEvidence.data.count, 0, 'the test pool stays out of overall evidence');
+    assert.equal(evidence.status, 404, 'the unused aggregate evidence endpoint stays unavailable');
 
     for (let attempt = 0; attempt < 40; attempt += 1) {
       if (/"type":"battle"/.test(stream) && /"type":"run"/.test(stream)) break;
@@ -1083,9 +1149,10 @@ test('gui starts tournament runs and mirrors bracket state', async () => {
     assert.equal(timers.p2?.seconds, null);
     assert.equal(typeof timers.p2?.elapsedSeconds, 'number');
     const publicBattle = await apiJson(`${base}api/battle/public?index=0`);
-    const publicSnapshot = publicBattle.data.snapshot as Record<string, unknown>;
-    assert.deepEqual(publicSnapshot.decisions, []);
-    assert.deepEqual((publicSnapshot.spend as Record<string, unknown>).p1, { seconds: 12, tokens: 50_000 });
+    assert.equal(publicBattle.data.visibility, 'public');
+    assert.equal('snapshot' in publicBattle.data, false);
+    assert.deepEqual(publicBattle.data.log, [], 'an unresolved game does not stream anonymous transitions');
+    assert.equal('decisions' in publicBattle.data, false);
   } finally {
     gui.close();
   }
@@ -1161,7 +1228,7 @@ test('hosted tournament runs execute in the worker and stream the bracket', asyn
   const gui = new GuiServer({
     runsDir: RUNS_SCRATCH,
     host: '127.0.0.1',
-    publicOrigin: 'http://league.example',
+    publicOrigin: 'https://league.example',
     mutationsEnabled: true,
     recordsPath: path.join(scratch, 'results.jsonl'),
     logger: (entry) => {
@@ -1178,7 +1245,7 @@ test('hosted tournament runs execute in the worker and stream the bracket', asyn
       path: '/api/run',
       headers: {
         host: 'league.example',
-        origin: 'http://league.example',
+        origin: 'https://league.example',
         'content-type': 'application/json',
       },
       body: '{"mode":"tournament","models":["random","random"],"pool":"test","concurrency":1,"seed":1}',
@@ -1276,6 +1343,14 @@ test('gui starts draft runs, validates the board, and mirrors draft state', asyn
     });
     assert.equal(invalidWindow.status, 400);
     assert.match(String(invalidWindow.data.error), /between 1 and 1/);
+    const invalidOfferCap = await apiJson(`${base}api/run`, {
+      mode: 'draft',
+      models: ['random', 'random'],
+      board: 'regmb-202607',
+      tradeWindow: { afterWeek: 1, tradesAllowed: 4 },
+    });
+    assert.equal(invalidOfferCap.status, 400);
+    assert.match(String(invalidOfferCap.data.error), /between 0 and 3/);
 
     const started = await apiJson(`${base}api/run`, {
       mode: 'draft',
@@ -1317,7 +1392,7 @@ test('hosted draft runs execute in the worker and stream draft state', async (t)
   const gui = new GuiServer({
     runsDir: RUNS_SCRATCH,
     host: '127.0.0.1',
-    publicOrigin: 'http://league.example',
+    publicOrigin: 'https://league.example',
     mutationsEnabled: true,
     recordsPath: path.join(scratch, 'results.jsonl'),
     logger: (entry) => {
@@ -1334,7 +1409,7 @@ test('hosted draft runs execute in the worker and stream draft state', async (t)
       path: '/api/run',
       headers: {
         host: 'league.example',
-        origin: 'http://league.example',
+        origin: 'https://league.example',
         'content-type': 'application/json',
       },
       body: '{"mode":"draft","models":["random","random"],"board":"regmb-202607","concurrency":1,"seed":5}',

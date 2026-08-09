@@ -99,11 +99,11 @@ test('key-carrying runs require a key for every hosted model', async (t) => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-model-league-keys-'));
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
   await assert.rejects(
-    runRotation(['random', 'anthropic:claude-x'], 1, directory, {
+    runRotation(['random', 'prime:test-model'], 1, directory, {
       apiKeys: {},
       recordsPath: path.join(directory, 'results.jsonl'),
     }),
-    /API key missing for anthropic:claude-x/,
+    /API key missing for prime:test-model/,
   );
 });
 

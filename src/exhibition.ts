@@ -1,12 +1,12 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
 import type { RandomEngine } from './battle-agent.js';
-import { LLMEngine, scaffoldRevision } from './llm-engine.js';
+import { LLMEngine, scaffoldComponents, scaffoldRevision } from './llm-engine.js';
 import { defaultPsDir, RESULTS_PATH } from './paths.js';
 import type { ReasoningLevel } from './providers.js';
-import { parseSpec, validateReasoning } from './providers.js';
+import { parseRoutingPreferences, parseSpec, validateReasoning } from './providers.js';
 import { resolveSeed, seededRng } from './random.js';
 import type { SeriesRecord } from './records.js';
 import { appendRow } from './records.js';
@@ -19,7 +19,32 @@ import { loadPool, validatePool } from './teams.js';
 import { DEFAULT_TIMER_SCALE } from './timer.js';
 import type { Pid } from './types.js';
 
-const EXHIBITION_PROTOCOL_VERSION = 1;
+const EXHIBITION_PROTOCOL_VERSION = 5;
+const EXTERNAL_ADAPTER_MODEL_VISIBLE_VERSION = 1;
+const EXTERNAL_ADAPTER_PROTOCOL = {
+  bridge_api: {
+    transport: 'localhost-http-post-json-bearer-v1',
+    routes: {
+      '/status': 'status-and-pending-exchange-id-v1',
+      '/poll': 'authorized-exchange-and-status-long-poll-v1',
+      '/messages': 'authorized-pending-exchange-messages-v1',
+      '/context': 'cursor-query-json-v1',
+      '/tools': 'decision-bound-tool-definitions-v1',
+      '/tool': 'decision-bound-lookup-v1',
+      '/submit': 'exchange-id-and-text-v1',
+    },
+  },
+  authorized_view: 'one-seat-only-v1',
+  context: 'cursor-addressable-authorized-series-stream-v1',
+  tools: 'live-decision-bound-lookups-v1',
+  limits: {
+    bridge_poll_wait_ms: 55_000,
+    client_poll_wait_ms: 25_000,
+    request_body_bytes: 1_000_000,
+    invalid_reply_corrections: 1,
+    battle_timer: 'disabled',
+  },
+} as const;
 
 export interface ExhibitionOptions {
   opponent: string;
@@ -36,7 +61,7 @@ export interface ExhibitionOptions {
   onReady?: (info: { url: string; agentDir: string }) => void;
 }
 
-/** External seat bridge; only that seat's view crosses the process boundary, and the result is unrated. */
+/** Trusted manual bridge. Its HTTP API is seat-private, but the external process is not sandboxed; results are unrated. */
 export async function runExhibition(runDir: string, options: ExhibitionOptions): Promise<SeriesRecord> {
   const seatSide: Pid = options.seat ?? 'p1';
   const oppSide: Pid = seatSide === 'p1' ? 'p2' : 'p1';
@@ -62,9 +87,51 @@ export async function runExhibition(runDir: string, options: ExhibitionOptions):
   const seriesDir = path.join(runDir, 'series', seriesId);
   fs.mkdirSync(seriesDir, { recursive: true });
   const scaffold = scaffoldRevision();
+  const scaffoldParts = scaffoldComponents();
+  const openRouterRouting = parseRoutingPreferences();
   const players: Record<Pid, string> = { p1: '', p2: '' };
   players[seatSide] = seatName;
   players[oppSide] = options.opponent;
+  const executionHarnesses = {
+    [seatSide]: {
+      adapter: 'trusted-external-bridge',
+      version: 4,
+      filesystem_isolation: false,
+      process_isolation: false,
+      network_isolation: false,
+      host_filesystem_access: 'unrestricted-unobserved',
+      host_process_access: 'unrestricted-unobserved',
+      arbitrary_network_access: 'unrestricted-unobserved',
+      workspace_policy: 'fresh-directory-0700-v1',
+      credential_policy: 'exclusive-artifacts-0600-v1',
+      delegation: 'unrestricted-unobserved',
+      context: 'cursor-addressable-authorized-series-stream-v1',
+      tools: 'live-decision-bound-lookups-v1',
+      model_visible_adapter: {
+        version: EXTERNAL_ADAPTER_MODEL_VISIBLE_VERSION,
+        digest: externalAdapterDigest(),
+      },
+      evidence_log: {
+        version: 1,
+        collection: 'host-side-jsonl-v1',
+        artifacts: ['decisions', 'trace', 'context', 'bridge-tools'],
+        presented_through_adapter: false,
+      },
+    },
+    [oppSide]: {
+      adapter: options.opponent === 'random' ? 'random-engine' : 'llm-engine',
+      version: 2,
+      filesystem_isolation: false,
+      process_isolation: false,
+      network_isolation: false,
+      host_filesystem_access: 'not-exposed-through-model-api',
+      host_process_access: 'not-exposed-through-model-api',
+      arbitrary_network_access: 'not-exposed-through-model-api',
+      delegation: 'none',
+      context: options.opponent === 'random' ? 'none' : 'bounded-game-timeline-and-series-notebook-v1',
+      tools: options.opponent === 'random' ? 'none' : 'provider-tool-loop-v1',
+    },
+  };
   fs.writeFileSync(
     path.join(runDir, 'config.json'),
     `${JSON.stringify(
@@ -72,8 +139,11 @@ export async function runExhibition(runDir: string, options: ExhibitionOptions):
         mode: 'exhibition',
         protocol_version: EXHIBITION_PROTOCOL_VERSION,
         scaffold,
+        scaffold_components: scaffoldParts,
+        ...(openRouterRouting ? { openrouter_routing: openRouterRouting } : {}),
         seat: seatSide,
         players,
+        execution_harnesses: executionHarnesses,
         seed,
         reasoning: options.reasoning ?? null,
         pool: pool.id,
@@ -87,8 +157,17 @@ export async function runExhibition(runDir: string, options: ExhibitionOptions):
 
   const reference = new ShowdownReference(pool.format, psDir);
   const toolLog = path.join(seriesDir, `${seatSide}-bridge-tools.jsonl`);
+  let seatEngine: LLMEngine | undefined;
   const bridge = new SeatBridge({
-    lookup: (name, args) => reference.lookup(name, args),
+    tools: () => seatEngine?.decisionToolDefinitions() ?? [],
+    context: (query) => {
+      if (!seatEngine) throw new Error('seat engine is not ready');
+      return seatEngine.readContext(query);
+    },
+    lookup: (name, args) => {
+      if (!seatEngine) throw new Error('seat engine is not ready');
+      return seatEngine.lookupDecisionTool(name, args);
+    },
     onExchange: (view) =>
       notice(`seat ${view.phase} exchange ${view.id} pending; the agent should run: node seat.mjs wait`),
     onTool: (name, args, result) =>
@@ -107,6 +186,7 @@ export async function runExhibition(runDir: string, options: ExhibitionOptions):
       state: 'running',
       seat: seatSide,
       players,
+      execution_harnesses: executionHarnesses,
       pool: pool.id,
       format: pool.format,
       game: 0,
@@ -115,21 +195,24 @@ export async function runExhibition(runDir: string, options: ExhibitionOptions):
     options.onReady?.({ url, agentDir });
 
     const names: Record<Pid, string> = { p1: `p1-${players.p1}`, p2: `p2-${players.p2}` };
+    seatEngine = new LLMEngine(seatSide, seatName, {
+      provider: bridge.provider(),
+      decisionLog: path.join(seriesDir, `${seatSide}-decisions.jsonl`),
+      traceLog: path.join(seriesDir, `${seatSide}-trace.jsonl`),
+      contextLog: path.join(seriesDir, `${seatSide}-context.jsonl`),
+      format: pool.format,
+      psDir,
+      reference,
+    });
     const engines = {
-      [seatSide]: new LLMEngine(seatSide, seatName, {
-        provider: bridge.provider(),
-        decisionLog: path.join(seriesDir, `${seatSide}-decisions.jsonl`),
-        traceLog: path.join(seriesDir, `${seatSide}-trace.jsonl`),
-        format: pool.format,
-        psDir,
-        reference,
-      }),
+      [seatSide]: seatEngine,
       [oppSide]: makeEngine({
         pid: oppSide,
         spec: options.opponent,
         seed: engineSeed,
         decisionLog: path.join(seriesDir, `${oppSide}-decisions.jsonl`),
         traceLog: path.join(seriesDir, `${oppSide}-trace.jsonl`),
+        contextLog: path.join(seriesDir, `${oppSide}-context.jsonl`),
         format: pool.format,
         psDir,
         reasoning: options.reasoning,
@@ -172,6 +255,7 @@ export async function runExhibition(runDir: string, options: ExhibitionOptions):
       pool: pool.id,
       seat: seatSide,
       players,
+      execution_harnesses: executionHarnesses,
       teams: { p1: teams.p1.id, p2: teams.p2.id },
       winner: winnerSide ? players[winnerSide] : null,
       winner_side: winnerSide ?? null,
@@ -193,14 +277,54 @@ export async function runExhibition(runDir: string, options: ExhibitionOptions):
 }
 
 function writeAgentWorkspace(agentDir: string, url: string, token: string, seatName: string): void {
-  fs.mkdirSync(agentDir, { recursive: true });
-  fs.writeFileSync(
+  fs.mkdirSync(path.dirname(agentDir), { recursive: true });
+  try {
+    fs.mkdirSync(agentDir, { mode: 0o700 });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'EEXIST') throw new Error('agent workspace must be freshly created');
+    throw error;
+  }
+
+  if (process.platform !== 'win32') {
+    const descriptor = fs.openSync(
+      agentDir,
+      fs.constants.O_RDONLY | fs.constants.O_DIRECTORY | fs.constants.O_NOFOLLOW,
+    );
+    try {
+      fs.fchmodSync(descriptor, 0o700);
+    } finally {
+      fs.closeSync(descriptor);
+    }
+  }
+
+  writePrivateArtifact(
     path.join(agentDir, 'seat.json'),
     `${JSON.stringify({ url, token, name: seatName }, null, 2)}\n`,
-    'utf8',
   );
-  fs.writeFileSync(path.join(agentDir, 'seat.mjs'), SEAT_CLIENT, 'utf8');
-  fs.writeFileSync(path.join(agentDir, 'SEAT.md'), SEAT_INSTRUCTIONS, 'utf8');
+  writePrivateArtifact(path.join(agentDir, 'seat.mjs'), SEAT_CLIENT);
+  writePrivateArtifact(path.join(agentDir, 'SEAT.md'), SEAT_INSTRUCTIONS);
+}
+
+function writePrivateArtifact(filePath: string, contents: string): void {
+  let descriptor: number;
+  try {
+    descriptor = fs.openSync(
+      filePath,
+      fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW,
+      0o600,
+    );
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === 'EEXIST' || code === 'ELOOP')
+      throw new Error(`agent workspace artifact must be freshly created: ${path.basename(filePath)}`);
+    throw error;
+  }
+  try {
+    if (process.platform !== 'win32') fs.fchmodSync(descriptor, 0o600);
+    fs.writeFileSync(descriptor, contents, 'utf8');
+  } finally {
+    fs.closeSync(descriptor);
+  }
 }
 
 const SEAT_CLIENT = `#!/usr/bin/env node
@@ -256,6 +380,10 @@ const commands = {
   async messages() {
     console.log(JSON.stringify(await call('/messages'), null, 2));
   },
+  async context() {
+    const query = args[0] ? JSON.parse(args[0]) : {};
+    console.log(JSON.stringify(await call('/context', query), null, 2));
+  },
   async tools() {
     const data = await call('/tools');
     for (const tool of data.tools) {
@@ -283,7 +411,7 @@ const commands = {
 
 const run = commands[command];
 if (!run) {
-  console.log('Usage: node seat.mjs <status|wait|show|system|messages|tools|tool|submit> [args] [--force]');
+  console.log('Usage: node seat.mjs <status|wait|show|system|messages|context|tools|tool|submit> [args] [--force]');
   process.exitCode = 2;
 } else {
   run().catch((error) => {
@@ -296,8 +424,9 @@ if (!run) {
 const SEAT_INSTRUCTIONS = `# Seat instructions
 
 You are playing one side of a Pokémon VGC best-of-three hosted by a separate process.
-Everything you may know arrives through \`seat.mjs\`. The host holds both sides'
-hidden information, so work only inside this directory.
+The \`seat.mjs\` API exposes only your authorized seat view. This trusted manual mode does
+not sandbox the process from the host filesystem or network, so its result is not a
+controlled evaluation. Do not inspect sibling run files or opponent-private artifacts.
 
 Loop:
 
@@ -320,5 +449,19 @@ Notes:
 - There is no move timer. Take the time you need, but submit every exchange; the game
   cannot continue without you.
 - \`node seat.mjs status\` shows the game number and series score.
+- \`node seat.mjs context '{"after":"ctx-00000010","limit":50}'\` retrieves authorized full-history events that the compact prompt may omit.
 - When the host process exits, requests fail with a connection error; the series is over.
 `;
+
+function externalAdapterDigest(): string {
+  return createHash('sha256')
+    .update(
+      JSON.stringify({
+        version: EXTERNAL_ADAPTER_MODEL_VISIBLE_VERSION,
+        seat_instructions: SEAT_INSTRUCTIONS,
+        seat_client: SEAT_CLIENT,
+        protocol: EXTERNAL_ADAPTER_PROTOCOL,
+      }),
+    )
+    .digest('hex');
+}

@@ -8,14 +8,15 @@ import type { BattleStream } from 'pokemon-showdown';
 import { RandomEngine } from '../src/battle-agent.js';
 import { buildMenus, type SlotMenu } from '../src/choices.js';
 import { defaultPsDir } from '../src/paths.js';
+import { RecoveryGate } from '../src/recovery.js';
 import { runRotation } from '../src/rotation.js';
 import { closedSheetsFormat } from '../src/series.js';
 import type { RoomBattleTimerSettings } from '../src/showdown.js';
-import { routeUpdateLines, SimBattle } from '../src/sim.js';
+import { finishUpdateRouting, routeUpdateLines, SimBattle } from '../src/sim.js';
 import { BattleState } from '../src/state.js';
 import { loadPool } from '../src/teams.js';
 import { parseTimerScale, TimerAdapter } from '../src/timer.js';
-import type { BattleRequest, TimerScale } from '../src/types.js';
+import type { ActionSubmission, BattleRequest, JsonObject, SubmissionContext, TimerScale } from '../src/types.js';
 
 test('forced-switch menus retain the neutral forfeit option', () => {
   const menus = buildMenus({
@@ -83,6 +84,86 @@ test('seeded random VGC battle completes untimed by default without protocol err
   assert.match(state.render({}), /Opponent side/);
 });
 
+test('Showdown rejection and accepted retry resolve distinct stable submissions once', async () => {
+  const pool = loadPool();
+  const p1Rows: JsonObject[] = [];
+  const p2Rows: JsonObject[] = [];
+  class RetryEngine extends RandomEngine {
+    calls = 0;
+
+    override submit(request: BattleRequest, context: SubmissionContext) {
+      this.calls += 1;
+      if (this.calls === 2) return super.submit(request, context);
+      return Promise.resolve<ActionSubmission>({
+        submissionId: context.submissionId,
+        choice: this.calls === 1 ? 'invalid' : 'forfeit',
+        source: 'random',
+      });
+    }
+  }
+  const outcome = await new SimBattle(
+    pool.format,
+    {
+      p1: { name: 'A-retry', team: pool.teams[0]!.packed },
+      p2: { name: 'B-normal', team: pool.teams[1]!.packed },
+    },
+    [61, 62, 63, 64],
+  ).run({ p1: new RetryEngine('p1', 1, p1Rows), p2: new RandomEngine('p2', 2, p2Rows) });
+
+  assert.deepEqual(outcome.errors, { p1: 1, p2: 0 });
+  const all = [...p1Rows, ...p2Rows];
+  assert.ok(all.every((row) => row.kind === 'decision'));
+  assert.equal(new Set(all.map((row) => row.submission_id)).size, all.length);
+  const rejected = p1Rows.find((row) => row.outcome === 'rejected');
+  assert.equal(rejected?.action, 'invalid');
+  assert.match(String(rejected?.showdown_error), /^\|error\|/);
+  assert.ok(p1Rows.some((row) => row.outcome === 'accepted'));
+  assert.ok(p2Rows.every((row) => row.outcome === 'accepted'));
+});
+
+test('an unavailable third reject is resolved before its simulator default', async () => {
+  class RejectThenTrappedSwitch extends RandomEngine {
+    private calls = 0;
+
+    override submit(request: BattleRequest, context: SubmissionContext) {
+      if (!request.active) return super.submit(request, context);
+      this.calls += 1;
+      return Promise.resolve<ActionSubmission>({
+        submissionId: context.submissionId,
+        choice: this.calls <= 2 ? 'invalid' : this.calls === 3 ? 'switch 2' : 'forfeit',
+        source: 'random',
+      });
+    }
+  }
+  class LeadGothitelle extends RandomEngine {
+    protected override decideJoint(menus: SlotMenu[]): number[] {
+      return menus.map((_, index) => index);
+    }
+  }
+  const decisions: JsonObject[] = [];
+  const outcome = await new SimBattle(
+    'gen9customgame',
+    {
+      p1: {
+        name: 'A-trapped',
+        team: 'Pika|Pikachu|LightBall|Static|Thunderbolt,Protect|Timid|,,,252,,252|||||]Eevee|||RunAway|Tackle,Protect|Jolly||||||',
+      },
+      p2: {
+        name: 'B-shadow-tag',
+        team: 'Goth|Gothitelle||ShadowTag|Psychic,Protect|Bold||||||]Ditto|||Limber|Transform|Serious||||||',
+      },
+    },
+    [31, 32, 33, 34],
+  ).run({ p1: new RejectThenTrappedSwitch('p1', 1, decisions), p2: new LeadGothitelle('p2', 2) });
+
+  assert.deepEqual(outcome.errors, { p1: 3, p2: 0 });
+  assert.deepEqual(outcome.simulatorSubstitutions, { p1: 1, p2: 0 });
+  assert.match(String(decisions.find((row) => row.action === 'switch 2')?.showdown_error), /Unavailable choice/);
+  const generated = decisions.find((row) => row.submission_source === 'simulator-default');
+  assert.equal(generated?.outcome, 'accepted');
+  assert.equal(new Set(decisions.map((row) => row.submission_id)).size, decisions.length);
+});
+
 test('closed sheets strip the open-team-sheet rules while the stock format keeps them', async () => {
   const pool = loadPool();
   const players = {
@@ -134,9 +215,11 @@ test('Showdown timer defaults a slow decision', { timeout: 25_000 }, async () =>
     undefined,
     1,
   );
-  const outcome = await battle.run({ p1: new SlowEngine('p1', 1), p2: new RandomEngine('p2', 2) });
+  const decisions: JsonObject[] = [];
+  const outcome = await battle.run({ p1: new SlowEngine('p1', 1, decisions), p2: new RandomEngine('p2', 2) });
   assert.ok(outcome.timerAutodefaults.p1 >= 1);
   assert.ok(outcome.pov.p1.includes('|timer|autodefault'));
+  assert.ok(decisions.some((row) => row.submission_source === 'timer-default' && row.outcome === 'accepted'));
 });
 
 test('timer scale multiplies Showdown timer settings and reseeds the banks', () => {
@@ -187,6 +270,59 @@ test('recovery restores a timed request to its turn-start clock', () => {
     `|-vgctimer|p1|${request.timer.seconds}|${request.timer.turnSeconds}`,
   ]);
   adapter.end();
+});
+
+test('recovery pause time is not charged to an invalid-choice retry', async () => {
+  const pool = loadPool();
+  const firstChoice = Promise.withResolvers<string>();
+  const firstRequestStarted = Promise.withResolvers<void>();
+  const retryReceived = Promise.withResolvers<void>();
+  let firstTimer: BattleRequest['timer'];
+  let retryTimer: BattleRequest['timer'];
+  class PausedInvalidAgent extends RandomEngine {
+    private calls = 0;
+
+    override async submit(request: BattleRequest, context: SubmissionContext): Promise<ActionSubmission> {
+      this.calls += 1;
+      if (this.calls === 1) {
+        firstTimer = request.timer;
+        firstRequestStarted.resolve();
+        return { submissionId: context.submissionId, choice: await firstChoice.promise, source: 'random' };
+      }
+      retryTimer = request.timer;
+      retryReceived.resolve();
+      return { submissionId: context.submissionId, choice: 'forfeit', source: 'random' };
+    }
+  }
+  let clock = 1_000;
+  const recovery = new RecoveryGate();
+  const battle = new SimBattle(
+    `${pool.format}@@@!!timermaxfirstturn=60,!!timermaxperturn=60`,
+    {
+      p1: { name: 'A-paused', team: pool.teams[0]!.packed },
+      p2: { name: 'B-deterministic', team: pool.teams[1]!.packed },
+    },
+    [41, 42, 43, 44],
+    undefined,
+    1,
+    () => clock,
+  ).run({ p1: new PausedInvalidAgent('p1', 1), p2: new RandomEngine('p2', 2) }, undefined, undefined, recovery);
+
+  await firstRequestStarted.promise;
+  clock += 4_000;
+  const paused = recovery.pause('fake:paused', { kind: 'rate_limit', summary: 'controlled pause' });
+  clock += 3_600_000;
+  assert.equal(recovery.resume(), true);
+  await paused;
+  clock += 3_000;
+  firstChoice.resolve('invalid');
+  await retryReceived.promise;
+  await battle;
+
+  assert.ok(firstTimer?.seconds !== undefined && firstTimer.turnSeconds !== undefined);
+  assert.ok(retryTimer?.seconds !== undefined && retryTimer.turnSeconds !== undefined);
+  assert.equal(retryTimer.seconds, firstTimer.seconds - 7);
+  assert.equal(retryTimer.turnSeconds, firstTimer.turnSeconds - 7);
 });
 
 test('parseTimerScale accepts multipliers and off, rejects everything else', () => {
@@ -282,9 +418,41 @@ test('split messages route secrets and buffer incomplete triples', () => {
   routeUpdateLines(['|split|p1', '|secret'], buffered);
   assert.deepEqual(buffered.pendingSplit, ['|split|p1', '|secret']);
   routeUpdateLines(['|public', '|after'], buffered);
+  finishUpdateRouting(buffered);
   assert.deepEqual(buffered.pov.p1, ['|secret', '|after']);
   assert.deepEqual(buffered.pov.p2, ['|public', '|after']);
   assert.deepEqual(buffered.publicLog, ['|public', '|after']);
+});
+
+test('split messages reject an unknown owner without routing either payload', () => {
+  const state = {
+    pov: { p1: [] as string[], p2: [] as string[] },
+    log: [] as string[],
+    publicLog: [] as string[],
+    pendingSplit: [] as string[],
+    winner: null,
+    turns: 0,
+  };
+  assert.throws(() => routeUpdateLines(['|split|p3', '|secret', '|public'], state), /unknown split owner: p3/);
+  assert.deepEqual(state.pov, { p1: [], p2: [] });
+  assert.deepEqual(state.log, []);
+  assert.deepEqual(state.publicLog, []);
+});
+
+test('stream termination rejects an incomplete split triple', () => {
+  const state = {
+    pov: { p1: [] as string[], p2: [] as string[] },
+    log: [] as string[],
+    publicLog: [] as string[],
+    pendingSplit: [] as string[],
+    winner: null,
+    turns: 0,
+  };
+  routeUpdateLines(['|split|p2', '|secret'], state);
+  assert.throws(() => finishUpdateRouting(state), /incomplete split triple \(2 of 3 lines\)/);
+  assert.deepEqual(state.pov, { p1: [], p2: [] });
+  assert.deepEqual(state.log, []);
+  assert.deepEqual(state.publicLog, []);
 });
 
 test('Rotation writes one completed best-of-three record', async (t) => {

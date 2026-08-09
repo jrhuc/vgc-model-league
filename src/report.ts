@@ -1,9 +1,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-import type { HeadToHead, SeriesRecord, Standing } from './records.js';
+import type { SeriesRecord } from './records.js';
 
-import { loadRows, ratingGroups, scopeRows, TEST_POOL } from './records.js';
+import { loadSeriesRecords, scopeRows, TEST_POOL } from './records.js';
 import { asRecord } from './value.js';
 
 const CSS = `
@@ -27,33 +27,9 @@ function escapeHtml(value: unknown): string {
   );
 }
 
-function standingsTable(table: Standing[]): string {
-  const head = '<tr><th>Model</th><th>Series</th><th>W</th><th>L</th><th>T</th><th>Win rate</th><th>Elo</th></tr>';
-  const body = table
-    .map(
-      (item) =>
-        `<tr><td>${escapeHtml(item.spec)}</td><td class=num>${item.series}</td><td class=num>${item.w}</td><td class=num>${item.l}</td><td class=num>${item.t}</td><td class=num>${(100 * item.winrate).toFixed(1)}%</td><td class=num>${item.elo.toFixed(1)}</td></tr>`,
-    )
-    .join('');
-  return `<div class=wrap><table>${head}${body}</table></div>`;
-}
-
-function h2hTable(matrix: HeadToHead): string {
-  const specs = Object.keys(matrix);
-  if (specs.length < 2) return '';
-  const head = `<tr><th>W-L-T</th>${specs.map((spec) => `<th>${escapeHtml(spec)}</th>`).join('')}</tr>`;
-  const body = specs
-    .map(
-      (a) =>
-        `<tr><th>${escapeHtml(a)}</th>${specs.map((b) => (a === b ? '<td class=num>-</td>' : `<td class=num>${matrix[a]![b]!.join('-')}</td>`)).join('')}</tr>`,
-    )
-    .join('');
-  return `<h3>Head-to-head</h3><div class=wrap><table>${head}${body}</table></div>`;
-}
-
-function seriesTable(rows: SeriesRecord[], limit = 40): string {
+function seriesTable(rows: SeriesRecord[], limit = 100): string {
   const head =
-    '<tr><th>When (UTC)</th><th>p1</th><th>p2</th><th>Teams</th><th>Score</th><th>Winner</th><th>Games</th><th>Turns</th></tr>';
+    '<tr><th>When (UTC)</th><th>Mode</th><th>Pool</th><th>Clock</th><th>Scaffold</th><th>p1</th><th>p2</th><th>Teams</th><th>Score</th><th>Winner</th><th>Games</th><th>Turns</th></tr>';
   const body = rows
     .slice(-limit)
     .reverse()
@@ -62,10 +38,11 @@ function seriesTable(rows: SeriesRecord[], limit = 40): string {
       const score = asRecord(row.score);
       const games = Array.isArray(row.games) ? row.games : [];
       const side = row.winner_side === 'p1' || row.winner_side === 'p2' ? row.winner_side : '';
-      return `<tr class='${side === 'p1' ? 'winner-a' : side === 'p2' ? 'winner-b' : ''}'><td>${escapeHtml(String(row.timestamp ?? '').slice(0, 19))}</td><td class=a>${escapeHtml(row.players.p1)}</td><td class=b>${escapeHtml(row.players.p2)}</td><td>${escapeHtml(`${teams.p1 ?? 'not recorded'} vs ${teams.p2 ?? 'not recorded'}`)}</td><td class=num>${escapeHtml(`${score.p1 ?? '?'}-${score.p2 ?? '?'}`)}</td><td>${escapeHtml(row.winner ?? 'tie')}</td><td class=num>${games.length}</td><td class=num>${escapeHtml(row.turns ?? '?')}</td></tr>`;
+      const clock = row.timer_scale === 'off' ? 'off' : `${row.timer_scale ?? 1}x`;
+      return `<tr class='${side === 'p1' ? 'winner-a' : side === 'p2' ? 'winner-b' : ''}'><td>${escapeHtml(String(row.timestamp ?? '').slice(0, 19))}</td><td>${escapeHtml(row.mode ?? 'legacy')}</td><td>${escapeHtml(row.pool ?? 'unrecorded')}</td><td>${escapeHtml(clock)}</td><td class=meta>${escapeHtml(row.scaffold ?? 'unrecorded')}</td><td class=a>${escapeHtml(row.players.p1)}</td><td class=b>${escapeHtml(row.players.p2)}</td><td>${escapeHtml(`${teams.p1 ?? 'not recorded'} vs ${teams.p2 ?? 'not recorded'}`)}</td><td class=num>${escapeHtml(`${score.p1 ?? '?'}-${score.p2 ?? '?'}`)}</td><td>${escapeHtml(row.winner ?? 'tie')}</td><td class=num>${games.length}</td><td class=num>${escapeHtml(row.turns ?? '?')}</td></tr>`;
     })
     .join('');
-  return `<h3>Recent series</h3><div class=wrap><table>${head}${body}</table></div>`;
+  return `<h2>Recorded series</h2><div class=wrap><table>${head}${body}</table></div>`;
 }
 
 function gamesTable(rows: SeriesRecord[], limit = 80): string {
@@ -85,19 +62,13 @@ function gamesTable(rows: SeriesRecord[], limit = 80): string {
 }
 
 export function writeReport(recordsPath: string, outPath: string, pool?: string): string {
-  const rows = scopeRows(loadRows(recordsPath), pool);
+  const rows = scopeRows(loadSeriesRecords(recordsPath), pool);
   const stamp = new Intl.DateTimeFormat('en-CA', { timeZone: 'UTC', dateStyle: 'medium', timeStyle: 'short' }).format(
     new Date(),
   );
   const poolText =
     pool === undefined ? ` across all pools (pool ${escapeHtml(TEST_POOL)} excluded)` : ` for pool ${escapeHtml(pool)}`;
-  const speedSections = ratingGroups(rows)
-    .map(
-      ({ label, standings: table, h2h: matrix }) =>
-        `<h2>${escapeHtml(label)}</h2>${standingsTable(table)}${h2hTable(matrix)}`,
-    )
-    .join('');
-  const document = `<!doctype html><meta charset=utf-8><title>VGC Model League records</title><style>${CSS}</style><h1>VGC Model League records</h1><p class=meta>${rows.length} completed series${poolText}. Battle speeds rate separately; untimed is the primary view. Generated ${stamp} UTC.</p>${speedSections}${seriesTable(rows)}${gamesTable(rows)}`;
+  const document = `<!doctype html><meta charset=utf-8><title>VGC Model League records</title><style>${CSS}</style><h1>VGC Model League records</h1><p class=meta>${rows.length} completed series${poolText}. These are per-series outcomes from heterogeneous recorded contexts, not an aggregate model ranking. Pool, clock, scaffold, opponents, and sample size remain attached to each row. Generated ${stamp} UTC.</p>${seriesTable(rows)}${gamesTable(rows)}`;
   fs.mkdirSync(path.dirname(outPath), { recursive: true });
   fs.writeFileSync(outPath, document, 'utf8');
   return outPath;

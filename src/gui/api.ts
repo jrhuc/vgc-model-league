@@ -12,7 +12,6 @@ export interface ProviderInfo {
   description: string;
   discovery: 'list' | 'manual' | 'none';
   requiresKey: boolean;
-  models: ModelInfo[];
 }
 
 export interface PoolInfo {
@@ -85,14 +84,9 @@ export interface DraftTableRow {
   gl: number;
 }
 
-export interface TeambuildSetView {
-  species: string;
-  spriteId: string;
-  item: string;
-  ability: string;
-  nature: string;
-  moves: string[];
+export interface TeambuildSetView extends PublicTeamSheetSetView {
   evs: Record<string, number>;
+  note?: string;
   repaired: boolean;
   repairs: string[];
 }
@@ -133,7 +127,7 @@ export interface BracketEntrantView {
   teamSheet?: TeambuildSetView[];
 }
 
-interface BracketMatchView {
+export interface BracketMatchView {
   seriesIndex: number | null;
   slots: [number | null, number | null];
   winner: number | null;
@@ -142,6 +136,61 @@ interface BracketMatchView {
 export interface BracketView {
   entrants: BracketEntrantView[];
   rounds: BracketMatchView[][];
+  champion: number | null;
+}
+
+/** A set on an official open team sheet. Private stat allocation and build metadata are not representable. */
+export interface PublicTeamSheetSetView {
+  species: string;
+  spriteId: string;
+  item: string;
+  ability: string;
+  nature: string;
+  moves: string[];
+}
+
+export type PublicDraftPickView = Pick<DraftPickView, 'pick' | 'entrant' | 'mon'>;
+
+export interface PublicTeambuildView {
+  seriesIndex: number;
+  entrant: number;
+  opponent: number;
+  brought: string[];
+  /** Absent, rather than empty, when the run uses closed team sheets. */
+  teamSheet?: PublicTeamSheetSetView[];
+}
+
+export interface PublicDraftView {
+  boardId: string;
+  budget: number;
+  picksPerEntrant: number;
+  entrants: string[];
+  teamNames: string[];
+  picks: PublicDraftPickView[];
+  rosters: string[][];
+  budgets: number[];
+  table: DraftTableRow[] | null;
+  teambuilds: PublicTeambuildView[];
+  week: number;
+  weeks: number;
+  phase: 'draft' | 'roundrobin' | 'window' | 'playoffs' | 'done';
+}
+
+export interface PublicBracketEntrantView {
+  model: string;
+  team: string;
+  seed?: number | null;
+  placement?: number | null;
+  player?: string;
+  /** Absent, rather than empty, when no reviewed official open sheet is public. */
+  teamSheet?: PublicTeamSheetSetView[];
+}
+
+export type PublicBracketMatchView = BracketMatchView;
+
+export interface PublicBracketView {
+  entrants: PublicBracketEntrantView[];
+  rounds: PublicBracketMatchView[][];
   champion: number | null;
 }
 
@@ -173,6 +222,24 @@ export interface RunSnapshot {
   board: string | null;
 }
 
+export interface PublicRunSnapshot {
+  visibility: 'public';
+  runId: string;
+  mode: ExperimentMode;
+  protocolVersion: number;
+  state: 'running' | 'paused' | 'done' | 'failed' | 'stopped';
+  pool: string;
+  models: string[];
+  startTime: number;
+  endTime: number | null;
+  rows: SeriesRowView[];
+  bracket: PublicBracketView | null;
+  draft: PublicDraftView | null;
+  board: string | null;
+}
+
+export type RunView = RunSnapshot | PublicRunSnapshot;
+
 export interface SampleTeam {
   name: string;
   paste: string;
@@ -192,9 +259,42 @@ export interface BoardResponse {
   mons: DraftBoardMonView[];
 }
 
+export interface SelectedTraceQuoteView {
+  stage: string;
+  text: string;
+}
+
+export interface SelectedTraceView {
+  traceId: string;
+  seatAlias: string;
+  /** Publication-time identity of the anonymized seat; seats stay anonymous in play. */
+  seatModel: string;
+  format: string;
+  eventCount: number;
+  draftQuotes: Array<SelectedTraceQuoteView & { pick: number }>;
+  registeredSix: string[];
+  lead: string[];
+  back: string[];
+  firstActions: string[];
+  /** Pinned-dex sprite id for every species named in this view, keyed by display name. */
+  sprites: Record<string, string>;
+  transaction: {
+    declinedOffer: { give: string; get: string };
+    swaps: Array<{ drop: string; add: string }>;
+  };
+  terminalQuote: SelectedTraceQuoteView;
+  turn: {
+    promptExcerpt: string;
+    incomingNotebook: string;
+    rationale: string;
+    submittedCommand: string;
+    replayAccepted: boolean;
+    choiceIndex: number;
+  };
+}
+
 export interface AppState {
   pools: PoolInfo[];
-  reasoningLevels: string[];
   defaultFormat: string;
   formats: FormatInfo[];
   providers: ProviderInfo[];
@@ -204,6 +304,23 @@ export interface AppState {
   run: RunSnapshot | null;
   externalRun: { runId: string; mode: 'draft' | 'tournament' } | null;
 }
+
+export interface PublicAppState {
+  pools: PoolInfo[];
+  defaultFormat: string;
+  formats: FormatInfo[];
+  providers: ProviderInfo[];
+  boards: BoardInfo[];
+  auth: AuthView;
+  run: PublicRunSnapshot | null;
+}
+
+export interface ContributorAppState extends PublicAppState {
+  sampleTeams: SampleTeam[];
+  externalRun: { runId: string; mode: 'draft' | 'tournament' } | null;
+}
+
+export type AppStateResponse = AppState | PublicAppState | ContributorAppState;
 
 export interface MonView {
   species: string;
@@ -278,109 +395,22 @@ export interface BattleMessage {
   snapshot: BattleSnapshot | null;
 }
 
-export type ServerEvent = { type: 'run'; run: RunSnapshot | null } | ({ type: 'battle' } & BattleMessage);
-
-export interface StandingView {
-  spec: string;
-  series: number;
-  w: number;
-  l: number;
-  t: number;
-  winrate: number;
-  elo: number;
-}
-
-export interface TrajectoryPointView {
-  series: number;
-  spec: string;
-  elo: number;
-}
-
-interface SpeedGroupView {
-  scale: number | 'off';
-  label: string;
-  count: number;
-  standings: StandingView[];
-  h2h: Record<string, Record<string, [number, number, number]>>;
-  trajectory: TrajectoryPointView[];
-}
-
-export interface RecordsResponse {
-  count: number;
-  /** Applied pool filter; null is the overall view, which excludes the test pool. */
-  pool: string | null;
-  pools: string[];
-  /** Rated rotation rows split by battle speed; untimed first, then ascending clock scales. */
-  groups: SpeedGroupView[];
-  imported: number;
-}
-
-export interface LatencyPoint {
-  ms: number;
-  tokens?: number;
-  seriesId: string;
+/** Anonymous battle data is a resolved public split-log projection, never a blank private snapshot. */
+export interface PublicBattleMessage {
+  visibility: 'public';
+  index: number;
   game: number;
-  turn: number;
-  phase: string;
+  games: number[];
+  revision: number;
+  log: BattleLogEntryView[];
 }
 
-export interface ModelEvidence {
-  spec: string;
-  providers: string[];
-  series: number;
-  decisions: number;
-  reflections: number;
-  latency: { median: number; p25: number; p75: number; max: number } | null;
-  tokens: { median: number; p25: number; p75: number; max: number } | null;
-  points: LatencyPoint[];
-  rates: {
-    fallback: number;
-    parseFailure: number;
-    providerRetry: number;
-    switch: number;
-    protect: number;
-    toolLookups: number;
-    reflectionFallback: number | null;
-  };
-}
-
-export interface SeriesLuckEntry {
-  seriesId: string;
-  runId: string;
-  timestamp: string;
-  p1: string;
-  p2: string;
-  winner: string | null;
-  score: [number, number];
-  games: number;
-  turns: number;
-  luck: Record<Pid, number>;
-  winnerLuckDelta: number | null;
-}
-
-export interface TournamentStanding {
-  spec: string;
-  entered: number;
-  titles: number;
-  runnerUp: number;
-  semis: number;
-  earlier: number;
-  matchWins: number;
-  matchLosses: number;
-}
+export type BattleView = BattleMessage | PublicBattleMessage;
+export type ServerEvent = { type: 'run'; run: RunView | null } | ({ type: 'battle' } & BattleView);
 
 export interface TournamentSummary {
   tournaments: number;
   matches: number;
-  standings: TournamentStanding[];
-}
-
-export interface EvidenceResponse {
-  pool: string | null;
-  count: number;
-  decisions: number;
-  models: ModelEvidence[];
-  series: SeriesLuckEntry[];
 }
 
 export interface ArchivedMatchView {
@@ -699,47 +729,6 @@ export interface QuartileView {
   max: number;
 }
 
-export interface ModeRecordView {
-  mode: string;
-  series: number;
-  w: number;
-  l: number;
-  runs: Array<{ runId: string; when: string }>;
-}
-
-export interface ModelProfileResponse {
-  id: string;
-  providers: string[];
-  firstSeen: string | null;
-  lastSeen: string | null;
-  series: number;
-  games: number;
-  decisions: number;
-  reflections: number;
-  totalTokens: number;
-  reasoningTokens: number | null;
-  cost: number | null;
-  latency: QuartileView | null;
-  tokensPerDecision: QuartileView | null;
-  rates: {
-    fallback: number;
-    parseFailure: number;
-    providerRetry: number;
-    abandoned: number;
-    switch: number;
-    protect: number;
-    spread: number;
-    allyTarget: number;
-    megaPerGame: number;
-    toolLookups: number;
-    repeatedActions: number;
-    bringChanges: number | null;
-    leadChanges: number | null;
-    reflectionFallback: number | null;
-  };
-  modes: ModeRecordView[];
-}
-
 export interface ImportRequest {
   row: Record<string, unknown>;
   logs?: Partial<Record<Pid, string>>;
@@ -778,16 +767,11 @@ export interface ModelsResponse {
   models: ModelInfo[];
 }
 
-export interface ReasoningLevelsResponse {
-  levels: string[];
-}
-
 export interface TeamMemberView {
   species: string;
   item: string;
   ability: string;
   moves: string[];
-  teraType: string;
 }
 
 export interface ValidateResponse {

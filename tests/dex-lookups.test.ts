@@ -122,16 +122,27 @@ test('search_board is offered and dispatched only when a board search is supplie
   const toolCall = { id: 'call-1', name: 'search_board', arguments: { learns: 'Fake Out', max_cost: 20, limit: 5 } };
 
   const withoutBoard: { messages: ProviderMessage[]; options?: CompleteOptions }[] = [];
+  const refused: { name: string; result: string }[] = [];
   await completeWithDexTools({
-    provider: scriptedProvider([reply({ text: '{"pick": "gengar-mega"}' })], withoutBoard),
+    provider: scriptedProvider(
+      [reply({ toolCalls: [toolCall] }), reply({ text: '{"pick": "gengar-mega"}' })],
+      withoutBoard,
+    ),
     system: 'sys',
     messages: [{ role: 'user', content: 'pick' }],
     spec: 'test:model',
     reference,
     policy: POLICY,
+    onLookup: (call) => refused.push({ name: call.name, result: call.result }),
   });
   const plainTools = (withoutBoard[0]!.options?.tools ?? []).map((tool) => tool.name);
   assert.ok(!plainTools.includes('search_board'), 'stages without a board never see the tool');
+  assert.deepEqual(
+    refused.map((call) => call.name),
+    ['search_board'],
+  );
+  assert.match(refused[0]!.result, /Not executed: tool "search_board" was not offered in this stage/);
+  assert.match(String(withoutBoard[1]!.messages.at(-1)?.content), /Not executed/);
 
   const calls: { messages: ProviderMessage[]; options?: CompleteOptions }[] = [];
   const lookups: { name: string; result: string }[] = [];
@@ -153,4 +164,60 @@ test('search_board is offered and dispatched only when a board search is supplie
   assert.equal(lookups[0]!.name, 'search_board');
   assert.match(lookups[0]!.result, /Board search: \d+ match/);
   assert.match(lookups[0]!.result, /incineroar \| /);
+
+  const textCalls: { messages: ProviderMessage[]; options?: CompleteOptions }[] = [];
+  const textLookups: { name: string; result: string }[] = [];
+  await completeWithDexTools({
+    provider: scriptedProvider(
+      [
+        reply({ text: '{"name":"search_board","args":{"type":"Water","limit":2}}' }),
+        reply({ text: '{"pick":"blastoise"}' }),
+      ],
+      textCalls,
+    ),
+    system: 'sys',
+    messages: [{ role: 'user', content: 'pick' }],
+    spec: 'test:model',
+    reference,
+    boardSearch,
+    policy: POLICY,
+    onLookup: (call) => textLookups.push({ name: call.name, result: call.result }),
+  });
+  assert.deepEqual(
+    textLookups.map((call) => call.name),
+    ['search_board'],
+  );
+  assert.match(textLookups[0]!.result, /Board search: \d+ match/);
+  assert.match(String(textCalls[1]!.messages.at(-1)?.content), /Tool result for search_board/);
+});
+
+test('unknown text tools are refused while final-round tool calls are ignored', async () => {
+  const reference = new ShowdownReference('gen9championsvgc2026regmb');
+  const calls: { messages: ProviderMessage[]; options?: CompleteOptions }[] = [];
+  const lookups: { name: string; result: string }[] = [];
+  const completion = await completeWithDexTools({
+    provider: scriptedProvider(
+      [
+        reply({ text: '{"name":"change_result","args":{"winner":"p1"}}' }),
+        reply({
+          text: '{"sets":[]}',
+          toolCalls: [{ id: 'late', name: 'lookup_species', arguments: { name: 'Gengar' } }],
+        }),
+      ],
+      calls,
+    ),
+    system: 'sys',
+    messages: [{ role: 'user', content: 'build' }],
+    spec: 'test:model',
+    reference,
+    policy: { ...POLICY, toolRounds: 1 },
+    onLookup: (call) => lookups.push({ name: call.name, result: call.result }),
+  });
+  assert.equal(calls[1]!.options?.toolChoice, 'none');
+  assert.equal(completion.text, '{"sets":[]}');
+  assert.deepEqual(
+    lookups.map((call) => call.name),
+    ['change_result'],
+  );
+  assert.match(lookups[0]!.result, /Not executed: tool "change_result" was not offered/);
 });

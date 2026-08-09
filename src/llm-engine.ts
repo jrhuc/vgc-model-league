@@ -1,8 +1,11 @@
-import { createHash } from 'node:crypto';
-import fs from 'node:fs';
-import path from 'node:path';
+import { createHash, randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
-
+import {
+  type AgentContextEvent,
+  type AgentContextKind,
+  type AgentContextQuery,
+  AgentContextStream,
+} from './agent-context.js';
 import type { ChoiceSubstitution, DecisionLog, GameEnd, GameStart } from './battle-agent.js';
 import { BaseEngine } from './battle-agent.js';
 import { summarizeBattleEvents } from './battle-transcript.js';
@@ -23,14 +26,20 @@ import {
   classifyProviderFailure,
   makeProvider,
   parseSpec,
-  resolveSpecOverride,
   toolResultMessage,
   uniqueToolCalls,
 } from './providers.js';
 import type { RecoveryGate } from './recovery.js';
 import { DEX_TOOLS, ShowdownReference } from './reference.js';
+import {
+  evidenceSuppliedRecord,
+  normalizeStageEvidence,
+  noStageEvidence,
+  type StageEvidence,
+} from './stage-evidence.js';
 import { BattleState } from './state.js';
 import type {
+  ActionSubmission,
   AgentContext,
   BattleRequest,
   CompleteOptions,
@@ -39,6 +48,7 @@ import type {
   Pid,
   Provider,
   ProviderMessage,
+  SubmissionSource,
   ToolCall,
   ToolDefinition,
 } from './types.js';
@@ -46,8 +56,9 @@ import { clip, isRecord, text } from './value.js';
 
 interface ParsedDecision {
   choices: number[];
-  rationale: string;
-  notebook: string;
+  rationale?: string;
+  notebook?: string;
+  evidence: StageEvidence;
 }
 
 interface ToolTrace extends JsonObject {
@@ -67,8 +78,7 @@ class DecisionAbandonedError extends Error {
 interface PendingDecision extends JsonObject {
   prompt?: string;
   rawResponse?: string;
-  rationale?: string;
-  notebook?: string;
+  evidence?: StageEvidence;
   reasoning?: string;
   generation: number;
   usage?: Record<string, number>;
@@ -91,6 +101,8 @@ export interface LLMEngineOptions {
   apiKey?: string;
   decisionLog?: DecisionLog;
   traceLog?: DecisionLog;
+  contextLog?: DecisionLog;
+  initialContext?: readonly AgentContextEvent[];
   format?: string;
   psDir?: string;
   reference?: ShowdownReference;
@@ -102,6 +114,8 @@ export interface LLMEngineOptions {
    * reflection to the draft variant that also reviews the registration itself. */
   draftRoster?: string;
   briefing?: string;
+  /** Test seam for provider retry backoff; production uses abort-aware wall-clock delay. */
+  sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
 }
 
 const RETRY_ATTEMPTS = 3;
@@ -116,7 +130,6 @@ const DECISION_MIN_TOKENS = 1024;
 const DECISION_MAX_TOKENS_DEEP: Partial<Record<ReasoningLevel, number>> = {
   high: 8192,
   xhigh: 16_384,
-  max: 16_384,
 };
 /** Timed budgets follow generation pace so replies arrive before the deadline. The untimed ceiling and wall
  * clock only stop runaway reasoning loops, so both are sized to sit above anything real traffic produces:
@@ -319,49 +332,164 @@ function goldenDecisionRender(): string {
   });
 }
 
+function decisionRenderIdentity(): Record<string, string> {
+  return {
+    implementation: renderDecision.toString(),
+    golden: goldenDecisionRender(),
+  };
+}
+
+function contextPolicy(): Record<string, unknown> {
+  return {
+    version: 1,
+    logicalScope: 'series',
+    promptTimelineScope: 'game',
+    promptTimelineCharacterLimit: TRANSCRIPT_CHARACTER_LIMIT,
+    promptClipMarker: TRANSCRIPT_CLIP_MARKER,
+    notebookScope: 'series',
+    fullStream: {
+      appendOnly: true,
+      cursor: 'ctx-########',
+      events: ['episode', 'observation', 'decision', 'reflection'],
+      externalSeatRetrieval: true,
+    },
+  };
+}
+
+function decisionPolicy(): Record<string, unknown> {
+  return {
+    minTokens: DECISION_MIN_TOKENS,
+    maxTokensDeep: DECISION_MAX_TOKENS_DEEP,
+    maxTokensCeiling: DECISION_MAX_TOKENS_CEILING,
+    assumedTokensPerSecond: ASSUMED_TOKENS_PER_SECOND,
+    paceSafety: PACE_SAFETY,
+    untimedCallTimeoutSeconds: UNTIMED_CALL_TIMEOUT_S,
+    forceCommitTurnFraction: FORCE_COMMIT_TURN_FRACTION,
+    bankHealthySeconds: BANK_HEALTHY_SECONDS,
+    bankLowSeconds: BANK_LOW_SECONDS,
+    maxToolRounds: DECISION_MAX_TOOL_ROUNDS,
+    maxStandardToolCalls: DECISION_MAX_STANDARD_TOOL_CALLS,
+    maxOrderToolCalls: DECISION_MAX_ORDER_TOOL_CALLS,
+    untimedMaxToolRounds: UNTIMED_MAX_TOOL_ROUNDS,
+    untimedMaxStandardToolCalls: UNTIMED_MAX_STANDARD_TOOL_CALLS,
+    untimedMaxOrderToolCalls: UNTIMED_MAX_ORDER_TOOL_CALLS,
+    parseAttempts: DECISION_PARSE_ATTEMPTS,
+    noteLimit: DECISION_NOTE_LIMIT,
+    rationaleLimit: DECISION_RATIONALE_LIMIT,
+    temperature: DECISION_TEMPERATURE,
+    forceCommitMs: FORCE_COMMIT_MS,
+    retries: RETRY_ATTEMPTS,
+    retryBaseMs: RETRY_BASE_MS,
+    retryMinRemainingMs: RETRY_MIN_REMAINING_MS,
+    consecutiveDecisionFailureLimit: CONSECUTIVE_DECISION_FAILURE_LIMIT,
+  };
+}
+
+type DecisionPhase = 'team_preview' | 'forced_switch' | 'turn';
+
+const DECISION_REQUEST_DIGEST_VERSION = 'battle-decision-request-v1';
+
+function decisionPhase(request: BattleRequest): DecisionPhase {
+  return request.teamPreview ? 'team_preview' : request.forceSwitch ? 'forced_switch' : 'turn';
+}
+
+function decisionRequestProjection(request: BattleRequest): JsonObject {
+  return {
+    active: request.active ?? null,
+    force_switch: request.forceSwitch ?? null,
+    max_chosen_team_size: request.maxChosenTeamSize ?? null,
+    side: request.side ?? null,
+    team_preview: request.teamPreview ?? null,
+    timer: request.timer ?? null,
+    wait: request.wait ?? null,
+  };
+}
+
+function stableDecisionRequestJson(value: JsonObject): string {
+  return JSON.stringify(value, (_key, nested) => {
+    if (!isRecord(nested)) return nested;
+    return Object.fromEntries(
+      Object.entries(nested).sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0)),
+    );
+  });
+}
+
+function decisionRequestDigest(input: {
+  pid: Pid;
+  seriesId: string | undefined;
+  gameId: string;
+  gameNumber: number;
+  turn: number;
+  phase: DecisionPhase;
+  request: BattleRequest;
+  menus: SlotMenu[];
+}): string {
+  const projection = {
+    version: DECISION_REQUEST_DIGEST_VERSION,
+    pid: input.pid,
+    series_id: input.seriesId ?? null,
+    game_id: input.gameId,
+    game_number: input.gameNumber,
+    turn: input.turn,
+    phase: input.phase,
+    request: decisionRequestProjection(input.request),
+    menus: input.menus.map((menu) =>
+      menu.map((item) => ({ label: item.label, canonical_action: item.part, kind: item.kind })),
+    ),
+  };
+  const hash = createHash('sha256').update(stableDecisionRequestJson(projection)).digest('hex');
+  return `${DECISION_REQUEST_DIGEST_VERSION}:${hash}`;
+}
+
+function digest(value: unknown): string {
+  return createHash('sha256').update(JSON.stringify(value)).digest('hex').slice(0, 12);
+}
+
+/** Key order here is load-bearing: it reproduces the pre-decomposition hash so revisions
+ * recorded by earlier runs keep the meaning they had when those runs were played. */
 export function scaffoldRevision(): string {
-  return createHash('sha256')
-    .update(
-      JSON.stringify({
-        system: SYSTEM,
-        timedSystem: TIMED_SYSTEM,
-        reflection: REFLECTION_SYSTEM,
-        seriesReflection: SERIES_REFLECTION_SYSTEM,
-        draftSeriesReflection: DRAFT_SERIES_REFLECTION_SYSTEM,
-        tools: DECISION_TOOLS,
-        decisionPolicy: {
-          minTokens: DECISION_MIN_TOKENS,
-          maxTokensDeep: DECISION_MAX_TOKENS_DEEP,
-          maxTokensCeiling: DECISION_MAX_TOKENS_CEILING,
-          assumedTokensPerSecond: ASSUMED_TOKENS_PER_SECOND,
-          paceSafety: PACE_SAFETY,
-          untimedCallTimeoutSeconds: UNTIMED_CALL_TIMEOUT_S,
-          forceCommitTurnFraction: FORCE_COMMIT_TURN_FRACTION,
-          bankHealthySeconds: BANK_HEALTHY_SECONDS,
-          bankLowSeconds: BANK_LOW_SECONDS,
-          maxToolRounds: DECISION_MAX_TOOL_ROUNDS,
-          maxStandardToolCalls: DECISION_MAX_STANDARD_TOOL_CALLS,
-          maxOrderToolCalls: DECISION_MAX_ORDER_TOOL_CALLS,
-          untimedMaxToolRounds: UNTIMED_MAX_TOOL_ROUNDS,
-          untimedMaxStandardToolCalls: UNTIMED_MAX_STANDARD_TOOL_CALLS,
-          untimedMaxOrderToolCalls: UNTIMED_MAX_ORDER_TOOL_CALLS,
-          parseAttempts: DECISION_PARSE_ATTEMPTS,
-          noteLimit: DECISION_NOTE_LIMIT,
-          rationaleLimit: DECISION_RATIONALE_LIMIT,
-          temperature: DECISION_TEMPERATURE,
-          forceCommitMs: FORCE_COMMIT_MS,
-          retries: RETRY_ATTEMPTS,
-          retryBaseMs: RETRY_BASE_MS,
-          retryMinRemainingMs: RETRY_MIN_REMAINING_MS,
-          consecutiveDecisionFailureLimit: CONSECUTIVE_DECISION_FAILURE_LIMIT,
-        },
-        reflectionMaxTokens: REFLECTION_MAX_TOKENS,
-        goldenDecision: goldenDecisionRender(),
-        referenceRender: ShowdownReference.renderRevision(),
-      }),
-    )
-    .digest('hex')
-    .slice(0, 12);
+  return digest({
+    system: SYSTEM,
+    timedSystem: TIMED_SYSTEM,
+    reflection: REFLECTION_SYSTEM,
+    seriesReflection: SERIES_REFLECTION_SYSTEM,
+    draftSeriesReflection: DRAFT_SERIES_REFLECTION_SYSTEM,
+    tools: DECISION_TOOLS,
+    decisionPolicy: decisionPolicy(),
+    reflectionMaxTokens: REFLECTION_MAX_TOKENS,
+    decisionRender: decisionRenderIdentity(),
+    referenceRender: ShowdownReference.renderRevision(),
+    contextPolicy: contextPolicy(),
+  });
+}
+
+export const SCAFFOLD_COMPONENTS = [
+  'system',
+  'stateRender',
+  'toolRender',
+  'tools',
+  'policy',
+  'context',
+  'reflection',
+] as const;
+
+export type ScaffoldComponent = (typeof SCAFFOLD_COMPONENTS)[number];
+
+export function scaffoldComponents(): Record<ScaffoldComponent, string> {
+  return {
+    system: digest({ system: SYSTEM, timedSystem: TIMED_SYSTEM }),
+    stateRender: digest(decisionRenderIdentity()),
+    toolRender: digest(ShowdownReference.renderRevision()),
+    tools: digest(DECISION_TOOLS),
+    policy: digest(decisionPolicy()),
+    context: digest(contextPolicy()),
+    reflection: digest({
+      reflection: REFLECTION_SYSTEM,
+      seriesReflection: SERIES_REFLECTION_SYSTEM,
+      draftSeriesReflection: DRAFT_SERIES_REFLECTION_SYSTEM,
+      reflectionMaxTokens: REFLECTION_MAX_TOKENS,
+    }),
+  };
 }
 
 function isRetryableError(error: unknown): boolean {
@@ -369,11 +497,15 @@ function isRetryableError(error: unknown): boolean {
   return failure.retryable ?? !failure.terminal;
 }
 
+const retrySleep = (ms: number, signal?: AbortSignal): Promise<void> =>
+  signal ? delay(ms, undefined, { signal }) : delay(ms);
+
 export class LLMEngine extends BaseEngine {
   provider: Provider;
-  private resolvedSpec: string;
   readonly reference: ShowdownReference;
   private state: BattleState;
+  private readonly fullContext: AgentContextStream;
+  private readonly contextAttempt = randomUUID();
   private transcript: string[] = [];
   private notebook: string;
   private gameId: string;
@@ -412,6 +544,7 @@ export class LLMEngine extends BaseEngine {
   private replayQueue: JsonObject[] = [];
   private generation = 0;
   private decisionController: AbortController | undefined;
+  private activeToolRequest: BattleRequest | undefined;
   private consecutiveDecisionFailures = 0;
 
   constructor(
@@ -419,34 +552,33 @@ export class LLMEngine extends BaseEngine {
     readonly spec: string,
     private readonly options: LLMEngineOptions = {},
   ) {
-    super(pid);
-    this.resolvedSpec = options.provider ? spec : resolveSpecOverride(spec);
-    this.provider = options.provider ?? this.buildProvider(this.resolvedSpec);
+    super(pid, options.decisionLog);
+    this.provider =
+      options.provider ??
+      makeProvider(parseSpec(spec), {
+        ...(options.reasoning === undefined ? {} : { reasoning: options.reasoning }),
+        ...(options.apiKey === undefined ? {} : { apiKey: options.apiKey }),
+      });
     this.reference =
       options.reference ?? new ShowdownReference(options.format ?? 'gen9championsvgc2026regmbbo3', options.psDir);
     this.state = new BattleState(pid);
+    this.fullContext = new AgentContextStream(options.initialContext, (event) => {
+      this.writeLog(this.options.contextLog, {
+        kind: 'agent_context',
+        pid: this.pid,
+        series_id: this.seriesId ?? null,
+        context_id: event.id,
+        sequence: event.sequence,
+        context_kind: event.kind,
+        payload: event.payload,
+      });
+    });
     this.notebook = clip(options.initialNotebook?.trim() ?? '', DECISION_NOTE_LIMIT);
     this.gameId = spec;
   }
 
-  private buildProvider(resolved: string): Provider {
-    return makeProvider(parseSpec(resolved), {
-      ...(this.options.reasoning === undefined ? {} : { reasoning: this.options.reasoning }),
-      ...(resolved === this.spec && this.options.apiKey !== undefined ? { apiKey: this.options.apiKey } : {}),
-    });
-  }
-
-  /** An explicit key belongs to the seat's own spec, so a rerouted seat falls back to environment
-   * keys for its replacement provider. */
-  private refreshProvider(): void {
-    if (this.options.provider) return;
-    const resolved = resolveSpecOverride(this.spec);
-    if (resolved === this.resolvedSpec) return;
-    this.resolvedSpec = resolved;
-    this.provider = this.buildProvider(resolved);
-  }
-
   override beginGame(context: GameStart): void {
+    super.beginGame(context);
     this.decisionController?.abort(new Error('game changed'));
     this.decisionController = undefined;
     this.gameId = context.gameId;
@@ -457,6 +589,13 @@ export class LLMEngine extends BaseEngine {
     this.pending = undefined;
     this.transcript = [];
     this.remember(`[Game ${context.gameNumber} begins; series score ${this.scoreText()}]`);
+    this.appendContext('episode', {
+      event: 'game_begin',
+      game_id: this.gameId,
+      series_id: this.seriesId ?? null,
+      game_number: this.gameNumber,
+      series_score: this.seriesScore,
+    });
   }
 
   override coachingNote(): string {
@@ -469,6 +608,14 @@ export class LLMEngine extends BaseEngine {
     const won = context.outcome.won === true;
     const result = winner === 'tie' ? 'tied' : won ? 'won' : 'lost';
     this.remember(`[Game ${context.gameNumber} ended; you ${result}; series score ${this.scoreText()}]`);
+    this.appendContext('episode', {
+      event: 'game_end',
+      game_id: this.gameId,
+      series_id: this.seriesId ?? null,
+      game_number: context.gameNumber,
+      result,
+      series_score: this.seriesScore,
+    });
     await this.reflect(context, result);
   }
 
@@ -476,6 +623,7 @@ export class LLMEngine extends BaseEngine {
     if (!lines.length) return;
     this.state.feed(lines);
     this.rememberEvents(lines);
+    this.appendObservation(lines);
   }
 
   override abandonDecision(): void {
@@ -492,15 +640,37 @@ export class LLMEngine extends BaseEngine {
     this.replayQueue = [...rows];
   }
 
+  private requestDigest(request: BattleRequest, menus: SlotMenu[], phase: DecisionPhase): string {
+    return decisionRequestDigest({
+      pid: this.pid,
+      seriesId: this.seriesId,
+      gameId: this.gameId,
+      gameNumber: this.gameNumber,
+      turn: this.state.turn,
+      phase,
+      request,
+      menus,
+    });
+  }
+
   private replayAction(request: BattleRequest): string | undefined {
     const row = this.replayQueue.shift();
     if (!row) return undefined;
-    const phase = request.teamPreview ? 'team_preview' : request.forceSwitch ? 'forced_switch' : 'turn';
+    const phase = decisionPhase(request);
+    const menus = buildMenus(request, this.menuHints(request));
+    const requestDigest = this.requestDigest(request, menus, phase);
     if (
-      Number(row.game_number) !== this.gameNumber ||
-      Number(row.turn) !== this.state.turn ||
+      row.request_digest !== requestDigest ||
+      row.pid !== this.pid ||
+      row.series_id !== (this.seriesId ?? null) ||
+      row.game_id !== this.gameId ||
+      row.game_number !== this.gameNumber ||
+      row.turn !== this.state.turn ||
       row.phase !== phase ||
-      typeof row.action !== 'string'
+      typeof row.action !== 'string' ||
+      typeof row.submission_id !== 'string' ||
+      !['model', 'automatic', 'model-default'].includes(String(row.submission_source)) ||
+      (row.outcome !== 'accepted' && row.outcome !== 'rejected')
     ) {
       /** The live battle diverged from the recording, so the recording is no longer the truth;
        * the rest of the game is decided live. */
@@ -512,22 +682,58 @@ export class LLMEngine extends BaseEngine {
       this.loggedNotebook = row.notebook;
     }
     this.rememberTurnDetail(`Decision: ${row.action}`);
+    this.appendContext('decision', {
+      game_id: this.gameId,
+      series_id: this.seriesId ?? null,
+      game_number: this.gameNumber,
+      turn: this.state.turn,
+      phase,
+      action: row.action,
+      rationale: typeof row.rationale === 'string' ? row.rationale : '',
+      notebook: this.notebook,
+      menus: this.contextMenus(menus),
+      replayed: true,
+    });
+    this.restoreSubmission({
+      submissionId: row.submission_id,
+      choice: row.action,
+      source: row.submission_source as SubmissionSource,
+    });
     return row.action;
+  }
+
+  readContext(query: AgentContextQuery = {}) {
+    return this.fullContext.read(query);
+  }
+
+  decisionToolDefinitions(): ToolDefinition[] {
+    return structuredClone(DECISION_TOOLS) as ToolDefinition[];
+  }
+
+  lookupDecisionTool(name: string, args: JsonObject): string {
+    const request = this.activeToolRequest;
+    if (!request) throw new Error('battle tools are available only during an active decision');
+    if (!DECISION_TOOLS.some((tool) => tool.name === name)) throw new Error(`unknown battle tool ${name}`);
+    if (name === ACTION_ORDER_TOOL.name) return this.state.compareActionOrder(args, this.reference);
+    if (name === 'estimate_damage') return this.state.estimateDamage(args, request, this.reference);
+    return this.reference.lookup(name, args);
   }
 
   override async act(request: BattleRequest, context: AgentContext): Promise<string> {
     const events = context.povLines;
     this.state.feed(events);
     this.rememberEvents(events);
+    this.appendObservation(events);
+    this.appendRequestObservation(request);
     const replayed = this.replayAction(request);
     if (replayed !== undefined) return replayed;
+    this.activeToolRequest = request;
     const generation = this.generation;
     const controller = new AbortController();
     this.decisionController?.abort(new Error('new decision started'));
     this.decisionController = controller;
     this.pending = {
       rawResponse: '',
-      notebook: this.notebook,
       generation,
       ...(request.timer ? { timer: request.timer } : {}),
     };
@@ -539,6 +745,7 @@ export class LLMEngine extends BaseEngine {
       throw caught;
     } finally {
       if (this.decisionController === controller) this.decisionController = undefined;
+      if (this.activeToolRequest === request) this.activeToolRequest = undefined;
     }
   }
 
@@ -559,6 +766,7 @@ export class LLMEngine extends BaseEngine {
     const pace = () => this.observedTokensPerSecond ?? ASSUMED_TOKENS_PER_SECOND;
     let maxTokens = Math.max(tokenFloor, decisionTokenBudget(remainingMs(), pace()));
     let truncatedBudget = 0;
+    let earlyLengthStop: { outputTokens: number; requestedMaxTokens: number } | undefined;
     const generation = this.generation;
     const decisionSignal = this.decisionController?.signal;
     const renderedState = this.state.render(request, (mon) => this.reference.describeCompact(mon));
@@ -603,6 +811,7 @@ export class LLMEngine extends BaseEngine {
     let toolRounds = 0;
     this.callRetries = 0;
     const toolCalls: ToolTrace[] = [];
+    const offeredToolNames = new Set(DECISION_TOOLS.map((tool) => tool.name));
     const seenToolResults = new Map<string, string>();
     const failedAttempts: { response: string; error: string }[] = [];
     const reasoningParts: string[] = [];
@@ -619,7 +828,7 @@ export class LLMEngine extends BaseEngine {
       this.rememberTurnDetail(
         `No choice submitted: ${failure.summary} ${stop ? 'The run cannot continue.' : 'The battle timer acts when time expires.'}`,
       );
-      const phase = request.teamPreview ? 'team_preview' : request.forceSwitch ? 'forced_switch' : 'turn';
+      const phase = decisionPhase(request);
       const timer = request.timer
         ? { turn_seconds: request.timer.turnSeconds ?? null, bank_seconds: request.timer.seconds ?? null }
         : null;
@@ -631,27 +840,6 @@ export class LLMEngine extends BaseEngine {
         pid: this.pid,
         phase,
       };
-      const rationale = stop
-        ? `${failure.summary} The run cannot continue.`
-        : `${failure.summary} No decision was submitted; the battle timer decides.`;
-      this.writeLog(this.options.decisionLog, {
-        kind: 'decision',
-        ...base,
-        selection: [],
-        action: 'abandoned',
-        rationale,
-        automatic: false,
-        fallback: true,
-        failure_kind: failure.kind,
-        error_summary: failure.summary,
-        error: message,
-        parse_failures: parseFailures,
-        latency_ms: Math.round(performance.now() - started),
-        total_tokens: totalTokens(usage),
-        ...reasoningField(usage),
-        timer,
-        tool_lookups: toolCalls.map((call) => call.name),
-      });
       this.writeLog(this.options.traceLog, {
         kind: 'decision_trace',
         ...base,
@@ -693,23 +881,26 @@ export class LLMEngine extends BaseEngine {
     let emptyRetries = 0;
     while (!parsed && parseFailures < parseAttempts) {
       if (generation !== this.generation) throw new DecisionAbandonedError();
-      if (parseFailures && (rawResponse || truncatedBudget)) {
-        /** Replaying a truncated ramble verbatim spends the retry's input budget on the reasoning that
-         * already overran, making the retry likelier to overrun too. Summarise it instead and ask for the
-         * answer first. */
+      if (parseFailures && (rawResponse || truncatedBudget || earlyLengthStop)) {
+        /** Replaying a cut-off ramble verbatim spends the retry's input budget on reasoning that cannot
+         * contain the missing ending. Summarise it instead and ask for the answer first. */
         messages.push({
           role: 'assistant',
-          content: truncatedBudget ? '[response cut off before a choice was submitted]' : rawResponse,
+          content:
+            truncatedBudget || earlyLengthStop ? '[response cut off before a choice was submitted]' : rawResponse,
         });
         messages.push({
           role: 'user',
           content: truncatedBudget
             ? `Your previous response ran past its ${truncatedBudget}-token budget before submitting a choice. Reply with the required JSON immediately, keeping reasoning brief enough to finish inside the budget.`
-            : `Your previous response was invalid. Error: ${error}. Reply again following the required JSON format.`,
+            : earlyLengthStop
+              ? `The provider stopped your previous response for length after ${earlyLengthStop.outputTokens} output tokens, below the requested ${earlyLengthStop.requestedMaxTokens}-token cap. Reply with the required JSON immediately.`
+              : `Your previous response was invalid. Error: ${error}. Reply again following the required JSON format.`,
         });
       }
       rawResponse = '';
       truncatedBudget = 0;
+      earlyLengthStop = undefined;
       const maxToolRounds = deadline === undefined ? UNTIMED_MAX_TOOL_ROUNDS : DECISION_MAX_TOOL_ROUNDS;
       let cutoffAnnounced = false;
       for (let round = 0; round <= maxToolRounds; round += 1) {
@@ -776,11 +967,9 @@ export class LLMEngine extends BaseEngine {
             const result =
               cached !== undefined
                 ? `[identical to an earlier call this decision] ${cached}`
-                : call.name === ACTION_ORDER_TOOL.name
-                  ? this.state.compareActionOrder(call.arguments, this.reference)
-                  : call.name === 'estimate_damage'
-                    ? this.state.estimateDamage(call.arguments, request, this.reference)
-                    : this.reference.lookup(call.name, call.arguments);
+                : !offeredToolNames.has(call.name)
+                  ? `Not executed: tool ${JSON.stringify(call.name)} was not offered for this decision.`
+                  : this.lookupDecisionTool(call.name, call.arguments);
             if (cached === undefined) seenToolResults.set(seenKey, result);
             toolCalls.push({ name: call.name, arguments: call.arguments, result });
             messages.push(toolResultMessage(call.id, result));
@@ -792,26 +981,30 @@ export class LLMEngine extends BaseEngine {
           }
           continue;
         }
-        /** A model cut off mid-reasoning still returns text, so finishReason alone misses it and the run
-         * blames the model's formatting for a budget it never got to spend. Token count is the signal
-         * providers agree on. */
-        if (completion.finishReason === 'length' || (completion.usage.output_tokens ?? 0) >= maxTokens) {
-          truncatedBudget = maxTokens;
-        }
+        /** Reported output reaching this call's requested cap is budget exhaustion even when a provider
+         * omits finishReason. A length stop below that cap is still truncation, but not budget exhaustion. */
+        const outputTokens = Math.trunc(completion.usage.output_tokens ?? 0);
+        if (outputTokens >= maxTokens) truncatedBudget = maxTokens;
+        else if (completion.finishReason === 'length')
+          earlyLengthStop = { outputTokens, requestedMaxTokens: maxTokens };
         if (!completion.text && !completion.toolCalls.length && truncatedBudget) break;
         rawResponse = completion.text;
         /** Some reasoning models via gateways finish with every token in the reasoning channel and an
          * empty text field; the decision they wrote is salvaged rather than bought again on a retry. */
         if (!rawResponse && !completion.toolCalls.length && completion.reasoning) {
           try {
-            LLMEngine.extractChoices(completion.reasoning, menus);
+            LLMEngine.extractChoices(completion.reasoning, menus, this.notebook);
             rawResponse = completion.reasoning;
           } catch {}
         }
         break;
       }
       if (!rawResponse) {
-        error = truncatedBudget ? `reasoning exhausted the ${truncatedBudget}-token response budget` : 'empty response';
+        error = truncatedBudget
+          ? `reasoning exhausted the ${truncatedBudget}-token response budget`
+          : earlyLengthStop
+            ? `provider stopped the response for length after ${earlyLengthStop.outputTokens} output tokens, below the requested ${earlyLengthStop.requestedMaxTokens}-token cap`
+            : 'empty response';
         failedAttempts.push({ response: '', error });
         if (request.timer) return failDecision(new Error(error));
         if (truncatedBudget) {
@@ -825,15 +1018,17 @@ export class LLMEngine extends BaseEngine {
         break;
       }
       try {
-        parsed = LLMEngine.extractChoices(rawResponse, menus);
+        parsed = LLMEngine.extractChoices(rawResponse, menus, this.notebook);
         BaseEngine.parts(menus, parsed.choices);
       } catch (caught) {
         parsed = undefined;
         error = truncatedBudget
           ? `reasoning exhausted the ${truncatedBudget}-token response budget before a choice was submitted`
-          : caught instanceof Error
-            ? caught.message
-            : String(caught);
+          : earlyLengthStop
+            ? `provider stopped the response for length after ${earlyLengthStop.outputTokens} output tokens, below the requested ${earlyLengthStop.requestedMaxTokens}-token cap before a choice was submitted`
+            : caught instanceof Error
+              ? caught.message
+              : String(caught);
         if (!truncatedBudget && /[|｜]\s*DSML\s*[|｜]/.test(rawResponse)) {
           error =
             'the response wrote tool-call markup as plain text, which nothing executes. Call tools through the API tool interface or reply with the required JSON object';
@@ -847,22 +1042,25 @@ export class LLMEngine extends BaseEngine {
       parsed ??
       ({
         choices: BaseEngine.defaults(menus)[0],
-        rationale: `No valid decision (${error}); defaulted to the first legal option for each slot.`,
-        notebook: this.notebook,
+        evidence: {
+          ...noStageEvidence(this.notebook),
+          rationale: `No valid decision (${error}); defaulted to the first legal option for each slot.`,
+        },
       } satisfies ParsedDecision);
     if (generation === this.generation && this.pending)
       Object.assign(this.pending, {
         prompt,
         rawResponse,
-        rationale: decision.rationale,
-        notebook: decision.notebook,
+        evidence: decision.evidence,
         reasoning: reasoningParts.join('\n\n').trim() || undefined,
         usage,
         ...(upstreamProviders.size ? { upstreamProviders: [...upstreamProviders] } : {}),
         fallback,
         error: fallback ? error : undefined,
         errorSummary:
-          fallback && truncatedBudget ? classifyProviderFailure(new Error(error), this.spec).summary : undefined,
+          fallback && (truncatedBudget || earlyLengthStop)
+            ? classifyProviderFailure(new Error(error), this.spec).summary
+            : undefined,
         latencyMs: performance.now() - started,
         toolCalls,
         ...(failedAttempts.length ? { failedAttempts } : {}),
@@ -893,7 +1091,6 @@ export class LLMEngine extends BaseEngine {
       runSignal && operationSignal ? AbortSignal.any([runSignal, operationSignal]) : (runSignal ?? operationSignal);
     while (true) {
       await this.options.recovery?.wait(this.spec, signal);
-      this.refreshProvider();
       try {
         return await this.completeWithRetry(messages, options, generation, system, deadline?.(), operationSignal);
       } catch (error) {
@@ -948,31 +1145,36 @@ export class LLMEngine extends BaseEngine {
         )
           throw error;
         this.callRetries += 1;
-        if (signal) await delay(RETRY_BASE_MS * 2 ** attempt, undefined, { signal });
-        else await delay(RETRY_BASE_MS * 2 ** attempt);
+        await (this.options.sleep ?? retrySleep)(RETRY_BASE_MS * 2 ** attempt, signal);
       }
     }
   }
 
-  protected override actionCommitted(
+  protected override submissionSource(automatic: boolean, substitution?: ChoiceSubstitution): SubmissionSource {
+    return substitution || this.pending?.fallback ? 'model-default' : automatic ? 'automatic' : 'model';
+  }
+
+  protected override actionSubmitted(
     request: BattleRequest,
     _context: AgentContext,
     menus: SlotMenu[],
     choices: number[],
     parts: string[],
     automatic: boolean,
+    submission: ActionSubmission,
     substitution?: ChoiceSubstitution,
   ): void {
     const pending = this.pending;
     this.pending = undefined;
     if (!pending || pending.generation !== this.generation) return;
-    const notebook = pending.notebook ?? this.notebook;
+    const evidence = automatic ? noStageEvidence(this.notebook) : (pending.evidence ?? noStageEvidence(this.notebook));
     const rationale = automatic
       ? 'Automatic: only one legal joint action.'
-      : pending.rationale || 'No rationale supplied.';
+      : evidence.rationale || 'No rationale supplied.';
+    const evidenceSupplied = evidenceSuppliedRecord(evidence);
     if (!automatic) {
       if (!pending.fallback) this.consecutiveDecisionFailures = 0;
-      this.notebook = notebook;
+      this.notebook = evidence.notebook;
       this.decisions += 1;
       if (pending.fallback) this.fallbacks += 1;
       this.parseFailureCount += pending.parseFailures ?? 0;
@@ -983,7 +1185,8 @@ export class LLMEngine extends BaseEngine {
     }
     const action = request.teamPreview ? `team ${parts.join('')}` : parts.join(', ');
     this.rememberTurnDetail(`Decision: ${action}`);
-    const phase = request.teamPreview ? 'team_preview' : request.forceSwitch ? 'forced_switch' : 'turn';
+    const phase = decisionPhase(request);
+    const requestDigest = this.requestDigest(request, menus, phase);
     const selection = choices.map((choice, slot) => menus[slot]?.[choice]?.label ?? parts[slot] ?? 'pass');
     if (!automatic) this.recordTendencies(phase, menus, choices, parts, action, pending.toolCalls ?? []);
     const timer = pending.timer
@@ -992,7 +1195,21 @@ export class LLMEngine extends BaseEngine {
     const substituted = substitution
       ? { requested_choices: substitution.requested, substitution_reason: substitution.reason }
       : {};
-    this.writeLog(this.options.decisionLog, {
+    this.appendContext('decision', {
+      game_id: this.gameId,
+      series_id: this.seriesId ?? null,
+      game_number: this.gameNumber,
+      turn: this.state.turn,
+      phase,
+      action,
+      rationale,
+      notebook: this.notebook,
+      menus: this.contextMenus(menus),
+      evidence_supplied: evidenceSupplied,
+      automatic,
+      fallback: pending.fallback ?? false,
+    });
+    this.holdSubmissionEvidence(submission, {
       kind: 'decision',
       game_id: this.gameId,
       series_id: this.seriesId ?? null,
@@ -1000,9 +1217,11 @@ export class LLMEngine extends BaseEngine {
       turn: this.state.turn,
       pid: this.pid,
       phase,
+      request_digest: requestDigest,
       selection,
       action,
       rationale,
+      evidence_supplied: evidenceSupplied,
       ...this.notebookUpdate(),
       automatic,
       fallback: pending.fallback ?? false,
@@ -1014,6 +1233,7 @@ export class LLMEngine extends BaseEngine {
       total_tokens: totalTokens(pending.usage),
       ...reasoningField(pending.usage),
       ...(pending.usage?.cost !== undefined ? { cost: pending.usage.cost } : {}),
+      ...(pending.upstreamProviders?.length ? { upstream_providers: pending.upstreamProviders } : {}),
       timer,
       tool_lookups: (pending.toolCalls ?? []).map((call) => call.name),
     });
@@ -1165,13 +1385,13 @@ export class LLMEngine extends BaseEngine {
     };
   }
 
-  static extractChoices(response: string, menus: SlotMenu[]): ParsedDecision {
+  static extractChoices(response: string, menus: SlotMenu[], currentNotebook = ''): ParsedDecision {
     const objects = jsonObjects(response, true).filter((value) => 'choices' in value || 'choice' in value);
     if (!objects.length) throw new Error('no JSON object with a choices key');
     let failure: unknown;
     for (const object of objects.reverse()) {
       try {
-        return LLMEngine.parseDecision(object, menus);
+        return LLMEngine.parseDecision(object, menus, currentNotebook);
       } catch (caught) {
         failure ??= caught;
       }
@@ -1179,7 +1399,7 @@ export class LLMEngine extends BaseEngine {
     throw failure;
   }
 
-  private static parseDecision(object: JsonObject, menus: SlotMenu[]): ParsedDecision {
+  private static parseDecision(object: JsonObject, menus: SlotMenu[], currentNotebook: string): ParsedDecision {
     const rawChoices = object.choices ?? (menus.length === 1 ? [object.choice] : undefined);
     if (!Array.isArray(rawChoices) || rawChoices.length !== menus.length)
       throw new Error(`choices must be an array of exactly ${menus.length} integers`);
@@ -1190,14 +1410,16 @@ export class LLMEngine extends BaseEngine {
         throw new Error(`choice for slot ${slot + 1} must be between 0 and ${menus[slot]!.length - 1}`);
       return index;
     });
-    const rationale = typeof object.rationale === 'string' ? object.rationale : undefined;
-    const notebook = typeof object.notebook === 'string' ? object.notebook : undefined;
-    if (rationale === undefined || notebook === undefined)
-      throw new Error('response must contain string rationale and notebook fields');
+    const evidence = normalizeStageEvidence(object.rationale, object.notebook, {
+      currentNotebook,
+      rationaleLimit: DECISION_RATIONALE_LIMIT,
+      notebookLimit: DECISION_NOTE_LIMIT,
+    });
     return {
       choices,
-      rationale: clip(rationale, DECISION_RATIONALE_LIMIT),
-      notebook: clip(notebook, DECISION_NOTE_LIMIT),
+      ...(evidence.supplied.rationale ? { rationale: evidence.rationale } : {}),
+      ...(evidence.supplied.notebookUpdate ? { notebook: evidence.notebook } : {}),
+      evidence,
     };
   }
 
@@ -1288,6 +1510,17 @@ export class LLMEngine extends BaseEngine {
     this.reasoningTotal += Math.trunc(usage.reasoning_tokens ?? 0);
     this.notebook = review.notebook;
     this.remember(`Game review: ${review.summary} Next-game adjustment: ${review.adjustment}`);
+    this.appendContext('reflection', {
+      game_id: this.gameId,
+      series_id: this.seriesId ?? null,
+      game_number: context.gameNumber,
+      result,
+      series_over: seriesOver,
+      summary: review.summary,
+      adjustment: review.adjustment,
+      notebook: this.notebook,
+      fallback,
+    });
     this.writeLog(this.options.decisionLog, {
       kind: 'game_reflection',
       game_id: this.gameId,
@@ -1387,19 +1620,39 @@ export class LLMEngine extends BaseEngine {
     }
   }
 
+  private appendObservation(lines: string[]): void {
+    if (!lines.length) return;
+    this.appendContext('observation', {
+      game_id: this.gameId,
+      series_id: this.seriesId ?? null,
+      game_number: this.gameNumber,
+      turn: this.state.turn,
+      lines,
+    });
+  }
+
+  private appendRequestObservation(request: BattleRequest): void {
+    this.appendContext('observation', {
+      game_id: this.gameId,
+      series_id: this.seriesId ?? null,
+      game_number: this.gameNumber,
+      turn: this.state.turn,
+      event: 'battle_request',
+      request,
+    });
+  }
+
+  private contextMenus(menus: SlotMenu[]) {
+    return menus.map((menu) => menu.map(({ label, part, kind }) => ({ label, part, kind })));
+  }
+
+  private appendContext(kind: AgentContextKind, payload: JsonObject): void {
+    this.fullContext.append(kind, { ...payload, attempt_id: this.contextAttempt });
+  }
+
   private scoreText(): string {
     const foe: Pid = this.pid === 'p1' ? 'p2' : 'p1';
     return `you ${this.seriesScore[this.pid]}, opponent ${this.seriesScore[foe]}`;
-  }
-
-  private writeLog(output: DecisionLog | undefined, row: JsonObject): void {
-    if (!output) return;
-    if (typeof output === 'function') output(row);
-    else if (Array.isArray(output)) output.push(row);
-    else {
-      fs.mkdirSync(path.dirname(output), { recursive: true });
-      fs.appendFileSync(output, `${JSON.stringify(row)}\n`, 'utf8');
-    }
   }
 }
 

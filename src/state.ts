@@ -624,6 +624,15 @@ export class BattleState {
       (mon) => mon.fainted,
     ).length;
     const active = this.activeEntries();
+    const moveTarget = reference.moveTarget(move);
+    const liveFoes = active.filter((entry) => entry.pid !== attacker.pid).length;
+    const hasLiveAlly = active.some((entry) => entry.pid === attacker.pid && entry.mon !== attacker.mon);
+    authoritative.is_spread_hit =
+      moveTarget === 'allAdjacentFoes'
+        ? liveFoes === 2
+        : moveTarget === 'allAdjacent'
+          ? liveFoes + Number(hasLiveAlly) > 1
+          : false;
     for (const [side, entry] of [
       ['attacker', attacker],
       ['defender', defender],

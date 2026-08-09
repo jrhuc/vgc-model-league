@@ -5,19 +5,16 @@ import path from 'node:path';
 import { boardRow, createBoardSearch } from './board-search.js';
 import { completeWithDexTools } from './dex-lookups.js';
 import type { BoardInfo, DraftBoardMonView, DraftPickView } from './gui/api.js';
+import { appendJsonlObject, readJsonlObjects } from './jsonl.js';
 import { BOARDS_DIR, defaultPsDir } from './paths.js';
+import { FORMAT_AUTHORITY_NOTICE } from './prompts.js';
 import type { ModelReasoningConfig, ReasoningLevel } from './providers.js';
-import {
-  classifyProviderFailure,
-  makeProvider,
-  parseSpec,
-  reasoningForModel,
-  resolveSpecOverride,
-} from './providers.js';
+import { classifyProviderFailure, makeProvider, parseSpec, reasoningForModel } from './providers.js';
 import type { Rng } from './random.js';
 import type { RecoveryGate } from './recovery.js';
 import { ShowdownReference } from './reference.js';
 import { loadShowdown } from './showdown.js';
+import { evidenceSuppliedRecord, normalizeStageEvidence, type StageEvidence } from './stage-evidence.js';
 import type { JsonObject, Provider, ProviderFailure, ProviderMessage } from './types.js';
 import { clip, text } from './value.js';
 
@@ -26,6 +23,7 @@ const BOARD_SLUG = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const DRAFT_PROMPT_POLICY = {
   systemTemplate: [
     'You are {{model}}, a coach in a Pokémon VGC draft league played in the format {{format}}.',
+    FORMAT_AUTHORITY_NOTICE,
     '',
     'LEAGUE RULES',
     '- {{coaches}} coaches snake-draft {{picks}} Pokémon each from the shared board below.',
@@ -51,8 +49,7 @@ const DRAFT_PROMPT_POLICY = {
     '{{board}}',
   ],
   turnInstruction:
-    'Reply with a single JSON object {"pick": "<board-id>", "reasoning": "<2-4 sentences>", ' +
-    '"notebook": "<updated notes to carry to your next pick>"} and nothing else.',
+    'Reply with one JSON object containing {"pick":"<board-id>"}. Optional evidence fields are "reasoning":"<concise reason>" and, only when your durable plan changed, "notebook":"<complete replacement notes for later picks>".',
   turnTemplate:
     'Overall pick {{pick}} of {{total}}. You have {{budget}} points and {{remaining}} left, and every remaining ' +
     'slot has to be filled from what is still on the board.',
@@ -83,6 +80,7 @@ const DRAFT_PROMPT_POLICY = {
 const FRANCHISE_NAME_PROMPT_POLICY = {
   systemTemplate: [
     'You are {{model}}. The competitive draft is complete.',
+    FORMAT_AUTHORITY_NOTICE,
     'Choose a concise, playful franchise name for the spectator-facing league display based on your finished roster.',
     "Wordplay and personality are welcome. The Shadow Cabinet, Prankster's Paradise, and Drought Dodgers are examples of the tone, not names to copy.",
     'The name is presentation only: coaches never see franchise names during competitive decisions.',
@@ -334,6 +332,7 @@ export interface RunDraftOptions extends ModelReasoningConfig {
   rng: Rng;
   signal?: AbortSignal;
   recovery?: RecoveryGate;
+  sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
   rosterPolicy?: string;
   onPick?: (view: DraftPickView, state: DraftState) => void;
   onName?: (entrant: number, teamName: string, state: DraftState) => void;
@@ -352,16 +351,7 @@ function replayTranscript(
     onPick?: (view: DraftPickView, state: DraftState) => void;
   },
 ): number {
-  let raw: string;
-  try {
-    raw = fs.readFileSync(file, 'utf8');
-  } catch {
-    return 0;
-  }
-  const rows = raw
-    .split('\n')
-    .filter((line) => line.trim())
-    .map((line) => JSON.parse(line) as Record<string, unknown>);
+  const rows = readJsonlObjects(file) as Record<string, unknown>[];
   for (const [index, row] of rows.entries()) {
     const drafter = context.order[index];
     if (drafter === undefined) throw new Error(`${file} holds more picks than the draft has slots`);
@@ -509,7 +499,8 @@ export function draftUserPrompt(
 interface ParsedPick {
   mon: DraftBoardMon;
   reasoning: string;
-  notebook: string;
+  notebook?: string;
+  evidence: StageEvidence;
 }
 
 function rejection(
@@ -542,6 +533,7 @@ export function parsePick(
   state: DraftState,
   drafter: number,
   models?: readonly string[],
+  currentNotebook = '',
 ): ParsedPick | string {
   const match = /\{[\s\S]*\}/.exec(response);
   if (!match) return 'the reply contained no JSON object';
@@ -555,13 +547,16 @@ export function parsePick(
   const pickId = slug(String(record.pick ?? ''));
   const mon = legal.find((candidate) => candidate.id === pickId || slug(candidate.name) === pickId);
   if (!mon) return rejection(pickId, legal, state, drafter, models);
-  const notebook =
-    typeof record.notebook === 'string' ? clip(record.notebook.trim(), DRAFT_PROMPT_POLICY.notebookLimit) : '';
-  if (!notebook) return '"notebook" must be a note to carry to your next pick';
+  const evidence = normalizeStageEvidence(record.reasoning, record.notebook, {
+    currentNotebook,
+    rationaleLimit: DRAFT_PROMPT_POLICY.rationaleLimit,
+    notebookLimit: DRAFT_PROMPT_POLICY.notebookLimit,
+  });
   return {
     mon,
-    reasoning: String(record.reasoning ?? '').trim(),
-    notebook,
+    reasoning: evidence.rationale,
+    ...(evidence.supplied.notebookUpdate ? { notebook: evidence.notebook } : {}),
+    evidence,
   };
 }
 
@@ -734,13 +729,11 @@ export async function runDraft(models: string[], board: DraftBoard, options: Run
     if (model === 'random') return undefined;
     const make =
       options.makeDraftProvider ??
-      ((spec: string, apiKey: string | undefined, reasoning: ReasoningLevel | undefined) => {
-        const resolved = resolveSpecOverride(spec);
-        return makeProvider(parseSpec(resolved), {
+      ((spec: string, apiKey: string | undefined, reasoning: ReasoningLevel | undefined) =>
+        makeProvider(parseSpec(spec), {
           ...(reasoning === undefined ? {} : { reasoning }),
-          ...(resolved === spec && apiKey !== undefined ? { apiKey } : {}),
-        });
-      });
+          ...(apiKey === undefined ? {} : { apiKey }),
+        }));
     return make(model, options.apiKeys?.[model], reasoningForModel(model, options));
   });
   const reference = new ShowdownReference(board.format, psDir);
@@ -774,6 +767,11 @@ export async function runDraft(models: string[], board: DraftBoard, options: Run
     }
     let chosen: DraftBoardMon | undefined;
     let reasoning = '';
+    let evidence: StageEvidence = {
+      rationale: '',
+      notebook: notebooks[drafter]!,
+      supplied: { rationale: false, notebookUpdate: false },
+    };
     let fallback = false;
     const provider = providers[drafter];
     if (provider) {
@@ -803,35 +801,43 @@ export async function runDraft(models: string[], board: DraftBoard, options: Run
             policy: DRAFT_PROMPT_POLICY,
             ...(options.recovery === undefined ? {} : { recovery: options.recovery }),
             ...(options.signal === undefined ? {} : { signal: options.signal }),
+            ...(options.sleep === undefined ? {} : { sleep: options.sleep }),
             onLookup: (call) => lookups.push(call),
           });
           response = completion.text;
           usage = completion.usage;
-          const truncated = completion.finishReason === 'length';
-          if (!response.trim() && !truncated && completion.reasoning) {
-            const salvaged = parsePick(completion.reasoning, legal, state, drafter, models);
+          const truncated = completion.outputLimitReached;
+          const stoppedEarly = completion.finishReason === 'length' && !truncated;
+          if (!response.trim() && !truncated && !stoppedEarly && completion.reasoning) {
+            const salvaged = parsePick(completion.reasoning, legal, state, drafter, models, notebooks[drafter]!);
             if (typeof salvaged !== 'string') response = completion.reasoning;
           }
-          const parsed = parsePick(response, legal, state, drafter, models);
+          const parsed = parsePick(response, legal, state, drafter, models, notebooks[drafter]!);
           if (typeof parsed === 'string') {
-            error = truncated ? `the reply used its whole token budget before naming a pick` : parsed;
+            error = truncated
+              ? `the reply used its whole ${DRAFT_PROMPT_POLICY.maxTokens}-token budget before naming a pick`
+              : stoppedEarly
+                ? `the provider stopped the reply for length before reaching the requested ${DRAFT_PROMPT_POLICY.maxTokens}-token cap`
+                : parsed;
             lastError = error;
             messages.push({
               role: 'assistant',
-              content: truncated
-                ? '[reply cut off before a pick]'
-                : response || '[the reply contained no visible text]',
+              content:
+                truncated || stoppedEarly
+                  ? '[reply cut off before a pick]'
+                  : response || '[the reply contained no visible text]',
             });
             messages.push({
               role: 'user',
               content: truncated
                 ? DRAFT_PROMPT_POLICY.truncatedTemplate.replace('{{budget}}', String(DRAFT_PROMPT_POLICY.maxTokens))
-                : DRAFT_PROMPT_POLICY.rejectionTemplate.replace('{{error}}', parsed),
+                : DRAFT_PROMPT_POLICY.rejectionTemplate.replace('{{error}}', error),
             });
           } else {
             chosen = parsed.mon;
             reasoning = parsed.reasoning;
-            notebooks[drafter] = parsed.notebook;
+            evidence = parsed.evidence;
+            notebooks[drafter] = evidence.notebook;
           }
         } catch (cause) {
           const failure = classifyProviderFailure(cause, models[drafter]);
@@ -870,10 +876,20 @@ export async function runDraft(models: string[], board: DraftBoard, options: Run
           .replace('{{mon}}', `${chosen.name} (${chosen.cost})`);
         const room = DRAFT_PROMPT_POLICY.notebookLimit - note.length - 1;
         notebooks[drafter] = `${clip(notebooks[drafter]!, Math.max(0, room))}\n${note}`.trim();
+        evidence = {
+          rationale: reasoning,
+          notebook: notebooks[drafter]!,
+          supplied: { rationale: false, notebookUpdate: false },
+        };
       }
     } else {
       chosen = legal[Math.floor(options.rng() * legal.length)]!;
       reasoning = 'random baseline pick';
+      evidence = {
+        rationale: reasoning,
+        notebook: notebooks[drafter]!,
+        supplied: { rationale: false, notebookUpdate: false },
+      };
     }
 
     state.taken.set(chosen.id, drafter);
@@ -887,22 +903,20 @@ export async function runDraft(models: string[], board: DraftBoard, options: Run
       fallback,
     };
     picks.push(view);
-    fs.appendFileSync(
-      transcript,
-      `${JSON.stringify({
-        pick: pickNumber + 1,
-        model: models[drafter],
-        mon: chosen.id,
-        name: chosen.name,
-        cost: chosen.cost,
-        budget_left: state.budgets[drafter],
-        rationale: reasoning,
-        ...(notebooks[drafter] ? { notebook: notebooks[drafter] } : {}),
-        fallback,
-        timestamp: new Date().toISOString(),
-      })}\n`,
-      'utf8',
-    );
+    appendJsonlObject(transcript, {
+      pick: pickNumber + 1,
+      model: models[drafter],
+      mon: chosen.id,
+      name: chosen.name,
+      cost: chosen.cost,
+      budget_left: state.budgets[drafter],
+      action: { pick: chosen.id },
+      rationale: reasoning,
+      evidence_supplied: evidenceSuppliedRecord(evidence),
+      ...(evidence.supplied.notebookUpdate || notebooks[drafter] ? { notebook: notebooks[drafter] } : {}),
+      fallback,
+      timestamp: new Date().toISOString(),
+    });
     options.onPick?.(view, state);
   }
 

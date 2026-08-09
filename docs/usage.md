@@ -2,242 +2,278 @@
 
 ## Install
 
-Use Node.js 24.18.1 and pnpm 11.11.0. If pnpm is not installed yet, bootstrap
-that exact version without lifecycle scripts:
+Use Node.js 24.18.1 and pnpm 11.11.0.
 
 ```sh
 npm install --global pnpm@11.11.0 --ignore-scripts --no-audit --no-fund
 pnpm install --frozen-lockfile
 pnpm run setup:showdown
 pnpm run build
+pnpm test
 ```
 
-`setup:showdown` installs the Pokémon Showdown revision in
-`showdown.lock.json`. Each build checks this revision and its compiled output.
-The project configuration requires exact dependencies, verifies lockfile and
-store content, waits seven days before admitting ordinary new releases, blocks
-exotic transitive sources, and disables dependency lifecycle scripts. The one
-release-age exception is an exact security-patched PostCSS version.
-
-Showdown is the deliberate special case: setup fetches only its official,
-full-commit pin, installs its upstream npm lock with lifecycle scripts disabled,
-runs its named build script explicitly, then removes everything except the one
-external package the simulator and room timer need at runtime. This project
-does not install or run Showdown's HTTP server dependencies.
-
-Use these commands to review or update the pinned revision:
+`setup:showdown` installs and checks the official full-commit pin in
+`showdown.lock.json`; the application embeds the simulator, not its HTTP server.
+To review or update the pin:
 
 ```sh
 pnpm run check:showdown-update
 pnpm run update:showdown
 ```
 
-The update command builds and tests the candidate revision. It restores the
-current revision if a check fails.
+The update command builds and tests the candidate and restores the old revision
+on failure.
+
+## Check the internal matchday package
+
+For internal contributor validation, build and test both the root TypeScript
+fixture at `dist/tests/fixtures/frozen-matchday.js` and the isolated
+`dist-matchday` bundle before entering the Python package workflow. Run these
+commands in order:
+
+```sh
+pnpm test
+pnpm run test:frozen-matchday-package
+pnpm run build:frozen-matchday-package
+```
+
+The package workflow and its current evidence are tracked only in the
+[evaluation support table](evaluation-plan.md#verifiers-boundary-and-target-architecture).
+The [package README](../environments/vgc_frozen_matchday_v0/README.md) owns its
+runtime contract.
+
+After `pnpm test` has built the CLI, freeze a reviewed private matchday source
+only into an absent private output root:
+
+```sh
+pnpm run freeze-frozen-matchday-task-source \
+  --input /absolute/path/private-source.json \
+  --out /absolute/path/absent-private-output-root
+```
+
+The command writes a private `manifest.json` and `task-source.jsonl`. It is safe
+only under the command's trusted-single-producer,
+immutable-repository/build/runtime-tree precondition;
+run `pnpm run freeze-frozen-matchday-task-source --help` for the byte,
+attestation, portability, concurrency, and identical-rerun limits. Do not treat
+this output as reviewed or release-approved.
 
 ## Run an experiment
 
-A model specification has the form `<provider>:<model-id>`. Use `random` for a
-legal-action baseline. CLI runs read provider keys from environment variables.
-GUI runs use the keys that you enter in the browser.
+Executable model specs are exactly `openrouter:<model-id>`, `prime:<model-id>`,
+and `random`, the legal-action baseline. OpenRouter uses the fixed
+`https://openrouter.ai/api/v1` endpoint and `OPENROUTER_API_KEY`; its GUI catalog
+lists current model IDs. Prime Inference uses the fixed
+`https://api.pinference.ai/api/v1` endpoint and `PRIME_API_KEY`; enter its model ID
+manually. Model specs never accept a base URL. GUI credentials entered in the
+browser remain in server memory only for that run.
 
 ```sh
 pnpm run vgcleague gui
 pnpm run vgcleague selfcheck
 
 pnpm run vgcleague rotation   --models <spec> <spec> --pool regmb-202607 --series-per-pair 4
-pnpm run vgcleague tournament --models <spec> <spec> <spec> <spec> --pool regmb-202607
-pnpm run vgcleague tournament --models <8 specs> --pool vr-aug26-top8
-pnpm run vgcleague draft      --models <spec> <spec> <spec> <spec> --board regmb-202607
+pnpm run vgcleague tournament   --models <spec> <spec> <spec> <spec> --pool regmb-202607
+pnpm run vgcleague draft   --models <spec> <spec> <spec> <spec> --board regmb-202607
 pnpm run vgcleague exhibition --opponent <spec>
 ```
 
-The GUI provides the default flow for one match. `selfcheck` runs one
-random-versus-random series.
+`selfcheck` runs one random-versus-random series. Use `pnpm run vgcleague
+--help` for the complete current option list.
 
-| Mode | Purpose | Rated |
+| Mode | Purpose | Comparison role |
 | --- | --- | --- |
-| Match | Play one best-of-three series. | No |
-| Tournament | Play a single-elimination bracket. | No |
-| Draft League | Draft rosters, build teams, and play a season. | No |
-| Rotation | Mirror team assignments across a fixed pool. | Yes |
-| Exhibition | Give one seat to an external terminal agent. | No |
+| GUI match | one best-of-three | contextual only |
+| Tournament | single-elimination bracket, one team per entrant | contextual only |
+| Draft | shared draft, matchup builds, round robin, playoffs | contextual only |
+| Rotation | mirrored assignments across a fixed pool | controlled/contextual; no rating |
+| Exhibition | one external terminal-agent seat | uncontrolled; no rating |
 
-Each experiment command accepts `--seed` and `--reasoning <level>`. Rotation,
-tournament, and draft also accept `--concurrency` and
-`--timer-scale <n|off>`.
+All experiment commands accept `--seed`. Rotation, tournament, and draft
+accept `--concurrency` and `--timer-scale <n|off>`. Battles are untimed by
+default. `--timer-scale 1` uses the standard VGC clock; 0.5 through 4 scales
+Showdown's clocks. Never pool different clocks or scaffolds.
 
-`vr-aug26-top8` holds the eight teams from the top cut of Victory Road's
-August 2026 Challenge #1, each seeded by where it finished, so eight models
-play that bracket in its real pairings with one team apiece. Tournaments on
-such a pool take `--provenance disclosed` (the default), which tells each seat
-the event and both teams' finishes, or `--provenance blind`, which tells it
-nothing — run the pair to measure what knowing is worth. Build a pool like it
-with `node dist/tools/build-event-pool.js teams/<pool>/sources.json`.
+Omitting reasoning configuration means provider default; there is no setting that
+claims to disable reasoning. The CLI may send `minimal`, `low`, `medium`, `high`,
+or `xhigh` to an explicit OpenRouter model and report any upstream rejection
+unchanged. The GUI offers those levels for an OpenRouter catalog model only when
+its `supported_parameters` includes `reasoning`. Prime's manually entered model
+IDs advertise no configurable levels because their capability is unknown.
 
-A bracket that stopped continues with `tournament --resume <run-dir>`. Resume
-uses the stored models, pool or inline teams, seed, provenance, reasoning, and
-clock, rebuilds the same draw, and stands on the series already recorded. The
-interrupted series adopts its own directory and replays its finished games and
-each side's recorded decisions before play continues, so a restart costs no
-provider calls for ground already covered. A seat rewired in the run's
-`config.json` plays on under its new spec; a draw that no longer matches the
-stored seats refuses to resume rather than record a different bracket.
+Transient provider outages and rate/quota errors pause and retry; credential and
+invalid-request errors fail fast. Each call executes the recorded seat's exact
+model spec. For OpenRouter, `--nitro` adds the `:nitro` throughput route to specs
+without another routing variant. Fallback is always disabled.
+`VGC_OPENROUTER_PIN=<provider>` optionally supplies the sole upstream order entry
+as routing metadata; without it OpenRouter chooses one upstream. The returned
+provider is recorded with cost data.
 
-Battles are untimed by default. `--timer-scale 1` uses the standard VGC clock.
-Values from 0.5 through 4 scale every Showdown clock. Each run records the
-selected scale. Ratings do not mix results from different scales.
+### Tournaments and resume
 
-Draft-league round-robin series run concurrently under `--concurrency`, with
-every matchup built blind to the other round-robin results. `--sequential-weeks`
-serializes the schedule without adding cross-match coaching context;
-`--through-week <n>` stops a sequential league after that round-robin week. Use
-`draft --resume <run-dir>` to continue the stored league. Resume uses the
-stored models, board, seed, rosters, schedule mode, trade-window state,
-completed results, and private playoff coaching context.
+A seeded event pool preserves its real bracket positions while models are
+shuffled across teams. `--provenance disclosed` (default) names the event and
+field but the competitive prompt withholds finishing order; `blind` withholds
+the event context. Player names never enter competitive prompts.
 
-`draft --draft-only` stops the run once every roster is drafted and plays no
-games, for when the draft itself is what you are measuring. The run writes its
-rosters and finishes; the archive lists it as a draft-only league. Resume it
-later with `draft --resume <run-dir>` to play the season from those rosters,
-which picks its free-agency window from `--trade-window` like a fresh league
-because a draft-only run never held one. The GUI offers the same choice as the
-run scope on the draft form.
+Resume a stopped bracket with:
 
-Draft leagues open a trade window after week 3 by default, or after the
-final round-robin week when a shorter league has fewer than three weeks.
-Lowest seed chooses first. Each coach may make one 1-for-1 offer to another
-coach, resolved immediately by that counterparty, before atomically submitting
-zero to six drop-and-add swaps from the undrafted board. Unequal-price trades
-are legal when both resulting rosters remain within budget; earlier trades and
-drops are visible to later coaches. Use
-`--trade-window <week>` to move the barrier or `--trade-window off` for the
-locked-roster control. See
-[Trade window](trade-window.md) for the full rules and provenance.
+```sh
+pnpm run vgcleague tournament --resume <run-dir>
+```
 
-When a coach's season ends — missing the playoff cut, losing a semifinal or the
-final, or winning it — it writes one retrospective over its own draft, its
-free-agency decision, and every series it played. Reviews are stored in
-`season.jsonl` and shown on the team page. See
-[Season review](season-review.md).
+The stored entrants, pool/teams, seed, provenance, reasoning, timer, draw, and
+completed evidence define the continuation. Recorded decisions replay without
+provider calls only while reconstruction remains eligible and requests match;
+otherwise the unfinished game continues live or restarts. Resume reconstructs
+explicit state and notes, not a provider process or chat. Stop the old owner and
+never resume one run concurrently.
 
-The Champions Bo3 formats publish open team sheets at team preview: both
-models read the opposing moves, items, abilities, and stat alignments, but
-never the hidden stat points. `draft --closed-sheets` strips that rule so
-models must deduce sets through play.
+### Draft leagues
 
-The draft board is published price-descending, as real draft leagues publish
-one. Coaches also get `search_board` during the draft and the free-agent
-window, which filters and re-sorts it by type, price range, ability, base stat
-total, or which entries legally learn a given move.
+Drafts select ten roster entries within 100 points, then build six complete sets
+per matchup. Round-robin builds are blind to other round-robin results. By
+default the scheduler runs concurrency-limited blind batches: all scheduled
+series through the transaction week, the barrier/window, then the remaining
+series. With the window off, the round robin is one batch. Use sequential weeks
+only as a labeled alternative. Useful controls include:
 
-Draft coaches carry a private roster note across their picks. A transaction
-window replaces that note with the coach's updated plan for later matchups.
-Each matchup's teambuild plan carries into its own best-of-three. Round-robin
-matchups do not otherwise share notes or results; playoff coaches receive
-their own earlier builds, results, and final battle notes.
+```sh
+pnpm run vgcleague draft --models <specs...> --draft-only
+pnpm run vgcleague draft --resume <run-dir>
+pnpm run vgcleague draft --models <specs...> --through-week <n>
+pnpm run vgcleague draft --models <specs...> --sequential-weeks
+pnpm run vgcleague draft --models <specs...> --closed-sheets
+pnpm run vgcleague draft --models <specs...> --trade-window off
+```
 
-After the last draft pick, each model names its finished franchise in a
-separate presentation-only turn. These names appear in the GUI, CLI, records,
-and archive, but models see coach/model identities—not franchise names—during
-drafting, matchup preparation, trades, battles, reflections, and season
-reviews. Naming writes `draft/franchise-names.jsonl`; completed names replay on
-resume without another model call. Older runs whose first picks contain
-`team_name` remain readable.
+`--draft-only` records rosters and stops; resume later to play the season.
+`--through-week` implies sequential weeks and stops cleanly after that week.
+Champions Bo3 uses open team sheets by default, excluding hidden stat points;
+`--closed-sheets` is a distinct condition.
 
-OpenRouter model specs pass variant suffixes through unchanged, so
-`openrouter:<model>:nitro` requests throughput-sorted routing. `--nitro` (or
-the OpenRouter routing select in the GUI) applies that variant to every
-OpenRouter spec that does not already carry one — faster and usually pricier,
-so skip it when slower seats set the pace anyway. Set
-`VGC_OPENROUTER_PROVIDER` to a JSON routing object (for example
-`{"order":["deepinfra"],"ignore":["novita"]}`) to pin or exclude upstream
-providers. Every OpenRouter response also records its upstream provider and
-reported cost in the run's decision traces.
+One transaction window opens after week 3 by default, or the last round-robin
+week in a shorter league. `--trade-window <week>` moves it; `off` is the labeled
+locked-roster control. Each coach may make one one-for-one offer before submitting
+up to six atomic free-agent drop/add swaps. Full rules and evidence boundaries
+are in [Trade window](trade-window.md).
 
-## Manage teams and draft boards
+Private notes are explicit reinjected state, not a persistent provider
+conversation. A roster note carries through the draft and transaction window; a
+matchup plan and battle notebook are series-scoped. Playoff coaches may receive
+their own earlier builds/results/final notes. Franchise names are spectator
+metadata and never enter competitive or review prompts. A terminal
+[Season review](season-review.md) is recorded when each coach's season ends.
 
-Team pools are immutable snapshots in `teams/<pool>/pool.json`. Create a new
-pool directory for each metagame update. Do not change a pool that has recorded
-results.
+Resume uses the stored board, models, seed, rosters, schedule, transaction state,
+completed results, and authorized playoff context. Inconsistent transaction,
+result, playoff, or roster evidence stops the resume. A draft-only run chooses
+its window when season play begins because it has not held one yet.
 
-Build a pool from Poképaste sources:
+## Manage immutable inputs
+
+Team pools live at `teams/<pool>/pool.json`; draft boards live at
+`boards/<board>.json`. Never mutate an input after it has recorded results.
 
 ```sh
 pnpm run build-pool teams/<pool>/sources.json
+pnpm run build-event-pool teams/<pool>/sources.json
+pnpm run build-board
 ```
 
-You can also paste Showdown teambuilder exports into the GUI pool manager. The
-pinned simulator validates both inputs and rejects duplicate species sets.
-
-Draft boards are immutable snapshots in `boards/<board>.json`. Build a board
-from a team pool:
-
-```sh
-pnpm run build-board <pool>
-```
+`build-pool` consumes Poképaste sources. The GUI pool manager also accepts
+Showdown teambuilder exports. The pinned simulator validates both. The current
+board builder uses its fixed Regulation MB cost source; it does not take a pool.
 
 ## Inspect evidence
 
 ```sh
-pnpm run vgcleague standings --pool regmb-202607
-pnpm run vgcleague report    --pool regmb-202607
+pnpm run vgcleague outcomes
+pnpm run vgcleague outcomes --pool regmb-202607
+pnpm run vgcleague report --pool regmb-202607
 ```
 
-The GUI archives finished runs: draft leagues under **Draft leagues** (rosters,
-pick rationales, per-series builds, schedule, and the board), brackets under
-**Tournaments**, and cross-mode model profiles under **Data room**.
+Without `--pool`, outcomes and reports exclude only the disposable `test` pool.
+They show contextual per-series rows with mode, pool, clock, scaffold, opponents,
+and sample size; they never merge aliases or calculate an aggregate order.
+Within-run standings and brackets remain descriptions of that run.
 
-Decision logs record `reasoning_tokens` and metered cost when the provider
-reports them.
+The GUI's canonical routes are **Home**, **Method**, **Docs**, **Draft
+leagues**, **Live**, **Tournaments**, and **New run**. Home and Method render the
+committed hash-checked selected artifact. Release status belongs only in the
+[Evaluation plan](evaluation-plan.md#program-status).
 
-Without `--pool`, standings and reports exclude the disposable `test` pool.
-They use only rotation results. Different providers for the same model ID
-count as one player within a timer group.
+Showdown and the versioned offline evaluator remain authorities. Browser and
+anonymous evidence boundaries are defined once in
+[Architecture](architecture.md#state-evidence-and-trust).
 
-## Archive a run
+Decision/context logs record authorized observations and submitted model
+evidence. They do not prove Showdown accepted a transition; join game/referee
+logs to establish legality, substitutions, timer defaults, and outcomes.
 
-Run directories hold every trace, thought log, and game log. They are the full
-record of a season but only the published subset is ever queried, so cold runs
-do not belong on the production volume.
+## Export experimental position evidence
+
+The supported offline commands remain experimental and run no comparison model:
+
+```sh
+pnpm run grade-positions --workers 4 --restart
+pnpm run export-position-panels --horizon 2 --luck 8 --opponents 4 --seed panels-1
+```
+
+`grade-positions` exactly replays eligible games and measures recorded choices.
+`export-position-panels` writes one public candidate root and one private root
+containing both score and sealed-panel files. Neither command releases a position
+package. The [Evaluation plan](evaluation-plan.md#program-status) alone owns
+status; its `vgc-positions-v1` section owns the remaining gates.
+
+## Archive and publish
+
+The selected GUI evidence uses a committed immutable three-file bundle.
+Run its clean-checkout integrity and privacy check with `pnpm run
+check:artifacts`; there is no supported reconstruction or promotion command.
+
+Archive full run directories to verified tarballs without deleting their source:
 
 ```sh
 pnpm run archive-run <run-id> [<run-id>...]
 ```
 
-Each run packs into `$VGC_RUN_ARCHIVE_DIR` (default `~/vgc-run-archive`) as a
-verified tarball with a checksum manifest. The source run is never deleted;
-remove it by hand after the archive lands wherever it is going. Sync the
-archive directory offsite with your own tooling, for example
-`rclone copy ~/vgc-run-archive <remote>:vgc-run-archive`.
+The destination is `$VGC_RUN_ARCHIVE_DIR` or `~/vgc-run-archive`. Copy it
+offsite with operator-managed tooling, then remove source runs manually if
+wanted.
 
-## Publish local results
-
-`publish` sends completed results to a deployment. It sends result rows,
-decision logs, game logs, run configuration, draft league assets, and missing
-team pools. Rotation, tournament, and draft runs all travel the same route. It
-does not send prompts or raw model responses. Re-publishing a series the
-deployment already holds backfills any game logs it is missing.
+Publish completed result rows and the allowed support evidence to a deployment:
 
 ```sh
 export VGC_LEAGUE_PUBLISH_ORIGIN=https://<deployment>
 export VGC_LEAGUE_IMPORT_TOKEN=<operator-secret>
-
 pnpm run vgcleague publish --dry-run
 pnpm run vgcleague publish
 pnpm run vgcleague publish --pool regmb-202607
-pnpm run vgcleague publish --run 20260805T175336.037000Z-0f155186
+pnpm run vgcleague publish --run <run-id>
 ```
 
-The command does not add a series that the deployment already has. Without
-`--pool`, it excludes the `test` pool. Use `--include-test` to include that
-pool. `--run` publishes exactly the named runs whatever their mode or pool, and
-is the only way to name a draft league, whose rows carry no pool; repeat it to
-send several. The deployment must use the same import token. See
-[Deployment](deployment.md).
+Publishing is idempotent. Without filters it excludes `test`; `--include-test`
+overrides that. Repeat `--run` for exact runs, including draft leagues whose rows
+have no pool. The command imports results, decision/game logs, run configuration,
+draft/teambuild/window/season support assets, and missing pools so authorized
+operators can reconstruct the archive. It does not send prompt-attempt logs, raw
+provider responses, trace logs, or seat-context JSONL, so the import is not a
+complete execution envelope.
 
-## Use an exhibition seat
+Import is not trace release. The exact anonymous and operator boundaries live in
+[Architecture](architecture.md#state-evidence-and-trust); service configuration
+lives in [Deployment](deployment.md).
 
-The host creates an agent workspace in `runs/<run>/agent/` by default. The
-workspace contains `seat.mjs`, `SEAT.md`, and a connection token. Start the
-terminal agent in that directory.
+## Exhibition seat
+
+Exhibition creates `runs/<run>/agent/` with `seat.mjs`, `SEAT.md`, and a token.
+Start the external terminal agent there. The loopback bearer bridge and POSIX
+owner-only modes provide token hygiene, not a sandbox: same-UID processes can
+read the workspace, and no filesystem, process, credential, network, egress, or
+delegation isolation is enforced.
+
+Treat Exhibition as trusted, manual, and unrated. It cannot support controlled
+model/scaffold claims. During the live process, `node seat.mjs context
+'{"after":"ctx-00000010","limit":50}'` pages authorized history omitted from the
+compact prompt. It does not recover an earlier external process's memory.

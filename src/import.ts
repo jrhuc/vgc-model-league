@@ -3,12 +3,14 @@ import path from 'node:path';
 
 import type { ImportRequest, ImportResponse, LeagueAssets } from './gui/api.js';
 import { SAFE_SEGMENT } from './path-safety.js';
-import { appendRow, loadRows, type SeriesRecord } from './records.js';
+import { mutateRecords, parseSeriesRecord, RecordsBusyError, type SeriesRecord } from './records.js';
 import { createPool, listPools } from './teams.js';
 import type { ExperimentMode, JsonObject, Pid } from './types.js';
 import { isRecord } from './value.js';
 
 export class ImportError extends Error {}
+
+export class ImportBusyError extends ImportError {}
 
 const MODES: Record<ExperimentMode, true> = { rotation: true, exhibition: true, tournament: true, draft: true };
 const SEATS: Pid[] = ['p1', 'p2'];
@@ -48,17 +50,26 @@ function runDirectory(runsDir: string, runId: string): string {
 
 function validateRow(candidate: unknown): SeriesRecord {
   if (!isRecord(candidate)) throw new ImportError('row must be a JSON object');
-  const row = candidate as SeriesRecord;
-  const players = row.players;
+  const players = candidate.players;
   if (!isRecord(players) || typeof players.p1 !== 'string' || typeof players.p2 !== 'string' || !players.p1) {
     throw new ImportError('row.players must name both seats');
   }
-  requireSegment(row.run_id, 'run_id');
-  requireSegment(row.series_id, 'series_id');
-  if (typeof row.timestamp !== 'string' || !row.timestamp) throw new ImportError('row.timestamp is required');
-  if (row.mode !== undefined && !MODES[row.mode]) throw new ImportError(`unknown mode ${JSON.stringify(row.mode)}`);
-  if (row.pool !== undefined && typeof row.pool !== 'string') throw new ImportError('row.pool must be a string');
-  return row;
+  requireSegment(candidate.run_id, 'run_id');
+  requireSegment(candidate.series_id, 'series_id');
+  if (typeof candidate.timestamp !== 'string' || !candidate.timestamp) {
+    throw new ImportError('row.timestamp is required');
+  }
+  if (typeof candidate.mode !== 'string' || !Object.hasOwn(MODES, candidate.mode)) {
+    throw new ImportError(`unknown mode ${JSON.stringify(candidate.mode)}`);
+  }
+  if (candidate.pool !== undefined && typeof candidate.pool !== 'string') {
+    throw new ImportError('row.pool must be a string');
+  }
+  try {
+    return parseSeriesRecord(candidate, 'row');
+  } catch (cause) {
+    throw new ImportError(cause instanceof Error ? cause.message : String(cause), { cause });
+  }
 }
 
 function validateJsonl(text: unknown, field: string): string {
@@ -136,7 +147,8 @@ function ensurePool(bundle: ImportRequest, options: ImportOptions): 'created' | 
   if (listPools(options.teamsDir).some((entry) => entry.name === pool.name)) return 'present';
   const teams = Array.isArray(pool.teams) ? pool.teams : [];
   if (pool.event !== undefined && !isRecord(pool.event)) throw new ImportError('pool.event must be a JSON object');
-  if (pool.spreads !== undefined && !isRecord(pool.spreads)) throw new ImportError('pool.spreads must be a JSON object');
+  if (pool.spreads !== undefined && !isRecord(pool.spreads))
+    throw new ImportError('pool.spreads must be a JSON object');
   try {
     createPool(
       String(pool.name),
@@ -157,17 +169,20 @@ export interface RemoveResponse {
 
 export function removeImportedRun(runId: string, options: ImportOptions): RemoveResponse {
   const runDir = runDirectory(options.runsDir, runId);
-  const rows = loadRows(options.recordsPath);
-  const target = rows.filter((row) => String(row.run_id ?? '') === runId);
-  if (target.length === 0) throw new ImportError(`no series held for run ${JSON.stringify(runId)}`);
-  if (!target.every(isImported)) throw new ImportError('refusing to remove locally recorded results');
-  const keep = rows.filter((row) => String(row.run_id ?? '') !== runId);
-  const text = keep.map((row) => JSON.stringify(row)).join('\n');
-  const staged = `${options.recordsPath}.tmp`;
-  fs.writeFileSync(staged, text.length ? `${text}\n` : '', 'utf8');
-  fs.renameSync(staged, options.recordsPath);
-  fs.rmSync(runDir, { recursive: true, force: true });
-  return { removed: target.length, runId };
+  try {
+    return mutateRecords(options.recordsPath, ({ load, replace }) => {
+      const rows = load();
+      const target = rows.filter((row) => String(row.run_id ?? '') === runId);
+      if (target.length === 0) throw new ImportError(`no series held for run ${JSON.stringify(runId)}`);
+      if (!target.every(isImported)) throw new ImportError('refusing to remove locally recorded results');
+      replace(rows.filter((row) => String(row.run_id ?? '') !== runId));
+      fs.rmSync(runDir, { recursive: true, force: true });
+      return { removed: target.length, runId };
+    });
+  } catch (error) {
+    if (error instanceof RecordsBusyError) throw new ImportBusyError(error.message);
+    throw error;
+  }
 }
 
 export function importSeries(bundle: ImportRequest, options: ImportOptions): ImportResponse {
@@ -182,22 +197,29 @@ export function importSeries(bundle: ImportRequest, options: ImportOptions): Imp
   if (bundle.runConfig !== undefined && !isRecord(bundle.runConfig)) {
     throw new ImportError('runConfig must be a JSON object');
   }
-  const known = new Set(loadRows(options.recordsPath).map(seriesKey));
-  const pool = ensurePool(bundle, options);
-  const runDir = runDirectory(options.runsDir, runId);
-  const league = writeLeagueAssets(bundle.league, runDir);
-  const seriesDir = path.join(runDir, 'series', seriesId);
-  const games = writeGameLogs(bundle.games, seriesDir);
-  if (known.has(seriesKey(row))) {
-    return { imported: false, duplicate: true, runId, seriesId, logs: [], games, pool, league };
+  try {
+    return mutateRecords(options.recordsPath, ({ load, append }) => {
+      const known = new Set(load().map(seriesKey));
+      const pool = ensurePool(bundle, options);
+      const runDir = runDirectory(options.runsDir, runId);
+      const league = writeLeagueAssets(bundle.league, runDir);
+      const seriesDir = path.join(runDir, 'series', seriesId);
+      const games = writeGameLogs(bundle.games, seriesDir);
+      if (known.has(seriesKey(row))) {
+        return { imported: false, duplicate: true, runId, seriesId, logs: [], games, pool, league };
+      }
+      fs.mkdirSync(seriesDir, { recursive: true });
+      for (const log of logs) fs.writeFileSync(path.join(seriesDir, `${log.pid}-decisions.jsonl`), log.text, 'utf8');
+      const configPath = path.join(runDir, 'config.json');
+      if (bundle.runConfig && !fs.existsSync(configPath)) {
+        fs.writeFileSync(configPath, `${JSON.stringify(bundle.runConfig, null, 2)}\n`, 'utf8');
+      }
+      const origin: RowOrigin = { source: 'import', at: new Date().toISOString() };
+      append({ ...row, origin } as JsonObject);
+      return { imported: true, runId, seriesId, logs: logs.map((log) => log.pid), games, pool, league };
+    });
+  } catch (error) {
+    if (error instanceof RecordsBusyError) throw new ImportBusyError(error.message);
+    throw error;
   }
-  fs.mkdirSync(seriesDir, { recursive: true });
-  for (const log of logs) fs.writeFileSync(path.join(seriesDir, `${log.pid}-decisions.jsonl`), log.text, 'utf8');
-  const configPath = path.join(runDir, 'config.json');
-  if (bundle.runConfig && !fs.existsSync(configPath)) {
-    fs.writeFileSync(configPath, `${JSON.stringify(bundle.runConfig, null, 2)}\n`, 'utf8');
-  }
-  const origin: RowOrigin = { source: 'import', at: new Date().toISOString() };
-  appendRow(options.recordsPath, { ...row, origin } as JsonObject);
-  return { imported: true, runId, seriesId, logs: logs.map((log) => log.pid), games, pool, league };
 }

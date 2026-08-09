@@ -1,0 +1,24 @@
+/* biome-ignore-all format: one maintained selector per line */
+/* Late overrides that must win over the per-view sheets; imported last. */
+.lineup-side > .muted { grid-column: 1 / -1; margin: 0; }
+.builder-intro .button { border-color: var(--yellow); background: var(--yellow); color: var(--ink); white-space: nowrap; }
+.tournament-card .table-scroll { padding: 0 24px 24px; }
+.live-tournament-heading .lede { color: #c6d5e6; }
+.live-tournament-heading .eyebrow { color: #ff8a89; }
+.match-game-heading .eyebrow { margin-bottom: 10px; }
+.league-view { display: flex; flex-direction: column; gap: 24px; }
+.league-view > .panel { margin: 0; padding: 0; overflow: hidden; }
+.league-heading { margin-bottom: 0; }
+.league-view > .stat-row, .league-view > .franchise-card-grid { margin-bottom: 0; }
+.league-view > .panel > .empty-note { margin: 18px 24px; }
+.league-view > .panel > .stat-row { margin-bottom: 14px; padding: 18px 24px 0; }
+.franchise-head .muted { margin-left: auto; font: 700 10px/1 var(--mono); white-space: nowrap; }
+.league-view .draft-table { width: calc(100% - 48px); margin: 16px 24px 24px; }
+.league-view .draft-feed { margin: 0 24px 24px; }
+.text-link.winner { font-weight: 700; }
+.league-card-top .eyebrow { margin: 0; color: var(--muted); }
+.franchise-card-foot .text-link { color: var(--blue-dark); font: 800 10px/1 var(--mono); letter-spacing: 0.05em; text-transform: uppercase; }
+.schedule-table td.matchup .text-link { white-space: nowrap; }
+.live-now > .section-head .live-dot { margin-right: 6px; background: var(--coral); animation: pulse 1.6s ease-out infinite; vertical-align: baseline; }
+.match-menu-side .text-link { color: white; font: inherit; }
+.game-switcher .text-link { font: 800 10px/1 var(--mono); letter-spacing: 0.05em; text-transform: uppercase; color: var(--blue-dark); text-decoration-thickness: 1px; text-underline-offset: 3px; }
