@@ -412,67 +412,57 @@ function WorkedExampleTrace({ trace }: { trace: SelectedTraceView }) {
   );
 }
 
-const TRUTH_ITEMS = [
+const BENCH_FACTS = [
   ['Format', 'Pokémon Champions VGC 2026 · Reg M-B · Bo3 doubles'],
   ['Simulator', 'Pinned Pokémon Showdown revision'],
   ['Record', 'Every decision + its written rationale'],
   ['Identity', 'Anonymous in play · named at publication'],
 ] as const;
 
+const REPOSITORY_ROOT = 'https://github.com/jrhuc/vgc-model-league';
+
 export function HomeView({ trace, onOpenMethod, onOpenDocs }: HomeViewProps) {
   return (
     <div class="public-ia public-home">
-      <section class="public-hero" aria-labelledby="home-title">
-        <div class="public-hero-grid" aria-hidden="true" />
-        <div class="public-hero-copy">
+      <header class="bench-masthead">
+        <div class="bench-masthead-copy">
           <p class="eyebrow">Language models play competitive Pokémon</p>
           <h1 id="home-title">How well does a language model decide when the game is VGC?</h1>
-          <p class="public-hero-lede">
-            Model seats draft on a budget, write plans, trade, and battle through full seasons. Every decision is
-            recorded with the reasoning behind it — and any turn can be replayed against the moves not taken.
+          <p class="bench-lede">
+            Model seats draft on a budget, write plans, trade, and battle through full seasons of a draft league on a
+            pinned simulator. Every decision is recorded with the reasoning behind it, and any turn can be replayed
+            against the moves not taken.
           </p>
-          <div class="public-hero-actions">
-            <button type="button" class="button primary" onClick={onOpenMethod}>
-              Read the method
+          <p class="bench-note">
+            A personal project — one game, a few evals and environments, built because watching models play a draft
+            league is fun. Code and artifacts are public.
+          </p>
+          <nav class="bench-links" aria-label="Start here">
+            <button type="button" onClick={onOpenMethod}>
+              Method →
             </button>
-            <button type="button" class="button hero-secondary" onClick={onOpenDocs}>
-              Open Docs
+            <button type="button" onClick={onOpenDocs}>
+              Docs →
             </button>
-          </div>
+            <a href={REPOSITORY_ROOT} target="_blank" rel="noreferrer">
+              GitHub ↗
+            </a>
+          </nav>
         </div>
-        <div class="public-hero-visual" aria-hidden="true">
-          <svg viewBox="0 0 430 430">
-            <title>Decorative decision field</title>
-            <circle cx="215" cy="215" r="152" />
-            <circle cx="215" cy="215" r="93" />
-            <path d="M63 215 H367 M215 63 V367" />
-            <path d="M107 107 L323 323 M323 107 L107 323" />
-            <rect x="188" y="188" width="54" height="54" transform="rotate(45 215 215)" />
-            <circle class="hero-signal" cx="322" cy="107" r="8" />
-            <circle class="hero-signal secondary" cx="108" cy="323" r="5" />
-          </svg>
-          {trace.lead.map((name, index) => (
-            <img
-              class={`hero-sprite hero-sprite-${index + 1}`}
-              src={`/sprites/${trace.sprites[name]}.png`}
-              alt=""
-              key={name}
-            />
+        <div class="bench-masthead-side" aria-hidden="true">
+          {trace.lead.map((name) => (
+            <img src={`/sprites/${trace.sprites[name]}.png`} alt="" key={name} />
           ))}
-          <span class="hero-visual-label label-one">CHOICE</span>
-          <span class="hero-visual-label label-two">CONTEXT</span>
-          <span class="hero-visual-label label-three">EVIDENCE</span>
         </div>
-      </section>
-
-      <dl class="truth-strip" aria-label="Project facts">
-        {TRUTH_ITEMS.map(([term, description]) => (
-          <div key={term}>
-            <dt>{term}</dt>
-            <dd>{description}</dd>
-          </div>
-        ))}
-      </dl>
+        <dl class="bench-facts" aria-label="Project facts">
+          {BENCH_FACTS.map(([term, description]) => (
+            <div key={term}>
+              <dt>{term}</dt>
+              <dd>{description}</dd>
+            </div>
+          ))}
+        </dl>
+      </header>
 
       <section class="home-section" aria-labelledby="horizons-title">
         <header class="editorial-section-heading">
@@ -492,21 +482,6 @@ export function HomeView({ trace, onOpenMethod, onOpenDocs }: HomeViewProps) {
       <RecordLedger />
 
       <WorkedExampleTrace trace={trace} />
-
-      <aside class="home-cta" aria-label="Next steps">
-        <div>
-          <p class="eyebrow">Continue</p>
-          <h2>Read the protocol or open the canonical project documents</h2>
-        </div>
-        <div>
-          <button type="button" class="button primary" onClick={onOpenMethod}>
-            Read Method
-          </button>
-          <button type="button" class="button" onClick={onOpenDocs}>
-            Open Docs
-          </button>
-        </div>
-      </aside>
     </div>
   );
 }
