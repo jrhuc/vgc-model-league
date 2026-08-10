@@ -8,9 +8,11 @@ import { type GameRecord, gameRecordCorpusDigest, loadGameRecordCorpus, verifyGa
 import {
   type CounterfactualOptions,
   counterfactualProtocol,
-  evaluatePosition,
+  EXHAUSTIVE_PANEL_PROTOCOL,
+  evaluateActionTable,
   validateCounterfactualOptions,
 } from '../src/eval/counterfactual.js';
+import { positionEligibilityMetrics } from '../src/eval/eligibility.js';
 import { ACTION_PROTOCOL, positionDigest, requestPhase } from '../src/eval/fork.js';
 import { captureRuntimeProducerAuthority } from '../src/eval/producer.js';
 import { DATA_DIR, defaultPsDir } from '../src/paths.js';
@@ -50,6 +52,7 @@ interface GradeManifest extends JsonObject {
   scope: JsonObject;
   action_protocol: JsonObject;
   counterfactual: JsonObject;
+  exhaustive_panels: JsonObject;
   seed_namespace: string;
 }
 
@@ -76,8 +79,6 @@ function parse(argv: string[]): Settings {
       settings.horizon = value === 'end' ? Number.POSITIVE_INFINITY : Number(value);
     else if (flag === '--luck' && value) settings.luckSamples = Number(value);
     else if (flag === '--opponents' && value) settings.opponentSamples = Number(value);
-    else if (flag === '--shortlist' && value) settings.shortlist = Number(value);
-    else if (flag === '--screen' && value) settings.screenSamples = Number(value);
     else if (flag === '--seed' && value) settings.seed = value;
     else if (flag === '--out' && value) settings.out = path.resolve(value);
     else if (flag === '--records' && value) settings.recordsPath = path.resolve(value);
@@ -124,7 +125,7 @@ function gradedGames(file: string): Set<string> {
 
 function manifestFor(settings: Settings, records: GameRecord[], producerDigest: string): GradeManifest {
   return {
-    schema_version: 1,
+    schema_version: 2,
     showdown_commit: showdownCommit(settings.psDir ?? defaultPsDir()),
     evaluator_digest: producerDigest,
     source_digest: gameRecordCorpusDigest(records),
@@ -137,6 +138,7 @@ function manifestFor(settings: Settings, records: GameRecord[], producerDigest: 
     },
     action_protocol: ACTION_PROTOCOL as unknown as JsonObject,
     counterfactual: counterfactualProtocol(settings) as unknown as JsonObject,
+    exhaustive_panels: EXHAUSTIVE_PANEL_PROTOCOL as unknown as JsonObject,
     seed_namespace: String(settings.seed ?? 'source-game-position'),
   };
 }
@@ -260,10 +262,36 @@ function gradeShard(shard: Shard, emit: (graded: GradedGame) => void): void {
           continue;
         }
         const seed = `${settings.seed ?? 'source-game-position'}:${key}:${position.index}:${pid}`;
-        const graded = evaluatePosition(position, pid, { ...settings, seed });
-        if (!graded) {
+        const table = evaluateActionTable(position, pid, { ...settings, seed });
+        if (!table) {
           stats.failed += 1;
           rows.push(decisionStatus(record, position.index, pid, 'counterfactual-evaluation-failed'));
+          continue;
+        }
+        const panels = [...table.stability, table.measurement];
+        const actions = table.measurement.actions.map((entry) => entry.action);
+        const complete =
+          panels.length === 3 &&
+          actions.length === table.legal &&
+          panels.every(
+            (panel) =>
+              panel.actions.length === table.legal &&
+              panel.draws.length > 0 &&
+              panel.matrix.length === panel.draws.length &&
+              panel.matrix.every((row) => row.length === table.legal) &&
+              panel.actions.every(
+                (entry, actionIndex) => entry.action === actions[actionIndex] && entry.samples === panel.draws.length,
+              ),
+          );
+        if (!complete) {
+          stats.failed += 1;
+          rows.push(decisionStatus(record, position.index, pid, 'counterfactual-evaluation-incomplete'));
+          continue;
+        }
+        const chosen = position.actual[pid];
+        if (!chosen || !actions.includes(chosen)) {
+          stats.failed += 1;
+          rows.push(decisionStatus(record, position.index, pid, 'recorded-action-not-in-counterfactual-table'));
           continue;
         }
         stats.graded += 1;
@@ -283,15 +311,14 @@ function gradeShard(shard: Shard, emit: (graded: GradedGame) => void): void {
           position_index: position.index,
           position_digest: positionDigest(position, pid),
           choice_index: choiceIndex,
-          turn: graded.turn,
+          turn: table.turn,
           phase: requestPhase(position.requests[pid]),
-          legal_actions: graded.legal,
-          chosen: graded.chosen,
-          state_value: graded.stateValue,
+          legal_actions: table.legal,
+          chosen,
+          state_value: table.stateValue,
           counterfactual: counterfactualProtocol(settings),
           sampling_seed: seed,
-          vs_actual_opponent: graded.vsActualOpponent,
-          vs_sampled_opponent: graded.vsSampledOpponent,
+          eligibility_metrics: positionEligibilityMetrics(table),
         });
       }
     }

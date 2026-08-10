@@ -2,12 +2,13 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { assertGameRecordCorpusDigest, type GameRecord, loadGameRecordCorpus, verifyGame } from '../src/eval/corpus.js';
 import {
   type CounterfactualOptions,
+  counterfactualProtocol,
   EXHAUSTIVE_PANEL_PROTOCOL,
   evaluateActionTable,
-  exhaustiveCounterfactualProtocol,
   validateCounterfactualOptions,
 } from '../src/eval/counterfactual.js';
 import { POSITION_ELIGIBILITY_METRICS_VERSION, positionEligibilityMetrics } from '../src/eval/eligibility.js';
@@ -184,7 +185,7 @@ function completedPositionScores(rows: JsonObject[], manifest: JsonObject): Json
       continue;
     }
     if (row.kind !== 'position_score') continue;
-    if (JSON.stringify(row.counterfactual) !== JSON.stringify(manifest.counterfactual)) {
+    if (canonicalJson(row.counterfactual) !== canonicalJson(manifest.counterfactual)) {
       throw new Error(`position score ${rowGame(row)} mixes a different counterfactual protocol`);
     }
     const game = rowGame(row);
@@ -288,6 +289,9 @@ function publishImmutable(directory: string, name: string, content: string, mode
 async function main(): Promise<void> {
   const settings = parse(process.argv.slice(2));
   const producer = captureRuntimeProducerAuthority(import.meta.url);
+  const graderProducer = captureRuntimeProducerAuthority(
+    new URL(`./grade-positions${path.extname(fileURLToPath(import.meta.url))}`, import.meta.url).href,
+  );
   const showdownRealpath = fs.realpathSync.native(settings.psDir ?? defaultPsDir());
   if (showdownRealpath !== producer.showdownRealpath) {
     throw new Error(
@@ -297,7 +301,19 @@ async function main(): Promise<void> {
   settings.psDir = producer.showdownRealpath;
   const gradedManifestPath = `${settings.graded}.manifest.json`;
   const gradedManifest = readObject(gradedManifestPath);
-  if (gradedManifest.schema_version !== 1) throw new Error('graded manifest is not the current schema');
+  if (gradedManifest.schema_version !== 2) throw new Error('graded manifest is not the current schema');
+  if (canonicalJson(gradedManifest.counterfactual) !== canonicalJson(counterfactualProtocol(settings))) {
+    throw new Error('graded manifest counterfactual budgets do not match the exporter settings');
+  }
+  if (canonicalJson(gradedManifest.exhaustive_panels) !== canonicalJson(EXHAUSTIVE_PANEL_PROTOCOL)) {
+    throw new Error('graded manifest exhaustive panel protocol is not current');
+  }
+  if (canonicalJson(gradedManifest.action_protocol) !== canonicalJson(ACTION_PROTOCOL)) {
+    throw new Error('graded manifest action protocol is not current');
+  }
+  if (gradedManifest.evaluator_digest !== graderProducer.producerDigest) {
+    throw new Error('graded manifest evaluator authority is not current');
+  }
   if (gradedManifest.showdown_commit !== showdownCommit(settings.psDir ?? defaultPsDir())) {
     throw new Error('graded manifest does not match the current Pokémon Showdown checkout');
   }
@@ -367,6 +383,9 @@ async function main(): Promise<void> {
     const seed = `${String(settings.seed ?? 'position-panels')}:${sourceId}`;
     const table = evaluateActionTable(position, candidate.pid, { ...settings, seed });
     if (!table) throw new Error(`position ${sourceId} did not produce three complete exhaustive panels`);
+    if (!(table.measurement.span > 0)) {
+      throw new Error(`position ${sourceId} did not produce a usable measurement reward span`);
+    }
     const rendered = renderPositionTask({
       id: sourceId,
       format: candidate.format,
@@ -408,7 +427,6 @@ async function main(): Promise<void> {
         : []),
       ...(!table.rankingStable ? ['best_anchor_unstable'] : []),
       ...(!table.anchorAgreement ? ['extrema_sets_unstable'] : []),
-      ...(table.valueSpan <= 0 ? ['measurement_zero_span'] : []),
     ];
     const eligibilityMetrics = positionEligibilityMetrics(table);
     taskRows.push({
@@ -510,7 +528,7 @@ async function main(): Promise<void> {
     action_protocol: ACTION_PROTOCOL,
     task_protocol: POSITION_TASK_PROTOCOL,
     canonical_json: CANONICAL_JSON_PROTOCOL,
-    counterfactual: exhaustiveCounterfactualProtocol(settings),
+    counterfactual: counterfactualProtocol(settings),
     exhaustive_panels: EXHAUSTIVE_PANEL_PROTOCOL,
     eligibility_metrics_version: POSITION_ELIGIBILITY_METRICS_VERSION,
     inputs: { graded: gradedDigest, graded_manifest: gradedManifestDigest },
@@ -525,6 +543,7 @@ async function main(): Promise<void> {
   validateCandidateManifest(manifest, 'constructed candidate manifest');
   const manifestContent = `${canonicalJson(manifest)}\n`;
   producer.assertUnchanged();
+  graderProducer.assertUnchanged();
   const outputs = prepareOutputDirectories(settings.out, settings.privateOut);
   publishImmutable(outputs.publicDirectory, taskName, taskContent, PUBLIC_FILE_MODE);
   publishImmutable(outputs.privateDirectory, scoreName, scoreContent, PRIVATE_FILE_MODE);

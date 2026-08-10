@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { EXHAUSTIVE_PANEL_PROTOCOL, exhaustiveCounterfactualProtocol } from '../src/eval/counterfactual.js';
+import { counterfactualProtocol, EXHAUSTIVE_PANEL_PROTOCOL } from '../src/eval/counterfactual.js';
 import { POSITION_ELIGIBILITY_METRICS_VERSION } from '../src/eval/eligibility.js';
 import { ACTION_PROTOCOL } from '../src/eval/fork.js';
 import {
@@ -24,7 +24,7 @@ function manifest(): Record<string, unknown> {
     action_protocol: ACTION_PROTOCOL,
     task_protocol: POSITION_TASK_PROTOCOL,
     canonical_json: CANONICAL_JSON_PROTOCOL,
-    counterfactual: exhaustiveCounterfactualProtocol(),
+    counterfactual: counterfactualProtocol(),
     exhaustive_panels: EXHAUSTIVE_PANEL_PROTOCOL,
     eligibility_metrics_version: POSITION_ELIGIBILITY_METRICS_VERSION,
     inputs: { graded: DIGEST, graded_manifest: DIGEST },
@@ -50,11 +50,35 @@ test('candidate manifest binds one exact public, private, and sealed artifact se
   assert.deepEqual(view.selection.formats, ['gen9championsvgc2026regmb']);
   assert.equal(view.outputs.tasks.rows, 1);
   assert.deepEqual(view.orderedTaskIds, [DIGEST]);
+  assert.equal(CANDIDATE_POSITION_SELECTION_RULES.version, 2);
+  assert.deepEqual(Object.keys(CANDIDATE_POSITION_SELECTION_RULES.filters).sort(), [
+    'formats',
+    'minimum_held_out_qualification_span',
+    'minimum_legal_actions',
+  ]);
+  assert.deepEqual(Object.keys(manifest()).sort(), [
+    'action_protocol',
+    'canonical_json',
+    'counterfactual',
+    'eligibility_metrics_version',
+    'evaluator_digest',
+    'exhaustive_panels',
+    'inputs',
+    'ordered_task_ids',
+    'outputs',
+    'runtime',
+    'schema_version',
+    'seed_namespace',
+    'selection',
+    'showdown_commit',
+    'task_protocol',
+  ]);
   assert.deepEqual(Object.keys(manifest().counterfactual as object).sort(), [
     'horizon',
     'luckSamples',
     'opponentSamples',
     'reference',
+    'rolloutLimit',
     'version',
   ]);
 });

@@ -300,7 +300,7 @@ function measurementZeroSpanArtifacts(): ReturnType<typeof artifacts> {
   table.valueSpan = 0;
   const score = artifact.scores[0] as JsonObject;
   score.measurement_ready = false;
-  score.diagnostic_flags = ['measurement_zero_span'];
+  score.diagnostic_flags = [];
   score.min_value = 0;
   score.max_value = 0;
   score.span = 0;
@@ -669,12 +669,13 @@ test('opponent draws preserve clustered replication blocks and the sealed reques
   );
 });
 
-test('score duplicates and structural versus measurement readiness are exact', () => {
+test('score duplicates and unusable measurement panels fail closed', () => {
   const zeroMeasurement = measurementZeroSpanArtifacts();
   assert.equal(zeroMeasurement.scores[0]!.structural_pass, true);
   assert.equal(zeroMeasurement.scores[0]!.measurement_ready, false);
-  assert.doesNotThrow(() =>
-    validatePositionPanelArtifacts(zeroMeasurement.tasks, zeroMeasurement.scores, zeroMeasurement.sealed),
+  assert.throws(
+    () => validatePositionPanelArtifacts(zeroMeasurement.tasks, zeroMeasurement.scores, zeroMeasurement.sealed),
+    /measurement panel has no usable reward span/,
   );
 
   const staleScoreAction = artifacts();

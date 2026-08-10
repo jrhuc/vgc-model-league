@@ -19,8 +19,9 @@ reward.
 
 The current branch can replay a game from its format, Showdown revision, seed,
 teams, and actions; refuse mismatched logs; reopen snapshots; enumerate legal
-joint actions; run bounded counterfactual panels; and select seeded stratified
-positions. It does **not** provide a public verifiers package, a supported
+joint actions; grade each eligible decision with one complete exhaustive action
+table; and select seeded stratified positions from versioned grade-time
+qualification metrics. It does **not** provide a public verifiers package, a supported
 real-provider frozen evaluation, a calibrated public reward, or a validated
 benchmark. All `grade-positions` output is exploratory.
 
@@ -50,9 +51,16 @@ binds the full Showdown SHA, format, scaffold/reference versions, sampling seeds
 source corpus, action encoding, executed evaluator, canonical bytes, and
 checksums.
 
-Two independent common-draw qualification panels decide eligibility. A third,
-untouched common-draw measurement panel supplies final rewards. A failed matrix
-cell rejects the panel; actions never receive unequal sample counts.
+The schema-v2 grading cache binds the canonical counterfactual budget (including
+the rollout limit) and exhaustive-panel protocol. It retains qualification
+metrics and source joins, not panel matrices or measurement values. Older caches
+must be restarted.
+
+Two independent common-draw qualification panels provide the held-out span used
+for grade-time eligibility. A third, untouched common-draw measurement panel
+supplies final rewards only after selection. The exporter reruns all three panels
+under a separate seed namespace. A failed matrix cell rejects the whole table;
+actions never receive unequal sample counts.
 Qualification thresholds, near-duplicate/source grouping, and corpus-balance
 requirements must come from a separately reviewed eligibility policy calibrated
 outside the candidate corpus. A balance failure or qualification-eligible row
@@ -264,12 +272,12 @@ Compatibility is evidence, not assumption. This is the current support table for
 
 ## Work order
 
-1. Harden the position pipeline before any corpus exists: wire the runtime
-   producer-authority binding (`src/eval/producer.ts`) into the grader and
-   exporter in place of their hand-rolled evaluator digests, collapse grading
-   to the exhaustive-panel estimator (deleting the screen/shortlist search
-   path and its unequal-sample drop), and implement the public-root reader
-   that verifies manifests and digests and rejects the private root.
+1. Finish hardening the position pipeline before any corpus exists. The runtime
+   producer-authority binding is wired into the grader and exporter, and grading
+   now uses only one complete exhaustive action table per eligible decision; the
+   old actual-opponent screen/shortlist estimator is deleted. The remaining item
+   is the public-root reader that verifies manifests and digests and rejects the
+   private root.
 2. Write the corpus sizing memo before generating games: games required,
    eligible positions after stratification caps, panel compute per position,
    and provider cost. Record generating models per position so

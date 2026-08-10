@@ -324,6 +324,7 @@ function validatePrivatePositionScore(row: JsonObject, index = 0): void {
       throw new Error(`${location}.actions[${actionIndex}].normalized_reward is inconsistent`);
   }
   if (row.measurement_ready !== span > 0) throw new Error(`${location}.measurement_ready is inconsistent`);
+  if (!row.measurement_ready) throw new Error(`${location} measurement panel has no usable reward span`);
 
   const stability = object(row.stability, `${location}.stability`);
   exactKeys(
@@ -374,7 +375,6 @@ function validatePrivatePositionScore(row: JsonObject, index = 0): void {
       : []),
     ...(!stability.best_anchor_agreement ? ['best_anchor_unstable'] : []),
     ...(!stability.extrema_set_agreement ? ['extrema_sets_unstable'] : []),
-    ...(span <= 0 ? ['measurement_zero_span'] : []),
   ];
   if (canonicalJson(diagnosticFlags) !== canonicalJson(expectedDiagnosticFlags))
     throw new Error(`${location} has inconsistent diagnostic flags`);
@@ -833,7 +833,6 @@ export function validatePositionPanelArtifacts(
         : []),
       ...(!table.rankingStable ? ['best_anchor_unstable'] : []),
       ...(!table.anchorAgreement ? ['extrema_sets_unstable'] : []),
-      ...(table.measurement.span <= 0 ? ['measurement_zero_span'] : []),
     ];
     if (canonicalJson(score.diagnostic_flags) !== canonicalJson(expectedDiagnosticFlags))
       throw new Error(`score ${id} has inconsistent diagnostic flags`);

@@ -6,6 +6,8 @@ import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
+import { counterfactualProtocol, EXHAUSTIVE_PANEL_PROTOCOL } from '../src/eval/counterfactual.js';
+import { ACTION_PROTOCOL } from '../src/eval/fork.js';
 import {
   assertPinnedShowdownRuntime,
   captureRuntimeProducerAuthority,
@@ -192,6 +194,29 @@ test('compiled position tools have distinct identities bound to the pinned Showd
   assert.notEqual(grade.producerDigest, exporter.producerDigest);
   grade.assertUnchanged();
   exporter.assertUnchanged();
+
+  const boundary = fs.mkdtempSync(path.join(os.tmpdir(), 'position-export-authority-'));
+  const graded = path.join(boundary, 'positions.jsonl');
+  fs.writeFileSync(graded, '');
+  const baseManifest = {
+    schema_version: 2,
+    showdown_commit: (JSON.parse(fs.readFileSync('showdown.lock.json', 'utf8')) as { commit: string }).commit,
+    evaluator_digest: grade.producerDigest,
+    action_protocol: ACTION_PROTOCOL,
+    counterfactual: counterfactualProtocol(),
+    exhaustive_panels: EXHAUSTIVE_PANEL_PROTOCOL,
+  };
+  for (const [manifest, expected] of [
+    [{ ...baseManifest, action_protocol: { stale: true } }, /action protocol is not current/u],
+    [{ ...baseManifest, evaluator_digest: '0'.repeat(64) }, /evaluator authority is not current/u],
+  ] as const) {
+    fs.writeFileSync(`${graded}.manifest.json`, JSON.stringify(manifest));
+    const result = spawnSync(process.execPath, [fileURLToPath(exporterEntry), '--graded', graded], {
+      encoding: 'utf8',
+    });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, expected);
+  }
 
   const unrelatedShowdown = fs.mkdtempSync(path.join(os.tmpdir(), 'producer-unrelated-showdown-'));
   for (const entry of [gradeEntry, exporterEntry]) {
