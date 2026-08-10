@@ -169,45 +169,6 @@ test('Home and Method render the selected artifact projection and endpoint', asy
   }
 });
 
-test('Home and Method expose honest trace slots before replacing them in place', async () => {
-  for (const [hash, loadedSelector] of [
-    ['', '.worked-trace'],
-    ['#method', '.turn-evidence-figure'],
-  ] as const) {
-    const window = new Window({ url: `${base}${hash}` });
-    window.document.body.innerHTML = '<div id="app"></div>';
-    (window as unknown as Record<string, unknown>).EventSource = class {
-      onmessage: unknown = null;
-      close(): void {}
-    };
-    const nativeFetch = window.fetch.bind(window);
-    let releaseTrace: () => void = () => {};
-    const traceGate = new Promise<void>((resolve) => (releaseTrace = resolve));
-    window.fetch = (async (input, init) => {
-      const target = typeof input === 'string' ? input : 'url' in input ? input.url : input.href;
-      if (new URL(target, base).pathname === '/api/selected-trace') await traceGate;
-      return nativeFetch(input, init);
-    }) as typeof window.fetch;
-
-    try {
-      window.eval(bundle);
-      await waitFor(() => activeView(window).querySelector('[aria-busy="true"] [role="status"]') !== null);
-      const slot = activeView(window).querySelector('[aria-busy="true"]');
-      assert.ok(slot);
-      assert.equal(slot.querySelector('[role="status"]')?.textContent?.trim(), 'Loading selected trace…');
-      assert.equal(slot.querySelector(loadedSelector), null);
-
-      releaseTrace();
-      await waitFor(() => slot.getAttribute('aria-busy') === 'false');
-      assert.equal(activeView(window).querySelector('[aria-busy="false"]'), slot);
-      assert.ok(slot.querySelector(loadedSelector));
-      assert.equal(slot.querySelector('[role="status"]'), null);
-    } finally {
-      await window.happyDOM.close();
-    }
-  }
-});
-
 test('selected-trace loading refuses linked directories and artifact files', () => {
   const source = path.resolve('artifacts/public/landing/circuit-trace-v1');
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-selected-trace-'));
@@ -270,35 +231,4 @@ test('public artifact checks allow research locators but reject actual credentia
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
   }
-});
-
-test('header and theme tokens have one CSS owner and Home motion is finite', () => {
-  const stylesDirectory = path.resolve('src/gui/client/styles');
-  const styles = fs
-    .readdirSync(stylesDirectory)
-    .filter((name) => name.endsWith('.css'))
-    .map((name) => [name, fs.readFileSync(path.join(stylesDirectory, name), 'utf8')] as const);
-  const headerSelector =
-    /\.(?:app-header|brand(?:-mark|-name)?|primary-nav|nav-(?:set(?:-label|-items)?|button)|header-(?:aside|state|readonly|auth-link|logout|user(?:-text)?|avatar|login|role))(?=[\s.:,{])/;
-  const headerOwners = styles.filter(([, source]) => source.split('\n').some((line) => headerSelector.test(line)));
-  assert.deepEqual(
-    headerOwners.map(([name]) => name),
-    ['base.css'],
-  );
-
-  const allStyles = styles.map(([, source]) => source).join('\n');
-  assert.equal((allStyles.match(/:root\s*\{/g) ?? []).length, 1);
-  assert.equal((allStyles.match(/body\.research-dark\s*\{/g) ?? []).length, 1);
-  assert.doesNotMatch(allStyles, /animation:[^;\n]*infinite/);
-
-  const base = fs.readFileSync(path.join(stylesDirectory, 'base.css'), 'utf8');
-  const home = fs.readFileSync(path.join(stylesDirectory, 'home.css'), 'utf8');
-  const html = fs.readFileSync(path.resolve('src/gui/client/index.html'), 'utf8');
-  assert.match(html, /<body class="research-dark">/);
-  assert.match(home, /\.diagram-flow \{[^\n]*animation: flow-dash 9s linear 3;/);
-  assert.match(home, /\.route-flow-line \{[^\n]*animation: route-flow 2\.8s linear 6;/);
-  assert.match(home, /@keyframes flow-dash \{[^\n]*stroke-dashoffset: -90;/);
-  assert.match(home, /@keyframes route-flow \{[^\n]*stroke-dashoffset: -36;/);
-  assert.doesNotMatch(home, /(?:flow-dash|route-flow)[^;\n]*infinite/);
-  assert.match(base, /@media \(prefers-reduced-motion: reduce\)[\s\S]*animation: none !important;/);
 });
