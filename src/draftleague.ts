@@ -873,10 +873,9 @@ export async function runDraftLeague(
       playoffPlans,
       rankedTable(table).map((row) => row.entrant),
     );
-    let adopted = true;
-    while (adopted) {
-      adopted = false;
-      for (const match of playoffBracketRounds.flat()) {
+    for (let round = 0; round < playoffBracketRounds.length; round += 1) {
+      for (let position = 0; position < playoffBracketRounds[round]!.length; position += 1) {
+        const match = playoffBracketRounds[round]![position]!;
         if (
           match.seriesIndex === null ||
           match.slots[0] === null ||
@@ -904,7 +903,6 @@ export async function runDraftLeague(
         teambuilds.push(builds.p1.view, builds.p2.view);
         completed.set(plan.index, row);
         storedOutcomes.set(plan.index, outcome);
-        adopted = true;
       }
     }
     const unresolved = [...storedPlayoffRows.keys()].find((index) => !completed.has(index));

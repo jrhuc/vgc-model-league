@@ -347,7 +347,8 @@ function runtimeRelativeFiles(entry: string, root: string): { own: string[]; sho
   };
 }
 
-function snapshotRuntimeProducerAuthority(entryUrl: string): RuntimeProducerAuthoritySnapshot {
+/** Captures the complete runtime authority and retains a verifier for pre-publication rechecks. */
+export function captureRuntimeProducerAuthority(entryUrl: string): RuntimeProducerAuthoritySnapshot {
   const entry = fileURLToPath(entryUrl);
   const layout = runtimeLayout(entry);
   const enumerate = (root: string): string[] => {
@@ -383,7 +384,13 @@ function snapshotRuntimeProducerAuthority(entryUrl: string): RuntimeProducerAuth
   };
 }
 
-/** Captures the complete runtime authority and retains a verifier for pre-publication rechecks. */
-export function captureRuntimeProducerAuthority(entryUrl: string): RuntimeProducerAuthoritySnapshot {
-  return snapshotRuntimeProducerAuthority(entryUrl);
+/** Binds a requested Showdown root to the captured producer runtime so tools cannot grade one tree and cite another. */
+export function boundShowdownRoot(producer: RuntimeProducerAuthoritySnapshot, requestedPsDir: string): string {
+  const requested = fs.realpathSync.native(requestedPsDir);
+  if (requested !== producer.showdownRealpath) {
+    throw new Error(
+      `configured Pokémon Showdown root ${requested} does not match captured producer runtime ${producer.showdownRealpath}`,
+    );
+  }
+  return producer.showdownRealpath;
 }

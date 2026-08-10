@@ -8,112 +8,16 @@ import { canonicalJson } from './serialization.js';
 
 const PUBLIC_MEMBERS = ['manifest.json', 'tasks.jsonl'] as const;
 
-interface RootIdentity {
-  requested: string;
-  realpath: string;
-  stat: fs.BigIntStats;
-}
-
-interface StableRead {
-  bytes: Buffer;
-  stat: fs.BigIntStats;
-}
-
-function sameRootIdentity(left: fs.BigIntStats, right: fs.BigIntStats): boolean {
-  return left.dev === right.dev && left.ino === right.ino && left.nlink === right.nlink && left.mode === right.mode;
-}
-
-function sameFileState(left: fs.BigIntStats, right: fs.BigIntStats): boolean {
-  return (
-    left.dev === right.dev &&
-    left.ino === right.ino &&
-    left.nlink === right.nlink &&
-    left.mode === right.mode &&
-    left.size === right.size &&
-    left.mtimeNs === right.mtimeNs &&
-    left.ctimeNs === right.ctimeNs
-  );
-}
-
-function assertDirectory(stat: fs.BigIntStats, label: string): void {
-  if (stat.isSymbolicLink() || !stat.isDirectory()) throw new Error(`${label} must be a non-symlink directory`);
-}
-
-function assertRegularFile(stat: fs.BigIntStats, label: string): void {
-  if (stat.isSymbolicLink() || !stat.isFile()) throw new Error(`${label} must be a regular non-symlink file`);
-}
-
-function captureRoot(root: string): RootIdentity {
-  const requested = path.resolve(root);
-  const requestedStat = fs.lstatSync(requested, { bigint: true });
-  assertDirectory(requestedStat, 'public candidate root');
-  const realpath = fs.realpathSync.native(requested);
-  const physicalStat = fs.lstatSync(realpath, { bigint: true });
-  assertDirectory(physicalStat, 'public candidate root');
-  if (!sameRootIdentity(requestedStat, physicalStat)) throw new Error('public candidate root identity changed');
-  return { requested, realpath, stat: requestedStat };
-}
-
-function assertRootUnchanged(root: RootIdentity): void {
-  const requestedStat = fs.lstatSync(root.requested, { bigint: true });
-  assertDirectory(requestedStat, 'public candidate root');
-  if (!sameRootIdentity(root.stat, requestedStat)) throw new Error('public candidate root identity changed');
-  const currentRealpath = fs.realpathSync.native(root.requested);
-  if (currentRealpath !== root.realpath) throw new Error('public candidate root realpath changed');
-  const physicalStat = fs.lstatSync(root.realpath, { bigint: true });
-  assertDirectory(physicalStat, 'public candidate root');
-  if (!sameRootIdentity(root.stat, physicalStat)) throw new Error('public candidate root identity changed');
-}
-
-function exactMembership(root: RootIdentity): Map<string, fs.BigIntStats> {
-  assertRootUnchanged(root);
-  const names = fs
-    .readdirSync(root.realpath)
-    .sort((left, right) => Buffer.compare(Buffer.from(left), Buffer.from(right)));
-  const expected = [...PUBLIC_MEMBERS].sort((left, right) => Buffer.compare(Buffer.from(left), Buffer.from(right)));
-  if (names.length !== expected.length || names.some((name, index) => name !== expected[index])) {
-    throw new Error(`public candidate root must contain exactly ${PUBLIC_MEMBERS.join(',')}`);
-  }
-  const states = new Map(
-    PUBLIC_MEMBERS.map((name) => [name, fs.lstatSync(path.join(root.realpath, name), { bigint: true })] as const),
-  );
-  for (const name of PUBLIC_MEMBERS) assertRegularFile(states.get(name)!, name);
-  assertRootUnchanged(root);
-  return states;
-}
-
-function stableRead(root: RootIdentity, name: (typeof PUBLIC_MEMBERS)[number], expected: fs.BigIntStats): StableRead {
-  assertRootUnchanged(root);
-  const file = path.join(root.realpath, name);
-  const pathBefore = fs.lstatSync(file, { bigint: true });
-  assertRegularFile(pathBefore, name);
-  if (!sameFileState(expected, pathBefore)) throw new Error(`${name} changed before it was read`);
-  const descriptor = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+function readMember(root: string, name: (typeof PUBLIC_MEMBERS)[number]): Buffer {
+  const file = path.join(root, name);
+  if (!fs.lstatSync(file).isFile()) throw new Error(`${name} must be a regular non-symlink file`);
+  const descriptor = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
   try {
-    const before = fs.fstatSync(descriptor, { bigint: true });
-    assertRegularFile(before, name);
-    if (!sameFileState(pathBefore, before)) throw new Error(`${name} path identity changed before it was read`);
-    const bytes = fs.readFileSync(descriptor);
-    const after = fs.fstatSync(descriptor, { bigint: true });
-    const pathAfter = fs.lstatSync(file, { bigint: true });
-    assertRegularFile(pathAfter, name);
-    if (!sameFileState(before, after) || !sameFileState(after, pathAfter) || BigInt(bytes.length) !== after.size) {
-      throw new Error(`${name} changed while it was read`);
-    }
-    assertRootUnchanged(root);
-    return { bytes, stat: after };
+    if (!fs.fstatSync(descriptor).isFile()) throw new Error(`${name} must be a regular non-symlink file`);
+    return fs.readFileSync(descriptor);
   } finally {
     fs.closeSync(descriptor);
   }
-}
-
-function assertFinalState(root: RootIdentity, reads: ReadonlyMap<string, fs.BigIntStats>): void {
-  assertRootUnchanged(root);
-  const current = exactMembership(root);
-  for (const name of PUBLIC_MEMBERS) {
-    if (!sameFileState(reads.get(name)!, current.get(name)!)) throw new Error(`${name} changed after it was read`);
-  }
-  assertRootUnchanged(root);
 }
 
 function strictUtf8(bytes: Buffer, label: string): string {
@@ -162,31 +66,31 @@ function publicTasks(bytes: Buffer): PublicPositionTask[] {
   return rows;
 }
 
-/** Reads only the exact public candidate artifact root and returns its validated task rows. */
+/** Reads a public-only candidate root — non-symlink layout, canonical bytes, manifest digest and order joins. */
 export function readPublicPositionCandidateRoot(root: string): readonly PublicPositionTask[] {
-  const rootIdentity = captureRoot(root);
-  const initial = exactMembership(rootIdentity);
-  const manifestRead = stableRead(rootIdentity, 'manifest.json', initial.get('manifest.json')!);
-  const manifest = validateCandidateManifest(canonicalManifest(manifestRead.bytes));
+  const resolved = path.resolve(root);
+  const rootStat = fs.lstatSync(resolved);
+  if (rootStat.isSymbolicLink() || !rootStat.isDirectory()) {
+    throw new Error('public candidate root must be a non-symlink directory');
+  }
+  const names = fs.readdirSync(resolved).sort();
+  const expected = [...PUBLIC_MEMBERS].sort();
+  if (names.length !== expected.length || names.some((name, index) => name !== expected[index])) {
+    throw new Error(`public candidate root must contain exactly ${PUBLIC_MEMBERS.join(',')}`);
+  }
+  const manifest = validateCandidateManifest(canonicalManifest(readMember(resolved, 'manifest.json')));
   if (manifest.outputs.tasks.file !== 'tasks.jsonl') {
     throw new Error('candidate manifest outputs.tasks.file must be exactly tasks.jsonl');
   }
-  const tasksRead = stableRead(rootIdentity, 'tasks.jsonl', initial.get('tasks.jsonl')!);
-  const tasksDigest = createHash('sha256').update(tasksRead.bytes).digest('hex');
+  const tasksBytes = readMember(resolved, 'tasks.jsonl');
+  const tasksDigest = createHash('sha256').update(tasksBytes).digest('hex');
   if (tasksDigest !== manifest.outputs.tasks.sha256) throw new Error('tasks.jsonl does not match its manifest SHA-256');
-  const tasks = publicTasks(tasksRead.bytes);
+  const tasks = publicTasks(tasksBytes);
   if (tasks.length !== manifest.outputs.tasks.rows || tasks.length !== manifest.selection.count) {
     throw new Error('tasks.jsonl row count does not match its manifest selection join');
   }
   if (tasks.some((task, index) => task.task_id !== manifest.orderedTaskIds[index])) {
     throw new Error('tasks.jsonl task_id sequence does not match manifest.ordered_task_ids');
   }
-  assertFinalState(
-    rootIdentity,
-    new Map([
-      ['manifest.json', manifestRead.stat],
-      ['tasks.jsonl', tasksRead.stat],
-    ]),
-  );
   return tasks;
 }

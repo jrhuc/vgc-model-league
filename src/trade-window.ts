@@ -143,32 +143,15 @@ export interface TradeSwap {
   add: string;
 }
 
-type TradeWindowTransaction =
-  | {
-      kind: 'offer';
-      from: number;
-      to: null;
-      give: null;
-      get: null;
-      accepted: null;
-      notebook: string;
-    }
-  | {
-      kind: 'offer';
-      from: number;
-      to: number;
-      give: string;
-      get: string;
-      accepted: boolean;
-      notebook: string;
-      responseNotebook: string;
-    }
-  | {
-      kind: 'free_agency';
-      entrant: number;
-      swaps: readonly TradeSwap[];
-      notebook: string;
-    };
+interface TradeOfferOutcome {
+  from: number;
+  to: number;
+  give: string;
+  get: string;
+  accepted: boolean;
+  notebook: string;
+  responseNotebook: string;
+}
 
 export interface TradeWindowDecision {
   entrant: number;
@@ -570,71 +553,41 @@ function commitRosterState(target: TradeWindowState, source: TradeWindowState): 
   target.notebooks.splice(0, target.notebooks.length, ...source.notebooks);
 }
 
-/** Applies one normalized offer outcome or free-agency decision to a new state, or rejects without mutation. */
-export function applyTradeWindowTransaction(
+/** Both return a fresh state; callers must commitRosterState the result into the shared live state. */
+export function applyTradeOffer(state: TradeWindowState, offer: TradeOfferOutcome): TradeWindowState {
+  const error = validateOfferTerms(state, offer.from, offer);
+  if (error) throw new Error(`invalid trade offer: ${error}`);
+
+  const next = rosterStateCopy(state);
+  next.notebooks[offer.from] = offer.notebook;
+  next.notebooks[offer.to] = offer.responseNotebook;
+  if (!offer.accepted) return next;
+
+  const fromRoster = state.rosters[offer.from]!;
+  const toRoster = state.rosters[offer.to]!;
+  const given = fromRoster.find((mon) => mon.id === offer.give)!;
+  const received = toRoster.find((mon) => mon.id === offer.get)!;
+  next.rosters[offer.from] = [...fromRoster.filter((mon) => mon.id !== given.id), received];
+  next.rosters[offer.to] = [...toRoster.filter((mon) => mon.id !== received.id), given];
+  for (const entrant of [offer.from, offer.to]) {
+    next.budgets[entrant] = state.board.budget - next.rosters[entrant]!.reduce((sum, mon) => sum + mon.cost, 0);
+  }
+  return next;
+}
+
+export function applyFreeAgency(
   state: TradeWindowState,
-  transaction: TradeWindowTransaction,
+  entrant: number,
+  swaps: readonly TradeSwap[],
+  notebook: string,
 ): TradeWindowState {
-  if (transaction.kind === 'offer') {
-    if (!Number.isSafeInteger(transaction.from) || transaction.from < 0 || transaction.from >= state.rosters.length) {
-      throw new Error(`trade offer names unknown proposer ${String(transaction.from)}`);
-    }
-    if (typeof transaction.notebook !== 'string') throw new Error('trade offer has an invalid proposer notebook');
-    if (transaction.to === null) {
-      if (
-        transaction.give !== null ||
-        transaction.get !== null ||
-        transaction.accepted !== null ||
-        'responseNotebook' in transaction
-      ) {
-        throw new Error('no-offer transaction has offer or response fields');
-      }
-      const next = rosterStateCopy(state);
-      next.notebooks[transaction.from] = transaction.notebook;
-      return next;
-    }
-    if (
-      typeof transaction.give !== 'string' ||
-      !transaction.give ||
-      typeof transaction.get !== 'string' ||
-      !transaction.get ||
-      typeof transaction.accepted !== 'boolean' ||
-      typeof transaction.responseNotebook !== 'string'
-    ) {
-      throw new Error('trade offer has invalid terms or response fields');
-    }
-    const error = validateOfferTerms(state, transaction.from, transaction);
-    if (error) throw new Error(`invalid trade offer: ${error}`);
-
-    const next = rosterStateCopy(state);
-    next.notebooks[transaction.from] = transaction.notebook;
-    next.notebooks[transaction.to] = transaction.responseNotebook;
-    if (!transaction.accepted) return next;
-
-    const fromRoster = state.rosters[transaction.from]!;
-    const toRoster = state.rosters[transaction.to]!;
-    const given = fromRoster.find((mon) => mon.id === transaction.give)!;
-    const received = toRoster.find((mon) => mon.id === transaction.get)!;
-    next.rosters[transaction.from] = [...fromRoster.filter((mon) => mon.id !== given.id), received];
-    next.rosters[transaction.to] = [...toRoster.filter((mon) => mon.id !== received.id), given];
-    for (const entrant of [transaction.from, transaction.to]) {
-      next.budgets[entrant] = state.board.budget - next.rosters[entrant]!.reduce((sum, mon) => sum + mon.cost, 0);
-    }
-    return next;
-  }
-  if (transaction.kind === 'free_agency') {
-    if (typeof transaction.notebook !== 'string') {
-      throw new Error('free-agency transaction has an invalid notebook');
-    }
-    const roster = freeAgencyRoster(state, transaction.entrant, transaction.swaps);
-    if (typeof roster === 'string') throw new Error(`invalid free-agency transaction: ${roster}`);
-    const next = rosterStateCopy(state);
-    next.rosters[transaction.entrant] = roster;
-    next.budgets[transaction.entrant] = state.board.budget - roster.reduce((sum, mon) => sum + mon.cost, 0);
-    next.notebooks[transaction.entrant] = transaction.notebook;
-    return next;
-  }
-  throw new Error(`unknown trade-window transaction ${JSON.stringify((transaction as { kind?: unknown }).kind)}`);
+  const roster = freeAgencyRoster(state, entrant, swaps);
+  if (typeof roster === 'string') throw new Error(`invalid free-agency transaction: ${roster}`);
+  const next = rosterStateCopy(state);
+  next.rosters[entrant] = roster;
+  next.budgets[entrant] = state.board.budget - roster.reduce((sum, mon) => sum + mon.cost, 0);
+  next.notebooks[entrant] = notebook;
+  return next;
 }
 
 function systemPrompt(state: TradeWindowState, entrant: number): string {
@@ -1043,17 +996,7 @@ function replayWindowLog(
           responseReasoning: '',
           offerEvidenceSupplied,
         };
-        const nextState = applyTradeWindowTransaction(state, {
-          kind: 'offer',
-          from: entrant,
-          to: null,
-          give: null,
-          get: null,
-          accepted: null,
-          notebook: record.notebook as string,
-        });
-        validateLeagueRosterState(nextState, `roster after replayed no-offer at ${file} line ${physical.line}`);
-        commitRosterState(state, nextState);
+        state.notebooks[entrant] = record.notebook as string;
         offerRows.push({
           kind: 'offer',
           model: record.model as string,
@@ -1109,8 +1052,7 @@ function replayWindowLog(
       };
       let nextState: TradeWindowState;
       try {
-        nextState = applyTradeWindowTransaction(state, {
-          kind: 'offer',
+        nextState = applyTradeOffer(state, {
           from: entrant,
           to,
           give,
@@ -1212,12 +1154,7 @@ function replayWindowLog(
     ) {
       throw windowLineError(file, physical.line, 'is not in canonical transaction form');
     }
-    const nextState = applyTradeWindowTransaction(state, {
-      kind: 'free_agency',
-      entrant,
-      swaps: parsed.swaps,
-      notebook: parsed.notebook,
-    });
+    const nextState = applyFreeAgency(state, entrant, parsed.swaps, parsed.notebook);
     validateLeagueRosterState(nextState, `roster after replayed free-agency decision at ${file} line ${physical.line}`);
     commitRosterState(state, nextState);
     decisions.push({
@@ -1477,6 +1414,7 @@ export async function runTradeWindow(
         }
         let response: ParsedTradeResponse | undefined;
         let responderFallback: boolean | null = null;
+        let offerOutcome: TradeWindowState | null = null;
         if (parsed.offer) {
           const responder = parsed.offer.to;
           const responseProvider = providers[responder];
@@ -1510,6 +1448,16 @@ export async function runTradeWindow(
               evidence: noStageEvidence(liveState.notebooks[responder]!),
             };
           }
+          offerOutcome = applyTradeOffer(liveState, {
+            from: entrant,
+            to: parsed.offer.to,
+            give: parsed.offer.give,
+            get: parsed.offer.get,
+            accepted: response.accept,
+            notebook: parsed.notebook,
+            responseNotebook: response.notebook,
+          });
+          validateLeagueRosterState(offerOutcome, `roster after live offer by entrant ${entrant}`);
         }
         const offer: TradeOffer = {
           from: entrant,
@@ -1525,28 +1473,6 @@ export async function runTradeWindow(
           offerEvidenceSupplied: parsed.evidence.supplied,
           ...(response ? { responseEvidenceSupplied: response.evidence.supplied } : {}),
         };
-        if (parsed.offer && !response) throw new Error('a submitted trade offer has no response outcome');
-        const nextState = parsed.offer
-          ? applyTradeWindowTransaction(liveState, {
-              kind: 'offer',
-              from: entrant,
-              to: parsed.offer.to,
-              give: parsed.offer.give,
-              get: parsed.offer.get,
-              accepted: response!.accept,
-              notebook: parsed.notebook,
-              responseNotebook: response!.notebook,
-            })
-          : applyTradeWindowTransaction(liveState, {
-              kind: 'offer',
-              from: entrant,
-              to: null,
-              give: null,
-              get: null,
-              accepted: null,
-              notebook: parsed.notebook,
-            });
-        validateLeagueRosterState(nextState, `roster after live offer by entrant ${entrant}`);
         const logRow: TradeOfferLogRow = {
           kind: 'offer',
           model: liveState.models[entrant]!,
@@ -1555,7 +1481,8 @@ export async function runTradeWindow(
           ...offer,
         };
         fs.appendFileSync(transcript, `${canonicalJson({ ...logRow, timestamp: new Date().toISOString() })}\n`, 'utf8');
-        commitRosterState(liveState, nextState);
+        if (offerOutcome) commitRosterState(liveState, offerOutcome);
+        else liveState.notebooks[entrant] = parsed.notebook;
         offers.push(offer);
         if (!parsed.offer) break;
         made += 1;
@@ -1652,12 +1579,7 @@ export async function runTradeWindow(
       };
       fallback = Boolean(provider);
     }
-    const nextState = applyTradeWindowTransaction(liveState, {
-      kind: 'free_agency',
-      entrant,
-      swaps: parsed.swaps,
-      notebook: parsed.notebook,
-    });
+    const nextState = applyFreeAgency(liveState, entrant, parsed.swaps, parsed.notebook);
     validateLeagueRosterState(nextState, `roster after live free agency for entrant ${entrant}`);
     const decision: TradeWindowDecision = {
       entrant,

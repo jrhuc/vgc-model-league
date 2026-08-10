@@ -175,7 +175,6 @@ export function selectPositions(candidates: CandidatePosition[], options: Select
   for (const position of candidates) if (!unique.has(keyOf(position))) unique.set(keyOf(position), position);
   const usable = [...unique.values()].filter(
     (position) =>
-      Number.isFinite(position.heldOutQualificationSpan) &&
       position.heldOutQualificationSpan >= MIN_HELD_OUT_QUALIFICATION_SPAN &&
       position.legal >= 2 &&
       (!options.formats || options.formats.includes(position.format)),

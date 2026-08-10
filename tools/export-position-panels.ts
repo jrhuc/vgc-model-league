@@ -2,7 +2,6 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { assertGameRecordCorpusDigest, type GameRecord, loadGameRecordCorpus, verifyGame } from '../src/eval/corpus.js';
 import {
   type CounterfactualOptions,
@@ -34,7 +33,7 @@ import {
   type SelectionOptions,
   selectPositions,
 } from '../src/eval/positions.js';
-import { captureRuntimeProducerAuthority } from '../src/eval/producer.js';
+import { boundShowdownRoot, captureRuntimeProducerAuthority } from '../src/eval/producer.js';
 import {
   CANONICAL_JSON_PROTOCOL,
   canonicalJson,
@@ -282,16 +281,8 @@ function publishImmutable(directory: string, name: string, content: string, mode
 async function main(): Promise<void> {
   const settings = parse(process.argv.slice(2));
   const producer = captureRuntimeProducerAuthority(import.meta.url);
-  const graderProducer = captureRuntimeProducerAuthority(
-    new URL(`./grade-positions${path.extname(fileURLToPath(import.meta.url))}`, import.meta.url).href,
-  );
-  const showdownRealpath = fs.realpathSync.native(settings.psDir ?? defaultPsDir());
-  if (showdownRealpath !== producer.showdownRealpath) {
-    throw new Error(
-      `configured Pokémon Showdown root ${showdownRealpath} does not match captured producer runtime ${producer.showdownRealpath}`,
-    );
-  }
-  settings.psDir = producer.showdownRealpath;
+  const graderProducer = captureRuntimeProducerAuthority(new URL('./grade-positions.js', import.meta.url).href);
+  settings.psDir = boundShowdownRoot(producer, settings.psDir ?? defaultPsDir());
   const gradedManifestPath = `${settings.graded}.manifest.json`;
   const gradedManifest = readObject(gradedManifestPath);
   if (gradedManifest.schema_version !== POSITION_GRADE_SCHEMA_VERSION)

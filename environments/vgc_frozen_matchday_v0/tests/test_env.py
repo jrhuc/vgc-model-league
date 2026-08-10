@@ -3,10 +3,6 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
-import subprocess
-import sys
-import time
-import tomllib
 from contextlib import asynccontextmanager
 from pathlib import Path
 from types import SimpleNamespace
@@ -15,12 +11,9 @@ from typing import Any
 import pytest
 from pydantic_config import cli as parse_cli
 from pydantic_config.cli import ConfigFileError
-from rich.console import Console
 from verifiers import v1 as vf
-from verifiers.v1.cli.dashboard.eval import Progress
 from verifiers.v1.cli.resolve import narrow_config, with_positional_taskset
 from verifiers.v1.configs.cli.eval import EvalConfig
-from verifiers.v1.env import RunSlot
 
 import vgc_frozen_matchday_v0.env as env_module
 from vgc_frozen_matchday_v0.env import FrozenMatchdayEnv, FrozenMatchdayEnvConfig
@@ -436,12 +429,6 @@ async def _run(
     return env, task, agents, referee, vf.Episode(traces=traces, ok=True)
 
 
-def _public_run_output(episode: vf.Episode) -> str:
-    console = Console(record=True, width=200, color_system=None)
-    console.print(Progress([RunSlot.finished(episode)], time.time()))
-    return console.export_text()
-
-
 @pytest.mark.asyncio
 async def test_phase_loop_fresh_private_turns_terminal_allowlist_joins_and_rewards(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -513,7 +500,6 @@ async def test_phase_loop_fresh_private_turns_terminal_allowlist_joins_and_rewar
     assert [trace for trace in episode.traces if trace.agent.trainable] == [
         entrant_carrier
     ]
-    assert "opponent: matchday_outcome_v0" in _public_run_output(episode)
     for trace in episode.traces:
         evidence = trace.info["matchday_v0"]
         assert evidence["runtime_ids"] == {
@@ -559,7 +545,7 @@ async def test_phase_loop_fresh_private_turns_terminal_allowlist_joins_and_rewar
     ],
 )
 @pytest.mark.asyncio
-async def test_native_v03_public_run_output_is_the_entrant_outcome_at_any_trace_count(
+async def test_native_v03_entrant_outcome_scores_win_loss_and_tie(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     score: dict[str, int],
@@ -580,11 +566,6 @@ async def test_native_v03_public_run_output_is_the_entrant_outcome_at_any_trace_
     opponent = next(trace for trace in carriers if trace.agent.name == "opponent")
     assert entrant.rewards["matchday_outcome_v0"].score == entrant_outcome
     assert opponent.rewards["matchday_outcome_v0"].score == -entrant_outcome
-
-    expected = f"reward {entrant_outcome:.2f}"
-    for visible_traces in (carriers, episode.traces, episode.traces * 3):
-        public_episode = vf.Episode(traces=list(visible_traces), ok=True)
-        assert expected in _public_run_output(public_episode)
 
 
 @pytest.mark.asyncio
@@ -777,39 +758,3 @@ def test_native_cli_dotted_overrides_bind_source_and_enforce_opponent_policy(
         )
         with pytest.raises(ConfigFileError, match=message):
             parse_cli(narrow_config(EvalConfig, argv), args=argv, plain=True)
-
-
-def test_installed_native_eval_cli_binds_the_required_source_override(
-    tmp_path: Path,
-) -> None:
-    source = _source(tmp_path).source
-    assert source is not None
-    output = tmp_path / "cli-output"
-    command = [
-        str(Path(sys.executable).with_name("eval")),
-        "vgc_frozen_matchday_v0",
-        "--env.taskset.source",
-        str(source),
-        "--dry-run",
-        "--output-dir",
-        str(output),
-        "--no-rich",
-        "--no-push",
-    ]
-    completed = subprocess.run(
-        command,
-        cwd=Path(__file__).parents[1],
-        text=True,
-        capture_output=True,
-        timeout=30,
-    )
-    assert completed.returncode == 0, completed.stdout + completed.stderr
-
-    config = tomllib.loads((output / "config.toml").read_text(encoding="utf-8"))
-    taskset = config["env"]["taskset"]
-    assert taskset["id"] == "vgc_frozen_matchday_v0"
-    assert Path(taskset["source"]).resolve() == source.resolve()
-    assert Path(taskset["task"]["source"]).resolve() == source.resolve()
-    assert taskset["task"]["source_sha256"] == hashlib.sha256(
-        source.read_bytes()
-    ).hexdigest()

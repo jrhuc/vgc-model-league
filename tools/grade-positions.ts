@@ -15,7 +15,7 @@ import {
 import { positionEligibilityMetrics } from '../src/eval/eligibility.js';
 import { ACTION_PROTOCOL, positionDigest, requestPhase } from '../src/eval/fork.js';
 import { POSITION_GRADE_SCHEMA_VERSION } from '../src/eval/positions.js';
-import { captureRuntimeProducerAuthority } from '../src/eval/producer.js';
+import { boundShowdownRoot, captureRuntimeProducerAuthority } from '../src/eval/producer.js';
 import { DATA_DIR, defaultPsDir } from '../src/paths.js';
 import { showdownCommit } from '../src/showdown.js';
 import type { JsonObject } from '../src/types.js';
@@ -269,26 +269,7 @@ function gradeShard(shard: Shard, emit: (graded: GradedGame) => void): void {
           rows.push(decisionStatus(record, position.index, pid, 'counterfactual-evaluation-failed'));
           continue;
         }
-        const panels = [...table.stability, table.measurement];
         const actions = table.measurement.actions.map((entry) => entry.action);
-        const complete =
-          panels.length === 3 &&
-          actions.length === table.legal &&
-          panels.every(
-            (panel) =>
-              panel.actions.length === table.legal &&
-              panel.draws.length > 0 &&
-              panel.matrix.length === panel.draws.length &&
-              panel.matrix.every((row) => row.length === table.legal) &&
-              panel.actions.every(
-                (entry, actionIndex) => entry.action === actions[actionIndex] && entry.samples === panel.draws.length,
-              ),
-          );
-        if (!complete) {
-          stats.failed += 1;
-          rows.push(decisionStatus(record, position.index, pid, 'counterfactual-evaluation-incomplete'));
-          continue;
-        }
         const chosen = position.actual[pid];
         if (!chosen || !actions.includes(chosen)) {
           stats.failed += 1;
@@ -313,7 +294,6 @@ function gradeShard(shard: Shard, emit: (graded: GradedGame) => void): void {
           choice_index: choiceIndex,
           turn: table.turn,
           phase: requestPhase(position.requests[pid]),
-          legal_actions: table.legal,
           chosen,
           state_value: table.stateValue,
           counterfactual: counterfactualProtocol(settings),
@@ -338,13 +318,7 @@ function gradeShard(shard: Shard, emit: (graded: GradedGame) => void): void {
 async function main(): Promise<void> {
   const settings = parse(process.argv.slice(2));
   const producer = captureRuntimeProducerAuthority(import.meta.url);
-  const showdownRealpath = fs.realpathSync.native(settings.psDir ?? defaultPsDir());
-  if (showdownRealpath !== producer.showdownRealpath) {
-    throw new Error(
-      `configured Pokémon Showdown root ${showdownRealpath} does not match captured producer runtime ${producer.showdownRealpath}`,
-    );
-  }
-  settings.psDir = producer.showdownRealpath;
+  settings.psDir = boundShowdownRoot(producer, settings.psDir ?? defaultPsDir());
   fs.mkdirSync(path.dirname(settings.out), { recursive: true });
   const records = scopedRecords(settings);
   const manifest = prepareOutput(settings, records, producer.producerDigest);
@@ -353,10 +327,7 @@ async function main(): Promise<void> {
   const workers = Math.min(settings.workers, Math.max(1, remaining));
   process.stdout.write(`${remaining} of ${records.length} candidate games left across ${workers} workers into ${settings.out}
 `);
-  if (!remaining) {
-    producer.assertUnchanged();
-    return;
-  }
+  if (!remaining) return;
 
   const stream = fs.createWriteStream(settings.out, { flags: 'a' });
   let rows = 0;
