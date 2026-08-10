@@ -125,7 +125,57 @@ export function buildBracket(count: number): BracketMatch[][] {
       })),
     );
   }
+  for (const [position, match] of first.entries()) {
+    const next = rounds[1]?.[position >> 1];
+    if (match.seriesIndex === null && next) next.slots[position % 2] = match.winner;
+  }
   return rounds;
+}
+
+/** Resolve one exact scheduled series without changing the supplied bracket. */
+export function applyBracketOutcome(
+  rounds: readonly (readonly BracketMatch[])[],
+  scheduled: Readonly<BracketMatch>,
+  winnerSide: Pid,
+): BracketMatch[][] {
+  if (scheduled.seriesIndex === null) throw new Error('a bye has no scheduled series outcome');
+  const round = rounds[scheduled.round];
+  const position = round?.findIndex((match) => match.seriesIndex === scheduled.seriesIndex) ?? -1;
+  const current = position < 0 ? undefined : round![position];
+  if (
+    !current ||
+    current.round !== scheduled.round ||
+    current.slots[0] !== scheduled.slots[0] ||
+    current.slots[1] !== scheduled.slots[1]
+  ) {
+    throw new Error(`bracket series ${scheduled.seriesIndex} is stale or is not scheduled here`);
+  }
+  if (current.slots[0] === null || current.slots[1] === null) {
+    throw new Error(`bracket series ${scheduled.seriesIndex} has unresolved prerequisites`);
+  }
+  if (current.winner !== null) throw new Error(`bracket series ${scheduled.seriesIndex} already has an outcome`);
+  if (winnerSide !== 'p1' && winnerSide !== 'p2') {
+    throw new Error(`bracket series ${scheduled.seriesIndex} has an invalid winner side`);
+  }
+
+  const winner = current.slots[winnerSide === 'p1' ? 0 : 1];
+  const next = rounds[scheduled.round + 1]?.[position >> 1];
+  const nextSide = position % 2;
+  if (next && next.slots[nextSide] !== null) {
+    throw new Error(`bracket series ${scheduled.seriesIndex} dependent slot already has an entrant`);
+  }
+
+  const updated = [...rounds] as BracketMatch[][];
+  const resolvedRound = [...round!];
+  resolvedRound[position] = { ...current, winner };
+  updated[scheduled.round] = resolvedRound;
+  if (next) {
+    const dependentRound = [...rounds[scheduled.round + 1]!];
+    dependentRound[position >> 1] = { ...next, slots: [...next.slots] };
+    dependentRound[position >> 1]!.slots[nextSide] = winner;
+    updated[scheduled.round + 1] = dependentRound;
+  }
+  return updated;
 }
 
 export async function runTournament(
@@ -208,8 +258,7 @@ export async function runTournament(
   );
   const provenance = options.provenance ?? DEFAULT_PROVENANCE;
   const briefing = provenance === 'disclosed' && event ? briefEvent(event, entrants.length) : undefined;
-  const rounds = buildBracket(entrants.length);
-  const matches = rounds.flat();
+  let rounds = buildBracket(entrants.length);
   const seriesCount = entrants.length - 1;
   const seriesSeeds = Array.from({ length: seriesCount }, () => seriesEntropy(random));
 
@@ -263,21 +312,14 @@ export async function runTournament(
     type: 'plans',
     mode: 'tournament',
     protocolVersion: TOURNAMENT_PROTOCOL_VERSION,
-    plans: matches
+    plans: rounds
+      .flat()
       .filter((match) => match.seriesIndex !== null)
       .sort((a, b) => a.seriesIndex! - b.seriesIndex!)
       .map((match) => ({ index: match.seriesIndex!, players: playersFor(match) })),
     pool: poolId ?? '',
     seed,
   });
-
-  const propagate = (match: BracketMatch): void => {
-    const roundMatches = rounds[match.round]!;
-    const position = roundMatches.indexOf(match);
-    const next = rounds[match.round + 1]?.[position >> 1];
-    if (next && match.winner !== null) next.slots[position % 2] = match.winner;
-  };
-  for (const match of rounds[0]!) if (match.seriesIndex === null) propagate(match);
 
   const validateStoredMatch = (match: BracketMatch, row: SeriesRecord): Pid => {
     const index = match.seriesIndex!;
@@ -342,7 +384,7 @@ export async function runTournament(
   };
 
   const results: SeriesRecord[] = [];
-  const started = new Set<BracketMatch>();
+  const started = new Set<number>();
   if (stored) {
     const recorded = new Map<number, SeriesRecord>();
     for (const row of loadSeriesRecords(recordsPath)) {
@@ -354,16 +396,15 @@ export async function runTournament(
     let settled = true;
     while (settled) {
       settled = false;
-      for (const match of matches) {
-        if (match.seriesIndex === null || started.has(match)) continue;
+      for (const match of rounds.flat()) {
+        if (match.seriesIndex === null || started.has(match.seriesIndex)) continue;
         if (match.slots[0] === null || match.slots[1] === null) continue;
         const row = recorded.get(match.seriesIndex);
         if (!row) continue;
         const winnerSide = validateStoredMatch(match, row);
-        match.winner = match.slots[winnerSide === 'p1' ? 0 : 1]!;
-        started.add(match);
+        rounds = applyBracketOutcome(rounds, match, winnerSide);
+        started.add(match.seriesIndex);
         results.push(row);
-        propagate(match);
         options.onEvent?.({ type: 'series-end', index: match.seriesIndex, record: row });
         settled = true;
       }
@@ -400,9 +441,9 @@ export async function runTournament(
         ...(options.onEvent === undefined ? {} : { onEvent: options.onEvent }),
         ...(options.contributor === undefined ? {} : { contributor: options.contributor }),
       });
+      rounds = applyBracketOutcome(rounds, match, row.winner_side as Pid);
       appendRow(recordsPath, row);
       results.push(row);
-      propagate(match);
       options.onEvent?.({ type: 'series-end', index: match.seriesIndex!, record: row });
       options.onEvent?.({ type: 'bracket', bracket: bracketView() });
     } catch (error) {
@@ -415,15 +456,17 @@ export async function runTournament(
 
   const startReady = (): void => {
     while (active.size < concurrency && !controller.signal.aborted) {
-      const match = matches.find(
-        (candidate) =>
-          candidate.seriesIndex !== null &&
-          candidate.slots[0] !== null &&
-          candidate.slots[1] !== null &&
-          !started.has(candidate),
-      );
+      const match = rounds
+        .flat()
+        .find(
+          (candidate) =>
+            candidate.seriesIndex !== null &&
+            candidate.slots[0] !== null &&
+            candidate.slots[1] !== null &&
+            !started.has(candidate.seriesIndex),
+        );
       if (!match) break;
-      started.add(match);
+      started.add(match.seriesIndex!);
       const task = runMatch(match);
       active.add(task);
       void task.finally(() => {
@@ -493,7 +536,7 @@ async function playMatch(
   });
 
   if (!winnerSide) throw new Error(`single-elimination series ${index + 1} ended without a winner`);
-  match.winner = match.slots[winnerSide === 'p1' ? 0 : 1]!;
+  const winner = match.slots[winnerSide === 'p1' ? 0 : 1]!;
 
   return {
     schema_version: 1,
@@ -507,7 +550,7 @@ async function playMatch(
     provenance: context.provenance,
     ...(context.poolId === null ? {} : { pool: context.poolId }),
     ...(context.contributor === undefined ? {} : { contributor: context.contributor }),
-    advanced: entrants[match.winner]!.model,
+    advanced: entrants[winner]!.model,
     run_seed: context.runSeed,
     ps_commit: showdownCommit(context.psDir),
     ...fields,

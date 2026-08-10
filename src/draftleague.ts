@@ -25,7 +25,7 @@ import {
 } from './teambuild.js';
 import { validateTeam } from './teams.js';
 import { DEFAULT_TIMER_SCALE } from './timer.js';
-import type { TournamentEvent } from './tournament.js';
+import { applyBracketOutcome, type BracketMatch, type TournamentEvent } from './tournament.js';
 import {
   DEFAULT_TRADE_WINDOW,
   MAX_TRADE_OFFERS,
@@ -70,6 +70,18 @@ interface SeriesPlanned {
 interface StoredSeriesOutcome {
   score: Record<Pid, number>;
   winnerSide: Pid | undefined;
+}
+
+function buildDraftPlayoffBracket(plans: readonly SeriesPlanned[], seeding: readonly number[]): BracketMatch[][] {
+  return plans.length === 3
+    ? [
+        [
+          { round: 0, seriesIndex: plans[0]!.index, slots: [seeding[0]!, seeding[3]!], winner: null },
+          { round: 0, seriesIndex: plans[1]!.index, slots: [seeding[1]!, seeding[2]!], winner: null },
+        ],
+        [{ round: 1, seriesIndex: plans[2]!.index, slots: [null, null], winner: null }],
+      ]
+    : [[{ round: 0, seriesIndex: plans[0]!.index, slots: [seeding[0]!, seeding[1]!], winner: null }]];
 }
 
 function builtTeamSummary(build: TeambuildView): string {
@@ -647,6 +659,7 @@ export async function runDraftLeague(
 
   const results: SeriesRecord[] = [];
   let seeding: number[] = [];
+  let playoffBracketRounds: BracketMatch[][] | undefined;
   const playSeries = async (plan: SeriesPlanned, signal: AbortSignal): Promise<SeriesRecord> => {
     const [a, b] = plan.entrants!;
     const players: Record<Pid, string> = { p1: entrants[a]!, p2: entrants[b]! };
@@ -855,48 +868,50 @@ export async function runDraftLeague(
         `run ${runId} has a playoff result before scheduled round-robin series ${missingRoundRobin.index}; it cannot resume`,
       );
     }
-    const storedSeeding = rankedTable(table).map((row) => row.entrant);
     const playoffPlans = plans.filter((plan) => plan.stage === 'playoff');
-    const adopt = (plan: SeriesPlanned, pair: [number, number]): StoredSeriesOutcome | undefined => {
-      plan.entrants = pair;
-      const row = storedPlayoffRows.get(plan.index);
-      if (!row) return undefined;
-      const builds = {
-        p1: storedBuildFor(plan, pair[0], pair[1], rosters),
-        p2: storedBuildFor(plan, pair[1], pair[0], rosters),
-      };
-      const outcome = validateStoredSeriesEvidence(row, plan, pair, builds, rosters);
-      if (!outcome.winnerSide) throw new Error(`run ${runId} playoff series ${plan.index} has no canonical winner`);
-      const expectedAdvanced = entrants[outcome.winnerSide === 'p1' ? pair[0] : pair[1]];
-      if (row.advanced !== expectedAdvanced) {
-        throw new Error(`run ${runId} series ${plan.index} advances a player other than its canonical winner`);
-      }
-      teambuilds.push(builds.p1.view, builds.p2.view);
-      completed.set(plan.index, row);
-      storedOutcomes.set(plan.index, outcome);
-      return outcome;
-    };
-    if (playoffRounds === 1) {
-      adopt(playoffPlans[0]!, [storedSeeding[0]!, storedSeeding[1]!]);
-    } else {
-      const semifinalPairs: Array<[number, number]> = [
-        [storedSeeding[0]!, storedSeeding[3]!],
-        [storedSeeding[1]!, storedSeeding[2]!],
-      ];
-      const semifinalOutcomes = [
-        adopt(playoffPlans[0]!, semifinalPairs[0]!),
-        adopt(playoffPlans[1]!, semifinalPairs[1]!),
-      ];
-      const finalPlan = playoffPlans[2]!;
-      if (storedPlayoffRows.has(finalPlan.index)) {
-        if (!semifinalOutcomes[0]?.winnerSide || !semifinalOutcomes[1]?.winnerSide) {
-          throw new Error(`run ${runId} has a final result before both scheduled semifinals; it cannot resume`);
+    playoffBracketRounds = buildDraftPlayoffBracket(
+      playoffPlans,
+      rankedTable(table).map((row) => row.entrant),
+    );
+    let adopted = true;
+    while (adopted) {
+      adopted = false;
+      for (const match of playoffBracketRounds.flat()) {
+        if (
+          match.seriesIndex === null ||
+          match.slots[0] === null ||
+          match.slots[1] === null ||
+          completed.has(match.seriesIndex)
+        ) {
+          continue;
         }
-        adopt(finalPlan, [
-          semifinalPairs[0]![semifinalOutcomes[0].winnerSide === 'p1' ? 0 : 1]!,
-          semifinalPairs[1]![semifinalOutcomes[1].winnerSide === 'p1' ? 0 : 1]!,
-        ]);
+        const row = storedPlayoffRows.get(match.seriesIndex);
+        if (!row) continue;
+        const plan = playoffPlans.find((candidate) => candidate.index === match.seriesIndex)!;
+        const pair: [number, number] = [match.slots[0], match.slots[1]];
+        plan.entrants = pair;
+        const builds = {
+          p1: storedBuildFor(plan, pair[0], pair[1], rosters),
+          p2: storedBuildFor(plan, pair[1], pair[0], rosters),
+        };
+        const outcome = validateStoredSeriesEvidence(row, plan, pair, builds, rosters);
+        if (!outcome.winnerSide) throw new Error(`run ${runId} playoff series ${plan.index} has no canonical winner`);
+        const expectedAdvanced = entrants[outcome.winnerSide === 'p1' ? pair[0] : pair[1]];
+        if (row.advanced !== expectedAdvanced) {
+          throw new Error(`run ${runId} series ${plan.index} advances a player other than its canonical winner`);
+        }
+        playoffBracketRounds = applyBracketOutcome(playoffBracketRounds, match, outcome.winnerSide);
+        teambuilds.push(builds.p1.view, builds.p2.view);
+        completed.set(plan.index, row);
+        storedOutcomes.set(plan.index, outcome);
+        adopted = true;
       }
+    }
+    const unresolved = [...storedPlayoffRows.keys()].find((index) => !completed.has(index));
+    if (unresolved !== undefined) {
+      throw new Error(
+        `run ${runId} playoff series ${unresolved} has unresolved bracket prerequisites; it cannot resume`,
+      );
     }
   }
 
@@ -1067,33 +1082,27 @@ export async function runDraftLeague(
   if (options.signal?.aborted) return finish();
 
   const playoffs = plans.filter((plan) => plan.stage === 'playoff');
-  const bracket: BracketView = {
+  playoffBracketRounds ??= buildDraftPlayoffBracket(playoffs, seeding);
+  const bracketView = (): BracketView => ({
     entrants: entrants.map((model, index) => ({
       model,
       team: teamNames[index] || `seed ${seeding.indexOf(index) + 1}`,
     })),
-    rounds:
-      playoffRounds === 2
-        ? [
-            [
-              { seriesIndex: playoffs[0]!.index, slots: [seeding[0]!, seeding[3]!], winner: null },
-              { seriesIndex: playoffs[1]!.index, slots: [seeding[1]!, seeding[2]!], winner: null },
-            ],
-            [{ seriesIndex: playoffs[2]!.index, slots: [null, null], winner: null }],
-          ]
-        : [[{ seriesIndex: playoffs[0]!.index, slots: [seeding[0]!, seeding[1]!], winner: null }]],
-    champion: null,
-  };
-  options.onEvent?.({ type: 'bracket', bracket });
+    rounds: playoffBracketRounds!.map((round) =>
+      round.map((match) => ({
+        seriesIndex: match.seriesIndex,
+        slots: [...match.slots],
+        winner: match.winner,
+      })),
+    ),
+    champion: playoffBracketRounds!.at(-1)![0]!.winner,
+  });
+  options.onEvent?.({ type: 'bracket', bracket: bracketView() });
 
-  const resolve = (matchIndex: number, roundIndex: number, winnerSide: Pid): number => {
-    const match = bracket.rounds[roundIndex]![matchIndex]!;
-    const winner = match.slots[winnerSide === 'p1' ? 0 : 1]!;
-    match.winner = winner;
-    const next = bracket.rounds[roundIndex + 1]?.[matchIndex >> 1];
-    if (next) next.slots[matchIndex % 2] = winner;
-    else bracket.champion = winner;
-    options.onEvent?.({ type: 'bracket', bracket });
+  const resolve = (scheduled: BracketMatch, winnerSide: Pid): number => {
+    const winner = scheduled.slots[winnerSide === 'p1' ? 0 : 1]!;
+    playoffBracketRounds = applyBracketOutcome(playoffBracketRounds!, scheduled, winnerSide);
+    options.onEvent?.({ type: 'bracket', bracket: bracketView() });
     return winner;
   };
 
@@ -1104,22 +1113,22 @@ export async function runDraftLeague(
       options.signal,
       async (matchIndex, signal) => {
         const plan = playoffs[matchIndex]!;
-        plan.entrants = bracket.rounds[0]![matchIndex]!.slots as [number, number];
+        const scheduled = playoffBracketRounds![0]![matchIndex]!;
+        plan.entrants = [...scheduled.slots] as [number, number];
         const existing = completed.get(plan.index);
         if (existing) {
           applyOutcome(plan, existing);
-          resolve(matchIndex, 0, existing.winner_side as Pid);
           return existing;
         }
         const row = await playSeries(plan, signal);
-        resolve(matchIndex, 0, row.winner_side as Pid);
+        resolve(scheduled, row.winner_side as Pid);
         return row;
       },
     );
     results.push(...semis);
     if (options.signal?.aborted) return finish();
     startSeasonClose(
-      bracket.rounds[0]!.flatMap((match) => {
+      playoffBracketRounds![0]!.flatMap((match) => {
         const loser = match.slots.find((slot) => slot !== null && slot !== match.winner);
         return loser === null || loser === undefined
           ? []
@@ -1135,7 +1144,8 @@ export async function runDraftLeague(
   }
   const finalPlan = playoffs[playoffs.length - 1]!;
   const finalRound = playoffRounds - 1;
-  finalPlan.entrants = bracket.rounds[finalRound]![0]!.slots as [number, number];
+  const scheduledFinal = playoffBracketRounds[finalRound]![0]!;
+  finalPlan.entrants = [...scheduledFinal.slots] as [number, number];
   if (finalPlan.entrants[0] === null || finalPlan.entrants[1] === null) return finish();
   const storedFinal = completed.get(finalPlan.index);
   const finalRow = storedFinal
@@ -1143,7 +1153,7 @@ export async function runDraftLeague(
     : await mapLimit([finalPlan], 1, options.signal, (plan, signal) => playSeries(plan, signal));
   if (finalRow[0]) {
     if (storedFinal) applyOutcome(finalPlan, storedFinal);
-    const champion = resolve(0, finalRound, finalRow[0].winner_side as Pid);
+    const champion = storedFinal ? scheduledFinal.winner! : resolve(scheduledFinal, finalRow[0].winner_side as Pid);
     results.push(finalRow[0]);
     const runnerUp = finalPlan.entrants.find((entrant) => entrant !== champion);
     await closeSeason([
