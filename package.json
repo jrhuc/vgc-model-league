@@ -26,7 +26,7 @@
     "dev:gui": "vite build --watch",
     "build:site": "vite build --mode static --logLevel warn && node -e \"require('node:fs').cpSync('artifacts/public/site', 'dist/gui-static/data', { recursive: true })\"",
     "export-site": "node dist/src/cli.js export-site",
-    "publish:site": "pnpm run build && pnpm run export-site && git add artifacts/public/site && git commit -m 'publish site data' && git push",
+    "publish:site": "pnpm run build && pnpm run export-site && node tools/publish-site.mjs",
     "test:unit": "node -e 'for (const d of [\"runs\", \"records\"]) require(\"node:fs\").mkdirSync(d, { recursive: true })' && node --test --test-concurrency=4 --test-timeout=300000 dist/tests/*.test.js",
     "test": "pnpm run check && pnpm run check:artifacts && pnpm run build && pnpm run build:frozen-matchday && pnpm run test:unit",
     "archive-run": "node tools/archive-run.mjs",
