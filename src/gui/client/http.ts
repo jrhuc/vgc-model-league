@@ -1,12 +1,40 @@
-let csrfToken = '';
-
-export function configureCsrf(token: string | null | undefined): void {
-  csrfToken = token ?? '';
-}
+declare const __STATIC_SITE__: boolean;
+/** Resolved through typeof so the module also loads where the bundler define is absent (Node tests). */
+const STATIC_SITE = typeof __STATIC_SITE__ !== 'undefined' && __STATIC_SITE__;
 
 const IMMUTABLE_PATH = /^\/api\/(?:selected-trace|board)(?:\?|$)/;
 const immutableCache = new Map<string, unknown>();
 const requests = new Map<string, Promise<unknown>>();
+
+export const TRACE_ARTIFACT_HREF = STATIC_SITE ? 'data/selected-trace-full.json' : '/api/selected-trace/full.json';
+
+/** The static deployment serves each read-only API response as a JSON file exported by `vgcleague export-site`. */
+function staticDataPath(pathname: string): string {
+  const url = new URL(pathname, 'http://static.invalid');
+  const query = url.searchParams;
+  switch (url.pathname) {
+    case '/api/state':
+      return 'data/state.json';
+    case '/api/selected-trace':
+      return 'data/selected-trace.json';
+    case '/api/selected-trace/full.json':
+      return 'data/selected-trace-full.json';
+    case '/api/leagues':
+      return 'data/leagues.json';
+    case '/api/tournaments':
+      return 'data/tournaments.json';
+    case '/api/league':
+      return `data/league/${encodeURIComponent(query.get('run') ?? '')}.json`;
+    case '/api/league/game':
+      return `data/league/${encodeURIComponent(query.get('run') ?? '')}/game-${query.get('series')}-${query.get('game')}.json`;
+    case '/api/tournament/game':
+      return `data/tournament/${encodeURIComponent(query.get('run') ?? '')}/game-${query.get('series')}-${query.get('game')}.json`;
+    case '/api/board':
+      return `data/board/${encodeURIComponent(query.get('id') ?? '')}.json`;
+    default:
+      return pathname;
+  }
+}
 
 async function request<T>(pathname: string, body?: unknown): Promise<T> {
   const init: RequestInit =
@@ -14,13 +42,11 @@ async function request<T>(pathname: string, body?: unknown): Promise<T> {
       ? {}
       : {
           method: 'POST',
-          headers: {
-            'content-type': 'application/json',
-            ...(csrfToken ? { 'x-csrf-token': csrfToken } : {}),
-          },
+          headers: { 'content-type': 'application/json' },
           body: JSON.stringify(body),
         };
-  const response = await fetch(pathname, init);
+  const target = STATIC_SITE && body === undefined ? staticDataPath(pathname) : pathname;
+  const response = await fetch(target, init);
   const data = (await response.json()) as T & { error?: string };
   if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
   return data;

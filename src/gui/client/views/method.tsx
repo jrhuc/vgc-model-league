@@ -1,5 +1,6 @@
 import type { SelectedTraceView } from '../../api';
 import { Sprite } from '../components/sprite';
+import { TRACE_ARTIFACT_HREF } from '../http';
 
 interface MethodViewProps {
   trace: SelectedTraceView | null;
@@ -7,7 +8,6 @@ interface MethodViewProps {
 }
 
 const REPOSITORY_ROOT = 'https://github.com/jrhuc/vgc-model-league';
-const TRACE_ARTIFACT = '/api/selected-trace/full.json';
 
 const POSITION_STEPS = [
   {
@@ -219,7 +219,7 @@ function RecordedTurn({ trace }: { trace: SelectedTraceView }) {
             </p>
             <h3>Seat input → model submission → replay check</h3>
           </div>
-          <a href={TRACE_ARTIFACT} target="_blank" rel="noreferrer">
+          <a href={TRACE_ARTIFACT_HREF} target="_blank" rel="noreferrer">
             Open selected evidence JSON <span aria-hidden="true">↗</span>
           </a>
         </figcaption>

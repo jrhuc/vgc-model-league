@@ -81,7 +81,9 @@ export function exportSite(options: ExportSiteOptions): ExportSiteSummary {
       requiresKey: option.requiresKey,
     })),
     auth: { mode: 'read-only', user: null, csrfToken: null },
+    sampleTeams: [],
     run: null,
+    externalRun: null,
   });
 
   const trace = loadSelectedTrace();

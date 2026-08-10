@@ -1,14 +1,6 @@
 import { useMemo } from 'preact/hooks';
 
-import type {
-  DraftView,
-  PublicDraftView,
-  PublicTeambuildView,
-  PublicTeamSheetSetView,
-  RunView,
-  TeambuildSetView,
-  TeambuildView,
-} from '../../api';
+import type { DraftView, RunView, TeambuildView } from '../../api';
 import { BoardBrowser, STAT_ORDER, useBoard } from '../components/boardbrowser';
 import { Mark } from '../components/mark';
 import { Sprite } from '../components/sprite';
@@ -22,78 +14,54 @@ const PHASE_LABELS: Record<DraftView['phase'], string> = {
   done: 'Complete',
 };
 
-function coachLabel(draft: DraftView | PublicDraftView, entrant: number): string {
+function coachLabel(draft: DraftView, entrant: number): string {
   const model = draft.entrants[entrant];
   return draft.teamNames[entrant] || (model ? modelName(model) : `Coach ${entrant + 1}`);
 }
 
-function isPrivateSet(set: PublicTeamSheetSetView): set is TeambuildSetView {
-  return 'evs' in set;
-}
-
-function TeambuildCard({
-  build,
-  draft,
-}: {
-  build: TeambuildView | PublicTeambuildView;
-  draft: DraftView | PublicDraftView;
-}) {
-  const privateBuild = 'sets' in build;
-  const sets = privateBuild ? build.sets : (build.teamSheet ?? []);
-  const repaired = privateBuild ? build.sets.filter((set) => set.repaired).length : 0;
+function TeambuildCard({ build, draft }: { build: TeambuildView; draft: DraftView }) {
+  const repaired = build.sets.filter((set) => set.repaired).length;
   return (
     <details class="teambuild-card">
       <summary>
         <b>{coachLabel(draft, build.entrant)}</b> vs {coachLabel(draft, build.opponent)}
-        {privateBuild ? (
-          <span class="muted">
-            {' '}
-            · {build.attempts} attempt{build.attempts === 1 ? '' : 's'}
-            {repaired ? ` · ${repaired} repaired` : ''}
-          </span>
-        ) : null}
+        <span class="muted">
+          {' '}
+          · {build.attempts} attempt{build.attempts === 1 ? '' : 's'}
+          {repaired ? ` · ${repaired} repaired` : ''}
+        </span>
       </summary>
-      {privateBuild && build.rationale ? <p class="teambuild-plan">{build.rationale}</p> : null}
+      {build.rationale ? <p class="teambuild-plan">{build.rationale}</p> : null}
       <div class="teambuild-sets">
-        {sets.map((set, index) => {
-          const privateSet = isPrivateSet(set);
-          return (
-            <div
-              class={`teambuild-set ${privateSet && set.repaired ? 'repaired' : ''}`}
-              key={`${set.species}-${index}`}
-            >
-              <div class="teambuild-set-head">
-                <Sprite id={set.spriteId} size={26} />
-                <b>{set.species}</b>
-                {set.item ? <span>@ {set.item}</span> : null}
-              </div>
-              <small>
-                {set.ability} · {set.nature}
-              </small>
-              <ul>
-                {set.moves.map((move) => (
-                  <li key={move}>{move}</li>
+        {build.sets.map((set, index) => (
+          <div class={`teambuild-set ${set.repaired ? 'repaired' : ''}`} key={`${set.species}-${index}`}>
+            <div class="teambuild-set-head">
+              <Sprite id={set.spriteId} size={26} />
+              <b>{set.species}</b>
+              {set.item ? <span>@ {set.item}</span> : null}
+            </div>
+            <small>
+              {set.ability} · {set.nature}
+            </small>
+            <ul>
+              {set.moves.map((move) => (
+                <li key={move}>{move}</li>
+              ))}
+            </ul>
+            <small class="teambuild-evs">
+              {STAT_ORDER.filter((stat) => set.evs[stat])
+                .map((stat) => `${set.evs[stat]} ${stat}`)
+                .join(' / ') || 'no EVs'}
+            </small>
+            {set.repairs.length > 0 ? (
+              <ul class="teambuild-repairs">
+                {set.repairs.map((repair) => (
+                  <li key={repair}>{repair}</li>
                 ))}
               </ul>
-              {privateSet ? (
-                <>
-                  <small class="teambuild-evs">
-                    {STAT_ORDER.filter((stat) => set.evs[stat])
-                      .map((stat) => `${set.evs[stat]} ${stat}`)
-                      .join(' / ') || 'no EVs'}
-                  </small>
-                  {set.repairs.length > 0 ? (
-                    <ul class="teambuild-repairs">
-                      {set.repairs.map((repair) => (
-                        <li key={repair}>{repair}</li>
-                      ))}
-                    </ul>
-                  ) : null}
-                </>
-              ) : null}
-            </div>
-          );
-        })}
+            ) : null}
+          </div>
+        ))}
       </div>
     </details>
   );
@@ -235,9 +203,9 @@ export function DraftRoomView({ run }: { run: RunView }) {
               <div class="draft-feed-item" key={pick.pick}>
                 <span class="draft-feed-head">
                   #{pick.pick} · {coachLabel(draft, pick.entrant)} → {byId.get(pick.mon)?.name ?? pick.mon}
-                  {'fallback' in pick && pick.fallback ? ' · fallback' : ''}
+                  {pick.fallback ? ' · fallback' : ''}
                 </span>
-                {'rationale' in pick && pick.rationale ? <p>{pick.rationale}</p> : null}
+                {pick.rationale ? <p>{pick.rationale}</p> : null}
               </div>
             ))}
           </div>

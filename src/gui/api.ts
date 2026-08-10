@@ -21,16 +21,10 @@ export interface PoolInfo {
   teamCount: number;
 }
 
-interface SessionUserView {
-  login: string;
-  avatarUrl: string;
-  role: 'reader' | 'contributor' | 'operator';
-}
-
 export interface AuthView {
-  mode: 'local' | 'github' | 'read-only';
-  user: SessionUserView | null;
-  csrfToken: string | null;
+  mode: 'local' | 'read-only';
+  user: null;
+  csrfToken: null;
 }
 
 export interface FormatInfo {
@@ -149,51 +143,6 @@ export interface PublicTeamSheetSetView {
   moves: string[];
 }
 
-export type PublicDraftPickView = Pick<DraftPickView, 'pick' | 'entrant' | 'mon'>;
-
-export interface PublicTeambuildView {
-  seriesIndex: number;
-  entrant: number;
-  opponent: number;
-  brought: string[];
-  /** Absent, rather than empty, when the run uses closed team sheets. */
-  teamSheet?: PublicTeamSheetSetView[];
-}
-
-export interface PublicDraftView {
-  boardId: string;
-  budget: number;
-  picksPerEntrant: number;
-  entrants: string[];
-  teamNames: string[];
-  picks: PublicDraftPickView[];
-  rosters: string[][];
-  budgets: number[];
-  table: DraftTableRow[] | null;
-  teambuilds: PublicTeambuildView[];
-  week: number;
-  weeks: number;
-  phase: 'draft' | 'roundrobin' | 'window' | 'playoffs' | 'done';
-}
-
-export interface PublicBracketEntrantView {
-  model: string;
-  team: string;
-  seed?: number | null;
-  placement?: number | null;
-  player?: string;
-  /** Absent, rather than empty, when no reviewed official open sheet is public. */
-  teamSheet?: PublicTeamSheetSetView[];
-}
-
-export type PublicBracketMatchView = BracketMatchView;
-
-export interface PublicBracketView {
-  entrants: PublicBracketEntrantView[];
-  rounds: PublicBracketMatchView[][];
-  champion: number | null;
-}
-
 export interface RunPauseView {
   model: string;
   kind: string;
@@ -221,23 +170,7 @@ export interface RunSnapshot {
   board: string | null;
 }
 
-export interface PublicRunSnapshot {
-  visibility: 'public';
-  runId: string;
-  mode: ExperimentMode;
-  protocolVersion: number;
-  state: 'running' | 'paused' | 'done' | 'failed' | 'stopped';
-  pool: string;
-  models: string[];
-  startTime: number;
-  endTime: number | null;
-  rows: SeriesRowView[];
-  bracket: PublicBracketView | null;
-  draft: PublicDraftView | null;
-  board: string | null;
-}
-
-export type RunView = RunSnapshot | PublicRunSnapshot;
+export type RunView = RunSnapshot;
 
 export interface SampleTeam {
   name: string;
@@ -304,22 +237,7 @@ export interface AppState {
   externalRun: { runId: string; mode: 'draft' | 'tournament' } | null;
 }
 
-export interface PublicAppState {
-  pools: PoolInfo[];
-  defaultFormat: string;
-  formats: FormatInfo[];
-  providers: ProviderInfo[];
-  boards: BoardInfo[];
-  auth: AuthView;
-  run: PublicRunSnapshot | null;
-}
-
-export interface ContributorAppState extends PublicAppState {
-  sampleTeams: SampleTeam[];
-  externalRun: { runId: string; mode: 'draft' | 'tournament' } | null;
-}
-
-export type AppStateResponse = AppState | PublicAppState | ContributorAppState;
+export type AppStateResponse = AppState;
 
 export interface MonView {
   species: string;
@@ -394,17 +312,7 @@ export interface BattleMessage {
   snapshot: BattleSnapshot | null;
 }
 
-/** Anonymous battle data is a resolved public split-log projection, never a blank private snapshot. */
-export interface PublicBattleMessage {
-  visibility: 'public';
-  index: number;
-  game: number;
-  games: number[];
-  revision: number;
-  log: BattleLogEntryView[];
-}
-
-export type BattleView = BattleMessage | PublicBattleMessage;
+export type BattleView = BattleMessage;
 export type ServerEvent = { type: 'run'; run: RunView | null } | ({ type: 'battle' } & BattleView);
 
 export interface TournamentSummary {

@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 
 import type {
   AppState,
-  ContributorAppState,
   ModelInfo,
   ModelsResponse,
   PokepasteResponse,
@@ -18,7 +17,7 @@ import { api } from '../http';
 import { PoolsView } from './pools';
 
 interface FixturesProps {
-  app: AppState | ContributorAppState;
+  app: AppState;
   run: RunView | null;
   onStarted: (run: RunSnapshot) => void;
   onPools: (pools: PoolInfo[]) => void;
