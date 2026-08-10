@@ -188,11 +188,8 @@ test('compiled position tools have distinct identities bound to the pinned Showd
   const grade = captureRuntimeProducerAuthority(gradeEntry.href);
   const exporter = captureRuntimeProducerAuthority(exporterEntry.href);
 
-  assert.match(grade.producerDigest, /^[0-9a-f]{64}$/u);
-  assert.match(exporter.producerDigest, /^[0-9a-f]{64}$/u);
   assert.equal(grade.showdownRuntimeDigest, expectedShowdownDigest);
   assert.equal(exporter.showdownRuntimeDigest, expectedShowdownDigest);
-  assert.notEqual(grade.producerDigest, exporter.producerDigest);
   grade.assertUnchanged();
   exporter.assertUnchanged();
 

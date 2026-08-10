@@ -117,7 +117,6 @@ test('the graded rows project only versioned grade-time eligibility metrics', ()
     scaffold: 'rev',
     phase: 'turn',
     turn: 6,
-    legal_actions: 999,
     chosen: 'move 1, move 2',
     state_value: -0.2,
     eligibility_metrics: { version: 1, legalActions: 88, heldOutSpanValue: 0.6 },
@@ -132,7 +131,6 @@ test('the graded rows project only versioned grade-time eligibility metrics', ()
   assert.equal(row?.played, 'move 1, move 2');
 
   const changedMeasurement = structuredClone(source);
-  changedMeasurement.legal_actions = 1;
   changedMeasurement.measurement_value = -99;
   changedMeasurement.measurement_panel = { span: 0 };
   assert.deepEqual(readCandidates([changedMeasurement]), readCandidates([source]));
