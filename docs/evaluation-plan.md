@@ -277,37 +277,44 @@ Compatibility is evidence, not assumption. This is the current support table for
    one complete exhaustive action table per eligible decision, and the public-root
    reader strictly verifies the current manifest, public task bytes, digest, order,
    and exact public-only layout while rejecting private or mixed roots.
-2. The parameterized [corpus-sizing memo](corpus-sizing.md) now defines the
-   planning equations and evidence boundary, and its private generator-provenance
-   schema gate is implemented. Its numeric addendum and mirror-pair design gate
-   remain incomplete, so it does not authorize pilot or candidate generation.
-3. Use the hardened grader and exporter to produce candidate artifacts,
-   establish separate calibration evidence, review the eligibility policy, and
-   pass the remaining gates.
-4. Build the small native-v1 static `Taskset` with strict parsing, lookup reward,
+2. The [corpus-sizing memo](corpus-sizing.md) freezes the v0 target of 500,
+   the two-position source-game cap, a 60-opportunity excluded-yield-pilot rule,
+   and the decision not to require mirrored source-game pairs. The selector and
+   exporter share those target/cap authorities, and private generator provenance
+   is implemented. These decisions do not authorize generation.
+3. Freeze the remaining source generators, teams, allocation blocks, eligibility,
+   balance, concentration, duplicate/isolation, pilot-accounting, and cost-stop
+   inputs using evidence outside the candidate corpus.
+4. With explicit resource approval, run only the preregistered excluded
+   yield/compute/cost pilot and mechanically append `y_L`; its source groups can
+   never enter calibration, candidate, or held-out corpora.
+5. Use the hardened grader and exporter to produce candidate artifacts only after
+   the planning gate passes, then independently review the artifacts and all
+   remaining release gates.
+6. Build the small native-v1 static `Taskset` with strict parsing, lookup reward,
    leakage tests, and a tool-less/null harness.
-5. Run a controlled pilot over one held-out candidate corpus; publish samples, uncertainty,
-   cost, and full configuration rather than a leaderboard alone.
-6. Build an isolated runtime image containing the compiled pinned referee, then
+7. Run a controlled held-out evaluation; publish samples, uncertainty, cost, and
+   full configuration rather than a leaderboard alone.
+8. Build an isolated runtime image containing the compiled pinned referee, then
    run the internal matchday package with a real provider and model under a
    pinned or declared baseline opponent condition, never self-play. Local
    debug-runtime evidence does not pass this gate.
-7. After that smoke, run the crossed notebook intervention (retained, withheld,
+9. After that smoke, run the crossed notebook intervention (retained, withheld,
    and fixed-replacement arms over the same frozen rows) as the first
    controlled matchday analysis, under
    [Measurement's long-horizon claim rules](measurement.md#long-horizon-claims).
-8. Run separate Docker, Prime runtime, Environment Hub, and Hosted Evaluation
+10. Run separate Docker, Prime runtime, Environment Hub, and Hosted Evaluation
    smokes for the exact wheel and image. Keep Hosted Training unsupported while
    the package is matchday-only and nontrainable.
-9. Only after those package gates, connect the existing draft and
+11. Only after those package gates, connect the existing draft and
     strict-construction artifacts into a full circuit `Env`, add schedule and
     playoff flow, and preregister and freeze terminal circuit-return and failure
     semantics before comparison or training.
-10. Export the mechanical draft-to-battle projection and pass its end-to-end
+12. Export the mechanical draft-to-battle projection and pass its end-to-end
     replay and join-completeness gate.
-11. Run the semantic-label pilot and preregistered controlled forks as separate
+13. Run the semantic-label pilot and preregistered controlled forks as separate
     parallel or later analyses; neither is conditional on the other.
-12. Add GUI reporting last and only from versioned evaluation outputs; it must
+14. Add GUI reporting last and only from versioned evaluation outputs; it must
     not invent scores from natural league games.
 
 Do not add another generic Showdown client, copy external baselines, derive a

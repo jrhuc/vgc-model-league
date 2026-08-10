@@ -9,6 +9,8 @@ import {
   gameOf,
   keyOf,
   MIN_HELD_OUT_QUALIFICATION_SPAN,
+  POSITION_SET_PER_GAME_CAP,
+  POSITION_SET_TARGET_SIZE,
   readCandidates,
   selectPositions,
   stratumOf,
@@ -50,6 +52,15 @@ test('qualification span and legal-action thresholds are inclusive and finite', 
   const selection = selectPositions(rows, { size: 10, seed: 'fixed' });
   assert.equal(selection.rejected, 3);
   assert.equal(selection.positions.length, 1);
+});
+
+test('the frozen position-set target caps each source game at two tasks', () => {
+  assert.equal(POSITION_SET_TARGET_SIZE, 500);
+  assert.equal(POSITION_SET_PER_GAME_CAP, 2);
+  const rows = Array.from({ length: 5 }, (_, index) => candidate({ positionIndex: index }));
+  const selection = selectPositions(rows, { size: 5, seed: 'fixed' });
+  assert.equal(selection.positions.length, 2);
+  assert.equal(selection.games, 1);
 });
 
 test('one long game cannot fill the set', () => {

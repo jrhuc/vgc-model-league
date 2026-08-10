@@ -3,6 +3,8 @@ import type { BattleRequest, JsonObject, Pid } from '../types.js';
 import { POSITION_ELIGIBILITY_METRICS_VERSION } from './eligibility.js';
 
 export const POSITION_GRADE_SCHEMA_VERSION = 3 as const;
+export const POSITION_SET_TARGET_SIZE = 500;
+export const POSITION_SET_PER_GAME_CAP = 2;
 export const MIN_HELD_OUT_QUALIFICATION_SPAN = 0.05;
 export interface CandidatePosition {
   runId: string;
@@ -165,8 +167,8 @@ interface PoolState {
 }
 
 export function selectPositions(candidates: CandidatePosition[], options: SelectionOptions = {}): Selection {
-  const size = options.size ?? 500;
-  const perGame = options.perGame ?? 3;
+  const size = options.size ?? POSITION_SET_TARGET_SIZE;
+  const perGame = options.perGame ?? POSITION_SET_PER_GAME_CAP;
   const random = seededRng(options.seed ?? 'position-set');
 
   const unique = new Map<string, CandidatePosition>();

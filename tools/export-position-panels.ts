@@ -28,6 +28,8 @@ import {
   anonymiseRequest,
   gameOf,
   POSITION_GRADE_SCHEMA_VERSION,
+  POSITION_SET_PER_GAME_CAP,
+  POSITION_SET_TARGET_SIZE,
   readCandidates,
   type SelectionOptions,
   selectPositions,
@@ -44,7 +46,7 @@ import { DATA_DIR, defaultPsDir } from '../src/paths.js';
 import { showdownCommit } from '../src/showdown.js';
 import type { JsonObject, Pid } from '../src/types.js';
 
-interface Settings extends CounterfactualOptions, Omit<SelectionOptions, 'seed'> {
+interface Settings extends CounterfactualOptions, Pick<SelectionOptions, 'formats'> {
   graded: string;
   selectionSeed?: string;
   recordsPath?: string;
@@ -111,9 +113,7 @@ function parse(argv: string[]): Settings {
     if (flag === '--graded' && value) settings.graded = path.resolve(value);
     else if (flag === '--records' && value) settings.recordsPath = path.resolve(value);
     else if (flag === '--runs-dir' && value) settings.runsDir = path.resolve(value);
-    else if (flag === '--size' && value) settings.size = Number(value);
     else if (flag === '--selection-seed' && value) settings.selectionSeed = value;
-    else if (flag === '--per-game' && value) settings.perGame = Number(value);
     else if (flag === '--formats' && value) settings.formats = value.split(',');
     else if (flag === '--out' && value) settings.out = path.resolve(value);
     else if (flag === '--private-out' && value) settings.privateOut = path.resolve(value);
@@ -125,14 +125,6 @@ function parse(argv: string[]): Settings {
     else if (flag === '--ps-dir' && value) settings.psDir = path.resolve(value);
     else throw new Error(`unknown option or missing value: ${flag}`);
     index += 1;
-  }
-  for (const [name, value] of [
-    ['size', settings.size],
-    ['per-game', settings.perGame],
-  ] as const) {
-    if (value !== undefined && (!Number.isInteger(value) || value < 1)) {
-      throw new Error(`--${name} must be a positive integer`);
-    }
   }
   if (settings.formats?.some((format) => !format.trim())) throw new Error('--formats cannot contain an empty format');
   validateCounterfactualOptions(settings);
@@ -324,12 +316,12 @@ async function main(): Promise<void> {
   const gradedManifestDigest = fileDigest(gradedManifestPath);
   const scoreRows = completedPositionScores(readJsonl(settings.graded), gradedManifest);
   const selection = selectPositions(readCandidates(scoreRows), {
-    ...(settings.size === undefined ? {} : { size: settings.size }),
-    ...(settings.perGame === undefined ? {} : { perGame: settings.perGame }),
+    size: POSITION_SET_TARGET_SIZE,
+    perGame: POSITION_SET_PER_GAME_CAP,
     ...(settings.formats === undefined ? {} : { formats: settings.formats }),
     seed: settings.selectionSeed ?? 'position-set',
   });
-  const requested = settings.size ?? 500;
+  const requested = POSITION_SET_TARGET_SIZE;
   if (selection.positions.length !== requested) {
     throw new Error(
       `requested ${requested} positions but only ${selection.positions.length} satisfy the filters and per-game cap`,
@@ -349,7 +341,7 @@ async function main(): Promise<void> {
   const selectionConfig = {
     count: requested,
     seed: settings.selectionSeed ?? 'position-set',
-    per_game: settings.perGame ?? 3,
+    per_game: POSITION_SET_PER_GAME_CAP,
     formats: settings.formats ?? null,
     rules: CANDIDATE_POSITION_SELECTION_RULES,
   };
