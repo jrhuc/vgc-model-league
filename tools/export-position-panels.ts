@@ -2,7 +2,6 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { assertGameRecordCorpusDigest, type GameRecord, loadGameRecordCorpus, verifyGame } from '../src/eval/corpus.js';
 import {
   type CounterfactualOptions,
@@ -31,6 +30,7 @@ import {
   type SelectionOptions,
   selectPositions,
 } from '../src/eval/positions.js';
+import { captureRuntimeProducerAuthority } from '../src/eval/producer.js';
 import {
   CANONICAL_JSON_PROTOCOL,
   canonicalJson,
@@ -148,38 +148,6 @@ function fileDigest(file: string): string {
 
 function contentDigest(content: string): string {
   return crypto.createHash('sha256').update(content, 'utf8').digest('hex');
-}
-
-function digestParts(parts: Iterable<string>): string {
-  const hash = crypto.createHash('sha256');
-  for (const part of parts) hash.update(`${Buffer.byteLength(part)}:`, 'utf8').update(part, 'utf8');
-  return hash.digest('hex');
-}
-
-function runtimeFiles(tool: string): string[] {
-  const sourceRoot = path.resolve(path.dirname(tool), '../src');
-  const visit = (directory: string): string[] =>
-    fs.readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
-      const file = path.join(directory, entry.name);
-      return entry.isDirectory() ? visit(file) : entry.isFile() && file.endsWith('.js') ? [file] : [];
-    });
-  return [
-    tool,
-    ...visit(sourceRoot),
-    path.resolve(path.dirname(tool), '../../package.json'),
-    path.resolve(path.dirname(tool), '../../pnpm-lock.yaml'),
-  ].sort((a, b) => Buffer.compare(Buffer.from(a), Buffer.from(b)));
-}
-
-function evaluatorDigest(): string {
-  const tool = fileURLToPath(import.meta.url);
-  const root = path.resolve(path.dirname(tool), '..');
-  return digestParts(
-    runtimeFiles(tool).map(
-      (file) => `${path.relative(root, file)}
-${fs.readFileSync(file, 'utf8')}`,
-    ),
-  );
 }
 
 function readObject(file: string): JsonObject {
@@ -319,6 +287,14 @@ function publishImmutable(directory: string, name: string, content: string, mode
 
 async function main(): Promise<void> {
   const settings = parse(process.argv.slice(2));
+  const producer = captureRuntimeProducerAuthority(import.meta.url);
+  const showdownRealpath = fs.realpathSync.native(settings.psDir ?? defaultPsDir());
+  if (showdownRealpath !== producer.showdownRealpath) {
+    throw new Error(
+      `configured Pokémon Showdown root ${showdownRealpath} does not match captured producer runtime ${producer.showdownRealpath}`,
+    );
+  }
+  settings.psDir = producer.showdownRealpath;
   const gradedManifestPath = `${settings.graded}.manifest.json`;
   const gradedManifest = readObject(gradedManifestPath);
   if (gradedManifest.schema_version !== 1) throw new Error('graded manifest is not the current schema');
@@ -527,7 +503,7 @@ async function main(): Promise<void> {
   const sealedContent = canonicalJsonl(sealedRows);
   const manifest = {
     schema_version: CANDIDATE_POSITION_MANIFEST_SCHEMA_VERSION,
-    evaluator_digest: evaluatorDigest(),
+    evaluator_digest: producer.producerDigest,
     runtime: { node: process.version, platform: process.platform, arch: process.arch },
     showdown_commit: showdownCommit(settings.psDir ?? defaultPsDir()),
     seed_namespace: String(settings.seed ?? 'position-panels'),
@@ -548,6 +524,7 @@ async function main(): Promise<void> {
   };
   validateCandidateManifest(manifest, 'constructed candidate manifest');
   const manifestContent = `${canonicalJson(manifest)}\n`;
+  producer.assertUnchanged();
   const outputs = prepareOutputDirectories(settings.out, settings.privateOut);
   publishImmutable(outputs.publicDirectory, taskName, taskContent, PUBLIC_FILE_MODE);
   publishImmutable(outputs.privateDirectory, scoreName, scoreContent, PRIVATE_FILE_MODE);

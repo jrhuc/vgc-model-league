@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -13,6 +12,7 @@ import {
   validateCounterfactualOptions,
 } from '../src/eval/counterfactual.js';
 import { ACTION_PROTOCOL, positionDigest, requestPhase } from '../src/eval/fork.js';
+import { captureRuntimeProducerAuthority } from '../src/eval/producer.js';
 import { DATA_DIR, defaultPsDir } from '../src/paths.js';
 import { showdownCommit } from '../src/showdown.js';
 import type { JsonObject } from '../src/types.js';
@@ -122,36 +122,11 @@ function gradedGames(file: string): Set<string> {
   return done;
 }
 
-function digestParts(parts: Iterable<string>): string {
-  const hash = crypto.createHash('sha256');
-  for (const part of parts) hash.update(`${Buffer.byteLength(part)}:`, 'utf8').update(part, 'utf8');
-  return hash.digest('hex');
-}
-
-function evaluatorDigest(): string {
-  const tool = fileURLToPath(import.meta.url);
-  const files = [
-    tool,
-    path.resolve(path.dirname(tool), '../src/eval/corpus.js'),
-    path.resolve(path.dirname(tool), '../src/eval/fork.js'),
-    path.resolve(path.dirname(tool), '../src/eval/counterfactual.js'),
-    path.resolve(path.dirname(tool), '../src/random.js'),
-    path.resolve(path.dirname(tool), '../src/choices.js'),
-    path.resolve(path.dirname(tool), '../src/sim.js'),
-  ];
-  return digestParts(
-    files.map(
-      (file) => `${path.basename(file)}
-${fs.readFileSync(file, 'utf8')}`,
-    ),
-  );
-}
-
-function manifestFor(settings: Settings, records: GameRecord[]): GradeManifest {
+function manifestFor(settings: Settings, records: GameRecord[], producerDigest: string): GradeManifest {
   return {
     schema_version: 1,
     showdown_commit: showdownCommit(settings.psDir ?? defaultPsDir()),
-    evaluator_digest: evaluatorDigest(),
+    evaluator_digest: producerDigest,
     source_digest: gameRecordCorpusDigest(records),
     source_games: records.length,
     scope: {
@@ -166,8 +141,8 @@ function manifestFor(settings: Settings, records: GameRecord[]): GradeManifest {
   };
 }
 
-function prepareOutput(settings: Settings, records: GameRecord[]): GradeManifest {
-  const manifest = manifestFor(settings, records);
+function prepareOutput(settings: Settings, records: GameRecord[], producerDigest: string): GradeManifest {
+  const manifest = manifestFor(settings, records, producerDigest);
   const manifestPath = `${settings.out}.manifest.json`;
   if (settings.restart) {
     fs.rmSync(settings.out, { force: true });
@@ -335,15 +310,26 @@ function gradeShard(shard: Shard, emit: (graded: GradedGame) => void): void {
 
 async function main(): Promise<void> {
   const settings = parse(process.argv.slice(2));
+  const producer = captureRuntimeProducerAuthority(import.meta.url);
+  const showdownRealpath = fs.realpathSync.native(settings.psDir ?? defaultPsDir());
+  if (showdownRealpath !== producer.showdownRealpath) {
+    throw new Error(
+      `configured Pokémon Showdown root ${showdownRealpath} does not match captured producer runtime ${producer.showdownRealpath}`,
+    );
+  }
+  settings.psDir = producer.showdownRealpath;
   fs.mkdirSync(path.dirname(settings.out), { recursive: true });
   const records = scopedRecords(settings);
-  const manifest = prepareOutput(settings, records);
+  const manifest = prepareOutput(settings, records, producer.producerDigest);
   const done = gradedGames(settings.out);
   const remaining = records.filter((record) => !done.has(gameKey(record))).length;
   const workers = Math.min(settings.workers, Math.max(1, remaining));
   process.stdout.write(`${remaining} of ${records.length} candidate games left across ${workers} workers into ${settings.out}
 `);
-  if (!remaining) return;
+  if (!remaining) {
+    producer.assertUnchanged();
+    return;
+  }
 
   const stream = fs.createWriteStream(settings.out, { flags: 'a' });
   let rows = 0;
@@ -373,6 +359,7 @@ async function main(): Promise<void> {
     stream.on('error', reject);
     stream.end(resolve);
   });
+  producer.assertUnchanged();
   process.stdout.write(`${rows} decisions graded in ${((Date.now() - started) / 60_000).toFixed(1)} min
 `);
 }

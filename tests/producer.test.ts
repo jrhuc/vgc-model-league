@@ -1,11 +1,14 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
 
 import {
   assertPinnedShowdownRuntime,
+  captureRuntimeProducerAuthority,
   PRODUCER_DIGEST_PROTOCOL,
   rawProducerDigest,
   showdownRuntimeAuthorityFiles,
@@ -172,6 +175,32 @@ test('reviewed Showdown runtime digest rejects a dirty compiled runtime copy', (
     () => assertPinnedShowdownRuntime(copy),
     /does not match reviewed .* rebuild with pnpm run setup:showdown/u,
   );
+});
+
+test('compiled position tools have distinct identities bound to the pinned Showdown runtime', () => {
+  const repository = path.resolve('.');
+  const expectedShowdownDigest = assertPinnedShowdownRuntime(repository);
+  const gradeEntry = new URL('../tools/grade-positions.js', import.meta.url);
+  const exporterEntry = new URL('../tools/export-position-panels.js', import.meta.url);
+  const grade = captureRuntimeProducerAuthority(gradeEntry.href);
+  const exporter = captureRuntimeProducerAuthority(exporterEntry.href);
+
+  assert.match(grade.producerDigest, /^[0-9a-f]{64}$/u);
+  assert.match(exporter.producerDigest, /^[0-9a-f]{64}$/u);
+  assert.equal(grade.showdownRuntimeDigest, expectedShowdownDigest);
+  assert.equal(exporter.showdownRuntimeDigest, expectedShowdownDigest);
+  assert.notEqual(grade.producerDigest, exporter.producerDigest);
+  grade.assertUnchanged();
+  exporter.assertUnchanged();
+
+  const unrelatedShowdown = fs.mkdtempSync(path.join(os.tmpdir(), 'producer-unrelated-showdown-'));
+  for (const entry of [gradeEntry, exporterEntry]) {
+    const result = spawnSync(process.execPath, [fileURLToPath(entry), '--ps-dir', unrelatedShowdown], {
+      encoding: 'utf8',
+    });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /does not match captured producer runtime/u);
+  }
 });
 
 test('freeze package script runs the canonical Showdown check before the freezer', () => {
