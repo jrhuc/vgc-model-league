@@ -256,8 +256,9 @@ static site:
 pnpm run publish:site
 ```
 
-This builds, re-exports `artifacts/public/site` from local records, commits it,
-and pushes; the Pages workflow then redeploys. To control the selection first,
+This builds, re-exports `artifacts/public/site` from local records, and lands
+the commit on `main` through a self-merged pull request (the `main` ruleset
+rejects direct pushes); the Pages workflow then redeploys. To control the selection first,
 run the exporter directly and inspect the output before committing:
 
 ```sh

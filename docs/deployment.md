@@ -11,7 +11,8 @@ file exported from local records.
    by default) into `artifacts/public/site/`. Curate with `--run`, `--pool`,
    or `--include-test`; the export replaces the directory wholesale, so the
    committed tree always mirrors exactly one export.
-2. Commit and push `artifacts/public/site` to `main`.
+2. Land `artifacts/public/site` on `main` through a pull request — the `main`
+   ruleset rejects direct pushes.
 3. `.github/workflows/pages.yml` builds the client with
    `vite build --mode static`, copies the committed data to `data/`, and
    deploys the result to GitHub Pages.
