@@ -4,7 +4,6 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import test, { after } from 'node:test';
-import { fileURLToPath } from 'node:url';
 
 import { BattleLog } from '../src/gui/battlelog.js';
 import { GuiServer } from '../src/gui/server.js';
@@ -56,40 +55,6 @@ function rawRequest(
     request.on('error', reject);
     request.end(options.body);
   });
-}
-
-function rawJsonRequest(
-  port: number,
-  options: { method?: string; path: string; headers?: Record<string, string>; body?: string },
-): Promise<{ status: number; headers: http.IncomingHttpHeaders; data: Record<string, unknown> }> {
-  const { promise, resolve, reject } = Promise.withResolvers<{
-    status: number;
-    headers: http.IncomingHttpHeaders;
-    data: Record<string, unknown>;
-  }>();
-  const request = http.request(
-    {
-      host: '127.0.0.1',
-      port,
-      method: options.method ?? 'GET',
-      path: options.path,
-      headers: options.headers ?? {},
-    },
-    (response) => {
-      const chunks: Buffer[] = [];
-      response.on('data', (chunk: Buffer) => chunks.push(chunk));
-      response.on('end', () => {
-        resolve({
-          status: response.statusCode ?? 0,
-          headers: response.headers,
-          data: JSON.parse(Buffer.concat(chunks).toString('utf8')) as Record<string, unknown>,
-        });
-      });
-    },
-  );
-  request.on('error', reject);
-  request.end(options.body);
-  return promise;
 }
 
 test('battle log turns protocol lines into a compact spectator feed', () => {
@@ -227,47 +192,6 @@ test('gui rejects spoofed hosts, cross-origin posts, and non-json posts', async 
       200,
     );
     assert.equal(await rawRequest(port, { path: '/assets/../package.json' }), 404);
-  } finally {
-    gui.close();
-  }
-});
-
-test('hosted mode enforces its canonical origin and defaults to read-only', async () => {
-  const gui = new GuiServer({
-    runsDir: RUNS_SCRATCH,
-    host: '127.0.0.1',
-    publicOrigin: 'https://league.example',
-  });
-  await gui.listen(0);
-  const address = gui.server.address();
-  assert.ok(address && typeof address === 'object');
-  const port = address.port;
-  try {
-    const state = await rawJsonRequest(port, { path: '/api/state', headers: { host: 'league.example' } });
-    assert.equal(state.status, 200);
-    assert.match(String(state.headers['content-security-policy']), /frame-ancestors 'none'/);
-    assert.match(String(state.headers['strict-transport-security']), /max-age=31536000/);
-    const providers = state.data.providers as Array<{ id: string }>;
-    assert.deepEqual(
-      providers.map((provider) => provider.id),
-      ['openrouter', 'prime', 'random'],
-    );
-    assert.deepEqual(state.data.auth, { mode: 'read-only', user: null, csrfToken: null });
-    assert.equal(await rawRequest(port, { path: '/api/state', headers: { host: 'evil.example' } }), 403);
-    assert.equal(
-      await rawRequest(port, {
-        method: 'POST',
-        path: '/api/run/stop',
-        headers: {
-          host: 'league.example',
-          origin: 'https://league.example',
-          'content-type': 'application/json',
-        },
-        body: '{}',
-      }),
-      503,
-    );
-    assert.equal(await rawRequest(port, { path: '/healthz', headers: { host: 'railway.internal' } }), 200);
   } finally {
     gui.close();
   }
@@ -607,47 +531,6 @@ test('gui validates the timer scale and forwards it to the runner', async () => 
   }
 });
 
-test('hosted runs accept untimed just like local runs', async () => {
-  let received: unknown = 'unset';
-  const gui = new GuiServer({
-    runsDir: RUNS_SCRATCH,
-    host: '127.0.0.1',
-    publicOrigin: 'https://league.example',
-    mutationsEnabled: true,
-    runner: async (_models, _seriesPerPair, _runDir, options = {}) => {
-      received = options.timerScale;
-      return [];
-    },
-  });
-  await gui.listen(0);
-  const address = gui.server.address();
-  assert.ok(address && typeof address === 'object');
-  const port = address.port;
-  const headers = { host: 'league.example', origin: 'https://league.example', 'content-type': 'application/json' };
-  try {
-    for (const provider of ['omp', 'claude-cli', 'openai', 'compat']) {
-      const rejected = await rawJsonRequest(port, {
-        method: 'POST',
-        path: '/api/run',
-        headers,
-        body: JSON.stringify({ models: [`${provider}:model`, 'random'], pool: 'test' }),
-      });
-      assert.equal(rejected.status, 400);
-      assert.match(String(rejected.data.error), /openrouter:<model-id>, prime:<model-id>, or random/);
-    }
-    const untimed = await rawJsonRequest(port, {
-      method: 'POST',
-      path: '/api/run',
-      headers,
-      body: '{"models":["random","random"],"pool":"test","timerScale":"off"}',
-    });
-    assert.equal(untimed.status, 200, JSON.stringify(untimed.data));
-    assert.equal(received, 'off');
-  } finally {
-    gui.close();
-  }
-});
-
 test('gui rejects a second run while one is active and stops on request', async () => {
   const gui = new GuiServer({
     runsDir: RUNS_SCRATCH,
@@ -885,89 +768,6 @@ test('server shutdown marks an active run as failed', async () => {
   assert.equal((await settled.promise).state, 'failed');
 });
 
-test('hosted runs execute in a child process and return events to the server', async (t) => {
-  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'vgcleague-worker-'));
-  t.after(() => fs.rmSync(scratch, { recursive: true, force: true }));
-  const settled = Promise.withResolvers<Record<string, unknown>>();
-  const gui = new GuiServer({
-    runsDir: RUNS_SCRATCH,
-    host: '127.0.0.1',
-    publicOrigin: 'https://league.example',
-    mutationsEnabled: true,
-    recordsPath: path.join(scratch, 'results.jsonl'),
-    logger: (entry) => {
-      if (entry.event === 'run_finished') settled.resolve(entry);
-    },
-  });
-  await gui.listen(0);
-  const address = gui.server.address();
-  assert.ok(address && typeof address === 'object');
-  const port = address.port;
-  try {
-    const started = await rawJsonRequest(port, {
-      method: 'POST',
-      path: '/api/run',
-      headers: {
-        host: 'league.example',
-        origin: 'https://league.example',
-        'content-type': 'application/json',
-      },
-      body: '{"models":["random","random"],"pool":"test","seriesPerPair":1,"concurrency":1,"seed":1}',
-    });
-    assert.equal(started.status, 200, JSON.stringify(started.data));
-    const finished = await settled.promise;
-    assert.equal(finished.state, 'done');
-    const state = await rawJsonRequest(port, { path: '/api/state', headers: { host: 'league.example' } });
-    const run = state.data.run as Record<string, unknown>;
-    assert.equal(run.state, 'done', String(run.error ?? ''));
-    assert.equal((run.rows as unknown[]).length, 1);
-  } finally {
-    await gui.shutdown(1_000);
-  }
-});
-
-test('a hung hosted worker is killed without taking down the web process', async () => {
-  const settled = Promise.withResolvers<Record<string, unknown>>();
-  const gui = new GuiServer({
-    runsDir: RUNS_SCRATCH,
-    host: '127.0.0.1',
-    publicOrigin: 'https://league.example',
-    mutationsEnabled: true,
-    maxRunMs: 1,
-    workerStopGraceMs: 1,
-    workerPath: fileURLToPath(new URL('./fixtures/hung-run-worker.js', import.meta.url)),
-    logger: (entry) => {
-      if (entry.event === 'run_finished') settled.resolve(entry);
-    },
-  });
-  await gui.listen(0);
-  const address = gui.server.address();
-  assert.ok(address && typeof address === 'object');
-  const port = address.port;
-  try {
-    const started = await rawJsonRequest(port, {
-      method: 'POST',
-      path: '/api/run',
-      headers: {
-        host: 'league.example',
-        origin: 'https://league.example',
-        'content-type': 'application/json',
-      },
-      body: '{"models":["random","random"],"pool":"test"}',
-    });
-    assert.equal(started.status, 200, JSON.stringify(started.data));
-    const finished = await settled.promise;
-    assert.equal(finished.state, 'failed');
-    const state = await rawJsonRequest(port, { path: '/api/state', headers: { host: 'league.example' } });
-    const run = state.data.run as Record<string, unknown>;
-    assert.equal(run.state, 'failed');
-    assert.equal('error' in run, false, 'anonymous hosted state omits private failure details');
-    assert.equal(await rawRequest(port, { path: '/healthz' }), 200);
-  } finally {
-    await gui.shutdown(1_000);
-  }
-});
-
 test('gui runs a random-vs-random series and streams live battle state', async () => {
   const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-model-league-gui-run-'));
   const gui = new GuiServer({
@@ -1148,11 +948,6 @@ test('gui starts tournament runs and mirrors bracket state', async () => {
     assert.equal(timers.p2?.running, true, 'the deciding marker starts an untimed clock');
     assert.equal(timers.p2?.seconds, null);
     assert.equal(typeof timers.p2?.elapsedSeconds, 'number');
-    const publicBattle = await apiJson(`${base}api/battle/public?index=0`);
-    assert.equal(publicBattle.data.visibility, 'public');
-    assert.equal('snapshot' in publicBattle.data, false);
-    assert.deepEqual(publicBattle.data.log, [], 'an unresolved game does not stream anonymous transitions');
-    assert.equal('decisions' in publicBattle.data, false);
   } finally {
     gui.close();
   }
@@ -1218,51 +1013,6 @@ test('gui validates inline match teams and hands packed teams to the tournament'
     assert.ok(received.teams?.every((team) => team.packed.includes('|')));
   } finally {
     gui.close();
-  }
-});
-
-test('hosted tournament runs execute in the worker and stream the bracket', async (t) => {
-  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'vgcleague-tournament-worker-'));
-  t.after(() => fs.rmSync(scratch, { recursive: true, force: true }));
-  const settled = Promise.withResolvers<Record<string, unknown>>();
-  const gui = new GuiServer({
-    runsDir: RUNS_SCRATCH,
-    host: '127.0.0.1',
-    publicOrigin: 'https://league.example',
-    mutationsEnabled: true,
-    recordsPath: path.join(scratch, 'results.jsonl'),
-    logger: (entry) => {
-      if (entry.event === 'run_finished') settled.resolve(entry);
-    },
-  });
-  await gui.listen(0);
-  const address = gui.server.address();
-  assert.ok(address && typeof address === 'object');
-  const port = address.port;
-  try {
-    const started = await rawJsonRequest(port, {
-      method: 'POST',
-      path: '/api/run',
-      headers: {
-        host: 'league.example',
-        origin: 'https://league.example',
-        'content-type': 'application/json',
-      },
-      body: '{"mode":"tournament","models":["random","random"],"pool":"test","concurrency":1,"seed":1}',
-    });
-    assert.equal(started.status, 200, JSON.stringify(started.data));
-    const finished = await settled.promise;
-    assert.equal(finished.state, 'done');
-    const state = await rawJsonRequest(port, { path: '/api/state', headers: { host: 'league.example' } });
-    const run = state.data.run as Record<string, unknown>;
-    assert.equal(run.state, 'done', String(run.error ?? ''));
-    assert.equal(run.mode, 'tournament');
-    assert.equal((run.rows as unknown[]).length, 1);
-    const bracket = run.bracket as Record<string, unknown> | null;
-    assert.ok(bracket, 'the worker streams bracket state back to the server');
-    assert.notEqual(bracket.champion, null);
-  } finally {
-    await gui.shutdown(1_000);
   }
 });
 
@@ -1382,52 +1132,5 @@ test('gui starts draft runs, validates the board, and mirrors draft state', asyn
     assert.equal(picks[0]!.rationale, 'strong pick');
   } finally {
     gui.close();
-  }
-});
-
-test('hosted draft runs execute in the worker and stream draft state', async (t) => {
-  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'vgcleague-draft-worker-'));
-  t.after(() => fs.rmSync(scratch, { recursive: true, force: true }));
-  const settled = Promise.withResolvers<Record<string, unknown>>();
-  const gui = new GuiServer({
-    runsDir: RUNS_SCRATCH,
-    host: '127.0.0.1',
-    publicOrigin: 'https://league.example',
-    mutationsEnabled: true,
-    recordsPath: path.join(scratch, 'results.jsonl'),
-    logger: (entry) => {
-      if (entry.event === 'run_finished') settled.resolve(entry);
-    },
-  });
-  await gui.listen(0);
-  const address = gui.server.address();
-  assert.ok(address && typeof address === 'object');
-  const port = address.port;
-  try {
-    const started = await rawJsonRequest(port, {
-      method: 'POST',
-      path: '/api/run',
-      headers: {
-        host: 'league.example',
-        origin: 'https://league.example',
-        'content-type': 'application/json',
-      },
-      body: '{"mode":"draft","models":["random","random"],"board":"regmb-202607","concurrency":1,"seed":5}',
-    });
-    assert.equal(started.status, 200, JSON.stringify(started.data));
-    const finished = await settled.promise;
-    assert.equal(finished.state, 'done');
-    const state = await rawJsonRequest(port, { path: '/api/state', headers: { host: 'league.example' } });
-    const run = state.data.run as Record<string, unknown>;
-    assert.equal(run.state, 'done', String(run.error ?? ''));
-    assert.equal(run.mode, 'draft');
-    assert.equal((run.rows as unknown[]).length, 2, 'one round-robin series and one playoff final');
-    const draft = run.draft as Record<string, unknown>;
-    assert.equal(draft.phase, 'done');
-    assert.equal((draft.picks as unknown[]).length, 20, 'two coaches draft ten each');
-    const bracket = run.bracket as Record<string, unknown> | null;
-    assert.ok(bracket && bracket.champion !== null, 'the playoff champion streams back from the worker');
-  } finally {
-    await gui.shutdown(2_000);
   }
 });

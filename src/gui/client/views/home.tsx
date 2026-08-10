@@ -2,8 +2,7 @@ import { useRef } from 'preact/hooks';
 
 import type { SelectedTraceView } from '../../api';
 import { Sprite } from '../components/sprite';
-
-const TRACE_ARTIFACT = '/api/selected-trace/full.json';
+import { TRACE_ARTIFACT_HREF } from '../http';
 
 function MonChip({ name, trace }: { name: string; trace: SelectedTraceView }) {
   return (
@@ -403,7 +402,7 @@ function WorkedExampleTrace({ trace }: { trace: SelectedTraceView }) {
         <p>
           The artifact holds {trace.eventCount} stage events; its battle excerpt stops after the first submitted action.
           What the original run recorded and what our replay verified are stored as separate fields.{' '}
-          <a href={TRACE_ARTIFACT} target="_blank" rel="noreferrer">
+          <a href={TRACE_ARTIFACT_HREF} target="_blank" rel="noreferrer">
             Open the complete selected evidence artifact <span aria-hidden="true">↗</span>
           </a>
         </p>
@@ -454,7 +453,7 @@ export function HomeView({ trace, onOpenMethod, onOpenDocs }: HomeViewProps) {
             const size = index === 0 ? 104 : 82;
             return (
               <img
-                src={`/sprites/${trace.sprites[name]}.png`}
+                src={`sprites/${trace.sprites[name]}.png`}
                 alt=""
                 width={size}
                 height={size}

@@ -3,9 +3,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
-import { AuthService } from './auth.js';
 import { GuiServer } from './gui/server.js';
-import { AUTH_DB_PATH, makeRunDirectory, prepareDataDirectories, RESULTS_PATH, RUNS_DIR, TEAMS_DIR } from './paths.js';
+import { makeRunDirectory, prepareDataDirectories, RESULTS_PATH, RUNS_DIR, TEAMS_DIR } from './paths.js';
 import type { ReasoningLevel } from './providers.js';
 import { isReasoningLevel, nitroSpec } from './providers.js';
 import type { SeriesRecord } from './records.js';
@@ -38,7 +37,7 @@ interface ExperimentCliValues {
 const HELP = `Usage: vgcleague <command>
 
 Commands:
-  gui [--port <n>] [--host <address>] [--origin <url>]  serve the browser GUI
+  gui [--port <n>] [--host <address>]  serve the browser GUI
   selfcheck                           run one random-vs-random series through the simulator
   rotation --models <spec> <spec>...  run the controlled team-rotation protocol
       [--series-per-pair <n>] [--pool <name>] [--seed <n>] [--concurrency <n>] [--reasoning <level>]
@@ -71,9 +70,8 @@ Commands:
       opponent specs: openrouter:<model-id>, prime:<model-id>, or random
   outcomes [--pool <name>]            print contextual per-series outcomes without an aggregate ranking
   report [--out <path>] [--pool <name>]  write an HTML report
-  publish [--to <origin>] [--run <id>]... [--pool <name>] [--include-test] [--dry-run]
-      send completed local series, their decision logs, and any missing team pool to a deployment
-      --run publishes exactly those runs, whatever their mode or pool; repeat it for several
+  export-site [--out <dir>] [--run <id>]... [--pool <name>] [--include-test]
+      write the public archive as static JSON for the GitHub Pages site
 
 Model specs are exactly openrouter:<model-id>, prime:<model-id>, or random.
 CLI calls read OPENROUTER_API_KEY or PRIME_API_KEY for the selected provider.
@@ -86,10 +84,6 @@ instead of failing the run. Credential and request errors still fail fast.
 --nitro adds the :nitro throughput-routing variant to every OpenRouter spec that
 does not already carry a routing variant. Faster, usually pricier; skip it when
 slower seats set the pace anyway.
-
-publish needs VGC_LEAGUE_PUBLISH_ORIGIN (or --to) and VGC_LEAGUE_IMPORT_TOKEN, which must
-match the token the deployment runs with. It is idempotent: series the deployment already
-holds are reported and skipped.
 
 Without --pool, outcomes and report retain all rows except the disposable "test" pool;
 pass --pool <name> to inspect every row in one pool. All modes remain contextual rows
@@ -193,63 +187,27 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
       options: {
         port: { type: 'string', default: process.env.PORT ?? '8484' },
         host: { type: 'string' },
-        origin: { type: 'string' },
       },
     });
-    const publicOrigin = values.origin ?? process.env.VGC_LEAGUE_PUBLIC_ORIGIN;
     const host = values.host ?? process.env.VGC_LEAGUE_HOST;
     const maxRunMinutes = environmentInteger('VGC_LEAGUE_MAX_RUN_MINUTES', 240, 1, 1440);
-    const logger = publicOrigin ? (entry: Record<string, unknown>) => console.log(JSON.stringify(entry)) : undefined;
-    const githubClientId = process.env.GITHUB_CLIENT_ID?.trim();
-    const githubClientSecret = process.env.GITHUB_CLIENT_SECRET?.trim();
-    if (Boolean(githubClientId) !== Boolean(githubClientSecret)) {
-      throw new Error('GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET must be configured together');
-    }
-    if (githubClientId && !publicOrigin) throw new Error('GitHub OAuth requires VGC_LEAGUE_PUBLIC_ORIGIN');
-    const auth =
-      githubClientId && githubClientSecret && publicOrigin
-        ? new AuthService({
-            dbPath: AUTH_DB_PATH,
-            clientId: githubClientId,
-            clientSecret: githubClientSecret,
-            publicOrigin,
-            operatorSubjects: (process.env.VGC_LEAGUE_OPERATOR_GITHUB_IDS ?? '')
-              .split(',')
-              .map((value) => value.trim())
-              .filter(Boolean),
-          })
-        : undefined;
-    const importToken = process.env.VGC_LEAGUE_IMPORT_TOKEN?.trim();
     const gui = new GuiServer({
       ...(host ? { host } : {}),
-      ...(publicOrigin ? { publicOrigin } : {}),
-      ...(importToken ? { importToken } : {}),
-      mutationsEnabled: !publicOrigin || process.env.VGC_LEAGUE_ENABLE_MUTATIONS === 'true',
-      ...(logger ? { logger } : {}),
-      ...(auth ? { auth } : {}),
       maxRunMs: maxRunMinutes * 60_000,
     });
     const url = await gui.listen(positiveInteger('port', values.port));
-    if (logger) logger({ timestamp: new Date().toISOString(), level: 'info', event: 'server_started', url });
-    else console.log(`VGC Model League GUI at ${url} (Ctrl-C to stop)`);
+    console.log(`VGC Model League GUI at ${url} (Ctrl-C to stop)`);
     let stopping = false;
     const shutdown = (signal: string) => {
       if (stopping) return;
       stopping = true;
-      logger?.({ timestamp: new Date().toISOString(), level: 'info', event: 'server_stopping', signal });
       void (async () => {
         try {
           await gui.shutdown();
         } catch (error) {
-          logger?.({
-            timestamp: new Date().toISOString(),
-            level: 'error',
-            event: 'shutdown_error',
-            error: error instanceof Error ? error.message : String(error),
-          });
+          console.error(`shutdown error (${signal}): ${error instanceof Error ? error.message : String(error)}`);
           process.exitCode = 1;
         } finally {
-          auth?.close();
           /** A wedged run task must not outlive the server: exit instead of draining the event loop. */
           process.exit(process.exitCode ?? 0);
         }
@@ -523,39 +481,30 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
     printResults([row]);
     return 0;
   }
-  if (command === 'publish') {
+  if (command === 'export-site') {
     const { values } = parseArgs({
       args: rest,
       options: {
-        to: { type: 'string' },
+        out: { type: 'string', default: path.join('artifacts', 'public', 'site') },
         run: { type: 'string', multiple: true },
         pool: { type: 'string' },
         'include-test': { type: 'boolean', default: false },
-        'dry-run': { type: 'boolean', default: false },
       },
     });
-    const origin = (values.to ?? process.env.VGC_LEAGUE_PUBLISH_ORIGIN ?? '').trim();
-    const token = (process.env.VGC_LEAGUE_IMPORT_TOKEN ?? '').trim();
-    if (!origin) throw new Error('publish needs --to <origin> or VGC_LEAGUE_PUBLISH_ORIGIN');
-    if (!token && !values['dry-run']) throw new Error('publish needs VGC_LEAGUE_IMPORT_TOKEN');
-    const { publishRecords } = await import('./publish.js');
-    const summary = await publishRecords({
-      origin,
-      token,
+    const { exportSite } = await import('./export-site.js');
+    const summary = exportSite({
+      out: path.resolve(values.out),
       recordsPath: RESULTS_PATH,
       runsDir: RUNS_DIR,
       teamsDir: TEAMS_DIR,
       ...(values.run === undefined ? {} : { runs: values.run }),
       ...(values.pool === undefined ? {} : { pool: values.pool }),
       includeTest: values['include-test'],
-      dryRun: values['dry-run'],
       log: (line) => console.log(line),
     });
-    if (!values['dry-run']) {
-      console.log(
-        `${summary.published} published, ${summary.duplicates} already present${summary.poolsCreated.length ? `, pools created: ${summary.poolsCreated.join(', ')}` : ''}`,
-      );
-    }
+    console.log(
+      `${summary.leagues} leagues and ${summary.tournaments} tournaments exported (${summary.files} files) to ${path.resolve(values.out)}`,
+    );
     return 0;
   }
   if (command === 'outcomes' || command === 'report') {

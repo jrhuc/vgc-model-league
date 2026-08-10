@@ -7,7 +7,6 @@ import test from 'node:test';
 
 import { buildLeague, buildLeagueGame } from '../src/archive.js';
 import { buildTournamentGame, buildTournaments } from '../src/evidence.js';
-import { buildPublicBattleMessage } from '../src/gui/public.js';
 import { GuiServer } from '../src/gui/server.js';
 import { TEAMS_DIR } from '../src/paths.js';
 import { loadSeriesRecords } from '../src/records.js';
@@ -249,41 +248,37 @@ function writeArchiveFixture(root: string): { runsDir: string; recordsPath: stri
   return { runsDir, recordsPath };
 }
 
-async function hostedGet(port: number, pathname: string): Promise<{ status: number; body: string; json: unknown }> {
+async function archiveGet(port: number, pathname: string): Promise<{ status: number; body: string; json: unknown }> {
   return new Promise((resolve, reject) => {
-    const request = http.request(
-      { host: '127.0.0.1', port, path: pathname, headers: { host: 'league.example' } },
-      (response) => {
-        const chunks: Buffer[] = [];
-        response.on('data', (chunk: Buffer) => chunks.push(chunk));
-        response.on('end', () => {
-          const body = Buffer.concat(chunks).toString('utf8');
-          resolve({ status: response.statusCode ?? 0, body, json: JSON.parse(body) as unknown });
-        });
-      },
-    );
+    const request = http.request({ host: '127.0.0.1', port, path: pathname }, (response) => {
+      const chunks: Buffer[] = [];
+      response.on('data', (chunk: Buffer) => chunks.push(chunk));
+      response.on('end', () => {
+        const body = Buffer.concat(chunks).toString('utf8');
+        resolve({ status: response.statusCode ?? 0, body, json: JSON.parse(body) as unknown });
+      });
+    });
     request.on('error', reject);
     request.end();
   });
 }
 
-test('anonymous terminal imports use the full league and tournament archive owners', async (t) => {
+test('the archive routes render imported league and tournament evidence exactly', async (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-public-archive-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const fixture = writeArchiveFixture(root);
   const rows = loadSeriesRecords(fixture.recordsPath);
-  const hosted = new GuiServer({
+  const gui = new GuiServer({
     ...fixture,
     teamsDir: TEAMS_DIR,
     host: '127.0.0.1',
-    publicOrigin: 'https://league.example',
   });
-  await hosted.listen(0);
-  const address = hosted.server.address();
+  await gui.listen(0);
+  const address = gui.server.address();
   assert.ok(address && typeof address === 'object');
-  t.after(() => hosted.close());
+  t.after(() => gui.close());
 
-  const league = await hostedGet(address.port, `/api/league?run=${LEAGUE_RUN}`);
+  const league = await archiveGet(address.port, `/api/league?run=${LEAGUE_RUN}`);
   assert.equal(league.status, 200);
   assert.deepEqual(league.json, buildLeague(rows, fixture.runsDir, LEAGUE_RUN));
   assert.match(league.body, /Drafted for exact speed control/);
@@ -294,7 +289,7 @@ test('anonymous terminal imports use the full league and tournament archive owne
   assert.match(league.body, /"toolLookups":99/);
   assert.match(league.body, /"seriesId":"league-series"/);
 
-  const leagueGame = await hostedGet(address.port, `/api/league/game?run=${LEAGUE_RUN}&series=0&game=1`);
+  const leagueGame = await archiveGet(address.port, `/api/league/game?run=${LEAGUE_RUN}&series=0&game=1`);
   assert.equal(leagueGame.status, 200);
   assert.deepEqual(leagueGame.json, buildLeagueGame(rows, fixture.runsDir, LEAGUE_RUN, 0, 1));
   assert.match(leagueGame.body, /exact imported decision rationale/);
@@ -302,28 +297,16 @@ test('anonymous terminal imports use the full league and tournament archive owne
   assert.match(leagueGame.body, /exact imported reflection/);
   assert.match(leagueGame.body, /Eevee → 38%/);
 
-  const tournaments = await hostedGet(address.port, '/api/tournaments');
+  const tournaments = await archiveGet(address.port, '/api/tournaments');
   assert.equal(tournaments.status, 200);
   assert.deepEqual(tournaments.json, buildTournaments(rows, fixture.runsDir, null, TEAMS_DIR));
   assert.match(tournaments.body, /"evs":/);
   assert.match(tournaments.body, /"seed":3/);
   assert.match(tournaments.body, /"paste":/);
 
-  const tournamentGame = await hostedGet(address.port, `/api/tournament/game?run=${TOURNAMENT_RUN}&series=0&game=1`);
+  const tournamentGame = await archiveGet(address.port, `/api/tournament/game?run=${TOURNAMENT_RUN}&series=0&game=1`);
   assert.equal(tournamentGame.status, 200);
   assert.deepEqual(tournamentGame.json, buildTournamentGame(rows, fixture.runsDir, TOURNAMENT_RUN, 0, 1, TEAMS_DIR));
   assert.match(tournamentGame.body, /exact tournament decision/);
   assert.match(tournamentGame.body, /exact tournament notebook/);
-});
-
-test('public battle messages remain a separate resolved-log view for a running hosted game', () => {
-  const resolved = buildPublicBattleMessage(0, 1, [1], 4, [
-    { turn: 1, kind: 'detail', text: 'Pikachu ability: Static' },
-    { turn: 1, kind: 'win', text: 'Alpha won the game' },
-  ]);
-  assert.deepEqual(
-    resolved.log.map((entry) => entry.text),
-    ['Pikachu ability: Static', 'Alpha won the game'],
-  );
-  assert.deepEqual(buildPublicBattleMessage(0, 1, [], 3, []).log, []);
 });

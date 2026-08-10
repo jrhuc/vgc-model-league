@@ -227,45 +227,28 @@ evidence remains. Raw submissions, referee transitions, and
 attempt/supersession events are append-only; summaries are observational
 projections and never feed legality or reward.
 
-Hosted SQLite stores users, sessions, OAuth flows, ownership, experiments, and
-audit events. Series/game/decision evidence remains in files. Imports validate
-before writing, write support files before result rows, and are idempotent by
-`run_id` plus `series_id`.
+The GUI server is the local operator console. It binds to loopback only, has a
+single trust level, and runs experiments in process. Executable inference is
+limited to the fixed OpenRouter and Prime Inference endpoints plus the random
+baseline. Browser-supplied `OPENROUTER_API_KEY` and `PRIME_API_KEY` values stay
+in server memory for the run and are never written to state or evidence.
 
-Local mode binds to loopback. Hosted mode accepts one configured public origin;
-anonymous users are read-only and GitHub OAuth grants contributor/operator
-roles. Executable inference is limited to the fixed OpenRouter and Prime
-Inference endpoints plus the random baseline. Browser-supplied
-`OPENROUTER_API_KEY` and `PRIME_API_KEY` values stay in server memory for the run
-and are never written to state or evidence. Hosted runs use a separate
-heap-bounded process.
+The public deployment is a static export, not a server. `vgcleague export-site`
+projects terminal, non-test archives through the same DTO builders the console
+uses and writes the result as committed JSON; GitHub Pages serves those files
+unchanged. A live run is visible only on the local console and enters the
+public export exclusively by finishing and being re-exported, so publication is
+an explicit operator action on terminal evidence, never a side effect of play.
 
-Every anonymous generic-run response is facts-only for every mutable lifecycle
-state; `done` never unlocks raw trace. The allowlist includes run/mode/protocol
-and timing facts, entrants, public draft picks and rosters, standings, brackets,
-series/game scores and winners, started matchup-six membership, and official
-open-sheet fields (species, item, ability, nature, and moves) when that run uses
-open sheets. During a live run, only a resolved game's separately captured
-Showdown public split-log branch may be shown, after scrubbing. Stored archive game files contain an owner-side branch,
-not the public branch, so anonymous archived game DTOs return no log rather than
-trying to sanitize private input into public history. Live unresolved logs and
-all snapshots are absent.
+The exported archive carries result rows, game logs, decision rationales,
+notebooks, reflections, season reviews, and league support assets — the
+recorded evidence layer. It never carries prompt-attempt logs, raw provider
+responses, thought/trace logs, seat-context JSONL, grader state, or API
+credentials. The export builders read named, bounded artifact files that also
+contain private fields and structurally project their output; this is a
+response boundary, not a claim that the exporter never reads the source bytes.
+A separately reviewed immutable bundle (the selected GUI trace) is a distinct
+publication artifact and does not change this rule.
 
-The anonymous projection excludes seeds, errors, pauses, notices, ownership and
-control fields, sample-team pastes, external-run identifiers, exact stat
-allocation, rationales, notebooks, build attempts and repair evidence, tool and
-spend details, submitted actions, decision/reflection counts or contents,
-season-review text, private HP/state, decision/context traces, opponent-private
-requests, snapshots, and all
-grader state. Unsafe storage fails closed; missing legacy config/status is
-accepted only when terminal result rows already establish contextual public
-facts. To build the projection, the trusted server may open and parse named,
-bounded artifact files that also contain private fields. Anonymous DTO builders
-structurally allowlist their output and never return those private fields or raw
-source objects; this is a response boundary, not a claim that the server never
-reads the source bytes. Trusted local users and authorized owners/operators
-retain the operational view. A separately reviewed immutable bundle is a
-distinct publication artifact and does not change this rule.
-
-See [Deployment](deployment.md) for service configuration and
+See [Deployment](deployment.md) for the static-site pipeline and
 [Usage](usage.md) for operator commands.

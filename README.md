@@ -77,3 +77,12 @@ must be reported as such. See [Usage](docs/usage.md) for commands.
 - [Trade window](docs/trade-window.md)
 - [Season review](docs/season-review.md)
 - [Related work](docs/related-work.md)
+
+## License and attribution
+
+Code is [MIT licensed](LICENSE). Pokémon sprites and item icons under
+`src/gui/client/public/` are mirrored from
+[Pokémon Showdown](https://play.pokemonshowdown.com/) for GUI display; Pokémon
+and all respective names are trademarks of Nintendo, Creatures Inc., and GAME
+FREAK inc. Provider logos ship under
+[their models.dev MIT license](src/gui/client/public/logos/LICENSE.models-dev.txt).

@@ -10,7 +10,7 @@ import type {
   SelectedTraceView,
   ServerEvent,
 } from '../api';
-import { api, configureCsrf } from './http';
+import { api } from './http';
 import type { StoredBattle } from './views/arena';
 import { ArenaView } from './views/arena';
 import { DocsView } from './views/docs';
@@ -115,18 +115,14 @@ function focusMainContent(event: MouseEvent, main: HTMLElement | null): void {
   main?.focus();
 }
 
-function battleHasContent(candidate: BattleView): boolean {
-  return 'visibility' in candidate ? candidate.log.length > 0 : candidate.snapshot !== null;
-}
-
 function isFresherBattle(candidate: BattleView, current: BattleView | undefined): boolean {
-  if (!battleHasContent(candidate)) return false;
-  if (!current || 'visibility' in candidate !== 'visibility' in current) return true;
+  if (candidate.snapshot === null) return false;
+  if (!current) return true;
   return candidate.revision > current.revision;
 }
 
 function canContribute(auth: AuthView): boolean {
-  return auth.mode === 'local' || auth.user?.role === 'contributor' || auth.user?.role === 'operator';
+  return auth.mode === 'local';
 }
 
 function isActiveRunState(state: RunView['state'] | undefined | null): state is 'running' | 'paused' {
@@ -172,38 +168,12 @@ function SiteFooter({ onNavigate }: { onNavigate: (view: ViewId) => void }) {
   );
 }
 
-function AccessGate({ auth }: { auth: AuthView }) {
-  if (auth.mode === 'read-only') {
-    return (
-      <div class="access-gate panel">
-        <p class="eyebrow">Hosted mode</p>
-        <h1>Read-only</h1>
-        <p class="lede">
-          You can browse records, but starting runs and creating team pools are disabled on this deployment.
-        </p>
-      </div>
-    );
-  }
-  if (!auth.user) {
-    return (
-      <div class="access-gate panel">
-        <p class="eyebrow">Sign in</p>
-        <h1>GitHub sign-in required</h1>
-        <p class="lede">Sign in to start runs and create team pools. Records remain available without an account.</p>
-        <a class="button primary" href="/auth/github">
-          Sign in with GitHub
-        </a>
-      </div>
-    );
-  }
+function AccessGate() {
   return (
     <div class="access-gate panel">
-      <p class="eyebrow">Access</p>
-      <h1>Insufficient role</h1>
-      <p class="lede">
-        Signed in as {auth.user.login} with role {auth.user.role}. Contributor or operator access is required for runs
-        and team pools.
-      </p>
+      <p class="eyebrow">Published archive</p>
+      <h1>Read-only</h1>
+      <p class="lede">You can browse records, but runs start from the local operator console, not this deployment.</p>
     </div>
   );
 }
@@ -230,7 +200,6 @@ export function App() {
     api<AppStateResponse>('/api/state')
       .then((state) => {
         if (!current) return;
-        configureCsrf(state.auth.csrfToken);
         setApp(state);
         setRun(state.run);
         setStateError('');
@@ -270,10 +239,8 @@ export function App() {
 
   const contribute = app ? canContribute(app.auth) : false;
   const eventsPath =
-    app && (route.view === 'arena' || (contribute && isActiveRunState(run?.state)))
-      ? contribute
-        ? '/api/events'
-        : '/api/events/public'
+    !__STATIC_SITE__ && app && contribute && (route.view === 'arena' || isActiveRunState(run?.state))
+      ? '/api/events'
       : null;
 
   const acceptRun = (next: RunView | null) => {
@@ -354,7 +321,7 @@ export function App() {
   const openTournament = (runId: string) => drill(runId ? `tournaments/${runId}` : 'tournaments');
 
   const fetchBattle = (index: number) => {
-    api<BattleView>(`${contribute ? '/api/battle' : '/api/battle/public'}?index=${index}`)
+    api<BattleView>(`/api/battle?index=${index}`)
       .then((data) => {
         setBattles((previous) => {
           if (!isFresherBattle(data, previous[index])) return previous;
@@ -369,8 +336,7 @@ export function App() {
     fetchBattle(index);
   };
 
-  const loadGame = (index: number, game: number) =>
-    api<BattleView>(`${contribute ? '/api/battle' : '/api/battle/public'}?index=${index}&game=${game}`);
+  const loadGame = (index: number, game: number) => api<BattleView>(`/api/battle?index=${index}&game=${game}`);
 
   const onStarted = (startedRun: RunSnapshot) => {
     acceptRun(startedRun);
@@ -382,22 +348,13 @@ export function App() {
     setApp((previous) => (previous ? { ...previous, pools } : previous));
   };
 
-  const logout = () => {
-    api<{ ok: boolean }>('/api/logout', {})
-      .catch(() => {})
-      .finally(() => {
-        configureCsrf(null);
-        window.location.assign('/');
-      });
-  };
-
   const fixturesSection = useMemo(
     () =>
       app ? (
-        contribute && 'sampleTeams' in app ? (
+        contribute ? (
           <FixturesView app={app} run={run} onStarted={onStarted} onPools={onPools} />
         ) : (
-          <AccessGate auth={app.auth} />
+          <AccessGate />
         )
       ) : null,
     [app, run, contribute],
@@ -409,9 +366,8 @@ export function App() {
 
   const running = run?.state === 'running';
   const paused = run?.state === 'paused';
-  const externalRun = run ? null : app && 'externalRun' in app ? app.externalRun : null;
+  const externalRun = run ? null : (app?.externalRun ?? null);
   const externallyRunning = externalRun !== null;
-  const user = app?.auth.user;
   const headerLabel = running
     ? 'Run in progress'
     : paused
@@ -430,8 +386,7 @@ export function App() {
     app && (running || paused || externallyRunning || view === 'arena' || view === 'fixtures'),
   );
   const showHeaderReadOnly = view === 'fixtures' && app?.auth.mode === 'read-only';
-  const showHeaderSignIn = view === 'fixtures' && app?.auth.mode === 'github' && !user;
-  const showHeaderAside = showHeaderState || showHeaderReadOnly || showHeaderSignIn || Boolean(user);
+  const showHeaderAside = showHeaderState || showHeaderReadOnly;
   return (
     <>
       <a ref={skipLinkRef} class="skip-link" href="#main-content" aria-controls="main-content">
@@ -476,25 +431,6 @@ export function App() {
               </div>
             ) : null}
             {showHeaderReadOnly ? <span class="header-readonly">Read-only</span> : null}
-            {showHeaderSignIn ? (
-              <a class="header-auth-link" href="/auth/github">
-                Sign in with GitHub
-              </a>
-            ) : null}
-            {user ? (
-              <div class="header-user">
-                <span class="header-avatar" aria-hidden="true">
-                  {user.login.slice(0, 1).toUpperCase()}
-                </span>
-                <div class="header-user-text">
-                  <span class="header-login">{user.login}</span>
-                  <span class="header-role">{user.role}</span>
-                </div>
-                <button type="button" class="header-logout" onClick={logout}>
-                  Log out
-                </button>
-              </div>
-            ) : null}
           </div>
         ) : null}
       </header>

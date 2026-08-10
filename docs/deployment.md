@@ -1,116 +1,43 @@
 # Deployment
 
-Deploy the browser/API results service with the repository `Dockerfile`. Use one
-long-running Railway service and attach one persistent volume at `/data`. This
-is the results-service image, not a matchday referee or model-runtime image.
+The public site is a static GitHub Pages deployment. There is no hosted
+service: no server, database, authentication, or import API. The browser app
+is built once, and every read-only API response it needs is a committed JSON
+file exported from local records.
 
-## Configure the service
+## Pipeline
 
-Set the public origin:
+1. `vgcleague export-site` projects the local archive (terminal, non-test runs
+   by default) into `artifacts/public/site/`. Curate with `--run`, `--pool`,
+   or `--include-test`; the export replaces the directory wholesale, so the
+   committed tree always mirrors exactly one export.
+2. Commit and push `artifacts/public/site` to `main`.
+3. `.github/workflows/pages.yml` builds the client with
+   `vite build --mode static`, copies the committed data to `data/`, and
+   deploys the result to GitHub Pages.
 
-```text
-VGC_LEAGUE_PUBLIC_ORIGIN=https://<canonical-host>
-```
+`pnpm run publish:site` performs all three steps in one command.
 
-The image sets these values:
+## One-time repository setup
 
-```text
-VGC_LEAGUE_HOST=0.0.0.0
-VGC_LEAGUE_DATA_DIR=/data
-VGC_LEAGUE_DB_PATH=/data/vgcleague.sqlite
-```
+Under Settings → Pages, set the source to **GitHub Actions**. The workflow
+deploys on pushes that touch the site data or client, and can be run manually
+from the Actions tab.
 
-Railway supplies `PORT`. Put Cloudflare or another edge rate limiter and web
-application firewall in front of the service. Proxy one canonical host.
+## What the static build changes
 
-## Configure authentication
+`--mode static` defines `__STATIC_SITE__`, which maps API routes onto exported
+files (`/api/league?run=X` → `data/league/X.json`), disables the live event
+stream, and marks the app read-only. Everything else is the same client the
+local console serves.
 
-Without OAuth, a hosted service is read-only for browser and contributor
-mutation requests, except for separately token-authenticated import API `POST`
-endpoints when configured. Create a GitHub OAuth app to enable contributor
-access. Use this callback:
+Live runs never appear on the public site. They are visible only on the local
+operator console (`vgcleague gui`, loopback only) and reach the site by
+finishing and being re-exported.
 
-```text
-https://<canonical-host>/auth/github/callback
-```
+## Size expectations
 
-Set the OAuth credentials:
-
-```text
-GITHUB_CLIENT_ID=<oauth-app-client-id>
-GITHUB_CLIENT_SECRET=<oauth-app-client-secret>
-```
-
-Set `VGC_LEAGUE_OPERATOR_GITHUB_IDS` to a comma-separated list of numeric
-GitHub account IDs. These accounts receive the operator role. The variable is
-optional. The list is authoritative at service startup: removing an ID demotes
-that account's existing sessions to contributor, while adding it promotes them.
-
-Do not set `VGC_LEAGUE_ENABLE_MUTATIONS=true` on a public service. This setting
-permits unauthenticated changes. Use it only behind separate private access
-control.
-
-## Public result projection
-
-Anonymous and operator responses use the projections defined in
-[Architecture](architecture.md#state-evidence-and-trust). Importing a run or
-changing its lifecycle state never publishes raw trace. The selected immutable
-GUI artifact is a separate hash-checked projection.
-
-## Configure runs and imports
-
-`VGC_LEAGUE_MAX_RUN_MINUTES` sets the run deadline. The valid range is 1 through
-1,440 minutes. The default is 240 minutes.
-
-`VGC_LEAGUE_IMPORT_TOKEN` enables `POST /api/import` and
-`POST /api/import/remove`. Set a long random value. Give the same value to
-operators who publish or remove local results. Both routes return 404 when the
-variable is not set. Change the variable to rotate the token.
-
-The service admits one run at a time. It applies these limits:
-
-| Mode | Maximum models | Other limit |
-| --- | ---: | --- |
-| Rotation | 4 | 4 series for each pair |
-| Tournament | 8 | Available pool teams |
-| Draft League | 8 | Draft board capacity |
-
-Each hosted run can use at most two concurrent series. Each run uses a child
-process with a 768 MiB V8 heap limit and a restricted environment. The server
-terminates the process when the run deadline expires. Every mode accepts only the fixed OpenRouter and Prime Inference endpoints (plus
-the provider-free random baseline); no model spec can supply an endpoint.
-
-## Monitor the service
-
-Railway checks `/readyz`. This endpoint checks static assets, writable roots,
-installed draft boards, and the pinned simulator. It checks SQLite readiness
-only when OAuth has configured `AuthService`; without OAuth, SQLite is not part
-of readiness. Use `/healthz` only for process liveness.
-
-The application sends an SSE heartbeat every 25 seconds. Configure the proxy
-timeout to keep these connections open.
-
-## Configure backups
-
-The image includes Litestream 0.5.14. Set `LITESTREAM_REPLICA_URL` and the
-credential variables for the object store. Litestream restores a missing
-SQLite database and then replicates changes.
-
-`litestream.yml` does not set retention. Configure object versioning and
-lifecycle retention. Enable bucket-managed encryption or KMS. Use credentials
-that cannot delete objects.
-
-Enable Railway volume backups for these paths:
-
-```text
-/data/teams
-/data/runs
-/data/records
-```
-
-Also enable whole-volume rollback. Railway backups remain in the Railway
-project. Litestream provides the separate SQLite copy. Test both restore paths
-with disposable data.
-
-See [Architecture](architecture.md) for the access and evidence trust model.
-See [Use the league](usage.md) for publication commands.
+The exported archive is currently ~15 MB of JSON plus ~2 MB of sprites and
+assets. GitHub Pages allows 1 GB per site, so growth headroom is large; if the
+archive ever outgrows Pages, move `data/` to object storage behind the same
+relative paths.

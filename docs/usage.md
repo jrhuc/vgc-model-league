@@ -249,28 +249,32 @@ The destination is `$VGC_RUN_ARCHIVE_DIR` or `~/vgc-run-archive`. Copy it
 offsite with operator-managed tooling, then remove source runs manually if
 wanted.
 
-Publish completed result rows and the allowed support evidence to a deployment:
+Publish completed result rows and the allowed support evidence to the public
+static site:
 
 ```sh
-export VGC_LEAGUE_PUBLISH_ORIGIN=https://<deployment>
-export VGC_LEAGUE_IMPORT_TOKEN=<operator-secret>
-pnpm run vgcleague publish --dry-run
-pnpm run vgcleague publish
-pnpm run vgcleague publish --pool regmb-202607
-pnpm run vgcleague publish --run <run-id>
+pnpm run publish:site
 ```
 
-Publishing is idempotent. Without filters it excludes `test`; `--include-test`
-overrides that. Repeat `--run` for exact runs, including draft leagues whose rows
-have no pool. The command imports results, decision/game logs, run configuration,
-draft/teambuild/window/season support assets, and missing pools so authorized
-operators can reconstruct the archive. It does not send prompt-attempt logs, raw
-provider responses, trace logs, or seat-context JSONL, so the import is not a
-complete execution envelope.
+This builds, re-exports `artifacts/public/site` from local records, commits it,
+and pushes; the Pages workflow then redeploys. To control the selection first,
+run the exporter directly and inspect the output before committing:
 
-Import is not trace release. The exact anonymous and operator boundaries live in
-[Architecture](architecture.md#state-evidence-and-trust); service configuration
-lives in [Deployment](deployment.md).
+```sh
+pnpm run export-site
+pnpm run export-site -- --pool regmb-202607
+pnpm run export-site -- --run <run-id>
+```
+
+Without filters the export excludes `test`; `--include-test` overrides that.
+Repeat `--run` for exact runs. The export contains result rows, decision/game
+logs, and league support assets already defined as public archive evidence. It
+never contains prompt-attempt logs, raw provider responses, trace logs, or
+seat-context JSONL.
+
+Export is not trace release. The exact public boundaries live in
+[Architecture](architecture.md#state-evidence-and-trust); site deployment lives
+in [Deployment](deployment.md).
 
 ## Exhibition seat
 

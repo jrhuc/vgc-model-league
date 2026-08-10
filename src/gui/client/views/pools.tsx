@@ -1,13 +1,6 @@
 import { useRef, useState } from 'preact/hooks';
 
-import type {
-  AppState,
-  ContributorAppState,
-  CreatePoolResponse,
-  PoolInfo,
-  TeamMemberView,
-  ValidateResponse,
-} from '../../api';
+import type { AppState, CreatePoolResponse, PoolInfo, TeamMemberView, ValidateResponse } from '../../api';
 import { Dropdown } from '../components/dropdown';
 import { api } from '../http';
 
@@ -20,7 +13,7 @@ interface Draft {
 }
 
 interface PoolsProps {
-  app: AppState | ContributorAppState;
+  app: AppState;
   onPools: (pools: PoolInfo[]) => void;
 }
 

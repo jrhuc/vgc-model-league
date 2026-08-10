@@ -34,5 +34,5 @@ export function Mark({ spec, size = 14 }: { spec: string; size?: number }) {
       </span>
     );
   }
-  return <img class="mark" src={`/logos/${slug}.svg`} alt="" width={size} height={size} loading="lazy" />;
+  return <img class="mark" src={`logos/${slug}.svg`} alt="" width={size} height={size} loading="lazy" />;
 }
