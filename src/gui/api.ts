@@ -404,6 +404,7 @@ export interface LeaguesResponse {
 export interface LeagueRosterSlotView {
   id: string;
   name: string;
+  spriteId: string;
   cost: number;
   pick: number | null;
   rationale: string;
@@ -491,6 +492,7 @@ export interface LeagueUsageView {
   entrant: number;
   id: string;
   name: string;
+  spriteId: string;
   cost: number;
   pick: number | null;
   builds: number;
