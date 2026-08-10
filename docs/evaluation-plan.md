@@ -272,12 +272,11 @@ Compatibility is evidence, not assumption. This is the current support table for
 
 ## Work order
 
-1. Finish hardening the position pipeline before any corpus exists. The runtime
-   producer-authority binding is wired into the grader and exporter, and grading
-   now uses only one complete exhaustive action table per eligible decision; the
-   old actual-opponent screen/shortlist estimator is deleted. The remaining item
-   is the public-root reader that verifies manifests and digests and rejects the
-   private root.
+1. Position pipeline hardening is complete before any corpus exists. The runtime
+   producer-authority binding is wired into the grader and exporter, grading uses
+   one complete exhaustive action table per eligible decision, and the public-root
+   reader strictly verifies the current manifest, public task bytes, digest, order,
+   and exact public-only layout while rejecting private or mixed roots.
 2. Write the corpus sizing memo before generating games: games required,
    eligible positions after stratification caps, panel compute per position,
    and provider cost. Record generating models per position so

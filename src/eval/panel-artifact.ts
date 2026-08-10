@@ -79,6 +79,17 @@ const POSITION_PROMPT_RESPONSE =
   'Return exactly one JSON object {"choice":N}, where N is a zero-based action number above. Include no other keys or prose.';
 export const POSITION_PANEL_ARTIFACT_SCHEMA_VERSION = 1;
 
+export interface PublicPositionTask extends JsonObject {
+  schema_version: typeof POSITION_PANEL_ARTIFACT_SCHEMA_VERSION;
+  task_id: string;
+  format: string;
+  phase: 'team_preview' | 'forced_switch' | 'turn';
+  turn: number;
+  prompt: string;
+  response_schema: JsonObject;
+  actions: Array<JsonObject & { number: number; canonical_action: string; label: string }>;
+}
+
 export function exactPublicPositionFingerprint(task: JsonObject): string {
   const actions = Array.isArray(task.actions)
     ? task.actions.map((raw) => {
@@ -143,14 +154,15 @@ function nullableFinite(value: unknown, location: string): number | null {
   return value === null ? null : finite(value, location);
 }
 
-function validatePublicPositionTask(row: JsonObject, index = 0): void {
+export function validatePublicPositionTask(value: unknown, index = 0): asserts value is PublicPositionTask {
   const location = `task[${index}]`;
+  const row = object(value, location);
   exactKeys(row, TASK_KEYS, location);
   if (row.schema_version !== POSITION_PANEL_ARTIFACT_SCHEMA_VERSION)
     throw new Error(`${location} has unsupported schema version`);
   string(row.task_id, `${location}.task_id`);
   string(row.format, `${location}.format`);
-  if (!['team_preview', 'forced_switch', 'turn'].includes(String(row.phase)))
+  if (typeof row.phase !== 'string' || !['team_preview', 'forced_switch', 'turn'].includes(row.phase))
     throw new Error(`${location}.phase is invalid`);
   integer(row.turn, `${location}.turn`);
   string(row.prompt, `${location}.prompt`);
