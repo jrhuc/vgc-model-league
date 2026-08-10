@@ -4,9 +4,9 @@ export function configureCsrf(token: string | null | undefined): void {
   csrfToken = token ?? '';
 }
 
-const CACHEABLE = /^\/api\/(?:leagues|league|league\/game|tournaments|board|model|pool\/teams)(?:\?|$)/;
-const CACHE_TTL_MS = 300_000;
-const cache = new Map<string, { at: number; data: unknown }>();
+const IMMUTABLE_PATH = /^\/api\/(?:selected-trace|board)(?:\?|$)/;
+const immutableCache = new Map<string, unknown>();
+const requests = new Map<string, Promise<unknown>>();
 
 async function request<T>(pathname: string, body?: unknown): Promise<T> {
   const init: RequestInit =
@@ -26,24 +26,32 @@ async function request<T>(pathname: string, body?: unknown): Promise<T> {
   return data;
 }
 
-async function revalidate<T>(pathname: string): Promise<T> {
-  const data = await request<T>(pathname);
-  cache.set(pathname, { at: Date.now(), data });
-  return data;
+function immutableResponse(pathname: string, data: unknown): boolean {
+  if (IMMUTABLE_PATH.test(pathname)) return true;
+  if (!/^\/api\/(?:league(?:\/game)?|tournament\/game)\?/.test(pathname)) return false;
+  return typeof data === 'object' && data !== null && 'live' in data && data.live === false;
+}
+
+function load<T>(pathname: string): Promise<T> {
+  if (immutableCache.has(pathname)) return Promise.resolve(immutableCache.get(pathname) as T);
+  const pending = requests.get(pathname);
+  if (pending) return pending as Promise<T>;
+  const next = request<T>(pathname)
+    .then((data) => {
+      if (immutableResponse(pathname, data)) immutableCache.set(pathname, data);
+      return data;
+    })
+    .finally(() => requests.delete(pathname));
+  requests.set(pathname, next);
+  return next;
 }
 
 export async function api<T>(pathname: string, body?: unknown): Promise<T> {
-  if (body !== undefined || !CACHEABLE.test(pathname)) return request<T>(pathname, body);
-  const hit = cache.get(pathname);
-  if (hit && Date.now() - hit.at < CACHE_TTL_MS) {
-    void revalidate<T>(pathname).catch(() => {});
-    return hit.data as T;
-  }
-  return revalidate<T>(pathname);
+  return body === undefined ? load<T>(pathname) : request<T>(pathname, body);
 }
 
 export async function apiFresh<T>(pathname: string): Promise<T> {
   const data = await request<T>(pathname);
-  if (CACHEABLE.test(pathname)) cache.set(pathname, { at: Date.now(), data });
+  if (immutableResponse(pathname, data)) immutableCache.set(pathname, data);
   return data;
 }

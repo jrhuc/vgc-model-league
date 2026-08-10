@@ -210,7 +210,7 @@ function AccessGate({ auth }: { auth: AuthView }) {
 
 export function App() {
   const [app, setApp] = useState<AppStateResponse | null>(null);
-  const [bootError, setBootError] = useState('');
+  const [stateError, setStateError] = useState('');
   const [selectedTrace, setSelectedTrace] = useState<SelectedTraceView | null>(null);
   const [run, setRun] = useState<RunView | null>(null);
   const [battles, setBattles] = useState<Record<number, StoredBattle>>({});
@@ -226,18 +226,39 @@ export function App() {
   const routeFocusReady = useRef(false);
 
   useEffect(() => {
-    Promise.all([api<AppStateResponse>('/api/state'), api<SelectedTraceView>('/api/selected-trace')])
-      .then(([state, trace]) => {
+    let current = true;
+    api<AppStateResponse>('/api/state')
+      .then((state) => {
+        if (!current) return;
         configureCsrf(state.auth.csrfToken);
         setApp(state);
-        setSelectedTrace(trace);
         setRun(state.run);
+        setStateError('');
         runWasLive.current = isActiveRunState(state.run?.state);
         runIdRef.current = state.run?.runId ?? null;
         if (state.run?.mode === 'draft' && state.run.draft?.phase === 'draft') setLiveTab('draft');
       })
-      .catch((error: Error) => setBootError(error.message));
+      .catch((error: Error) => {
+        if (current) setStateError(error.message);
+      });
+    return () => {
+      current = false;
+    };
   }, []);
+
+  const needsSelectedTrace = route.view === 'home' || route.view === 'method';
+  useEffect(() => {
+    if (selectedTrace || !needsSelectedTrace) return;
+    let current = true;
+    api<SelectedTraceView>('/api/selected-trace')
+      .then((trace) => {
+        if (current) setSelectedTrace(trace);
+      })
+      .catch(() => {});
+    return () => {
+      current = false;
+    };
+  }, [selectedTrace, needsSelectedTrace]);
 
   useEffect(() => {
     const link = skipLinkRef.current;
@@ -248,7 +269,12 @@ export function App() {
   }, [app]);
 
   const contribute = app ? canContribute(app.auth) : false;
-  const eventsPath = app ? (contribute ? '/api/events' : '/api/events/public') : null;
+  const eventsPath =
+    app && (route.view === 'arena' || (contribute && isActiveRunState(run?.state)))
+      ? contribute
+        ? '/api/events'
+        : '/api/events/public'
+      : null;
 
   const acceptRun = (next: RunView | null) => {
     const nextRunId = next?.runId ?? null;
@@ -281,10 +307,10 @@ export function App() {
   }, [eventsPath]);
 
   useEffect(() => {
-    if (run?.state !== 'running') return;
+    if (route.view !== 'arena' || run?.state !== 'running') return;
     const timer = setInterval(() => setClockTick((tick) => tick + 1), 1000);
     return () => clearInterval(timer);
-  }, [run?.state]);
+  }, [route.view, run?.state]);
 
   useEffect(() => {
     const onRouteChange = () => setRoute(routeFromHash());
@@ -307,17 +333,6 @@ export function App() {
   }, [route.view, route.run, route.team, route.series]);
 
   const view = route.view;
-  useEffect(() => {
-    document.body.classList.toggle('research-dark', view === 'home' || view === 'method' || view === 'docs');
-  }, [view]);
-  const leagueRouteRef = useRef<{
-    run: string | undefined;
-    team: string | undefined;
-    series: number | undefined;
-  }>({ run: undefined, team: undefined, series: undefined });
-  const tournamentRunRef = useRef<string | undefined>(undefined);
-  if (view === 'leagues') leagueRouteRef.current = { run: route.run, team: route.team, series: route.series };
-  if (view === 'tournaments') tournamentRunRef.current = route.run;
 
   const navigate = (next: ViewId) => {
     setRoute({ view: next });
@@ -389,30 +404,11 @@ export function App() {
     [run],
   );
 
-  if (bootError) {
-    return (
-      <main id="main-content" class="shell" tabIndex={-1} ref={mainRef}>
-        <h1>VGC Model League could not load</h1>
-        <div class="message error" role="alert">
-          Could not load the application: {bootError}
-        </div>
-      </main>
-    );
-  }
-  if (!app || !selectedTrace) {
-    return (
-      <main id="main-content" class="shell" tabIndex={-1} ref={mainRef}>
-        <h1>VGC Model League</h1>
-        <p class="muted">Loading the application…</p>
-      </main>
-    );
-  }
-
   const running = run?.state === 'running';
   const paused = run?.state === 'paused';
-  const externalRun = run ? null : 'externalRun' in app ? app.externalRun : null;
+  const externalRun = run ? null : app && 'externalRun' in app ? app.externalRun : null;
   const externallyRunning = externalRun !== null;
-  const user = app.auth.user;
+  const user = app?.auth.user;
   const headerLabel = running
     ? 'Run in progress'
     : paused
@@ -427,9 +423,11 @@ export function App() {
   const showLiveTabs = Boolean(run?.mode === 'draft' && run.draft);
   const liveShowsDraft = showLiveTabs && liveTab === 'draft';
   const externalTournament = externalRun?.mode === 'tournament' ? externalRun : null;
-  const showHeaderState = running || paused || externallyRunning || view === 'arena' || view === 'fixtures';
-  const showHeaderReadOnly = view === 'fixtures' && app.auth.mode === 'read-only';
-  const showHeaderSignIn = view === 'fixtures' && app.auth.mode === 'github' && !user;
+  const showHeaderState = Boolean(
+    app && (running || paused || externallyRunning || view === 'arena' || view === 'fixtures'),
+  );
+  const showHeaderReadOnly = view === 'fixtures' && app?.auth.mode === 'read-only';
+  const showHeaderSignIn = view === 'fixtures' && app?.auth.mode === 'github' && !user;
   const showHeaderAside = showHeaderState || showHeaderReadOnly || showHeaderSignIn || Boolean(user);
   return (
     <>
@@ -523,7 +521,17 @@ export function App() {
           inert={view !== 'fixtures'}
           aria-hidden={view !== 'fixtures' ? 'true' : undefined}
         >
-          {fixturesSection}
+          {fixturesSection ??
+            (view === 'fixtures' ? (
+              <div class="route-pending">
+                <h1>New run</h1>
+                {stateError ? (
+                  <div class="message error" role="alert">
+                    Could not load the run workspace: {stateError}
+                  </div>
+                ) : null}
+              </div>
+            ) : null)}
         </section>
         <section
           class={`view ${view === 'arena' ? 'on' : ''}`}
@@ -552,27 +560,39 @@ export function App() {
             </nav>
           ) : null}
           {externalTournament ? (
-            <TournamentsView
-              active={view === 'arena'}
-              epoch={recordsEpoch}
-              run={externalTournament.runId}
-              focusRun={externalTournament.runId}
-              onOpenRun={openTournament}
-            />
+            view === 'arena' ? (
+              <TournamentsView
+                epoch={recordsEpoch}
+                run={externalTournament.runId}
+                focusRun={externalTournament.runId}
+                onOpenRun={openTournament}
+              />
+            ) : null
           ) : (
             <>
               <div hidden={liveShowsDraft} inert={liveShowsDraft} aria-hidden={liveShowsDraft ? 'true' : undefined}>
-                <ArenaView
-                  run={run}
-                  externalRun={externalRun?.mode === 'draft' ? externalRun : null}
-                  battles={battles}
-                  selected={selected}
-                  onSelect={selectBattle}
-                  onLoadGame={loadGame}
-                  onFetchBattle={fetchBattle}
-                  onGoFixtures={() => navigate('fixtures')}
-                  onOpenLeague={openLeague}
-                />
+                {app && view === 'arena' ? (
+                  <ArenaView
+                    run={run}
+                    externalRun={externalRun?.mode === 'draft' ? externalRun : null}
+                    battles={battles}
+                    selected={selected}
+                    onSelect={selectBattle}
+                    onLoadGame={loadGame}
+                    onFetchBattle={fetchBattle}
+                    onGoFixtures={() => navigate('fixtures')}
+                    onOpenLeague={openLeague}
+                  />
+                ) : view === 'arena' ? (
+                  <div class="route-pending">
+                    <h1>Live</h1>
+                    {stateError ? (
+                      <div class="message error" role="alert">
+                        Could not load the live workspace: {stateError}
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
               </div>
               {draftRoomSection ? (
                 <div
@@ -586,37 +606,25 @@ export function App() {
             </>
           )}
         </section>
-        <section
-          class={`view ${view === 'leagues' ? 'on' : ''}`}
-          hidden={view !== 'leagues'}
-          inert={view !== 'leagues'}
-          aria-hidden={view !== 'leagues' ? 'true' : undefined}
-        >
-          <LeaguesView
-            active={view === 'leagues'}
-            epoch={recordsEpoch}
-            boards={app.boards}
-            run={leagueRouteRef.current.run}
-            team={leagueRouteRef.current.team}
-            series={leagueRouteRef.current.series}
-            onOpenLeague={openLeague}
-            onOpenTeam={openTeam}
-            onBack={() => openLeague('')}
-          />
-        </section>
-        <section
-          class={`view ${view === 'tournaments' ? 'on' : ''}`}
-          hidden={view !== 'tournaments'}
-          inert={view !== 'tournaments'}
-          aria-hidden={view !== 'tournaments' ? 'true' : undefined}
-        >
-          <TournamentsView
-            active={view === 'tournaments'}
-            epoch={recordsEpoch}
-            run={tournamentRunRef.current}
-            onOpenRun={openTournament}
-          />
-        </section>
+        {view === 'leagues' ? (
+          <section class="view on">
+            <LeaguesView
+              epoch={recordsEpoch}
+              boards={app?.boards ?? null}
+              run={route.run}
+              team={route.team}
+              series={route.series}
+              onOpenLeague={openLeague}
+              onOpenTeam={openTeam}
+              onBack={() => openLeague('')}
+            />
+          </section>
+        ) : null}
+        {view === 'tournaments' ? (
+          <section class="view on">
+            <TournamentsView epoch={recordsEpoch} run={route.run} onOpenRun={openTournament} />
+          </section>
+        ) : null}
       </main>
       <SiteFooter onNavigate={navigate} />
     </>

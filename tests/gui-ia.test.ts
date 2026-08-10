@@ -154,6 +154,7 @@ test('Home and Method render the selected artifact projection and endpoint', asy
 
   const window = await boot();
   try {
+    await waitFor(() => (activeView(window).textContent ?? '').includes(selectedTrace.draftQuotes[0]!.text));
     assert.ok((activeView(window).textContent ?? '').includes(selectedTrace.draftQuotes[0]!.text));
     assert.ok(
       [...activeView(window).querySelectorAll('a')].some((link) => link.getAttribute('href') === TRACE_ARTIFACT),
@@ -165,6 +166,45 @@ test('Home and Method render the selected artifact projection and endpoint', asy
     );
   } finally {
     await window.happyDOM.close();
+  }
+});
+
+test('Home and Method expose honest trace slots before replacing them in place', async () => {
+  for (const [hash, loadedSelector] of [
+    ['', '.worked-trace'],
+    ['#method', '.turn-evidence-figure'],
+  ] as const) {
+    const window = new Window({ url: `${base}${hash}` });
+    window.document.body.innerHTML = '<div id="app"></div>';
+    (window as unknown as Record<string, unknown>).EventSource = class {
+      onmessage: unknown = null;
+      close(): void {}
+    };
+    const nativeFetch = window.fetch.bind(window);
+    let releaseTrace: () => void = () => {};
+    const traceGate = new Promise<void>((resolve) => (releaseTrace = resolve));
+    window.fetch = (async (input, init) => {
+      const target = typeof input === 'string' ? input : 'url' in input ? input.url : input.href;
+      if (new URL(target, base).pathname === '/api/selected-trace') await traceGate;
+      return nativeFetch(input, init);
+    }) as typeof window.fetch;
+
+    try {
+      window.eval(bundle);
+      await waitFor(() => activeView(window).querySelector('[aria-busy="true"] [role="status"]') !== null);
+      const slot = activeView(window).querySelector('[aria-busy="true"]');
+      assert.ok(slot);
+      assert.equal(slot.querySelector('[role="status"]')?.textContent?.trim(), 'Loading selected trace…');
+      assert.equal(slot.querySelector(loadedSelector), null);
+
+      releaseTrace();
+      await waitFor(() => slot.getAttribute('aria-busy') === 'false');
+      assert.equal(activeView(window).querySelector('[aria-busy="false"]'), slot);
+      assert.ok(slot.querySelector(loadedSelector));
+      assert.equal(slot.querySelector('[role="status"]'), null);
+    } finally {
+      await window.happyDOM.close();
+    }
   }
 });
 

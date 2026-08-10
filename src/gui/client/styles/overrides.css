@@ -1,7 +1,7 @@
 /* biome-ignore-all format: one maintained selector per line */
 /* Late overrides that must win over the per-view sheets; imported last. */
 .lineup-side > .muted { grid-column: 1 / -1; margin: 0; }
-.builder-intro .button { border-color: var(--yellow); background: var(--yellow); color: var(--ink); white-space: nowrap; }
+.builder-intro .button { color: var(--navy); background: var(--yellow); border-color: var(--yellow); white-space: nowrap; }
 .tournament-card .table-scroll { padding: 0 24px 24px; }
 .live-tournament-heading .lede { color: #c6d5e6; }
 .live-tournament-heading .eyebrow { color: #ff8a89; }
@@ -19,6 +19,6 @@
 .league-card-top .eyebrow { margin: 0; color: var(--muted); }
 .franchise-card-foot .text-link { color: var(--blue-dark); font: 800 10px/1 var(--mono); letter-spacing: 0.05em; text-transform: uppercase; }
 .schedule-table td.matchup .text-link { white-space: nowrap; }
-.live-now > .section-head .live-dot { margin-right: 6px; background: var(--coral); animation: pulse 1.6s ease-out infinite; vertical-align: baseline; }
+.live-now > .section-head .live-dot { margin-right: 6px; background: var(--coral); animation: status-arrival 1.4s ease-out 2; vertical-align: baseline; }
 .match-menu-side .text-link { color: white; font: inherit; }
 .game-switcher .text-link { font: 800 10px/1 var(--mono); letter-spacing: 0.05em; text-transform: uppercase; color: var(--blue-dark); text-decoration-thickness: 1px; text-underline-offset: 3px; }

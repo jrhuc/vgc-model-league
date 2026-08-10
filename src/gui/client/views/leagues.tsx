@@ -1122,7 +1122,6 @@ function LeaguePage({
 }
 
 export function LeaguesView({
-  active,
   epoch,
   boards,
   run,
@@ -1132,8 +1131,7 @@ export function LeaguesView({
   onOpenTeam,
   onBack,
 }: {
-  boards: BoardInfo[];
-  active: boolean;
+  boards: BoardInfo[] | null;
   epoch: number;
   run: string | undefined;
   team: string | undefined;
@@ -1150,27 +1148,27 @@ export function LeaguesView({
   const noOwners = useMemo(() => new Map<string, number>(), []);
 
   useEffect(() => {
-    if (!active || run) return;
+    if (run) return;
     api<LeaguesResponse>('/api/leagues')
       .then((response) => {
         setList(response);
         setError('');
       })
       .catch((failure: Error) => setError(failure.message));
-  }, [active, run, epoch]);
+  }, [run, epoch]);
 
   useEffect(() => {
-    if (!active || run || !list?.leagues.some((card) => card.live)) return;
+    if (run || !list?.leagues.some((card) => card.live)) return;
     const timer = setInterval(() => {
       apiFresh<LeaguesResponse>('/api/leagues')
         .then(setList)
         .catch(() => {});
     }, 30_000);
     return () => clearInterval(timer);
-  }, [active, run, list]);
+  }, [run, list]);
 
   useEffect(() => {
-    if (!active || !run) return;
+    if (!run) return;
     if (league?.runId === run) return;
     setLeague(null);
     api<LeagueResponse>(`/api/league?run=${encodeURIComponent(run)}`)
@@ -1179,17 +1177,17 @@ export function LeaguesView({
         setError('');
       })
       .catch((failure: Error) => setError(failure.message));
-  }, [active, run, epoch, league?.runId]);
+  }, [run, epoch, league?.runId]);
 
   useEffect(() => {
-    if (!active || !run || league?.runId !== run || !league.live) return;
+    if (!run || league?.runId !== run || !league.live) return;
     const timer = setInterval(() => {
       apiFresh<LeagueResponse>(`/api/league?run=${encodeURIComponent(run)}`)
         .then(setLeague)
         .catch(() => {});
     }, 20_000);
     return () => clearInterval(timer);
-  }, [active, run, league?.runId, league?.live]);
+  }, [run, league?.runId, league?.live]);
 
   if (run) {
     if (error)
@@ -1201,9 +1199,8 @@ export function LeaguesView({
       );
     if (!league || league.runId !== run)
       return (
-        <div>
+        <div class="archive-route-pending">
           <h1>Draft league</h1>
-          <p class="muted">Loading the league…</p>
         </div>
       );
     return (
@@ -1252,7 +1249,9 @@ export function LeaguesView({
       ) : (
         <div class="league-index-layout">
           <div class="league-index-main">
-            {leagues.length === 0 && !error ? (
+            {list === null && !error ? (
+              <div class="archive-route-pending" aria-hidden="true" />
+            ) : leagues.length === 0 && !error ? (
               <section class="panel">
                 <div class="results-empty">
                   No draft leagues recorded yet. Start one from <b>New run</b>; finished seasons are archived here.
@@ -1275,7 +1274,7 @@ export function LeaguesView({
               </div>
             </div>
             <div class="board-snapshot-list">
-              {boards.map((board) => (
+              {boards?.map((board) => (
                 <button type="button" class="board-snapshot" key={board.id} onClick={() => setBoardId(board.id)}>
                   <span>
                     <b>{board.id}</b>
@@ -1290,7 +1289,7 @@ export function LeaguesView({
                   </span>
                 </button>
               ))}
-              {boards.length === 0 ? <p class="empty-note">No draft boards are installed.</p> : null}
+              {boards?.length === 0 ? <p class="empty-note">No draft boards are installed.</p> : null}
             </div>
           </aside>
         </div>

@@ -15,7 +15,7 @@ function MonChip({ name, trace }: { name: string; trace: SelectedTraceView }) {
 }
 
 interface HomeViewProps {
-  trace: SelectedTraceView;
+  trace: SelectedTraceView | null;
   onOpenMethod: () => void;
   onOpenDocs: () => void;
 }
@@ -180,7 +180,7 @@ const RECORD_STAGES: ReadonlyArray<{
     stage: 'Draft',
     detail: 'Ten exclusive picks from a shared points board.',
     artifacts: [
-      ['written', 'rationale for every pick'],
+      ['written', 'model rationale when supplied'],
       ['commit', 'pick + price paid'],
       ['check', 'flag when the harness picked instead'],
     ],
@@ -198,7 +198,7 @@ const RECORD_STAGES: ReadonlyArray<{
     stage: 'Battle',
     detail: 'Bring four, lead two, then turn-by-turn play.',
     artifacts: [
-      ['written', 'rationale each turn'],
+      ['written', 'model rationale when supplied'],
       ['commit', 'submitted command'],
       ['check', 'simulator accept / reject'],
       ['check', 'latency + token spend'],
@@ -217,7 +217,7 @@ const RECORD_STAGES: ReadonlyArray<{
     stage: 'Trade window',
     detail: 'Mid-season offers and free agency.',
     artifacts: [
-      ['written', 'offer message + both sides’ reasoning'],
+      ['written', 'offer message; reasoning when supplied'],
       ['commit', 'accepted / declined'],
       ['commit', 'add–drop swaps'],
     ],
@@ -415,7 +415,7 @@ function WorkedExampleTrace({ trace }: { trace: SelectedTraceView }) {
 const BENCH_FACTS = [
   ['Format', 'Pokémon Champions VGC 2026 · Reg M-B · Bo3 doubles'],
   ['Simulator', 'Pinned Pokémon Showdown revision'],
-  ['Record', 'Every decision + its written rationale'],
+  ['Record', 'Accepted actions + supplied model evidence'],
   ['Identity', 'Anonymous in play · named at publication'],
 ] as const;
 
@@ -430,8 +430,8 @@ export function HomeView({ trace, onOpenMethod, onOpenDocs }: HomeViewProps) {
           <h1 id="home-title">How well does a language model decide when the game is VGC?</h1>
           <p class="bench-lede">
             Model seats draft on a budget, write plans, trade, and battle through full seasons of a draft league on a
-            pinned simulator. Every decision is recorded with the reasoning behind it, and any turn can be replayed
-            against the moves not taken.
+            pinned simulator. Accepted actions are recorded alongside any rationale the model supplied. Eligible battle
+            decisions can be replayed against legal actions not taken.
           </p>
           <p class="bench-note">
             A personal project — one game, a few evals and environments, built because watching models play a draft
@@ -450,9 +450,20 @@ export function HomeView({ trace, onOpenMethod, onOpenDocs }: HomeViewProps) {
           </nav>
         </div>
         <div class="bench-masthead-side" aria-hidden="true">
-          {trace.lead.map((name) => (
-            <img src={`/sprites/${trace.sprites[name]}.png`} alt="" key={name} />
-          ))}
+          {trace?.lead.map((name, index) => {
+            const size = index === 0 ? 104 : 82;
+            return (
+              <img
+                src={`/sprites/${trace.sprites[name]}.png`}
+                alt=""
+                width={size}
+                height={size}
+                loading="eager"
+                decoding="async"
+                key={name}
+              />
+            );
+          })}
         </div>
         <dl class="bench-facts" aria-label="Project facts">
           {BENCH_FACTS.map(([term, description]) => (
@@ -481,7 +492,15 @@ export function HomeView({ trace, onOpenMethod, onOpenDocs }: HomeViewProps) {
 
       <RecordLedger />
 
-      <WorkedExampleTrace trace={trace} />
+      <div class="selected-trace-slot selected-trace-slot-home" aria-busy={trace ? 'false' : 'true'}>
+        {trace ? (
+          <WorkedExampleTrace trace={trace} />
+        ) : (
+          <p class="selected-trace-status" role="status">
+            Loading selected trace…
+          </p>
+        )}
+      </div>
     </div>
   );
 }
