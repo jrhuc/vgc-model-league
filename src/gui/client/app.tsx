@@ -301,7 +301,7 @@ export function App() {
 
   const view = route.view;
   useLayoutEffect(() => {
-    document.body.classList.toggle('research-dark', view === 'home' || view === 'method' || view === 'docs');
+    document.body.classList.toggle('research-dark', view !== 'arena' && view !== 'fixtures');
   }, [view]);
 
   const navigate = (next: ViewId) => {
