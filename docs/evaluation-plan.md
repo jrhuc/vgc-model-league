@@ -277,11 +277,10 @@ Compatibility is evidence, not assumption. This is the current support table for
    one complete exhaustive action table per eligible decision, and the public-root
    reader strictly verifies the current manifest, public task bytes, digest, order,
    and exact public-only layout while rejecting private or mixed roots.
-2. Write the corpus sizing memo before generating games: games required,
-   eligible positions after stratification caps, panel compute per position,
-   and provider cost. Record generating models per position so
-   leave-own-games-out splits stay available, and consider side-mirrored
-   freezer row pairs so counterbalance is a corpus property.
+2. The parameterized [corpus-sizing memo](corpus-sizing.md) now defines the
+   planning equations and evidence boundary. Its numeric addendum and
+   provenance and mirror-pair design gates remain incomplete, so it does not
+   authorize pilot or candidate generation.
 3. Use the hardened grader and exporter to produce candidate artifacts,
    establish separate calibration evidence, review the eligibility policy, and
    pass the remaining gates.
