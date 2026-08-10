@@ -629,6 +629,7 @@ function readRosters(runsDir: string, runId: string, identity: LeagueIdentity, c
       return {
         id,
         name: String(mon.name ?? mon.id ?? ''),
+        spriteId: spriteIdFor(id),
         cost: count(mon.cost),
         pick: pick ? count(pick.pick) : null,
         rationale: typeof pick?.rationale === 'string' ? pick.rationale : '',
@@ -646,6 +647,7 @@ function readRosters(runsDir: string, runId: string, identity: LeagueIdentity, c
         (pick): LeagueRosterSlotView => ({
           id: String(pick.mon ?? ''),
           name: String(pick.name ?? pick.mon ?? ''),
+          spriteId: spriteIdFor(String(pick.mon ?? '')),
           cost: count(pick.cost),
           pick: count(pick.pick),
           rationale: typeof pick.rationale === 'string' ? pick.rationale : '',
@@ -862,6 +864,7 @@ export function buildLeague(allRows: SeriesRecord[], runsDir: string, runId: str
         entrant,
         id,
         name: slot?.name ?? id,
+        spriteId: slot?.spriteId ?? spriteIdFor(id),
         cost: slot?.cost ?? 0,
         pick: slot?.pick ?? null,
         builds: 0,

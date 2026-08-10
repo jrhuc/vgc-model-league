@@ -149,7 +149,7 @@ function FranchiseCard({
   onOpenTeam,
 }: {
   franchise: LeagueFranchiseView;
-  spriteFor: (id: string) => string;
+  spriteFor: (entry: { id: string; spriteId?: string }) => string;
   onOpenTeam: () => void;
 }) {
   const [openSlot, setOpenSlot] = useState<string | null>(null);
@@ -183,7 +183,7 @@ function FranchiseCard({
             title={`${entry.name} · ${entry.cost} pts${entry.acquired === 'window' ? ' · mid-season trade' : entry.pick !== null ? ` · pick ${entry.pick}` : ''}`}
             onClick={() => setOpenSlot(openSlot === entry.id ? null : entry.id)}
           >
-            <Sprite id={spriteFor(entry.id)} size={40} />
+            <Sprite id={spriteFor(entry)} size={40} />
           </button>
         ))}
       </div>
@@ -554,7 +554,7 @@ function TeamPage({
 }: {
   league: LeagueResponse;
   franchise: LeagueFranchiseView;
-  spriteFor: (id: string) => string;
+  spriteFor: (entry: { id: string; spriteId?: string }) => string;
   focusSeries: number | undefined;
   onBack: () => void;
   onOpenGame: (seriesIndex: number, game: number) => void;
@@ -636,7 +636,7 @@ function TeamPage({
           {picks.map((entry) => (
             <div class="draft-feed-item" key={entry.id}>
               <span class="draft-feed-head">
-                <Sprite id={spriteFor(entry.id)} size={24} />
+                <Sprite id={spriteFor(entry)} size={24} />
                 {entry.pick !== null ? `${pickLabel(entry.pick)} · ` : ''}
                 {entry.name} · {entry.cost} pts
                 {entry.fallback ? ' · fallback' : ''}
@@ -910,7 +910,8 @@ function LeaguePage({
 }) {
   const { board } = useBoard(league.board ?? '');
   const byId = useMemo(() => new Map((board?.mons ?? []).map((mon) => [mon.id, mon] as const)), [board]);
-  const spriteFor = (id: string) => byId.get(id)?.spriteId ?? id;
+  const spriteFor = (entry: { id: string; spriteId?: string }) =>
+    entry.spriteId || (byId.get(entry.id)?.spriteId ?? '');
   const owners = useMemo(() => {
     const map = new Map<string, number>();
     for (const franchise of league.franchises) {
@@ -1082,7 +1083,7 @@ function LeaguePage({
                     <tr key={`${entry.entrant}:${entry.id}`}>
                       <td>
                         <span class="usage-mon">
-                          <Sprite id={spriteFor(entry.id)} size={26} />
+                          <Sprite id={spriteFor(entry)} size={26} />
                           <b>{entry.name}</b>
                         </span>
                       </td>
