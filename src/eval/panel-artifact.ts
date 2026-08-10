@@ -40,7 +40,16 @@ const SEALED_KEYS = [
   'table',
   'task_id',
 ];
-const SOURCE_KEYS = ['game_number', 'pid', 'played', 'played_by', 'position_index', 'run_id', 'scaffold', 'series_id'];
+const SOURCE_KEYS = [
+  'game_number',
+  'generating_models',
+  'pid',
+  'played',
+  'position_index',
+  'run_id',
+  'scaffold',
+  'series_id',
+];
 const TABLE_KEYS = [
   'anchorAgreement',
   'heldOutGap',
@@ -77,7 +86,18 @@ const POSITION_PROMPT_PREFIX =
   'Choose one listed joint action for this controlled Pokemon VGC position.\nSelect the number for the complete joint action, not one part of it.\n\n';
 const POSITION_PROMPT_RESPONSE =
   'Return exactly one JSON object {"choice":N}, where N is a zero-based action number above. Include no other keys or prose.';
-export const POSITION_PANEL_ARTIFACT_SCHEMA_VERSION = 1;
+export const POSITION_PANEL_ARTIFACT_SCHEMA_VERSION = 2 as const;
+
+export interface PublicPositionTask extends JsonObject {
+  schema_version: typeof POSITION_PANEL_ARTIFACT_SCHEMA_VERSION;
+  task_id: string;
+  format: string;
+  phase: 'team_preview' | 'forced_switch' | 'turn';
+  turn: number;
+  prompt: string;
+  response_schema: JsonObject;
+  actions: Array<JsonObject & { number: number; canonical_action: string; label: string }>;
+}
 
 export function exactPublicPositionFingerprint(task: JsonObject): string {
   const actions = Array.isArray(task.actions)
@@ -143,14 +163,15 @@ function nullableFinite(value: unknown, location: string): number | null {
   return value === null ? null : finite(value, location);
 }
 
-function validatePublicPositionTask(row: JsonObject, index = 0): void {
+export function validatePublicPositionTask(value: unknown, index = 0): asserts value is PublicPositionTask {
   const location = `task[${index}]`;
+  const row = object(value, location);
   exactKeys(row, TASK_KEYS, location);
   if (row.schema_version !== POSITION_PANEL_ARTIFACT_SCHEMA_VERSION)
     throw new Error(`${location} has unsupported schema version`);
   string(row.task_id, `${location}.task_id`);
   string(row.format, `${location}.format`);
-  if (!['team_preview', 'forced_switch', 'turn'].includes(String(row.phase)))
+  if (typeof row.phase !== 'string' || !['team_preview', 'forced_switch', 'turn'].includes(row.phase))
     throw new Error(`${location}.phase is invalid`);
   integer(row.turn, `${location}.turn`);
   string(row.prompt, `${location}.prompt`);
@@ -324,6 +345,7 @@ function validatePrivatePositionScore(row: JsonObject, index = 0): void {
       throw new Error(`${location}.actions[${actionIndex}].normalized_reward is inconsistent`);
   }
   if (row.measurement_ready !== span > 0) throw new Error(`${location}.measurement_ready is inconsistent`);
+  if (!row.measurement_ready) throw new Error(`${location} measurement panel has no usable reward span`);
 
   const stability = object(row.stability, `${location}.stability`);
   exactKeys(
@@ -374,7 +396,6 @@ function validatePrivatePositionScore(row: JsonObject, index = 0): void {
       : []),
     ...(!stability.best_anchor_agreement ? ['best_anchor_unstable'] : []),
     ...(!stability.extrema_set_agreement ? ['extrema_sets_unstable'] : []),
-    ...(span <= 0 ? ['measurement_zero_span'] : []),
   ];
   if (canonicalJson(diagnosticFlags) !== canonicalJson(expectedDiagnosticFlags))
     throw new Error(`${location} has inconsistent diagnostic flags`);
@@ -717,8 +738,11 @@ function validateSealedPositionPanel(row: JsonObject, index = 0, psDir = default
   const panelSeed = string(row.panel_seed, `${location}.panel_seed`);
   const source = object(row.source, `${location}.source`);
   exactKeys(source, SOURCE_KEYS, `${location}.source`);
-  for (const key of ['run_id', 'series_id', 'scaffold', 'played_by', 'played'] as const)
+  for (const key of ['run_id', 'series_id', 'scaffold', 'played'] as const)
     string(source[key], `${location}.source.${key}`);
+  const generatingModels = object(source.generating_models, `${location}.source.generating_models`);
+  exactKeys(generatingModels, ['p1', 'p2'], `${location}.source.generating_models`);
+  for (const pid of ['p1', 'p2'] as const) string(generatingModels[pid], `${location}.source.generating_models.${pid}`);
   integer(source.game_number, `${location}.source.game_number`, 1);
   integer(source.position_index, `${location}.source.position_index`);
   if (!['p1', 'p2'].includes(String(source.pid))) throw new Error(`${location}.source.pid is invalid`);
@@ -833,7 +857,6 @@ export function validatePositionPanelArtifacts(
         : []),
       ...(!table.rankingStable ? ['best_anchor_unstable'] : []),
       ...(!table.anchorAgreement ? ['extrema_sets_unstable'] : []),
-      ...(table.measurement.span <= 0 ? ['measurement_zero_span'] : []),
     ];
     if (canonicalJson(score.diagnostic_flags) !== canonicalJson(expectedDiagnosticFlags))
       throw new Error(`score ${id} has inconsistent diagnostic flags`);

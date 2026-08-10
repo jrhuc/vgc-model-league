@@ -3,20 +3,23 @@ import { z } from 'zod';
 import { COUNTERFACTUAL_PROTOCOL_VERSION, EXHAUSTIVE_PANEL_PROTOCOL, REFERENCE } from './counterfactual.js';
 import { POSITION_ELIGIBILITY_METRICS_VERSION } from './eligibility.js';
 import { ACTION_PROTOCOL } from './fork.js';
-import { MIN_MEASURED_CONTRAST } from './positions.js';
+import { MIN_HELD_OUT_QUALIFICATION_SPAN } from './positions.js';
 import { CANONICAL_JSON_PROTOCOL, canonicalJson } from './serialization.js';
 import { POSITION_TASK_PROTOCOL } from './task.js';
 
-export const CANDIDATE_POSITION_MANIFEST_SCHEMA_VERSION = 1 as const;
+export const CANDIDATE_POSITION_MANIFEST_SCHEMA_VERSION = 2 as const;
 
 export const CANDIDATE_POSITION_SELECTION_RULES = {
-  version: 1,
-  source_rows: 'position-score-rows-from-complete-graded-source-games',
+  version: 3,
+  source_rows: 'schema-v3-exhaustive-position-score-rows-from-complete-graded-source-games',
   source_identity: ['run_id', 'series_id', 'game_number', 'position_index', 'pid'],
   duplicate_resolution: 'first-row-in-graded-input',
+  qualification_projection: {
+    source: 'versioned-grade-time-eligibility-metrics-only',
+    measurement_values: 'not-read',
+  },
   filters: {
-    discriminating: true,
-    minimum_measured_contrast: MIN_MEASURED_CONTRAST,
+    minimum_held_out_qualification_span: MIN_HELD_OUT_QUALIFICATION_SPAN,
     minimum_legal_actions: 2,
     formats: 'exact-allowlist-membership-or-all-when-null',
   },
@@ -53,6 +56,7 @@ const counterfactualSchema = z.strictObject({
   horizon: z.union([z.literal('end'), z.number().int().nonnegative()]),
   luckSamples: z.number().int().positive(),
   opponentSamples: z.number().int().positive(),
+  rolloutLimit: z.number().int().positive(),
 });
 const manifestSchema = z.strictObject({
   schema_version: z.literal(CANDIDATE_POSITION_MANIFEST_SCHEMA_VERSION),

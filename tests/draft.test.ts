@@ -7,6 +7,7 @@ import test from 'node:test';
 import { createBoardSearch } from '../src/board-search.js';
 import type { DraftBoardMon, DraftState } from '../src/draft.js';
 import {
+  applyDraftPick,
   boardInfo,
   draftBoardTable,
   draftScaffoldRevision,
@@ -34,8 +35,7 @@ import { foldSeriesGames } from '../src/series.js';
 import { loadShowdown } from '../src/showdown.js';
 import { runTeambuild, teambuildScaffoldRevision } from '../src/teambuild.js';
 import {
-  applyTradeDecision,
-  applyTradeOffer,
+  applyTradeWindowTransaction,
   MAX_TRADE_OFFERS,
   parseTradeDecision,
   parseTradeOffer,
@@ -197,6 +197,60 @@ test('snake order reverses on every round', () => {
   assert.deepEqual(snakeOrder(2, 2), [0, 1, 1, 0]);
 });
 
+test('draft pick transitions enforce the exact turn without mutating prior state', () => {
+  const snapshot = (state: DraftState) => ({
+    taken: [...state.taken],
+    rosters: state.rosters.map((roster) => roster.map((entry) => entry.id)),
+    budgets: [...state.budgets],
+    teamNames: [...state.teamNames],
+  });
+  const initial = freshState();
+  const untouched = snapshot(initial);
+  const action = { pick: 1, entrant: 0, mon: 'garchomp' };
+  const accepted = applyDraftPick(initial, action);
+
+  assert.deepEqual(snapshot(initial), untouched);
+  assert.notEqual(accepted, initial);
+  assert.notEqual(accepted.taken, initial.taken);
+  assert.notEqual(accepted.rosters, initial.rosters);
+  assert.notEqual(accepted.budgets, initial.budgets);
+  assert.notEqual(accepted.teamNames, initial.teamNames);
+  assert.deepEqual(applyDraftPick(initial, action), accepted, 'the same state and action have the same result');
+
+  const afterAccepted = snapshot(accepted);
+  assert.throws(() => applyDraftPick(accepted, action), /pick 1 is stale; expected pick 2/);
+  assert.deepEqual(snapshot(accepted), afterAccepted);
+  assert.throws(() => applyDraftPick(initial, { ...action, entrant: 1 }), /pick 1 belongs to entrant 0, not entrant 1/);
+  assert.deepEqual(snapshot(initial), untouched);
+});
+
+test('draft pick transitions reject unavailable, species-clashing, and over-budget picks atomically', () => {
+  const first = applyDraftPick(freshState(), { pick: 1, entrant: 0, mon: 'garchomp' });
+  const afterFirst = {
+    taken: [...first.taken],
+    rosters: first.rosters.map((roster) => [...roster]),
+    budgets: [...first.budgets],
+  };
+  assert.throws(() => applyDraftPick(first, { pick: 2, entrant: 1, mon: 'garchomp' }), /already drafted by coach 1/);
+  assert.deepEqual({ taken: [...first.taken], rosters: first.rosters, budgets: first.budgets }, afterFirst);
+
+  const second = applyDraftPick(first, { pick: 2, entrant: 1, mon: 'charizard-mega-y' });
+  const beforeClash = structuredClone(second);
+  assert.throws(
+    () => applyDraftPick(second, { pick: 3, entrant: 1, mon: 'charizard' }),
+    /shares the species Charizard/,
+  );
+  assert.deepEqual(second, beforeClash);
+
+  const tight = freshState({ budgets: [1, BOARD.budget] });
+  const beforeBudget = structuredClone(tight);
+  assert.throws(
+    () => applyDraftPick(tight, { pick: 1, entrant: 0, mon: 'garchomp' }),
+    /costs .* but you can spend at most/,
+  );
+  assert.deepEqual(tight, beforeBudget);
+});
+
 test('the round robin pairs every coach once and plays one match a week', () => {
   for (const size of [2, 4, 7, 8]) {
     const weeks = roundRobinWeeks(size);
@@ -257,7 +311,18 @@ test('trade-window swaps are atomic and may upgrade a base entry to its Mega', (
     0,
   );
   assert.match(String(overBudget), /above the .* budget/);
-  assert.ok(state.rosters[0]!.includes(tyranitar), 'a rejected list mutates nothing');
+  const beforeRejected = structuredClone(state);
+  assert.throws(
+    () =>
+      applyTradeWindowTransaction(state, {
+        kind: 'free_agency',
+        entrant: 0,
+        swaps: [{ drop: tyranitar.id, add: megaTyranitar.id }],
+        notebook: 'Mega Tyranitar is the endgame.',
+      }),
+    /above the .* budget/,
+  );
+  assert.deepEqual(state, beforeRejected, 'a rejected list mutates nothing');
 
   const parsed = parseTradeDecision(
     JSON.stringify({
@@ -273,12 +338,19 @@ test('trade-window swaps are atomic and may upgrade a base entry to its Mega', (
   );
   assert.notEqual(typeof parsed, 'string', String(parsed));
   if (typeof parsed === 'string') return;
-  applyTradeDecision(state, 0, parsed);
-  assert.equal(state.rosters[0]!.length, BOARD.picks);
-  assert.equal(state.budgets[0], 0);
-  assert.ok(state.rosters[0]!.some((entry) => entry.id === megaTyranitar.id));
-  assert.ok(state.rosters[0]!.some((entry) => entry.id === absol.id));
-  assert.ok(!state.rosters[0]!.some((entry) => entry.id === tyranitar.id || entry.id === mrRime.id));
+  const accepted = applyTradeWindowTransaction(state, {
+    kind: 'free_agency',
+    entrant: 0,
+    swaps: parsed.swaps,
+    notebook: parsed.notebook,
+  });
+  assert.deepEqual(state, beforeRejected, 'an accepted transition does not mutate its prior state');
+  assert.equal(accepted.rosters[0]!.length, BOARD.picks);
+  assert.equal(accepted.budgets[0], 0);
+  assert.equal(accepted.notebooks[0], 'Mega Tyranitar is now the endgame.');
+  assert.ok(accepted.rosters[0]!.some((entry) => entry.id === megaTyranitar.id));
+  assert.ok(accepted.rosters[0]!.some((entry) => entry.id === absol.id));
+  assert.ok(!accepted.rosters[0]!.some((entry) => entry.id === tyranitar.id || entry.id === mrRime.id));
 });
 
 test('coach trades validate both rosters and apply an accepted exchange atomically', () => {
@@ -347,25 +419,46 @@ test('coach trades validate both rosters and apply an accepted exchange atomical
     },
   });
   if (typeof parsed === 'string' || !parsed.offer) return;
-  applyTradeOffer(state, {
+  const offered = parsed.offer;
+  const before = structuredClone(state);
+  assert.throws(
+    () =>
+      applyTradeWindowTransaction(state, {
+        kind: 'offer',
+        from: 0,
+        to: 1,
+        give: offered.give,
+        get: 'garchomp',
+        accepted: true,
+        notebook: parsed.notebook,
+        responseNotebook: 'Plan around Charizard.',
+      }),
+    /is not on test:b's current roster/,
+  );
+  assert.deepEqual(state, before, 'a rejected offer leaves rosters, budgets, and notebooks untouched');
+
+  const accepted = applyTradeWindowTransaction(state, {
+    kind: 'offer',
     from: 0,
-    ...parsed.offer,
+    to: offered.to,
+    give: offered.give,
+    get: offered.get,
     accepted: true,
-    proposerFallback: false,
-    responderFallback: false,
-    offerReasoning: parsed.reasoning,
-    responseReasoning: 'Worth it.',
+    notebook: parsed.notebook,
+    responseNotebook: 'Plan around Charizard.',
   });
+  assert.deepEqual(state, before, 'an accepted offer does not mutate its prior state');
   assert.deepEqual(
-    state.rosters[0]!.map((entry) => entry.id),
+    accepted.rosters[0]!.map((entry) => entry.id),
     ['absol', 'tyranitar'],
   );
   assert.deepEqual(
-    state.rosters[1]!.map((entry) => entry.id),
+    accepted.rosters[1]!.map((entry) => entry.id),
     ['mr-rime', 'charizard-mega-y'],
   );
-  assert.equal(state.budgets[0], 85);
-  assert.equal(state.budgets[1], 77);
+  assert.equal(accepted.budgets[0], 85);
+  assert.equal(accepted.budgets[1], 77);
+  assert.deepEqual(accepted.notebooks, ['Plan around Tyranitar.', 'Plan around Charizard.']);
 });
 
 test('coach offers resolve before free agency and replay without model calls', async (t) => {
@@ -426,7 +519,8 @@ test('coach offers resolve before free agency and replay without model calls', a
   ]);
   const prompts = new Map<string, string[]>();
   const systems: string[] = [];
-  const artifact = await runTradeWindow(createState(), {
+  const liveState = createState();
+  const artifact = await runTradeWindow(liveState, {
     runDir: directory,
     psDir: defaultPsDir(),
     afterWeek: 1,
@@ -471,7 +565,8 @@ test('coach offers resolve before free agency and replay without model calls', a
   );
 
   let replayCalls = 0;
-  const replayed = await runTradeWindow(createState(), {
+  const replayState = createState();
+  const replayed = await runTradeWindow(replayState, {
     runDir: directory,
     psDir: defaultPsDir(),
     afterWeek: 1,
@@ -485,6 +580,7 @@ test('coach offers resolve before free agency and replay without model calls', a
   });
   assert.equal(replayCalls, 0);
   assert.deepEqual(replayed, artifact);
+  assert.deepEqual(replayState, liveState, 'ordered replay and live orchestration apply identical transitions');
 });
 
 test('offer artifacts distinguish exhausted parsing from deliberate and random decisions', async (t) => {
@@ -826,7 +922,7 @@ test('drafters name their franchise only after every pick is complete', async (t
     },
   );
   assert.equal(replayCalls, 0);
-  assert.deepEqual(replayed.teamNames, outcome.teamNames);
+  assert.deepEqual(replayed, outcome, 'transcript replay reconstructs the live draft outcome exactly');
 });
 
 test('a rejected pick is told which rule it broke', () => {
@@ -1790,17 +1886,64 @@ test('a full draft league drafts, plays weekly rounds, and crowns a champion', a
   assert.equal(finalDraft.weeks, 3);
   assert.ok(finalDraft.teambuilds.length > 0);
   assert.equal(loadSeriesRecords(recordsPath).length, rows.length);
+  const replayEvents: DraftLeagueEvent[] = [];
   const resumed = await runDraftLeague(['random', 'random', 'random', 'random'], directory, {
     recordsPath,
     seed: 11,
     concurrency: 2,
     resume: true,
+    onEvent: (event) => replayEvents.push(event),
   });
   assert.deepEqual(
     resumed.map((row) => row.series_id),
     rows.map((row) => row.series_id),
     'a completed final is adopted only after both exact constructions and series identity replay',
   );
+  const liveBracket = events
+    .filter((event): event is Extract<DraftLeagueEvent, { type: 'bracket' }> => event.type === 'bracket')
+    .at(-1)!.bracket;
+  const replayBracket = replayEvents.find(
+    (event): event is Extract<DraftLeagueEvent, { type: 'bracket' }> => event.type === 'bracket',
+  )!.bracket;
+  assert.deepEqual(replayBracket, liveBracket, 'live playoffs and stored adoption produce the same bracket');
+});
+
+test('a four-seed draft playoff advances and replays the same exact bracket', async (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-draft-league-playoff-bracket-'));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const recordsPath = path.join(directory, 'results.jsonl');
+  const models = Array.from({ length: 5 }, () => 'random');
+  const liveEvents: DraftLeagueEvent[] = [];
+  const rows = await runDraftLeague(models, directory, {
+    recordsPath,
+    seed: 17,
+    concurrency: 4,
+    tradeWindow: null,
+    onEvent: (event) => liveEvents.push(event),
+  });
+  assert.equal(rows.filter((row) => row.stage === 'playoff').length, 3);
+  const liveBracket = liveEvents
+    .filter((event): event is Extract<DraftLeagueEvent, { type: 'bracket' }> => event.type === 'bracket')
+    .at(-1)!.bracket;
+  assert.deepEqual(
+    liveBracket.rounds[1]![0]!.slots,
+    liveBracket.rounds[0]!.map((match) => match.winner),
+    'each semifinal advances only into its corresponding final slot',
+  );
+
+  const replayEvents: DraftLeagueEvent[] = [];
+  await runDraftLeague(models, directory, {
+    recordsPath,
+    seed: 17,
+    concurrency: 4,
+    tradeWindow: null,
+    resume: true,
+    onEvent: (event) => replayEvents.push(event),
+  });
+  const replayBracket = replayEvents.find(
+    (event): event is Extract<DraftLeagueEvent, { type: 'bracket' }> => event.type === 'bracket',
+  )!.bracket;
+  assert.deepEqual(replayBracket, liveBracket);
 });
 
 test('a draft league checkpoints after a week and resumes to a champion', async (t) => {

@@ -9,7 +9,11 @@ import {
   twoStageClusterEstimate,
 } from '../src/eval/counterfactual.js';
 import { requestActionCandidates } from '../src/eval/fork.js';
-import { exactPublicPositionFingerprint, validatePositionPanelArtifacts } from '../src/eval/panel-artifact.js';
+import {
+  exactPublicPositionFingerprint,
+  POSITION_PANEL_ARTIFACT_SCHEMA_VERSION,
+  validatePositionPanelArtifacts,
+} from '../src/eval/panel-artifact.js';
 import { canonicalJson, canonicalJsonDigest, canonicalJsonl } from '../src/eval/serialization.js';
 import type { BattleRequest, JsonObject } from '../src/types.js';
 import { minimalPanelBattle } from './fixtures/position-panel.js';
@@ -22,7 +26,7 @@ function artifacts(): { tasks: JsonObject[]; scores: JsonObject[]; sealed: JsonO
   ];
   const tasks: JsonObject[] = [
     {
-      schema_version: 1,
+      schema_version: POSITION_PANEL_ARTIFACT_SCHEMA_VERSION,
       task_id: 'task-a',
       format: 'gen9customgame',
       phase: 'turn',
@@ -50,7 +54,7 @@ function artifacts(): { tasks: JsonObject[]; scores: JsonObject[]; sealed: JsonO
   ];
   const scores: JsonObject[] = [
     {
-      schema_version: 1,
+      schema_version: POSITION_PANEL_ARTIFACT_SCHEMA_VERSION,
       task_id: 'task-a',
       structural_pass: true,
       structural_reasons: [],
@@ -141,7 +145,7 @@ function artifacts(): { tasks: JsonObject[]; scores: JsonObject[]; sealed: JsonO
   };
   const sealed: JsonObject[] = [
     {
-      schema_version: 1,
+      schema_version: POSITION_PANEL_ARTIFACT_SCHEMA_VERSION,
       task_id: 'task-a',
       source_id: 'source-a',
       exact_public_fingerprint: 'pending',
@@ -152,7 +156,10 @@ function artifacts(): { tasks: JsonObject[]; scores: JsonObject[]; sealed: JsonO
         position_index: 2,
         pid: 'p1',
         scaffold: 'revision',
-        played_by: 'model',
+        generating_models: {
+          p1: 'p1-openrouter:model-a',
+          p2: 'p2-anthropic:model-b',
+        },
         played: 'move 2',
       },
       snapshot: position.snapshot,
@@ -300,7 +307,7 @@ function measurementZeroSpanArtifacts(): ReturnType<typeof artifacts> {
   table.valueSpan = 0;
   const score = artifact.scores[0] as JsonObject;
   score.measurement_ready = false;
-  score.diagnostic_flags = ['measurement_zero_span'];
+  score.diagnostic_flags = [];
   score.min_value = 0;
   score.max_value = 0;
   score.span = 0;
@@ -382,12 +389,48 @@ test('public, private-score, and sealed panel rows form one exact schema join', 
 test('public, score, and sealed rows require the current artifact schema', () => {
   for (const collection of ['tasks', 'scores', 'sealed'] as const) {
     const artifact = artifacts();
-    artifact[collection][0]!.schema_version = 999;
+    artifact[collection][0]!.schema_version = POSITION_PANEL_ARTIFACT_SCHEMA_VERSION - 1;
     assert.throws(
       () => validatePositionPanelArtifacts(artifact.tasks, artifact.scores, artifact.sealed),
       /unsupported schema version/,
     );
   }
+});
+
+test('sealed generator provenance requires one exact configured model spec for each pid', () => {
+  const accepted = artifacts();
+  assert.doesNotThrow(() => validatePositionPanelArtifacts(accepted.tasks, accepted.scores, accepted.sealed));
+
+  const missing = artifacts();
+  const missingModels = (missing.sealed[0]!.source as JsonObject).generating_models as JsonObject;
+  delete missingModels.p2;
+  assert.throws(
+    () => validatePositionPanelArtifacts(missing.tasks, missing.scores, missing.sealed),
+    /source.generating_models keys differ/,
+  );
+
+  const extra = artifacts();
+  const extraModels = (extra.sealed[0]!.source as JsonObject).generating_models as JsonObject;
+  extraModels.p3 = 'p3-openrouter:model-c';
+  assert.throws(
+    () => validatePositionPanelArtifacts(extra.tasks, extra.scores, extra.sealed),
+    /source.generating_models keys differ/,
+  );
+
+  const normalized = artifacts();
+  const normalizedModels = (normalized.sealed[0]!.source as JsonObject).generating_models as JsonObject;
+  normalizedModels.p1 = { provider: 'openrouter', model: 'model-a' };
+  assert.throws(
+    () => validatePositionPanelArtifacts(normalized.tasks, normalized.scores, normalized.sealed),
+    /source.generating_models.p1 must be a non-empty string/,
+  );
+
+  const collapsed = artifacts();
+  (collapsed.sealed[0]!.source as JsonObject).generating_models = 'openrouter:model-a';
+  assert.throws(
+    () => validatePositionPanelArtifacts(collapsed.tasks, collapsed.scores, collapsed.sealed),
+    /source.generating_models must be an object/,
+  );
 });
 
 test('frozen prompt, public fingerprint, played action, and panel seed are sealed joins', () => {
@@ -669,12 +712,13 @@ test('opponent draws preserve clustered replication blocks and the sealed reques
   );
 });
 
-test('score duplicates and structural versus measurement readiness are exact', () => {
+test('score duplicates and unusable measurement panels fail closed', () => {
   const zeroMeasurement = measurementZeroSpanArtifacts();
   assert.equal(zeroMeasurement.scores[0]!.structural_pass, true);
   assert.equal(zeroMeasurement.scores[0]!.measurement_ready, false);
-  assert.doesNotThrow(() =>
-    validatePositionPanelArtifacts(zeroMeasurement.tasks, zeroMeasurement.scores, zeroMeasurement.sealed),
+  assert.throws(
+    () => validatePositionPanelArtifacts(zeroMeasurement.tasks, zeroMeasurement.scores, zeroMeasurement.sealed),
+    /measurement panel has no usable reward span/,
   );
 
   const staleScoreAction = artifacts();

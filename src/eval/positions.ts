@@ -1,7 +1,11 @@
 import { seededRng, shuffle } from '../random.js';
 import type { BattleRequest, JsonObject, Pid } from '../types.js';
+import { POSITION_ELIGIBILITY_METRICS_VERSION } from './eligibility.js';
 
-export const MIN_MEASURED_CONTRAST = 0.05;
+export const POSITION_GRADE_SCHEMA_VERSION = 3 as const;
+export const POSITION_SET_TARGET_SIZE = 500;
+export const POSITION_SET_PER_GAME_CAP = 2;
+export const MIN_HELD_OUT_QUALIFICATION_SPAN = 0.05;
 export interface CandidatePosition {
   runId: string;
   seriesId: string;
@@ -15,9 +19,8 @@ export interface CandidatePosition {
   turn: number;
   legal: number;
   value: number;
-  contrast: number;
+  heldOutQualificationSpan: number;
   played: string;
-  discriminating: boolean;
 }
 
 export interface SelectionOptions {
@@ -43,15 +46,32 @@ interface Selection {
   rejected: number;
 }
 
+function projectedEligibilityMetrics(value: unknown): { legal: number; heldOutQualificationSpan: number } | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const metrics = value as JsonObject;
+  if (
+    metrics.version !== POSITION_ELIGIBILITY_METRICS_VERSION ||
+    typeof metrics.legalActions !== 'number' ||
+    !Number.isSafeInteger(metrics.legalActions) ||
+    metrics.legalActions < 1 ||
+    typeof metrics.heldOutSpanValue !== 'number' ||
+    !Number.isFinite(metrics.heldOutSpanValue)
+  ) {
+    return null;
+  }
+  return { legal: metrics.legalActions, heldOutQualificationSpan: metrics.heldOutSpanValue };
+}
+
 export function readCandidates(rows: JsonObject[]): CandidatePosition[] {
   const candidates: CandidatePosition[] = [];
   for (const row of rows) {
-    const vsSampledOpponent = row.vs_sampled_opponent as JsonObject | undefined;
+    const metrics = projectedEligibilityMetrics(row.eligibility_metrics);
     const pid = row.pid;
     if (
-      !vsSampledOpponent ||
+      !metrics ||
       (pid !== 'p1' && pid !== 'p2') ||
       typeof row.state_value !== 'number' ||
+      !Number.isFinite(row.state_value) ||
       typeof row.position_digest !== 'string' ||
       !row.position_digest
     ) {
@@ -62,17 +82,16 @@ export function readCandidates(rows: JsonObject[]): CandidatePosition[] {
       seriesId: String(row.series_id ?? ''),
       gameNumber: Number(row.game_number ?? 0),
       positionIndex: Number(row.position_index ?? 0),
-      positionDigest: String(row.position_digest ?? ''),
+      positionDigest: row.position_digest,
       pid,
       format: String(row.format ?? ''),
       scaffold: String(row.scaffold ?? ''),
       phase: typeof row.phase === 'string' ? row.phase : 'turn',
       turn: Number(row.turn ?? 0),
-      legal: Number(row.legal_actions ?? 0),
+      legal: metrics.legal,
       value: row.state_value,
-      contrast: Number(vsSampledOpponent.measuredContrast ?? 0),
+      heldOutQualificationSpan: metrics.heldOutQualificationSpan,
       played: String(row.chosen ?? ''),
-      discriminating: Boolean(vsSampledOpponent.discriminating),
     });
   }
   return candidates;
@@ -148,17 +167,17 @@ interface PoolState {
 }
 
 export function selectPositions(candidates: CandidatePosition[], options: SelectionOptions = {}): Selection {
-  const size = options.size ?? 500;
-  const perGame = options.perGame ?? 3;
+  const size = options.size ?? POSITION_SET_TARGET_SIZE;
+  const perGame = options.perGame ?? POSITION_SET_PER_GAME_CAP;
   const random = seededRng(options.seed ?? 'position-set');
 
   const unique = new Map<string, CandidatePosition>();
   for (const position of candidates) if (!unique.has(keyOf(position))) unique.set(keyOf(position), position);
   const usable = [...unique.values()].filter(
     (position) =>
-      position.discriminating &&
-      position.contrast >= MIN_MEASURED_CONTRAST &&
-      position.legal > 1 &&
+      Number.isFinite(position.heldOutQualificationSpan) &&
+      position.heldOutQualificationSpan >= MIN_HELD_OUT_QUALIFICATION_SPAN &&
+      position.legal >= 2 &&
       (!options.formats || options.formats.includes(position.format)),
   );
   const rejected = candidates.length - usable.length;

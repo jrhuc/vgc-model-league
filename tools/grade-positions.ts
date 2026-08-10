@@ -1,18 +1,21 @@
 #!/usr/bin/env node
-import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isMainThread, parentPort, Worker, workerData } from 'node:worker_threads';
-import { type GameRecord, gameRecordCorpusDigest, loadGameRecords, verifyGame } from '../src/eval/corpus.js';
+import { type GameRecord, gameRecordCorpusDigest, loadGameRecordCorpus, verifyGame } from '../src/eval/corpus.js';
 import {
   type CounterfactualOptions,
   counterfactualProtocol,
-  evaluatePosition,
+  EXHAUSTIVE_PANEL_PROTOCOL,
+  evaluateActionTable,
   validateCounterfactualOptions,
 } from '../src/eval/counterfactual.js';
+import { positionEligibilityMetrics } from '../src/eval/eligibility.js';
 import { ACTION_PROTOCOL, positionDigest, requestPhase } from '../src/eval/fork.js';
+import { POSITION_GRADE_SCHEMA_VERSION } from '../src/eval/positions.js';
+import { captureRuntimeProducerAuthority } from '../src/eval/producer.js';
 import { DATA_DIR, defaultPsDir } from '../src/paths.js';
 import { showdownCommit } from '../src/showdown.js';
 import type { JsonObject } from '../src/types.js';
@@ -42,7 +45,7 @@ interface GradedGame {
 }
 
 interface GradeManifest extends JsonObject {
-  schema_version: number;
+  schema_version: typeof POSITION_GRADE_SCHEMA_VERSION;
   showdown_commit: string;
   evaluator_digest: string;
   source_digest: string;
@@ -50,6 +53,7 @@ interface GradeManifest extends JsonObject {
   scope: JsonObject;
   action_protocol: JsonObject;
   counterfactual: JsonObject;
+  exhaustive_panels: JsonObject;
   seed_namespace: string;
 }
 
@@ -76,8 +80,6 @@ function parse(argv: string[]): Settings {
       settings.horizon = value === 'end' ? Number.POSITIVE_INFINITY : Number(value);
     else if (flag === '--luck' && value) settings.luckSamples = Number(value);
     else if (flag === '--opponents' && value) settings.opponentSamples = Number(value);
-    else if (flag === '--shortlist' && value) settings.shortlist = Number(value);
-    else if (flag === '--screen' && value) settings.screenSamples = Number(value);
     else if (flag === '--seed' && value) settings.seed = value;
     else if (flag === '--out' && value) settings.out = path.resolve(value);
     else if (flag === '--records' && value) settings.recordsPath = path.resolve(value);
@@ -122,36 +124,11 @@ function gradedGames(file: string): Set<string> {
   return done;
 }
 
-function digestParts(parts: Iterable<string>): string {
-  const hash = crypto.createHash('sha256');
-  for (const part of parts) hash.update(`${Buffer.byteLength(part)}:`, 'utf8').update(part, 'utf8');
-  return hash.digest('hex');
-}
-
-function evaluatorDigest(): string {
-  const tool = fileURLToPath(import.meta.url);
-  const files = [
-    tool,
-    path.resolve(path.dirname(tool), '../src/eval/corpus.js'),
-    path.resolve(path.dirname(tool), '../src/eval/fork.js'),
-    path.resolve(path.dirname(tool), '../src/eval/counterfactual.js'),
-    path.resolve(path.dirname(tool), '../src/random.js'),
-    path.resolve(path.dirname(tool), '../src/choices.js'),
-    path.resolve(path.dirname(tool), '../src/sim.js'),
-  ];
-  return digestParts(
-    files.map(
-      (file) => `${path.basename(file)}
-${fs.readFileSync(file, 'utf8')}`,
-    ),
-  );
-}
-
-function manifestFor(settings: Settings, records: GameRecord[]): GradeManifest {
+function manifestFor(settings: Settings, records: GameRecord[], producerDigest: string): GradeManifest {
   return {
-    schema_version: 1,
+    schema_version: POSITION_GRADE_SCHEMA_VERSION,
     showdown_commit: showdownCommit(settings.psDir ?? defaultPsDir()),
-    evaluator_digest: evaluatorDigest(),
+    evaluator_digest: producerDigest,
     source_digest: gameRecordCorpusDigest(records),
     source_games: records.length,
     scope: {
@@ -162,12 +139,13 @@ function manifestFor(settings: Settings, records: GameRecord[]): GradeManifest {
     },
     action_protocol: ACTION_PROTOCOL as unknown as JsonObject,
     counterfactual: counterfactualProtocol(settings) as unknown as JsonObject,
+    exhaustive_panels: EXHAUSTIVE_PANEL_PROTOCOL as unknown as JsonObject,
     seed_namespace: String(settings.seed ?? 'source-game-position'),
   };
 }
 
-function prepareOutput(settings: Settings, records: GameRecord[]): GradeManifest {
-  const manifest = manifestFor(settings, records);
+function prepareOutput(settings: Settings, records: GameRecord[], producerDigest: string): GradeManifest {
+  const manifest = manifestFor(settings, records, producerDigest);
   const manifestPath = `${settings.out}.manifest.json`;
   if (settings.restart) {
     fs.rmSync(settings.out, { force: true });
@@ -195,11 +173,10 @@ function prepareOutput(settings: Settings, records: GameRecord[]): GradeManifest
 }
 
 function scopedRecords(settings: Settings): GameRecord[] {
-  const records = loadGameRecords({
+  const records = loadGameRecordCorpus({
     ...(settings.modes ? { modes: settings.modes } : {}),
     ...(settings.recordsPath ? { recordsPath: settings.recordsPath } : {}),
     ...(settings.runsDir ? { runsDir: settings.runsDir } : {}),
-    ...(settings.psDir ? { psDir: settings.psDir } : {}),
   });
   return records.slice(0, settings.limit ?? Number.POSITIVE_INFINITY);
 }
@@ -286,10 +263,36 @@ function gradeShard(shard: Shard, emit: (graded: GradedGame) => void): void {
           continue;
         }
         const seed = `${settings.seed ?? 'source-game-position'}:${key}:${position.index}:${pid}`;
-        const graded = evaluatePosition(position, pid, { ...settings, seed });
-        if (!graded) {
+        const table = evaluateActionTable(position, pid, { ...settings, seed });
+        if (!table) {
           stats.failed += 1;
           rows.push(decisionStatus(record, position.index, pid, 'counterfactual-evaluation-failed'));
+          continue;
+        }
+        const panels = [...table.stability, table.measurement];
+        const actions = table.measurement.actions.map((entry) => entry.action);
+        const complete =
+          panels.length === 3 &&
+          actions.length === table.legal &&
+          panels.every(
+            (panel) =>
+              panel.actions.length === table.legal &&
+              panel.draws.length > 0 &&
+              panel.matrix.length === panel.draws.length &&
+              panel.matrix.every((row) => row.length === table.legal) &&
+              panel.actions.every(
+                (entry, actionIndex) => entry.action === actions[actionIndex] && entry.samples === panel.draws.length,
+              ),
+          );
+        if (!complete) {
+          stats.failed += 1;
+          rows.push(decisionStatus(record, position.index, pid, 'counterfactual-evaluation-incomplete'));
+          continue;
+        }
+        const chosen = position.actual[pid];
+        if (!chosen || !actions.includes(chosen)) {
+          stats.failed += 1;
+          rows.push(decisionStatus(record, position.index, pid, 'recorded-action-not-in-counterfactual-table'));
           continue;
         }
         stats.graded += 1;
@@ -303,21 +306,19 @@ function gradeShard(shard: Shard, emit: (graded: GradedGame) => void): void {
           showdown_commit: record.psCommit,
           scaffold: record.scaffold.revision,
           scaffold_components: record.scaffold.components,
-          model: record.players[pid],
-          opponent: record.players[pid === 'p1' ? 'p2' : 'p1'],
+          generating_models: { p1: record.players.p1, p2: record.players.p2 },
           pid,
           position_index: position.index,
           position_digest: positionDigest(position, pid),
           choice_index: choiceIndex,
-          turn: graded.turn,
+          turn: table.turn,
           phase: requestPhase(position.requests[pid]),
-          legal_actions: graded.legal,
-          chosen: graded.chosen,
-          state_value: graded.stateValue,
+          legal_actions: table.legal,
+          chosen,
+          state_value: table.stateValue,
           counterfactual: counterfactualProtocol(settings),
           sampling_seed: seed,
-          vs_actual_opponent: graded.vsActualOpponent,
-          vs_sampled_opponent: graded.vsSampledOpponent,
+          eligibility_metrics: positionEligibilityMetrics(table),
         });
       }
     }
@@ -336,15 +337,26 @@ function gradeShard(shard: Shard, emit: (graded: GradedGame) => void): void {
 
 async function main(): Promise<void> {
   const settings = parse(process.argv.slice(2));
+  const producer = captureRuntimeProducerAuthority(import.meta.url);
+  const showdownRealpath = fs.realpathSync.native(settings.psDir ?? defaultPsDir());
+  if (showdownRealpath !== producer.showdownRealpath) {
+    throw new Error(
+      `configured Pokémon Showdown root ${showdownRealpath} does not match captured producer runtime ${producer.showdownRealpath}`,
+    );
+  }
+  settings.psDir = producer.showdownRealpath;
   fs.mkdirSync(path.dirname(settings.out), { recursive: true });
   const records = scopedRecords(settings);
-  const manifest = prepareOutput(settings, records);
+  const manifest = prepareOutput(settings, records, producer.producerDigest);
   const done = gradedGames(settings.out);
   const remaining = records.filter((record) => !done.has(gameKey(record))).length;
   const workers = Math.min(settings.workers, Math.max(1, remaining));
   process.stdout.write(`${remaining} of ${records.length} candidate games left across ${workers} workers into ${settings.out}
 `);
-  if (!remaining) return;
+  if (!remaining) {
+    producer.assertUnchanged();
+    return;
+  }
 
   const stream = fs.createWriteStream(settings.out, { flags: 'a' });
   let rows = 0;
@@ -374,6 +386,7 @@ async function main(): Promise<void> {
     stream.on('error', reject);
     stream.end(resolve);
   });
+  producer.assertUnchanged();
   process.stdout.write(`${rows} decisions graded in ${((Date.now() - started) / 60_000).toFixed(1)} min
 `);
 }

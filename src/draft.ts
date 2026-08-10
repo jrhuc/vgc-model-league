@@ -301,6 +301,39 @@ export function legalPicks(state: DraftState, drafter: number): DraftBoardMon[] 
   });
 }
 
+interface DraftPickAction {
+  pick: number;
+  entrant: number;
+  mon: string;
+}
+
+export function applyDraftPick(state: DraftState, action: DraftPickAction): DraftState {
+  const completed = state.taken.size;
+  const expectedPick = completed + 1;
+  const expectedEntrant = snakeOrder(state.rosters.length, state.board.picks)[completed];
+  if (expectedEntrant === undefined) throw new Error('the draft is already complete');
+  if (!Number.isSafeInteger(action.pick) || action.pick !== expectedPick) {
+    throw new Error(`draft pick ${String(action.pick)} is stale; expected pick ${expectedPick}`);
+  }
+  if (action.entrant !== expectedEntrant) {
+    throw new Error(`draft pick ${expectedPick} belongs to entrant ${expectedEntrant}, not entrant ${action.entrant}`);
+  }
+  if (typeof action.mon !== 'string') throw new Error(`draft pick ${expectedPick} needs an exact board id`);
+  const mon = state.board.mons.find((candidate) => candidate.id === action.mon);
+  if (!mon) throw new Error(`draft pick ${expectedPick} names unknown board id ${JSON.stringify(action.mon)}`);
+  const legal = legalPicks(state, action.entrant);
+  if (!legal.includes(mon))
+    throw new Error(`draft pick ${expectedPick} is illegal: ${rejection(mon.id, legal, state, action.entrant)}`);
+
+  const rosters = [...state.rosters];
+  rosters[action.entrant] = [...rosters[action.entrant]!, mon];
+  const budgets = [...state.budgets];
+  budgets[action.entrant]! -= mon.cost;
+  const taken = new Map(state.taken);
+  taken.set(mon.id, action.entrant);
+  return { board: state.board, taken, rosters, budgets, teamNames: [...state.teamNames] };
+}
+
 export function maxAffordable(legal: readonly DraftBoardMon[]): number {
   return legal.length ? Math.max(...legal.map((mon) => mon.cost)) : 0;
 }
@@ -344,37 +377,38 @@ function replayTranscript(
   state: DraftState,
   context: {
     models: string[];
-    board: DraftBoard;
     order: number[];
     picks: DraftPickView[];
     notebooks: string[];
     onPick?: (view: DraftPickView, state: DraftState) => void;
   },
-): number {
+): { count: number; state: DraftState } {
   const rows = readJsonlObjects(file) as Record<string, unknown>[];
+  let replayedState = state;
   for (const [index, row] of rows.entries()) {
     const drafter = context.order[index];
     if (drafter === undefined) throw new Error(`${file} holds more picks than the draft has slots`);
     if (row.model !== context.models[drafter]) {
       throw new Error(`${file} pick ${index + 1} belongs to ${String(row.model)}, expected ${context.models[drafter]}`);
     }
-    const mon = context.board.mons.find((entry) => entry.id === row.mon);
-    if (!mon) {
+    try {
+      replayedState = applyDraftPick(replayedState, {
+        pick: row.pick as number,
+        entrant: drafter,
+        mon: row.mon as string,
+      });
+    } catch (cause) {
+      const reason = cause instanceof Error ? cause.message : String(cause);
+      throw new Error(`${file} pick ${index + 1} is invalid: ${reason}`, { cause });
+    }
+    const mon = replayedState.rosters[drafter]!.at(-1)!;
+    if (typeof row.budget_left === 'number' && row.budget_left !== replayedState.budgets[drafter]) {
       throw new Error(
-        `${file} pick ${index + 1} drafted ${String(row.mon)}, which board ${context.board.id} does not hold`,
+        `${file} pick ${index + 1} leaves ${replayedState.budgets[drafter]} points, but the transcript recorded ${row.budget_left}`,
       );
     }
-    if (state.taken.has(mon.id)) throw new Error(`${file} pick ${index + 1} drafted ${mon.id} twice`);
-    state.taken.set(mon.id, drafter);
-    state.rosters[drafter]!.push(mon);
-    state.budgets[drafter]! -= mon.cost;
-    if (typeof row.budget_left === 'number' && row.budget_left !== state.budgets[drafter]) {
-      throw new Error(
-        `${file} pick ${index + 1} leaves ${state.budgets[drafter]} points, but the transcript recorded ${row.budget_left}`,
-      );
-    }
-    if (typeof row.team_name === 'string' && row.team_name && !state.teamNames[drafter])
-      state.teamNames[drafter] = row.team_name;
+    if (typeof row.team_name === 'string' && row.team_name && !replayedState.teamNames[drafter])
+      replayedState.teamNames[drafter] = row.team_name;
     if (typeof row.notebook === 'string') context.notebooks[drafter] = row.notebook;
     const view: DraftPickView = {
       pick: index + 1,
@@ -384,9 +418,9 @@ function replayTranscript(
       fallback: row.fallback === true,
     };
     context.picks.push(view);
-    context.onPick?.(view, state);
+    context.onPick?.(view, replayedState);
   }
-  return rows.length;
+  return { count: rows.length, state: replayedState };
 }
 
 export function snakeOrder(entrants: number, rounds: number): number[] {
@@ -718,7 +752,7 @@ export interface DraftOutcome {
 export async function runDraft(models: string[], board: DraftBoard, options: RunDraftOptions): Promise<DraftOutcome> {
   const psDir = options.psDir ?? defaultPsDir();
   fs.mkdirSync(options.logDir, { recursive: true });
-  const state: DraftState = {
+  let state: DraftState = {
     board,
     taken: new Map(),
     rosters: models.map(() => []),
@@ -750,14 +784,14 @@ export async function runDraft(models: string[], board: DraftBoard, options: Run
   const order = snakeOrder(models.length, board.picks);
   const replayed = replayTranscript(transcript, state, {
     models,
-    board,
     order,
     picks,
     notebooks,
     ...(options.onPick ? { onPick: options.onPick } : {}),
   });
+  state = replayed.state;
   for (const [pickNumber, drafter] of order.entries()) {
-    if (pickNumber < replayed) continue;
+    if (pickNumber < replayed.count) continue;
     options.signal?.throwIfAborted();
     const legal = legalPicks(state, drafter);
     if (legal.length === 0) {
@@ -892,9 +926,7 @@ export async function runDraft(models: string[], board: DraftBoard, options: Run
       };
     }
 
-    state.taken.set(chosen.id, drafter);
-    state.rosters[drafter]!.push(chosen);
-    state.budgets[drafter]! -= chosen.cost;
+    state = applyDraftPick(state, { pick: pickNumber + 1, entrant: drafter, mon: chosen.id });
     const view: DraftPickView = {
       pick: pickNumber + 1,
       entrant: drafter,

@@ -8,6 +8,9 @@ import {
   type CandidatePosition,
   gameOf,
   keyOf,
+  MIN_HELD_OUT_QUALIFICATION_SPAN,
+  POSITION_SET_PER_GAME_CAP,
+  POSITION_SET_TARGET_SIZE,
   readCandidates,
   selectPositions,
   stratumOf,
@@ -27,9 +30,8 @@ function candidate(overrides: Partial<CandidatePosition> = {}): CandidatePositio
     turn: 5,
     legal: 40,
     value: 0,
-    contrast: 0.5,
+    heldOutQualificationSpan: 0.5,
     played: 'move 1, move 1',
-    discriminating: true,
     ...overrides,
   };
 }
@@ -40,16 +42,25 @@ test('a position is placed by phase, how far in, and who was ahead', () => {
   assert.equal(stratumOf(candidate({ turn: 12, value: -0.2 })), 'turn/late/behind');
 });
 
-test('a position nothing could be learned from is not a candidate', () => {
+test('qualification span and legal-action thresholds are inclusive and finite', () => {
   const rows = [
-    candidate({ positionIndex: 0, discriminating: false }),
-    candidate({ positionIndex: 1, contrast: 0.001 }),
+    candidate({ positionIndex: 0, heldOutQualificationSpan: Number.NaN }),
+    candidate({ positionIndex: 1, heldOutQualificationSpan: MIN_HELD_OUT_QUALIFICATION_SPAN - 0.001 }),
     candidate({ positionIndex: 2, legal: 1 }),
-    candidate({ positionIndex: 3 }),
+    candidate({ positionIndex: 3, heldOutQualificationSpan: MIN_HELD_OUT_QUALIFICATION_SPAN, legal: 2 }),
   ];
   const selection = selectPositions(rows, { size: 10, seed: 'fixed' });
   assert.equal(selection.rejected, 3);
   assert.equal(selection.positions.length, 1);
+});
+
+test('the frozen position-set target caps each source game at two tasks', () => {
+  assert.equal(POSITION_SET_TARGET_SIZE, 500);
+  assert.equal(POSITION_SET_PER_GAME_CAP, 2);
+  const rows = Array.from({ length: 5 }, (_, index) => candidate({ positionIndex: index }));
+  const selection = selectPositions(rows, { size: 5, seed: 'fixed' });
+  assert.equal(selection.positions.length, 2);
+  assert.equal(selection.games, 1);
 });
 
 test('one long game cannot fill the set', () => {
@@ -93,31 +104,68 @@ test('both sides of a position are separate decisions to answer', () => {
   assert.equal(selectPositions(rows, { size: 10, seed: 'fixed', perGame: 3 }).positions.length, 2);
 });
 
-test('the graded rows carry everything a candidate needs', () => {
-  const [row] = readCandidates([
-    {
-      run_id: 'r',
-      series_id: 's',
-      game_number: 2,
-      position_index: 4,
-      position_digest: 'digest-4',
-      pid: 'p2',
-      format: 'gen9championsvgc2026regmbbo3',
-      scaffold: 'rev',
-      phase: 'turn',
-      turn: 6,
-      legal_actions: 88,
-      chosen: 'move 1, move 2',
-      state_value: -0.2,
-      vs_sampled_opponent: { opportunityLoss: 0.1, measuredContrast: 0.6, discriminating: true },
-    },
-    { run_id: 'r', pid: 'p1' },
-  ]);
+test('the graded rows project only versioned grade-time eligibility metrics', () => {
+  const source = {
+    run_id: 'r',
+    series_id: 's',
+    game_number: 2,
+    position_index: 4,
+    position_digest: 'digest-4',
+    pid: 'p2',
+    generating_models: { p1: 'p1-openrouter:model-a', p2: 'p2-anthropic:model-b' },
+    format: 'gen9championsvgc2026regmbbo3',
+    scaffold: 'rev',
+    phase: 'turn',
+    turn: 6,
+    legal_actions: 999,
+    chosen: 'move 1, move 2',
+    state_value: -0.2,
+    eligibility_metrics: { version: 1, legalActions: 88, heldOutSpanValue: 0.6 },
+    measurement_value: 99,
+    measurement_panel: { span: 999 },
+  };
+  const [row] = readCandidates([source, { run_id: 'r', pid: 'p1' }]);
   assert.equal(row?.pid, 'p2');
   assert.equal(row?.value, -0.2);
   assert.equal(row?.legal, 88);
+  assert.equal(row?.heldOutQualificationSpan, 0.6);
   assert.equal(row?.played, 'move 1, move 2');
-  assert.equal(readCandidates([{ run_id: 'r' }]).length, 0);
+
+  const changedMeasurement = structuredClone(source);
+  changedMeasurement.legal_actions = 1;
+  changedMeasurement.measurement_value = -99;
+  changedMeasurement.measurement_panel = { span: 0 };
+  assert.deepEqual(readCandidates([changedMeasurement]), readCandidates([source]));
+
+  const changedProvenance = {
+    ...source,
+    generating_models: { p1: 'p1-prime:model-c', p2: 'p2-openrouter:model-d' },
+  };
+  assert.deepEqual(readCandidates([changedProvenance]), readCandidates([source]));
+});
+
+test('missing, wrong-version, and malformed eligibility metrics are rejected rather than defaulted', () => {
+  const base = {
+    run_id: 'r',
+    series_id: 's',
+    game_number: 1,
+    position_index: 1,
+    position_digest: 'digest',
+    pid: 'p1',
+    state_value: 0,
+  };
+  const rows = [
+    base,
+    { ...base, position_index: 2, eligibility_metrics: { version: 2, legalActions: 2, heldOutSpanValue: 1 } },
+    { ...base, position_index: 3, eligibility_metrics: { version: 1, legalActions: 2 } },
+    {
+      ...base,
+      position_index: 4,
+      eligibility_metrics: { version: 1, legalActions: 2, heldOutSpanValue: Number.NaN },
+    },
+    { ...base, position_index: 5, eligibility_metrics: { version: 1, legalActions: 1.5, heldOutSpanValue: 1 } },
+  ];
+  assert.deepEqual(readCandidates(rows), []);
 });
 
 test('a position does not tell a model who played it or who it faced', () => {

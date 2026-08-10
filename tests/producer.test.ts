@@ -1,11 +1,17 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
 
+import { counterfactualProtocol, EXHAUSTIVE_PANEL_PROTOCOL } from '../src/eval/counterfactual.js';
+import { ACTION_PROTOCOL } from '../src/eval/fork.js';
+import { POSITION_GRADE_SCHEMA_VERSION } from '../src/eval/positions.js';
 import {
   assertPinnedShowdownRuntime,
+  captureRuntimeProducerAuthority,
   PRODUCER_DIGEST_PROTOCOL,
   rawProducerDigest,
   showdownRuntimeAuthorityFiles,
@@ -172,6 +178,59 @@ test('reviewed Showdown runtime digest rejects a dirty compiled runtime copy', (
     () => assertPinnedShowdownRuntime(copy),
     /does not match reviewed .* rebuild with pnpm run setup:showdown/u,
   );
+});
+
+test('compiled position tools have distinct identities bound to the pinned Showdown runtime', () => {
+  const repository = path.resolve('.');
+  const expectedShowdownDigest = assertPinnedShowdownRuntime(repository);
+  const gradeEntry = new URL('../tools/grade-positions.js', import.meta.url);
+  const exporterEntry = new URL('../tools/export-position-panels.js', import.meta.url);
+  const grade = captureRuntimeProducerAuthority(gradeEntry.href);
+  const exporter = captureRuntimeProducerAuthority(exporterEntry.href);
+
+  assert.match(grade.producerDigest, /^[0-9a-f]{64}$/u);
+  assert.match(exporter.producerDigest, /^[0-9a-f]{64}$/u);
+  assert.equal(grade.showdownRuntimeDigest, expectedShowdownDigest);
+  assert.equal(exporter.showdownRuntimeDigest, expectedShowdownDigest);
+  assert.notEqual(grade.producerDigest, exporter.producerDigest);
+  grade.assertUnchanged();
+  exporter.assertUnchanged();
+
+  const boundary = fs.mkdtempSync(path.join(os.tmpdir(), 'position-export-authority-'));
+  const graded = path.join(boundary, 'positions.jsonl');
+  fs.writeFileSync(graded, '');
+  const baseManifest = {
+    schema_version: POSITION_GRADE_SCHEMA_VERSION,
+    showdown_commit: (JSON.parse(fs.readFileSync('showdown.lock.json', 'utf8')) as { commit: string }).commit,
+    evaluator_digest: grade.producerDigest,
+    action_protocol: ACTION_PROTOCOL,
+    counterfactual: counterfactualProtocol(),
+    exhaustive_panels: EXHAUSTIVE_PANEL_PROTOCOL,
+  };
+  for (const [manifest, expected] of [
+    [
+      { ...baseManifest, schema_version: POSITION_GRADE_SCHEMA_VERSION - 1 },
+      /graded manifest is not the current schema/u,
+    ],
+    [{ ...baseManifest, action_protocol: { stale: true } }, /action protocol is not current/u],
+    [{ ...baseManifest, evaluator_digest: '0'.repeat(64) }, /evaluator authority is not current/u],
+  ] as const) {
+    fs.writeFileSync(`${graded}.manifest.json`, JSON.stringify(manifest));
+    const result = spawnSync(process.execPath, [fileURLToPath(exporterEntry), '--graded', graded], {
+      encoding: 'utf8',
+    });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, expected);
+  }
+
+  const unrelatedShowdown = fs.mkdtempSync(path.join(os.tmpdir(), 'producer-unrelated-showdown-'));
+  for (const entry of [gradeEntry, exporterEntry]) {
+    const result = spawnSync(process.execPath, [fileURLToPath(entry), '--ps-dir', unrelatedShowdown], {
+      encoding: 'utf8',
+    });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /does not match captured producer runtime/u);
+  }
 });
 
 test('freeze package script runs the canonical Showdown check before the freezer', () => {

@@ -220,11 +220,18 @@ pnpm run grade-positions --workers 4 --restart
 pnpm run export-position-panels --horizon 2 --luck 8 --opponents 4 --seed panels-1
 ```
 
-`grade-positions` exactly replays eligible games and measures recorded choices.
-`export-position-panels` writes one public candidate root and one private root
-containing both score and sealed-panel files. Neither command releases a position
-package. The [Evaluation plan](evaluation-plan.md#program-status) alone owns
-status; its `vgc-positions-v1` section owns the remaining gates.
+`grade-positions` exactly replays eligible games and evaluates every legal action
+once through the canonical three-panel exhaustive estimator. Its schema-v3 cache
+stores source joins with private exact pid-keyed generating-model provenance, the
+recorded action, state value, canonical protocol and seed, and versioned
+qualification metrics; it stores no action-value matrices.
+Pass `--restart` when an older grading cache exists. `export-position-panels`
+requires the same `--horizon`, `--luck`, and `--opponents` budgets as the grading
+manifest, selects only from its grade-time qualification metrics, then generates
+fresh panels under the exporter seed namespace. It writes one public candidate
+root and one private root containing both score and sealed-panel files. Neither
+command releases a position package. The [Evaluation plan](evaluation-plan.md#program-status)
+alone owns status; its `vgc-positions-v1` section owns the remaining gates.
 
 ## Archive and publish
 

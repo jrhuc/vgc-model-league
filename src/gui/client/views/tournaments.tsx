@@ -256,13 +256,11 @@ function TournamentCard({
 }
 
 export function TournamentsView({
-  active,
   epoch,
   run,
   focusRun,
   onOpenRun,
 }: {
-  active: boolean;
   epoch: number;
   run: string | undefined;
   focusRun?: string;
@@ -276,26 +274,25 @@ export function TournamentsView({
   useEffect(() => setOpenRun(run ?? ''), [run]);
 
   useEffect(() => {
-    if (!active) return;
     api<TournamentsResponse>('/api/tournaments')
       .then((response) => {
         setData(response);
         setError('');
       })
       .catch((failure: Error) => setError(failure.message));
-  }, [active, epoch]);
+  }, [epoch]);
 
   const archives = data?.tournaments ?? [];
   const anyLive = archives.some((archive) => archive.live);
   useEffect(() => {
-    if (!active || !anyLive) return;
+    if (!anyLive) return;
     const timer = setInterval(() => {
       apiFresh<TournamentsResponse>('/api/tournaments')
         .then((response) => setData(response))
         .catch(() => {});
     }, 15_000);
     return () => clearInterval(timer);
-  }, [active, anyLive]);
+  }, [anyLive]);
 
   const summary = data?.summary ?? { tournaments: 0, matches: 0 };
   const finished = archives.filter((archive) => archive.complete);
@@ -364,40 +361,45 @@ export function TournamentsView({
         </p>
       </header>
       {error ? <div class="message error">Could not load the brackets: {error}</div> : null}
-      <div class="stat-row">
-        <StatTile
-          label="Brackets archived"
-          value={String(summary.tournaments)}
-          note={`${finished.length} finished, ${archives.length - finished.length} unresolved`}
-        />
-        <StatTile label="Series archived" value={String(summary.matches)} note="best-of-three series" />
-        <StatTile
-          label="Latest bracket winner"
-          value={latestWinner ? modelName(latestWinner.model) : '–'}
-          note={latestWinner ? formatTeamSlug(latestWinner.team) : 'no finished bracket yet'}
-        />
-      </div>
-      {archives.length === 0 && !error ? (
-        <section class="panel">
-          <div class="results-empty">
-            No tournaments recorded yet. Start one from the New run tab; finished brackets are archived here.
+      {!data && !error ? <div class="archive-route-pending" aria-hidden="true" /> : null}
+      {data ? (
+        <>
+          <div class="stat-row">
+            <StatTile
+              label="Brackets archived"
+              value={String(summary.tournaments)}
+              note={`${finished.length} finished, ${archives.length - finished.length} unresolved`}
+            />
+            <StatTile label="Series archived" value={String(summary.matches)} note="best-of-three series" />
+            <StatTile
+              label="Latest bracket winner"
+              value={latestWinner ? modelName(latestWinner.model) : '–'}
+              note={latestWinner ? formatTeamSlug(latestWinner.team) : 'no finished bracket yet'}
+            />
           </div>
-        </section>
-      ) : (
-        archives.map((archive) => (
-          <TournamentCard
-            key={archive.runId}
-            archive={archive}
-            open={openRun === archive.runId || archive.live}
-            onToggle={() => {
-              const next = openRun === archive.runId ? '' : archive.runId;
-              setOpenRun(next);
-              onOpenRun(next);
-            }}
-            onOpenGame={(seriesIndex, number) => setGame({ runId: archive.runId, seriesIndex, game: number })}
-          />
-        ))
-      )}
+          {archives.length === 0 && !error ? (
+            <section class="panel">
+              <div class="results-empty">
+                No tournaments recorded yet. Start one from the New run tab; finished brackets are archived here.
+              </div>
+            </section>
+          ) : (
+            archives.map((archive) => (
+              <TournamentCard
+                key={archive.runId}
+                archive={archive}
+                open={openRun === archive.runId || archive.live}
+                onToggle={() => {
+                  const next = openRun === archive.runId ? '' : archive.runId;
+                  setOpenRun(next);
+                  onOpenRun(next);
+                }}
+                onOpenGame={(seriesIndex, number) => setGame({ runId: archive.runId, seriesIndex, game: number })}
+              />
+            ))
+          )}
+        </>
+      ) : null}
     </div>
   );
 }

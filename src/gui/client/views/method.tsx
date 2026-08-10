@@ -2,7 +2,7 @@ import type { SelectedTraceView } from '../../api';
 import { Sprite } from '../components/sprite';
 
 interface MethodViewProps {
-  trace: SelectedTraceView;
+  trace: SelectedTraceView | null;
   onOpenDocs: () => void;
 }
 
@@ -352,7 +352,15 @@ export function MethodView({ trace, onOpenDocs }: MethodViewProps) {
       <ConstructBoundary />
       <StaticPositionMethod />
       <ConnectedEpisodeMethod />
-      <RecordedTurn trace={trace} />
+      <div class="selected-trace-slot selected-trace-slot-method" aria-busy={trace ? 'false' : 'true'}>
+        {trace ? (
+          <RecordedTurn trace={trace} />
+        ) : (
+          <p class="selected-trace-status" role="status">
+            Loading selected trace…
+          </p>
+        )}
+      </div>
       <ValidityLimits />
       <Sources onOpenDocs={onOpenDocs} />
     </div>

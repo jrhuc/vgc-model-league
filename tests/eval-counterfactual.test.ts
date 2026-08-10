@@ -4,7 +4,6 @@ import {
   counterfactualProtocol,
   EXHAUSTIVE_PANEL_PROTOCOL,
   evaluateActionTable,
-  evaluatePosition,
   exhaustivePanelDrawPlan,
   exhaustivePanelMatrixDigest,
   REFERENCE,
@@ -22,9 +21,10 @@ import {
 } from '../src/eval/fork.js';
 import { loadPool } from '../src/teams.js';
 import type { Pid } from '../src/types.js';
+import { minimalPanelBattle } from './fixtures/position-panel.js';
 
 const SEED: [number, number, number, number] = [5, 10, 15, 20];
-const BUDGET = { luckSamples: 3, screenSamples: 1, shortlist: 3, opponentSamples: 2 };
+const BUDGET = { luckSamples: 3, opponentSamples: 2 };
 
 let cached: Position[] | undefined;
 
@@ -77,6 +77,7 @@ test('the reference every number is measured against is named, not implied', () 
     'opponent',
     'value',
   ]);
+  assert.equal(REFERENCE.opponent, 'srswor-uniform-legal-when-simultaneous-or-null-census-when-unilateral');
   assert.equal(EXHAUSTIVE_PANEL_PROTOCOL.version, 5);
   assert.equal(EXHAUSTIVE_PANEL_PROTOCOL.uncertaintyEstimator, 'two-stage-srswor-opponent-cluster-v1');
   assert.equal(EXHAUSTIVE_PANEL_PROTOCOL.matrixDigest, 'sha256-canonical-exhaustive-panel-matrix-v2');
@@ -90,20 +91,27 @@ test('counterfactual option validation admits diagnostic zero horizon and reject
       horizon: 0,
       luckSamples: 1,
       opponentSamples: 1,
-      shortlist: 1,
-      screenSamples: 1,
       seed: 0,
       psDir: '.',
     }),
   );
   assert.equal(counterfactualProtocol({ horizon: 0 }).horizon, 0);
   assert.equal(counterfactualProtocol({ horizon: Number.POSITIVE_INFINITY }).horizon, 'end');
+  assert.deepEqual(Object.keys(counterfactualProtocol()).toSorted(), [
+    'horizon',
+    'luckSamples',
+    'opponentSamples',
+    'reference',
+    'rolloutLimit',
+    'version',
+  ]);
+  assert.equal(counterfactualProtocol().rolloutLimit, 60);
   assert.doesNotThrow(() => validateCounterfactualOptions({ horizon: Number.MAX_SAFE_INTEGER, seed: 'seed' }));
 
   for (const horizon of [-1, 0.5, Number.NaN, Number.NEGATIVE_INFINITY, Number.MAX_SAFE_INTEGER + 1]) {
     assert.throws(() => validateCounterfactualOptions({ horizon }), /counterfactual horizon/);
   }
-  for (const field of ['luckSamples', 'opponentSamples', 'shortlist', 'screenSamples'] as const) {
+  for (const field of ['luckSamples', 'opponentSamples'] as const) {
     for (const value of [0, -1, 0.5, Number.POSITIVE_INFINITY, Number.MAX_SAFE_INTEGER + 1]) {
       assert.throws(() => validateCounterfactualOptions({ [field]: value }), new RegExp(`counterfactual ${field}`));
     }
@@ -114,10 +122,6 @@ test('counterfactual option validation admits diagnostic zero horizon and reject
   assert.throws(() => validateCounterfactualOptions({ psDir: '' }), /counterfactual psDir/);
 
   const invalidPosition = {} as Position;
-  assert.throws(
-    () => evaluatePosition(invalidPosition, 'p1', { luckSamples: 0 }, 'move 1'),
-    /counterfactual luckSamples/,
-  );
   assert.throws(
     () => evaluateActionTable(invalidPosition, 'p1', { opponentSamples: 0 }),
     /counterfactual opponentSamples/,
@@ -214,65 +218,45 @@ test('an unreplicated luck stage reports unidentified uncertainty instead of zer
   assert.deepEqual(twoStageClusterEstimate([[1], [3]], 4), { value: 2, standardError: null });
 });
 
-test('the held-out estimate reports rather than hides selection reversals', () => {
-  const result = evaluatePosition(battleTurn(), 'p1', { ...BUDGET, horizon: 0 });
-  assert.ok(result);
-  for (const view of [result.vsActualOpponent, result.vsSampledOpponent]) {
-    assert.ok(view.opportunityLoss >= 0);
-    assert.ok(Math.abs(view.signedGap - (view.selected - view.chosen)) < 1e-9);
-    assert.ok(Math.abs(view.opportunityLoss - Math.max(0, view.signedGap)) < 1e-9);
-    assert.equal(view.selectionReversed, view.signedGap < 0);
-  }
-  assert.ok(result.legal > 1);
-  assert.equal(result.horizon, 0);
-});
+function inertPosition(): Position {
+  const fixture = minimalPanelBattle(['Splash'], ['Splash', 'Celebrate']);
+  return {
+    index: 0,
+    turn: 1,
+    pending: ['p1', 'p2'],
+    requests: fixture.requests,
+    actual: { p1: fixture.actions.p1[0] as string, p2: fixture.actions.p2[0] as string },
+    choiceIndex: { p1: 0, p2: 0 },
+    seen: { p1: 0, p2: 0 },
+    snapshot: fixture.snapshot,
+  };
+}
 
-test('the same position and budget grade the same way twice', () => {
-  const position = battleTurn();
-  const first = evaluatePosition(position, 'p1', { ...BUDGET, horizon: 0, seed: 'fixed' });
-  const second = evaluatePosition(position, 'p1', { ...BUDGET, horizon: 0, seed: 'fixed' });
-  assert.deepEqual(first, second);
-});
-
-test('the sampling namespace changes luck and continuation panels, not only opponent order', () => {
-  const position = battleTurn();
-  const first = evaluatePosition(position, 'p1', { ...BUDGET, horizon: 2, seed: 'panel-a' });
-  const second = evaluatePosition(position, 'p1', { ...BUDGET, horizon: 2, seed: 'panel-b' });
-  assert.ok(first);
-  assert.ok(second);
-  assert.notDeepEqual(
-    [first.vsActualOpponent, first.vsSampledOpponent],
-    [second.vsActualOpponent, second.vsSampledOpponent],
+test('a failed exhaustive cell rejects the whole action table', () => {
+  assert.equal(
+    evaluateActionTable(inertPosition(), 'p1', {
+      horizon: Number.POSITIVE_INFINITY,
+      luckSamples: 1,
+      opponentSamples: 1,
+      seed: 'rollout-limit-failure',
+    }),
+    null,
   );
 });
 
-test('submitting the action selected on the search panel removes its measured positive gap', () => {
-  const position = battleTurn();
-  const graded = evaluatePosition(position, 'p1', { ...BUDGET, horizon: 0, seed: 'fixed' });
-  assert.ok(graded);
-  if (graded.vsActualOpponent.selectedAction === graded.chosen) {
-    assert.equal(graded.vsActualOpponent.opportunityLoss, 0);
-    return;
-  }
-  const swapped: Position = { ...position, actual: { ...position.actual, p1: graded.vsActualOpponent.selectedAction } };
-  const rerun = evaluatePosition(swapped, 'p1', { ...BUDGET, horizon: 0, seed: 'fixed' });
-  assert.ok(rerun);
-  assert.ok(rerun.vsActualOpponent.opportunityLoss <= graded.vsActualOpponent.opportunityLoss + 1e-9);
-});
-
-test('a horizon of zero admits that it cannot grade team preview', () => {
-  const preview = positions()[0];
-  assert.ok(preview);
-  assert.equal(preview.turn, 0);
-
-  const myopic = evaluatePosition(preview, 'p1', { ...BUDGET, horizon: 0 });
-  assert.ok(myopic);
-  assert.equal(myopic.vsSampledOpponent.discriminating, false);
-  assert.equal(myopic.vsSampledOpponent.opportunityLoss, 0);
-
-  const played = evaluatePosition(preview, 'p1', { ...BUDGET, horizon: 2 });
-  assert.ok(played);
-  assert.equal(played.vsSampledOpponent.discriminating, true);
+test('exhaustive ranking ties use deterministic canonical action ordering', () => {
+  const table = evaluateActionTable(inertPosition(), 'p1', {
+    horizon: 0,
+    luckSamples: 1,
+    opponentSamples: 1,
+    seed: 'tie-order',
+  });
+  assert.ok(table);
+  const canonicalFirst = [...table.measurement.actions.map((entry) => entry.action)].sort((left, right) =>
+    Buffer.compare(Buffer.from(left), Buffer.from(right)),
+  )[0];
+  assert.equal(table.selectionBest, canonicalFirst);
+  assert.equal(table.measurementBest, canonicalFirst);
 });
 
 test('the exhaustive table uses complete, normalized, common-draw action panels', () => {
@@ -300,7 +284,11 @@ test('the exhaustive table uses complete, normalized, common-draw action panels'
   assert.ok(table.measurement.opponentPopulation >= table.measurement.opponentSlots);
   assert.equal(table.measurement.luckReplications, BUDGET.luckSamples);
   assert.equal(table.measurement.matrix.length, BUDGET.luckSamples * BUDGET.opponentSamples);
-  assert.ok(table.measurement.matrix.every((row) => row.length === legal.length));
+  for (const panel of [...table.stability, table.measurement]) {
+    assert.equal(panel.matrix.length, panel.draws.length);
+    assert.ok(panel.matrix.every((row) => row.length === legal.length));
+    assert.ok(panel.actions.every((entry) => entry.samples === panel.draws.length));
+  }
   assert.ok(table.measurement.actions.every((entry) => entry.standardError !== null));
   assert.equal(new Set(table.stability.map((panel) => panel.matrixDigest)).size, 2);
   assert.equal(table.heldOutGap.selectedAction, table.selectionBest);
@@ -328,10 +316,28 @@ test('the exhaustive table is deterministic for a fixed sampling namespace', () 
   assert.deepEqual(first, second);
 });
 
-test('a position the recorded action is not legal in is refused rather than graded', () => {
+test('the exhaustive table sampling namespace binds every panel draw plan', () => {
   const position = battleTurn();
-  const invented: Position = { ...position, actual: { ...position.actual, p1: 'move 9 9' } };
-  assert.equal(evaluatePosition(invented, 'p1', { ...BUDGET, horizon: 0 }), null);
+  const first = evaluateActionTable(position, 'p1', { ...BUDGET, horizon: 0, seed: 'panel-a' });
+  const second = evaluateActionTable(position, 'p1', { ...BUDGET, horizon: 0, seed: 'panel-b' });
+  assert.ok(first);
+  assert.ok(second);
+  assert.notDeepEqual(
+    first.stability.map((panel) => panel.draws),
+    second.stability.map((panel) => panel.draws),
+  );
+});
+
+test('the exhaustive table does not use the recorded actual action as an opponent reference', () => {
+  const position = battleTurn();
+  const changed: Position = {
+    ...position,
+    actual: { ...position.actual, p1: 'move 99', p2: 'move 99' },
+  };
+  assert.deepEqual(
+    evaluateActionTable(position, 'p1', { ...BUDGET, horizon: 0, seed: 'actual-independent' }),
+    evaluateActionTable(changed, 'p1', { ...BUDGET, horizon: 0, seed: 'actual-independent' }),
+  );
 });
 
 function oneSidedReplacement(): Position {
@@ -350,33 +356,41 @@ function oneSidedReplacement(): Position {
   while (!battle.ended && steps++ < 400) {
     const pending = pendingSides(battle);
     for (const pid of pending) {
-      const action = requestActionCandidates(battle.getSide(pid).activeRequest as never)[0];
+      const actions = requestActionCandidates(battle.getSide(pid).activeRequest as never);
+      const action = actions[(steps + (pid === 'p1' ? 0 : 3)) % actions.length];
       if (!action) throw new Error(`no legal action for ${pid}`);
       base.choices[pid].push(action);
     }
     for (const pid of pending) battle.choose(pid, base.choices[pid].at(-1) as string);
   }
   const replay = replayGame(base, omniscientLog(battle.log));
-  const position = replay.positions.find((entry) => entry.pending.length === 1);
-  assert.ok(position, 'the deterministic game reached a one-sided replacement');
+  const position = replay.positions.find(
+    (entry) =>
+      entry.pending.length === 1 && requestActionCandidates(entry.requests[entry.pending[0] as Pid]).length >= 2,
+  );
+  assert.ok(position, 'the deterministic game reached a one-sided replacement with multiple legal actions');
   return position;
 }
 
-test('a one-sided replacement is graded without inventing an opponent action', () => {
+test('a one-sided replacement uses only the unilateral null-opponent census', () => {
   const position = oneSidedReplacement();
   const pid = position.pending[0] as Pid;
-  const result = evaluatePosition(position, pid, { ...BUDGET, horizon: 0 });
-  assert.ok(result);
-  assert.equal(result.chosen, position.actual[pid]);
-  assert.deepEqual(result.vsSampledOpponent, result.vsActualOpponent);
+  const table = evaluateActionTable(position, pid, { ...BUDGET, horizon: 0, seed: 'unilateral' });
+  assert.ok(table);
+  for (const panel of [...table.stability, table.measurement]) {
+    assert.equal(panel.opponentPopulation, 1);
+    assert.equal(panel.opponentSlots, 1);
+    assert.ok(panel.draws.every((draw) => draw.opponentAction === null));
+  }
 });
 
-test('both sides of the same position are gradeable', () => {
+test('both sides of the same position produce complete exhaustive tables', () => {
   const position = battleTurn();
   for (const pid of ['p1', 'p2'] as const) {
-    const result = evaluatePosition(position, pid, { ...BUDGET, horizon: 0 });
-    assert.ok(result);
-    assert.equal(result.pid, pid);
-    assert.equal(result.chosen, position.actual[pid]);
+    const table = evaluateActionTable(position, pid, { ...BUDGET, horizon: 0, seed: `both:${pid}` });
+    assert.ok(table);
+    assert.equal(table.pid, pid);
+    assert.equal(table.measurement.actions.length, table.legal);
+    assert.ok(table.measurement.matrix.every((row) => row.length === table.legal));
   }
 });

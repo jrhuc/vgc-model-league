@@ -14,12 +14,12 @@ import {
 } from './fork.js';
 import { canonicalJsonDigest } from './serialization.js';
 
-export const COUNTERFACTUAL_PROTOCOL_VERSION = 4;
+export const COUNTERFACTUAL_PROTOCOL_VERSION = 5;
 
 export const REFERENCE = {
   hiddenState: 'realized',
   continuation: 'uniform-random-permutation-first-showdown-accepted-request-derived-non-concession',
-  opponent: 'actual-or-sampled-uniform-showdown-accepted-request-derived-when-simultaneous',
+  opponent: 'srswor-uniform-legal-when-simultaneous-or-null-census-when-unilateral',
   actionSet: 'showdown-accepted-request-derived-candidates-not-universal-showdown-completeness',
   value: 'material-differential',
 } as const;
@@ -44,8 +44,6 @@ export interface CounterfactualOptions {
   horizon?: number;
   luckSamples?: number;
   opponentSamples?: number;
-  shortlist?: number;
-  screenSamples?: number;
   seed?: string | number;
 }
 
@@ -53,8 +51,6 @@ const DEFAULTS = {
   horizon: 2,
   luckSamples: 8,
   opponentSamples: 4,
-  shortlist: 8,
-  screenSamples: 2,
   rolloutLimit: 60,
 } as const;
 
@@ -64,8 +60,6 @@ interface CounterfactualProtocol {
   horizon: number | 'end';
   luckSamples: number;
   opponentSamples: number;
-  shortlist: number;
-  screenSamples: number;
   rolloutLimit: number;
 }
 
@@ -89,8 +83,6 @@ export function validateCounterfactualOptions(options: CounterfactualOptions): v
   for (const [name, value] of [
     ['luckSamples', options.luckSamples],
     ['opponentSamples', options.opponentSamples],
-    ['shortlist', options.shortlist],
-    ['screenSamples', options.screenSamples],
   ] as const) {
     if (value !== undefined && (!Number.isSafeInteger(value) || value < 1))
       throw new Error(`counterfactual ${name} must be a positive safe integer`);
@@ -106,43 +98,8 @@ export function counterfactualProtocol(options: CounterfactualOptions = {}): Cou
     horizon: horizon === Number.POSITIVE_INFINITY ? 'end' : horizon,
     luckSamples: options.luckSamples ?? DEFAULTS.luckSamples,
     opponentSamples: options.opponentSamples ?? DEFAULTS.opponentSamples,
-    shortlist: options.shortlist ?? DEFAULTS.shortlist,
-    screenSamples: options.screenSamples ?? DEFAULTS.screenSamples,
     rolloutLimit: DEFAULTS.rolloutLimit,
   };
-}
-
-export function exhaustiveCounterfactualProtocol(options: CounterfactualOptions = {}) {
-  const { version, reference, horizon, luckSamples, opponentSamples } = counterfactualProtocol(options);
-  return { version, reference, horizon, luckSamples, opponentSamples };
-}
-
-interface ActionValue {
-  action: string;
-  value: number;
-  samples: number;
-}
-
-interface ReferenceView {
-  chosen: number;
-  selected: number;
-  selectedAction: string;
-  signedGap: number;
-  opportunityLoss: number;
-  measuredContrast: number;
-  discriminating: boolean;
-  selectionReversed: boolean;
-}
-
-interface PositionScore {
-  pid: Pid;
-  turn: number;
-  chosen: string;
-  legal: number;
-  horizon: number;
-  stateValue: number;
-  vsActualOpponent: ReferenceView;
-  vsSampledOpponent: ReferenceView;
 }
 
 interface ExhaustiveActionValue {
@@ -274,10 +231,10 @@ function sampledPolicyAction(battle: Battle, pid: Pid, request: BattleRequest, r
   return null;
 }
 
-function continueBattle(battle: Battle, turns: number, random: Rng): boolean {
+function continueBattle(battle: Battle, turns: number, rolloutLimit: number, random: Rng): boolean {
   const stopAfter = battle.turn + turns;
   let steps = 0;
-  while (!battle.ended && steps++ < DEFAULTS.rolloutLimit) {
+  while (!battle.ended && steps++ < rolloutLimit) {
     if (Number.isFinite(turns) && battle.turn >= stopAfter) return true;
     const pending = pendingSides(battle);
     if (!pending.length) return false;
@@ -301,45 +258,12 @@ interface Trial {
   pid: Pid;
   name: string;
   horizon: number;
+  rolloutLimit: number;
   psDir: string;
   seed: string;
 }
 
 type OpponentAction = string | null;
-
-function play(trial: Trial, action: string, opponentAction: OpponentAction, draw: number): number | null {
-  const battle = openPosition(trial.position, trial.psDir);
-  const luck = seededRng(`${trial.seed}:luck:${draw}`);
-  const word = () => 1 + Math.floor(luck() * 0xffff);
-  battle.resetRNG(`${word()},${word()},${word()},${word()}` as `${number},${string}`);
-  const choices: Partial<Record<Pid, string>> = { [trial.pid]: action };
-  if (opponentAction !== null) choices[foe(trial.pid)] = opponentAction;
-  if (!playJoint(battle, choices)) return null;
-  if (trial.horizon > 0 && !continueBattle(battle, trial.horizon, seededRng(`${trial.seed}:continuation:${draw}`))) {
-    return null;
-  }
-  return value(battle, trial.pid, trial.name);
-}
-
-function average(
-  trial: Trial,
-  action: string,
-  opponents: OpponentAction[],
-  luckSamples: number,
-  drawOffset: number,
-): ActionValue | null {
-  let total = 0;
-  let samples = 0;
-  for (const [index, opponentAction] of opponents.entries()) {
-    for (let luck = 0; luck < luckSamples; luck += 1) {
-      const result = play(trial, action, opponentAction, drawOffset + index * luckSamples + luck);
-      if (result === null) return null;
-      total += result;
-      samples += 1;
-    }
-  }
-  return samples ? { action, value: total / samples, samples } : null;
-}
 
 function mean(values: readonly number[]): number {
   return values.reduce((sum, entry) => sum + entry, 0) / values.length;
@@ -393,65 +317,9 @@ function playDraw(trial: Trial, action: string, draw: ExhaustiveDraw): number | 
   const choices: Partial<Record<Pid, string>> = { [trial.pid]: action };
   if (draw.opponentAction !== null) choices[foe(trial.pid)] = draw.opponentAction;
   if (!playJoint(battle, choices)) return null;
-  if (trial.horizon > 0 && !continueBattle(battle, trial.horizon, seededRng(draw.continuationSeed))) return null;
+  if (trial.horizon > 0 && !continueBattle(battle, trial.horizon, trial.rolloutLimit, seededRng(draw.continuationSeed)))
+    return null;
   return value(battle, trial.pid, trial.name);
-}
-
-interface SearchBudget {
-  luckSamples: number;
-  shortlist: number;
-  screenSamples: number;
-}
-
-function search(
-  trial: Trial,
-  actions: string[],
-  chosen: string,
-  selectionOpponents: OpponentAction[],
-  measurementOpponents: OpponentAction[],
-  budget: SearchBudget,
-): ReferenceView | null {
-  const screened: ActionValue[] = [];
-  for (const action of actions) {
-    const result = average(trial, action, selectionOpponents, budget.screenSamples, 0);
-    if (result) screened.push(result);
-  }
-  if (!screened.length) return null;
-  screened.sort((a, b) => b.value - a.value || Buffer.compare(Buffer.from(a.action), Buffer.from(b.action)));
-  const shortlist = new Set(screened.slice(0, budget.shortlist).map((entry) => entry.action));
-
-  const refined: ActionValue[] = [];
-  for (const action of actions) {
-    if (!shortlist.has(action)) continue;
-    const result = average(trial, action, selectionOpponents, budget.luckSamples, 1_000);
-    if (result) refined.push(result);
-  }
-  refined.sort((a, b) => b.value - a.value || Buffer.compare(Buffer.from(a.action), Buffer.from(b.action)));
-  const selectedAction = refined[0]?.action;
-  const selectedWorst = screened.at(-1)?.action;
-  if (!selectedAction || !selectedWorst) return null;
-
-  const measured = new Map<string, ActionValue>();
-  for (const action of new Set([chosen, selectedAction, selectedWorst])) {
-    const result = average(trial, action, measurementOpponents, budget.luckSamples, 2_000);
-    if (!result) return null;
-    measured.set(action, result);
-  }
-  const chosenValue = measured.get(chosen) as ActionValue;
-  const selectedValue = measured.get(selectedAction) as ActionValue;
-  const worstValue = measured.get(selectedWorst) as ActionValue;
-  const signedGap = selectedValue.value - chosenValue.value;
-  const measuredContrast = Math.abs(selectedValue.value - worstValue.value);
-  return {
-    chosen: chosenValue.value,
-    selected: selectedValue.value,
-    selectedAction,
-    signedGap,
-    opportunityLoss: Math.max(0, signedGap),
-    measuredContrast,
-    discriminating: measuredContrast > 0,
-    selectionReversed: signedGap < 0,
-  };
 }
 
 function sampleOpponents(actions: string[], count: number, random: Rng): string[] {
@@ -498,67 +366,6 @@ export function exhaustivePanelDrawPlan(input: ExhaustivePanelDrawPlanInput): Ex
     opponentSlots: opponents.length,
     luckReplications: input.luckReplications,
     draws,
-  };
-}
-
-export function evaluatePosition(
-  position: Position,
-  pid: Pid,
-  options: CounterfactualOptions = {},
-  submittedAction = position.actual[pid],
-): PositionScore | null {
-  const psDir = options.psDir ?? defaultPsDir();
-  const protocol = counterfactualProtocol(options);
-  const horizon = protocol.horizon === 'end' ? Number.POSITIVE_INFINITY : protocol.horizon;
-  const random = seededRng(options.seed ?? `${position.index}:${pid}`);
-  const request = position.requests[pid];
-  const chosen = submittedAction ?? position.actual[pid];
-  if (!request || !chosen) return null;
-  const opened = openPosition(position, psDir);
-  const actions = policyActions(opened, pid);
-  if (!actions.includes(chosen)) return null;
-
-  const trial: Trial = {
-    position,
-    pid,
-    name: opened.getSide(pid).name,
-    horizon,
-    psDir,
-    seed: String(options.seed ?? `${position.index}:${pid}`),
-  };
-  const stateValue = value(opened, pid, trial.name);
-  const simultaneous = position.pending.includes(foe(pid));
-  const opponentPid = foe(pid);
-  const opponentRequest = position.requests[opponentPid];
-  const opponentLegal = simultaneous && opponentRequest ? policyActions(opened, opponentPid) : [];
-  const selectionField: OpponentAction[] = simultaneous
-    ? sampleOpponents(opponentLegal, protocol.opponentSamples, random)
-    : [null];
-  const measurementField: OpponentAction[] = simultaneous
-    ? sampleOpponents(opponentLegal, protocol.opponentSamples, random)
-    : [null];
-  if (!selectionField.length || !measurementField.length) return null;
-
-  const budget = {
-    luckSamples: protocol.luckSamples,
-    shortlist: protocol.shortlist,
-    screenSamples: protocol.screenSamples,
-  };
-  const actualOpponent = simultaneous ? position.actual[opponentPid] : null;
-  if (actualOpponent === undefined || (actualOpponent !== null && !opponentLegal.includes(actualOpponent))) return null;
-  const actual: OpponentAction[] = [actualOpponent];
-  const vsActualOpponent = search(trial, actions, chosen, actual, actual, budget);
-  const vsSampledOpponent = search(trial, actions, chosen, selectionField, measurementField, budget);
-  if (!vsActualOpponent || !vsSampledOpponent) return null;
-  return {
-    pid,
-    turn: position.turn,
-    chosen,
-    legal: actions.length,
-    horizon,
-    stateValue,
-    vsActualOpponent,
-    vsSampledOpponent,
   };
 }
 
@@ -671,6 +478,7 @@ export function evaluateActionTable(
     pid,
     name: opened.getSide(pid).name,
     horizon,
+    rolloutLimit: protocol.rolloutLimit,
     psDir,
     seed: String(options.seed ?? `${position.index}:${pid}`),
   };

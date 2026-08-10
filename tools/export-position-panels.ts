@@ -3,12 +3,12 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { assertGameRecordCorpusDigest, type GameRecord, loadGameRecords, verifyGame } from '../src/eval/corpus.js';
+import { assertGameRecordCorpusDigest, type GameRecord, loadGameRecordCorpus, verifyGame } from '../src/eval/corpus.js';
 import {
   type CounterfactualOptions,
+  counterfactualProtocol,
   EXHAUSTIVE_PANEL_PROTOCOL,
   evaluateActionTable,
-  exhaustiveCounterfactualProtocol,
   validateCounterfactualOptions,
 } from '../src/eval/counterfactual.js';
 import { POSITION_ELIGIBILITY_METRICS_VERSION, positionEligibilityMetrics } from '../src/eval/eligibility.js';
@@ -27,10 +27,14 @@ import {
   anonymiseLog,
   anonymiseRequest,
   gameOf,
+  POSITION_GRADE_SCHEMA_VERSION,
+  POSITION_SET_PER_GAME_CAP,
+  POSITION_SET_TARGET_SIZE,
   readCandidates,
   type SelectionOptions,
   selectPositions,
 } from '../src/eval/positions.js';
+import { captureRuntimeProducerAuthority } from '../src/eval/producer.js';
 import {
   CANONICAL_JSON_PROTOCOL,
   canonicalJson,
@@ -42,7 +46,7 @@ import { DATA_DIR, defaultPsDir } from '../src/paths.js';
 import { showdownCommit } from '../src/showdown.js';
 import type { JsonObject, Pid } from '../src/types.js';
 
-interface Settings extends CounterfactualOptions, Omit<SelectionOptions, 'seed'> {
+interface Settings extends CounterfactualOptions, Pick<SelectionOptions, 'formats'> {
   graded: string;
   selectionSeed?: string;
   recordsPath?: string;
@@ -109,9 +113,7 @@ function parse(argv: string[]): Settings {
     if (flag === '--graded' && value) settings.graded = path.resolve(value);
     else if (flag === '--records' && value) settings.recordsPath = path.resolve(value);
     else if (flag === '--runs-dir' && value) settings.runsDir = path.resolve(value);
-    else if (flag === '--size' && value) settings.size = Number(value);
     else if (flag === '--selection-seed' && value) settings.selectionSeed = value;
-    else if (flag === '--per-game' && value) settings.perGame = Number(value);
     else if (flag === '--formats' && value) settings.formats = value.split(',');
     else if (flag === '--out' && value) settings.out = path.resolve(value);
     else if (flag === '--private-out' && value) settings.privateOut = path.resolve(value);
@@ -123,14 +125,6 @@ function parse(argv: string[]): Settings {
     else if (flag === '--ps-dir' && value) settings.psDir = path.resolve(value);
     else throw new Error(`unknown option or missing value: ${flag}`);
     index += 1;
-  }
-  for (const [name, value] of [
-    ['size', settings.size],
-    ['per-game', settings.perGame],
-  ] as const) {
-    if (value !== undefined && (!Number.isInteger(value) || value < 1)) {
-      throw new Error(`--${name} must be a positive integer`);
-    }
   }
   if (settings.formats?.some((format) => !format.trim())) throw new Error('--formats cannot contain an empty format');
   validateCounterfactualOptions(settings);
@@ -148,38 +142,6 @@ function fileDigest(file: string): string {
 
 function contentDigest(content: string): string {
   return crypto.createHash('sha256').update(content, 'utf8').digest('hex');
-}
-
-function digestParts(parts: Iterable<string>): string {
-  const hash = crypto.createHash('sha256');
-  for (const part of parts) hash.update(`${Buffer.byteLength(part)}:`, 'utf8').update(part, 'utf8');
-  return hash.digest('hex');
-}
-
-function runtimeFiles(tool: string): string[] {
-  const sourceRoot = path.resolve(path.dirname(tool), '../src');
-  const visit = (directory: string): string[] =>
-    fs.readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
-      const file = path.join(directory, entry.name);
-      return entry.isDirectory() ? visit(file) : entry.isFile() && file.endsWith('.js') ? [file] : [];
-    });
-  return [
-    tool,
-    ...visit(sourceRoot),
-    path.resolve(path.dirname(tool), '../../package.json'),
-    path.resolve(path.dirname(tool), '../../pnpm-lock.yaml'),
-  ].sort((a, b) => Buffer.compare(Buffer.from(a), Buffer.from(b)));
-}
-
-function evaluatorDigest(): string {
-  const tool = fileURLToPath(import.meta.url);
-  const root = path.resolve(path.dirname(tool), '..');
-  return digestParts(
-    runtimeFiles(tool).map(
-      (file) => `${path.relative(root, file)}
-${fs.readFileSync(file, 'utf8')}`,
-    ),
-  );
 }
 
 function readObject(file: string): JsonObject {
@@ -216,7 +178,7 @@ function completedPositionScores(rows: JsonObject[], manifest: JsonObject): Json
       continue;
     }
     if (row.kind !== 'position_score') continue;
-    if (JSON.stringify(row.counterfactual) !== JSON.stringify(manifest.counterfactual)) {
+    if (canonicalJson(row.counterfactual) !== canonicalJson(manifest.counterfactual)) {
       throw new Error(`position score ${rowGame(row)} mixes a different counterfactual protocol`);
     }
     const game = rowGame(row);
@@ -263,7 +225,7 @@ function reopenedGradedCorpus(settings: Settings, manifest: JsonObject): GameRec
   ) {
     throw new Error('graded manifest scope is malformed');
   }
-  const records = loadGameRecords({
+  const sourceRecords = loadGameRecordCorpus({
     ...(scopeObject.modes === null ? {} : { modes: scopeObject.modes as string[] }),
     ...(settings.recordsPath
       ? { recordsPath: settings.recordsPath }
@@ -275,8 +237,11 @@ function reopenedGradedCorpus(settings: Settings, manifest: JsonObject): GameRec
       : scopeObject.runs_dir === null
         ? {}
         : { runsDir: String(scopeObject.runs_dir) }),
-    ...(settings.psDir ? { psDir: settings.psDir } : {}),
-  }).slice(0, scopeObject.limit === null ? Number.POSITIVE_INFINITY : Number(scopeObject.limit));
+  });
+  const records = sourceRecords.slice(
+    0,
+    scopeObject.limit === null ? Number.POSITIVE_INFINITY : Number(scopeObject.limit),
+  );
   const expectedGames = manifest.source_games;
   const expectedDigest = manifest.source_digest;
   if (
@@ -316,9 +281,33 @@ function publishImmutable(directory: string, name: string, content: string, mode
 
 async function main(): Promise<void> {
   const settings = parse(process.argv.slice(2));
+  const producer = captureRuntimeProducerAuthority(import.meta.url);
+  const graderProducer = captureRuntimeProducerAuthority(
+    new URL(`./grade-positions${path.extname(fileURLToPath(import.meta.url))}`, import.meta.url).href,
+  );
+  const showdownRealpath = fs.realpathSync.native(settings.psDir ?? defaultPsDir());
+  if (showdownRealpath !== producer.showdownRealpath) {
+    throw new Error(
+      `configured Pokémon Showdown root ${showdownRealpath} does not match captured producer runtime ${producer.showdownRealpath}`,
+    );
+  }
+  settings.psDir = producer.showdownRealpath;
   const gradedManifestPath = `${settings.graded}.manifest.json`;
   const gradedManifest = readObject(gradedManifestPath);
-  if (gradedManifest.schema_version !== 1) throw new Error('graded manifest is not the current schema');
+  if (gradedManifest.schema_version !== POSITION_GRADE_SCHEMA_VERSION)
+    throw new Error('graded manifest is not the current schema');
+  if (canonicalJson(gradedManifest.counterfactual) !== canonicalJson(counterfactualProtocol(settings))) {
+    throw new Error('graded manifest counterfactual budgets do not match the exporter settings');
+  }
+  if (canonicalJson(gradedManifest.exhaustive_panels) !== canonicalJson(EXHAUSTIVE_PANEL_PROTOCOL)) {
+    throw new Error('graded manifest exhaustive panel protocol is not current');
+  }
+  if (canonicalJson(gradedManifest.action_protocol) !== canonicalJson(ACTION_PROTOCOL)) {
+    throw new Error('graded manifest action protocol is not current');
+  }
+  if (gradedManifest.evaluator_digest !== graderProducer.producerDigest) {
+    throw new Error('graded manifest evaluator authority is not current');
+  }
   if (gradedManifest.showdown_commit !== showdownCommit(settings.psDir ?? defaultPsDir())) {
     throw new Error('graded manifest does not match the current Pokémon Showdown checkout');
   }
@@ -327,12 +316,12 @@ async function main(): Promise<void> {
   const gradedManifestDigest = fileDigest(gradedManifestPath);
   const scoreRows = completedPositionScores(readJsonl(settings.graded), gradedManifest);
   const selection = selectPositions(readCandidates(scoreRows), {
-    ...(settings.size === undefined ? {} : { size: settings.size }),
-    ...(settings.perGame === undefined ? {} : { perGame: settings.perGame }),
+    size: POSITION_SET_TARGET_SIZE,
+    perGame: POSITION_SET_PER_GAME_CAP,
     ...(settings.formats === undefined ? {} : { formats: settings.formats }),
     seed: settings.selectionSeed ?? 'position-set',
   });
-  const requested = settings.size ?? 500;
+  const requested = POSITION_SET_TARGET_SIZE;
   if (selection.positions.length !== requested) {
     throw new Error(
       `requested ${requested} positions but only ${selection.positions.length} satisfy the filters and per-game cap`,
@@ -352,7 +341,7 @@ async function main(): Promise<void> {
   const selectionConfig = {
     count: requested,
     seed: settings.selectionSeed ?? 'position-set',
-    per_game: settings.perGame ?? 3,
+    per_game: POSITION_SET_PER_GAME_CAP,
     formats: settings.formats ?? null,
     rules: CANDIDATE_POSITION_SELECTION_RULES,
   };
@@ -388,6 +377,9 @@ async function main(): Promise<void> {
     const seed = `${String(settings.seed ?? 'position-panels')}:${sourceId}`;
     const table = evaluateActionTable(position, candidate.pid, { ...settings, seed });
     if (!table) throw new Error(`position ${sourceId} did not produce three complete exhaustive panels`);
+    if (!(table.measurement.span > 0)) {
+      throw new Error(`position ${sourceId} did not produce a usable measurement reward span`);
+    }
     const rendered = renderPositionTask({
       id: sourceId,
       format: candidate.format,
@@ -429,7 +421,6 @@ async function main(): Promise<void> {
         : []),
       ...(!table.rankingStable ? ['best_anchor_unstable'] : []),
       ...(!table.anchorAgreement ? ['extrema_sets_unstable'] : []),
-      ...(table.valueSpan <= 0 ? ['measurement_zero_span'] : []),
     ];
     const eligibilityMetrics = positionEligibilityMetrics(table);
     taskRows.push({
@@ -491,7 +482,7 @@ async function main(): Promise<void> {
       position_index: candidate.positionIndex,
       pid: candidate.pid,
       scaffold: candidate.scaffold,
-      played_by: record.players[candidate.pid],
+      generating_models: { p1: record.players.p1, p2: record.players.p2 },
       played: candidate.played,
     };
     const opponentPid: Pid = candidate.pid === 'p1' ? 'p2' : 'p1';
@@ -524,14 +515,14 @@ async function main(): Promise<void> {
   const sealedContent = canonicalJsonl(sealedRows);
   const manifest = {
     schema_version: CANDIDATE_POSITION_MANIFEST_SCHEMA_VERSION,
-    evaluator_digest: evaluatorDigest(),
+    evaluator_digest: producer.producerDigest,
     runtime: { node: process.version, platform: process.platform, arch: process.arch },
     showdown_commit: showdownCommit(settings.psDir ?? defaultPsDir()),
     seed_namespace: String(settings.seed ?? 'position-panels'),
     action_protocol: ACTION_PROTOCOL,
     task_protocol: POSITION_TASK_PROTOCOL,
     canonical_json: CANONICAL_JSON_PROTOCOL,
-    counterfactual: exhaustiveCounterfactualProtocol(settings),
+    counterfactual: counterfactualProtocol(settings),
     exhaustive_panels: EXHAUSTIVE_PANEL_PROTOCOL,
     eligibility_metrics_version: POSITION_ELIGIBILITY_METRICS_VERSION,
     inputs: { graded: gradedDigest, graded_manifest: gradedManifestDigest },
@@ -545,6 +536,8 @@ async function main(): Promise<void> {
   };
   validateCandidateManifest(manifest, 'constructed candidate manifest');
   const manifestContent = `${canonicalJson(manifest)}\n`;
+  producer.assertUnchanged();
+  graderProducer.assertUnchanged();
   const outputs = prepareOutputDirectories(settings.out, settings.privateOut);
   publishImmutable(outputs.publicDirectory, taskName, taskContent, PUBLIC_FILE_MODE);
   publishImmutable(outputs.privateDirectory, scoreName, scoreContent, PRIVATE_FILE_MODE);

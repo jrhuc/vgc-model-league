@@ -9,6 +9,7 @@ import { loadSeriesRecords } from '../src/records.js';
 import { loadPool } from '../src/teams.js';
 import type { TournamentEvent } from '../src/tournament.js';
 import {
+  applyBracketOutcome,
   briefEvent,
   buildBracket,
   runTournament,
@@ -42,6 +43,42 @@ test('every bracket size plays exactly n-1 series and byes auto-advance', () => 
     }
     assert.equal(rounds[rounds.length - 1]!.length, 1, 'a single final');
   }
+});
+
+test('bracket outcomes are exact immutable atomic transitions', () => {
+  const initial = buildBracket(4);
+  const untouched = structuredClone(initial);
+  const semifinal = initial[0]![0]!;
+  const otherSemifinal = initial[0]![1]!;
+  const final = initial[1]![0]!;
+
+  assert.throws(() => applyBracketOutcome(initial, final, 'p1'), /unresolved prerequisites/);
+  assert.throws(
+    () => applyBracketOutcome(initial, { ...semifinal, slots: [semifinal.slots[1], semifinal.slots[0]] }, 'p1'),
+    /stale or is not scheduled/,
+  );
+  const occupied = structuredClone(initial);
+  occupied[1]![0]!.slots[0] = 99;
+  const beforeOccupied = structuredClone(occupied);
+  assert.throws(() => applyBracketOutcome(occupied, occupied[0]![0]!, 'p1'), /dependent slot already/);
+  assert.deepEqual(occupied, beforeOccupied);
+  assert.deepEqual(initial, untouched, 'rejections do not mutate the bracket');
+
+  const afterFirst = applyBracketOutcome(initial, semifinal, 'p2');
+  assert.deepEqual(initial, untouched, 'a successful transition does not mutate its input');
+  assert.equal(afterFirst[0]![0]!.winner, semifinal.slots[1]);
+  assert.equal(afterFirst[1]![0]!.slots[0], semifinal.slots[1]);
+  assert.equal(afterFirst[1]![0]!.slots[1], null, 'only the dependent finalist slot advances');
+
+  const beforeDuplicate = structuredClone(afterFirst);
+  assert.throws(() => applyBracketOutcome(afterFirst, semifinal, 'p2'), /already has an outcome/);
+  assert.throws(() => applyBracketOutcome(afterFirst, semifinal, 'p1'), /already has an outcome/);
+  assert.deepEqual(afterFirst, beforeDuplicate, 'duplicate and contradictory outcomes are atomic');
+
+  const afterSemifinals = applyBracketOutcome(afterFirst, otherSemifinal, 'p1');
+  const resolvedFinal = afterSemifinals[1]![0]!;
+  const complete = applyBracketOutcome(afterSemifinals, resolvedFinal, 'p1');
+  assert.equal(complete.at(-1)![0]!.winner, resolvedFinal.slots[0]);
 });
 
 test('a tournament crowns a champion and records rounds coherently', async (t) => {
@@ -107,6 +144,20 @@ test('a tournament crowns a champion and records rounds coherently', async (t) =
   }
   const championSeries = final.rounds[final.rounds.length - 1]![0]!;
   assert.equal(final.champion, championSeries.winner);
+
+  const replayEvents: TournamentEvent[] = [];
+  const replayed = await runTournament(['random', 'random', 'random', 'random', 'random'], directory, {
+    seed: 11,
+    concurrency: 2,
+    recordsPath,
+    resume: true,
+    onEvent: (event) => replayEvents.push(event),
+  });
+  const replayBracket = replayEvents.filter(
+    (event): event is Extract<TournamentEvent, { type: 'bracket' }> => event.type === 'bracket',
+  )[0]!.bracket;
+  assert.deepEqual(replayed, rows);
+  assert.deepEqual(replayBracket, final, 'live completion and stored adoption produce the same bracket');
 });
 
 test('inline teams pair to models by index and record no pool', async (t) => {

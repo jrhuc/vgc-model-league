@@ -19,8 +19,9 @@ reward.
 
 The current branch can replay a game from its format, Showdown revision, seed,
 teams, and actions; refuse mismatched logs; reopen snapshots; enumerate legal
-joint actions; run bounded counterfactual panels; and select seeded stratified
-positions. It does **not** provide a public verifiers package, a supported
+joint actions; grade each eligible decision with one complete exhaustive action
+table; and select seeded stratified positions from versioned grade-time
+qualification metrics. It does **not** provide a public verifiers package, a supported
 real-provider frozen evaluation, a calibrated public reward, or a validated
 benchmark. All `grade-positions` output is exploratory.
 
@@ -42,17 +43,24 @@ protocol and write exactly two physically separated roots:
 - one private root for score vectors, qualification evidence, snapshots, draw
   identities, and rectangular action-value matrices.
 
-Public loaders must verify the complete manifest and reject the private root;
-that standalone reader is work-order material, not an existing component.
+The standalone public loader verifies the complete manifest and rejects private
+or mixed roots.
 
-The current candidate manifest and artifact rows use schema v1. The manifest
+The current candidate manifest and artifact rows use schema v2. The manifest
 binds the full Showdown SHA, format, scaffold/reference versions, sampling seeds,
 source corpus, action encoding, executed evaluator, canonical bytes, and
 checksums.
 
-Two independent common-draw qualification panels decide eligibility. A third,
-untouched common-draw measurement panel supplies final rewards. A failed matrix
-cell rejects the panel; actions never receive unequal sample counts.
+The schema-v3 grading cache binds the canonical counterfactual budget (including
+the rollout limit) and exhaustive-panel protocol. It retains qualification
+metrics and private exact configured generator provenance in source joins, not
+panel matrices or measurement values. Older caches must be restarted.
+
+Two independent common-draw qualification panels provide the held-out span used
+for grade-time eligibility. A third, untouched common-draw measurement panel
+supplies final rewards only after selection. The exporter reruns all three panels
+under a separate seed namespace. A failed matrix cell rejects the whole table;
+actions never receive unequal sample counts.
 Qualification thresholds, near-duplicate/source grouping, and corpus-balance
 requirements must come from a separately reviewed eligibility policy calibrated
 outside the candidate corpus. A balance failure or qualification-eligible row
@@ -264,44 +272,49 @@ Compatibility is evidence, not assumption. This is the current support table for
 
 ## Work order
 
-1. Harden the position pipeline before any corpus exists: wire the runtime
-   producer-authority binding (`src/eval/producer.ts`) into the grader and
-   exporter in place of their hand-rolled evaluator digests, collapse grading
-   to the exhaustive-panel estimator (deleting the screen/shortlist search
-   path and its unequal-sample drop), and implement the public-root reader
-   that verifies manifests and digests and rejects the private root.
-2. Write the corpus sizing memo before generating games: games required,
-   eligible positions after stratification caps, panel compute per position,
-   and provider cost. Record generating models per position so
-   leave-own-games-out splits stay available, and consider side-mirrored
-   freezer row pairs so counterbalance is a corpus property.
-3. Use the hardened grader and exporter to produce candidate artifacts,
-   establish separate calibration evidence, review the eligibility policy, and
-   pass the remaining gates.
-4. Build the small native-v1 static `Taskset` with strict parsing, lookup reward,
+1. Position pipeline hardening is complete before any corpus exists. The runtime
+   producer-authority binding is wired into the grader and exporter, grading uses
+   one complete exhaustive action table per eligible decision, and the public-root
+   reader strictly verifies the current manifest, public task bytes, digest, order,
+   and exact public-only layout while rejecting private or mixed roots.
+2. The [corpus-sizing memo](corpus-sizing.md) freezes the v0 target of 500,
+   the two-position source-game cap, a 60-opportunity excluded-yield-pilot rule,
+   and the decision not to require mirrored source-game pairs. The selector and
+   exporter share those target/cap authorities, and private generator provenance
+   is implemented. These decisions do not authorize generation.
+3. Freeze the remaining source generators, teams, allocation blocks, eligibility,
+   balance, concentration, duplicate/isolation, pilot-accounting, and cost-stop
+   inputs using evidence outside the candidate corpus.
+4. With explicit resource approval, run only the preregistered excluded
+   yield/compute/cost pilot and mechanically append `y_L`; its source groups can
+   never enter calibration, candidate, or held-out corpora.
+5. Use the hardened grader and exporter to produce candidate artifacts only after
+   the planning gate passes, then independently review the artifacts and all
+   remaining release gates.
+6. Build the small native-v1 static `Taskset` with strict parsing, lookup reward,
    leakage tests, and a tool-less/null harness.
-5. Run a controlled pilot over one held-out candidate corpus; publish samples, uncertainty,
-   cost, and full configuration rather than a leaderboard alone.
-6. Build an isolated runtime image containing the compiled pinned referee, then
+7. Run a controlled held-out evaluation; publish samples, uncertainty, cost, and
+   full configuration rather than a leaderboard alone.
+8. Build an isolated runtime image containing the compiled pinned referee, then
    run the internal matchday package with a real provider and model under a
    pinned or declared baseline opponent condition, never self-play. Local
    debug-runtime evidence does not pass this gate.
-7. After that smoke, run the crossed notebook intervention (retained, withheld,
+9. After that smoke, run the crossed notebook intervention (retained, withheld,
    and fixed-replacement arms over the same frozen rows) as the first
    controlled matchday analysis, under
    [Measurement's long-horizon claim rules](measurement.md#long-horizon-claims).
-8. Run separate Docker, Prime runtime, Environment Hub, and Hosted Evaluation
+10. Run separate Docker, Prime runtime, Environment Hub, and Hosted Evaluation
    smokes for the exact wheel and image. Keep Hosted Training unsupported while
    the package is matchday-only and nontrainable.
-9. Only after those package gates, connect the existing draft and
+11. Only after those package gates, connect the existing draft and
     strict-construction artifacts into a full circuit `Env`, add schedule and
     playoff flow, and preregister and freeze terminal circuit-return and failure
     semantics before comparison or training.
-10. Export the mechanical draft-to-battle projection and pass its end-to-end
+12. Export the mechanical draft-to-battle projection and pass its end-to-end
     replay and join-completeness gate.
-11. Run the semantic-label pilot and preregistered controlled forks as separate
+13. Run the semantic-label pilot and preregistered controlled forks as separate
     parallel or later analyses; neither is conditional on the other.
-12. Add GUI reporting last and only from versioned evaluation outputs; it must
+14. Add GUI reporting last and only from versioned evaluation outputs; it must
     not invent scores from natural league games.
 
 Do not add another generic Showdown client, copy external baselines, derive a
