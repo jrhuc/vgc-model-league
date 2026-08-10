@@ -50,7 +50,7 @@ test('candidate manifest binds one exact public, private, and sealed artifact se
   assert.deepEqual(view.selection.formats, ['gen9championsvgc2026regmb']);
   assert.equal(view.outputs.tasks.rows, 1);
   assert.deepEqual(view.orderedTaskIds, [DIGEST]);
-  assert.equal(CANDIDATE_POSITION_SELECTION_RULES.version, 2);
+  assert.equal(CANDIDATE_POSITION_SELECTION_RULES.version, 3);
   assert.deepEqual(Object.keys(CANDIDATE_POSITION_SELECTION_RULES.filters).sort(), [
     'formats',
     'minimum_held_out_qualification_span',
@@ -83,7 +83,15 @@ test('candidate manifest binds one exact public, private, and sealed artifact se
   ]);
 });
 
-test('candidate manifest rejects extra fields, inconsistent selection, and broken output joins', () => {
+test('candidate manifest rejects old schemas, extra fields, inconsistent selection, and broken output joins', () => {
+  assert.throws(
+    () =>
+      validateCandidateManifest({
+        ...manifest(),
+        schema_version: CANDIDATE_POSITION_MANIFEST_SCHEMA_VERSION - 1,
+      }),
+    /malformed/u,
+  );
   assert.throws(() => validateCandidateManifest({ ...manifest(), extra: true }), /malformed/u);
 
   const wrongRules = manifest();

@@ -27,6 +27,7 @@ import {
   anonymiseLog,
   anonymiseRequest,
   gameOf,
+  POSITION_GRADE_SCHEMA_VERSION,
   readCandidates,
   type SelectionOptions,
   selectPositions,
@@ -301,7 +302,8 @@ async function main(): Promise<void> {
   settings.psDir = producer.showdownRealpath;
   const gradedManifestPath = `${settings.graded}.manifest.json`;
   const gradedManifest = readObject(gradedManifestPath);
-  if (gradedManifest.schema_version !== 2) throw new Error('graded manifest is not the current schema');
+  if (gradedManifest.schema_version !== POSITION_GRADE_SCHEMA_VERSION)
+    throw new Error('graded manifest is not the current schema');
   if (canonicalJson(gradedManifest.counterfactual) !== canonicalJson(counterfactualProtocol(settings))) {
     throw new Error('graded manifest counterfactual budgets do not match the exporter settings');
   }
@@ -488,7 +490,7 @@ async function main(): Promise<void> {
       position_index: candidate.positionIndex,
       pid: candidate.pid,
       scaffold: candidate.scaffold,
-      played_by: record.players[candidate.pid],
+      generating_models: { p1: record.players.p1, p2: record.players.p2 },
       played: candidate.played,
     };
     const opponentPid: Pid = candidate.pid === 'p1' ? 'p2' : 'p1';

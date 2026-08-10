@@ -186,18 +186,24 @@ pairs are handled, and whether selection and splitting operate on whole pairs.
 The pair schema and rules are a preregistration gate before the pilot. No mirror
 schema or rule is implemented or frozen by this memo.
 
-### Subsequent code gate
+### Implemented provenance schema gate
 
-Before generation, replace grading rows' `model` plus `opponent` fields and the
-sealed source's `played_by` field with a private, pid-keyed `generating_models`
-record. Bump every affected artifact schema and make validators reject the old
-schema; there is no current candidate artifact requiring migration. Add optional
-pair identity only after mirror rules are frozen. Public task rows must retain no
-generator identity.
+The private generator-provenance gate is implemented. The grader and exporter
+copy both exact configured specs from the authoritative source record into
+`generating_models: {p1, p2}` instead of acting-seat aliases. The grading cache is
+schema v3, sealed rows and the candidate manifest are schema v2, and selection
+rules are version 3. Strict validators reject old schemas and malformed or
+non-pid-keyed generator maps. Selection does not read generator identity, and
+public task rows and manifests expose none. There is no current candidate artifact
+requiring migration.
+
+Add optional pair identity only after mirror rules are frozen; no mirror schema
+or rule is implemented by this gate.
 
 ## Decision status
 
-This parameterization becomes actionable only after the numeric addendum,
-provenance schema change, and any adopted mirror-pair design pass review. A later
-pilot may populate planning distributions; it cannot authorize release or pass
-the release gates in the [evaluation plan](evaluation-plan.md).
+This parameterization becomes actionable only after the numeric addendum and
+mirror-pair design pass review. The implemented provenance schema does not itself
+authorize generation or a pilot. A later pilot may populate planning
+distributions; it cannot authorize release or pass the release gates in the
+[evaluation plan](evaluation-plan.md).

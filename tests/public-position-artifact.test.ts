@@ -8,7 +8,7 @@ import test from 'node:test';
 import { counterfactualProtocol, EXHAUSTIVE_PANEL_PROTOCOL } from '../src/eval/counterfactual.js';
 import { POSITION_ELIGIBILITY_METRICS_VERSION } from '../src/eval/eligibility.js';
 import { ACTION_PROTOCOL } from '../src/eval/fork.js';
-import type { PublicPositionTask } from '../src/eval/panel-artifact.js';
+import { POSITION_PANEL_ARTIFACT_SCHEMA_VERSION, type PublicPositionTask } from '../src/eval/panel-artifact.js';
 import {
   CANDIDATE_POSITION_MANIFEST_SCHEMA_VERSION,
   CANDIDATE_POSITION_SELECTION_RULES,
@@ -27,7 +27,7 @@ function task(taskId = TASK_A): PublicPositionTask {
     { number: 1, canonical_action: 'move 2', label: 'Tailwind' },
   ];
   return {
-    schema_version: 1,
+    schema_version: POSITION_PANEL_ARTIFACT_SCHEMA_VERSION,
     task_id: taskId,
     format: 'gen9championsvgc2026regmb',
     phase: 'turn',
@@ -130,6 +130,7 @@ test('public candidate reader returns only the validated ordered public rows', (
   try {
     const rows = readPublicPositionCandidateRoot(value.root);
     assert.deepEqual(rows, value.rows);
+    assert.equal('generating_models' in rows[0]!, false);
     assert.deepEqual(Object.keys(rows[0]!).sort(), [
       'actions',
       'format',

@@ -101,6 +101,7 @@ test('the graded rows project only versioned grade-time eligibility metrics', ()
     position_index: 4,
     position_digest: 'digest-4',
     pid: 'p2',
+    generating_models: { p1: 'p1-openrouter:model-a', p2: 'p2-anthropic:model-b' },
     format: 'gen9championsvgc2026regmbbo3',
     scaffold: 'rev',
     phase: 'turn',
@@ -124,6 +125,12 @@ test('the graded rows project only versioned grade-time eligibility metrics', ()
   changedMeasurement.measurement_value = -99;
   changedMeasurement.measurement_panel = { span: 0 };
   assert.deepEqual(readCandidates([changedMeasurement]), readCandidates([source]));
+
+  const changedProvenance = {
+    ...source,
+    generating_models: { p1: 'p1-prime:model-c', p2: 'p2-openrouter:model-d' },
+  };
+  assert.deepEqual(readCandidates([changedProvenance]), readCandidates([source]));
 });
 
 test('missing, wrong-version, and malformed eligibility metrics are rejected rather than defaulted', () => {

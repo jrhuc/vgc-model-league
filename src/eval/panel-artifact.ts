@@ -40,7 +40,16 @@ const SEALED_KEYS = [
   'table',
   'task_id',
 ];
-const SOURCE_KEYS = ['game_number', 'pid', 'played', 'played_by', 'position_index', 'run_id', 'scaffold', 'series_id'];
+const SOURCE_KEYS = [
+  'game_number',
+  'generating_models',
+  'pid',
+  'played',
+  'position_index',
+  'run_id',
+  'scaffold',
+  'series_id',
+];
 const TABLE_KEYS = [
   'anchorAgreement',
   'heldOutGap',
@@ -77,7 +86,7 @@ const POSITION_PROMPT_PREFIX =
   'Choose one listed joint action for this controlled Pokemon VGC position.\nSelect the number for the complete joint action, not one part of it.\n\n';
 const POSITION_PROMPT_RESPONSE =
   'Return exactly one JSON object {"choice":N}, where N is a zero-based action number above. Include no other keys or prose.';
-export const POSITION_PANEL_ARTIFACT_SCHEMA_VERSION = 1;
+export const POSITION_PANEL_ARTIFACT_SCHEMA_VERSION = 2 as const;
 
 export interface PublicPositionTask extends JsonObject {
   schema_version: typeof POSITION_PANEL_ARTIFACT_SCHEMA_VERSION;
@@ -729,8 +738,11 @@ function validateSealedPositionPanel(row: JsonObject, index = 0, psDir = default
   const panelSeed = string(row.panel_seed, `${location}.panel_seed`);
   const source = object(row.source, `${location}.source`);
   exactKeys(source, SOURCE_KEYS, `${location}.source`);
-  for (const key of ['run_id', 'series_id', 'scaffold', 'played_by', 'played'] as const)
+  for (const key of ['run_id', 'series_id', 'scaffold', 'played'] as const)
     string(source[key], `${location}.source.${key}`);
+  const generatingModels = object(source.generating_models, `${location}.source.generating_models`);
+  exactKeys(generatingModels, ['p1', 'p2'], `${location}.source.generating_models`);
+  for (const pid of ['p1', 'p2'] as const) string(generatingModels[pid], `${location}.source.generating_models.${pid}`);
   integer(source.game_number, `${location}.source.game_number`, 1);
   integer(source.position_index, `${location}.source.position_index`);
   if (!['p1', 'p2'].includes(String(source.pid))) throw new Error(`${location}.source.pid is invalid`);

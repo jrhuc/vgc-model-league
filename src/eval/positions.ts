@@ -2,6 +2,7 @@ import { seededRng, shuffle } from '../random.js';
 import type { BattleRequest, JsonObject, Pid } from '../types.js';
 import { POSITION_ELIGIBILITY_METRICS_VERSION } from './eligibility.js';
 
+export const POSITION_GRADE_SCHEMA_VERSION = 3 as const;
 export const MIN_HELD_OUT_QUALIFICATION_SPAN = 0.05;
 export interface CandidatePosition {
   runId: string;

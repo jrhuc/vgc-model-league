@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 
 import { counterfactualProtocol, EXHAUSTIVE_PANEL_PROTOCOL } from '../src/eval/counterfactual.js';
 import { ACTION_PROTOCOL } from '../src/eval/fork.js';
+import { POSITION_GRADE_SCHEMA_VERSION } from '../src/eval/positions.js';
 import {
   assertPinnedShowdownRuntime,
   captureRuntimeProducerAuthority,
@@ -199,7 +200,7 @@ test('compiled position tools have distinct identities bound to the pinned Showd
   const graded = path.join(boundary, 'positions.jsonl');
   fs.writeFileSync(graded, '');
   const baseManifest = {
-    schema_version: 2,
+    schema_version: POSITION_GRADE_SCHEMA_VERSION,
     showdown_commit: (JSON.parse(fs.readFileSync('showdown.lock.json', 'utf8')) as { commit: string }).commit,
     evaluator_digest: grade.producerDigest,
     action_protocol: ACTION_PROTOCOL,
@@ -207,6 +208,10 @@ test('compiled position tools have distinct identities bound to the pinned Showd
     exhaustive_panels: EXHAUSTIVE_PANEL_PROTOCOL,
   };
   for (const [manifest, expected] of [
+    [
+      { ...baseManifest, schema_version: POSITION_GRADE_SCHEMA_VERSION - 1 },
+      /graded manifest is not the current schema/u,
+    ],
     [{ ...baseManifest, action_protocol: { stale: true } }, /action protocol is not current/u],
     [{ ...baseManifest, evaluator_digest: '0'.repeat(64) }, /evaluator authority is not current/u],
   ] as const) {

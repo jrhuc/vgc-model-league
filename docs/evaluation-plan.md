@@ -43,18 +43,18 @@ protocol and write exactly two physically separated roots:
 - one private root for score vectors, qualification evidence, snapshots, draw
   identities, and rectangular action-value matrices.
 
-Public loaders must verify the complete manifest and reject the private root;
-that standalone reader is work-order material, not an existing component.
+The standalone public loader verifies the complete manifest and rejects private
+or mixed roots.
 
-The current candidate manifest and artifact rows use schema v1. The manifest
+The current candidate manifest and artifact rows use schema v2. The manifest
 binds the full Showdown SHA, format, scaffold/reference versions, sampling seeds,
 source corpus, action encoding, executed evaluator, canonical bytes, and
 checksums.
 
-The schema-v2 grading cache binds the canonical counterfactual budget (including
+The schema-v3 grading cache binds the canonical counterfactual budget (including
 the rollout limit) and exhaustive-panel protocol. It retains qualification
-metrics and source joins, not panel matrices or measurement values. Older caches
-must be restarted.
+metrics and private exact configured generator provenance in source joins, not
+panel matrices or measurement values. Older caches must be restarted.
 
 Two independent common-draw qualification panels provide the held-out span used
 for grade-time eligibility. A third, untouched common-draw measurement panel
@@ -278,9 +278,9 @@ Compatibility is evidence, not assumption. This is the current support table for
    reader strictly verifies the current manifest, public task bytes, digest, order,
    and exact public-only layout while rejecting private or mixed roots.
 2. The parameterized [corpus-sizing memo](corpus-sizing.md) now defines the
-   planning equations and evidence boundary. Its numeric addendum and
-   provenance and mirror-pair design gates remain incomplete, so it does not
-   authorize pilot or candidate generation.
+   planning equations and evidence boundary, and its private generator-provenance
+   schema gate is implemented. Its numeric addendum and mirror-pair design gate
+   remain incomplete, so it does not authorize pilot or candidate generation.
 3. Use the hardened grader and exporter to produce candidate artifacts,
    establish separate calibration evidence, review the eligibility policy, and
    pass the remaining gates.

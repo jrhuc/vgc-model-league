@@ -7,11 +7,11 @@ import { MIN_HELD_OUT_QUALIFICATION_SPAN } from './positions.js';
 import { CANONICAL_JSON_PROTOCOL, canonicalJson } from './serialization.js';
 import { POSITION_TASK_PROTOCOL } from './task.js';
 
-export const CANDIDATE_POSITION_MANIFEST_SCHEMA_VERSION = 1 as const;
+export const CANDIDATE_POSITION_MANIFEST_SCHEMA_VERSION = 2 as const;
 
 export const CANDIDATE_POSITION_SELECTION_RULES = {
-  version: 2,
-  source_rows: 'schema-v2-exhaustive-position-score-rows-from-complete-graded-source-games',
+  version: 3,
+  source_rows: 'schema-v3-exhaustive-position-score-rows-from-complete-graded-source-games',
   source_identity: ['run_id', 'series_id', 'game_number', 'position_index', 'pid'],
   duplicate_resolution: 'first-row-in-graded-input',
   qualification_projection: {

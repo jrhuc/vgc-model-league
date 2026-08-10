@@ -221,9 +221,10 @@ pnpm run export-position-panels --horizon 2 --luck 8 --opponents 4 --seed panels
 ```
 
 `grade-positions` exactly replays eligible games and evaluates every legal action
-once through the canonical three-panel exhaustive estimator. Its schema-v2 cache
-stores source joins, the recorded action, state value, canonical protocol and
-seed, and versioned qualification metrics; it stores no action-value matrices.
+once through the canonical three-panel exhaustive estimator. Its schema-v3 cache
+stores source joins with private exact pid-keyed generating-model provenance, the
+recorded action, state value, canonical protocol and seed, and versioned
+qualification metrics; it stores no action-value matrices.
 Pass `--restart` when an older grading cache exists. `export-position-panels`
 requires the same `--horizon`, `--luck`, and `--opponents` budgets as the grading
 manifest, selects only from its grade-time qualification metrics, then generates

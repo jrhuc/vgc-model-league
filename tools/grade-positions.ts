@@ -14,6 +14,7 @@ import {
 } from '../src/eval/counterfactual.js';
 import { positionEligibilityMetrics } from '../src/eval/eligibility.js';
 import { ACTION_PROTOCOL, positionDigest, requestPhase } from '../src/eval/fork.js';
+import { POSITION_GRADE_SCHEMA_VERSION } from '../src/eval/positions.js';
 import { captureRuntimeProducerAuthority } from '../src/eval/producer.js';
 import { DATA_DIR, defaultPsDir } from '../src/paths.js';
 import { showdownCommit } from '../src/showdown.js';
@@ -44,7 +45,7 @@ interface GradedGame {
 }
 
 interface GradeManifest extends JsonObject {
-  schema_version: number;
+  schema_version: typeof POSITION_GRADE_SCHEMA_VERSION;
   showdown_commit: string;
   evaluator_digest: string;
   source_digest: string;
@@ -125,7 +126,7 @@ function gradedGames(file: string): Set<string> {
 
 function manifestFor(settings: Settings, records: GameRecord[], producerDigest: string): GradeManifest {
   return {
-    schema_version: 2,
+    schema_version: POSITION_GRADE_SCHEMA_VERSION,
     showdown_commit: showdownCommit(settings.psDir ?? defaultPsDir()),
     evaluator_digest: producerDigest,
     source_digest: gameRecordCorpusDigest(records),
@@ -305,8 +306,7 @@ function gradeShard(shard: Shard, emit: (graded: GradedGame) => void): void {
           showdown_commit: record.psCommit,
           scaffold: record.scaffold.revision,
           scaffold_components: record.scaffold.components,
-          model: record.players[pid],
-          opponent: record.players[pid === 'p1' ? 'p2' : 'p1'],
+          generating_models: { p1: record.players.p1, p2: record.players.p2 },
           pid,
           position_index: position.index,
           position_digest: positionDigest(position, pid),
