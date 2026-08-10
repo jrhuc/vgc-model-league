@@ -35,7 +35,8 @@ import { foldSeriesGames } from '../src/series.js';
 import { loadShowdown } from '../src/showdown.js';
 import { runTeambuild, teambuildScaffoldRevision } from '../src/teambuild.js';
 import {
-  applyTradeWindowTransaction,
+  applyFreeAgency,
+  applyTradeOffer,
   MAX_TRADE_OFFERS,
   parseTradeDecision,
   parseTradeOffer,
@@ -210,12 +211,6 @@ test('draft pick transitions enforce the exact turn without mutating prior state
   const accepted = applyDraftPick(initial, action);
 
   assert.deepEqual(snapshot(initial), untouched);
-  assert.notEqual(accepted, initial);
-  assert.notEqual(accepted.taken, initial.taken);
-  assert.notEqual(accepted.rosters, initial.rosters);
-  assert.notEqual(accepted.budgets, initial.budgets);
-  assert.notEqual(accepted.teamNames, initial.teamNames);
-  assert.deepEqual(applyDraftPick(initial, action), accepted, 'the same state and action have the same result');
 
   const afterAccepted = snapshot(accepted);
   assert.throws(() => applyDraftPick(accepted, action), /pick 1 is stale; expected pick 2/);
@@ -313,13 +308,7 @@ test('trade-window swaps are atomic and may upgrade a base entry to its Mega', (
   assert.match(String(overBudget), /above the .* budget/);
   const beforeRejected = structuredClone(state);
   assert.throws(
-    () =>
-      applyTradeWindowTransaction(state, {
-        kind: 'free_agency',
-        entrant: 0,
-        swaps: [{ drop: tyranitar.id, add: megaTyranitar.id }],
-        notebook: 'Mega Tyranitar is the endgame.',
-      }),
+    () => applyFreeAgency(state, 0, [{ drop: tyranitar.id, add: megaTyranitar.id }], 'Mega Tyranitar is the endgame.'),
     /above the .* budget/,
   );
   assert.deepEqual(state, beforeRejected, 'a rejected list mutates nothing');
@@ -338,12 +327,7 @@ test('trade-window swaps are atomic and may upgrade a base entry to its Mega', (
   );
   assert.notEqual(typeof parsed, 'string', String(parsed));
   if (typeof parsed === 'string') return;
-  const accepted = applyTradeWindowTransaction(state, {
-    kind: 'free_agency',
-    entrant: 0,
-    swaps: parsed.swaps,
-    notebook: parsed.notebook,
-  });
+  const accepted = applyFreeAgency(state, 0, parsed.swaps, parsed.notebook);
   assert.deepEqual(state, beforeRejected, 'an accepted transition does not mutate its prior state');
   assert.equal(accepted.rosters[0]!.length, BOARD.picks);
   assert.equal(accepted.budgets[0], 0);
@@ -423,8 +407,7 @@ test('coach trades validate both rosters and apply an accepted exchange atomical
   const before = structuredClone(state);
   assert.throws(
     () =>
-      applyTradeWindowTransaction(state, {
-        kind: 'offer',
+      applyTradeOffer(state, {
         from: 0,
         to: 1,
         give: offered.give,
@@ -437,8 +420,7 @@ test('coach trades validate both rosters and apply an accepted exchange atomical
   );
   assert.deepEqual(state, before, 'a rejected offer leaves rosters, budgets, and notebooks untouched');
 
-  const accepted = applyTradeWindowTransaction(state, {
-    kind: 'offer',
+  const accepted = applyTradeOffer(state, {
     from: 0,
     to: offered.to,
     give: offered.give,

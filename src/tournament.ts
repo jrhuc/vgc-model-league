@@ -132,7 +132,6 @@ export function buildBracket(count: number): BracketMatch[][] {
   return rounds;
 }
 
-/** Resolve one exact scheduled series without changing the supplied bracket. */
 export function applyBracketOutcome(
   rounds: readonly (readonly BracketMatch[])[],
   scheduled: Readonly<BracketMatch>,
@@ -154,9 +153,6 @@ export function applyBracketOutcome(
     throw new Error(`bracket series ${scheduled.seriesIndex} has unresolved prerequisites`);
   }
   if (current.winner !== null) throw new Error(`bracket series ${scheduled.seriesIndex} already has an outcome`);
-  if (winnerSide !== 'p1' && winnerSide !== 'p2') {
-    throw new Error(`bracket series ${scheduled.seriesIndex} has an invalid winner side`);
-  }
 
   const winner = current.slots[winnerSide === 'p1' ? 0 : 1];
   const next = rounds[scheduled.round + 1]?.[position >> 1];
