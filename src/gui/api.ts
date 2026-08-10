@@ -213,7 +213,6 @@ export interface RunSnapshot {
   pool: string;
   models: string[];
   startTime: number;
-  owner: string | null;
   endTime: number | null;
   canControl: boolean;
   rows: SeriesRowView[];
@@ -727,40 +726,6 @@ export interface QuartileView {
   p25: number;
   p75: number;
   max: number;
-}
-
-export interface ImportRequest {
-  row: Record<string, unknown>;
-  logs?: Partial<Record<Pid, string>>;
-  games?: Record<string, string>;
-  runConfig?: Record<string, unknown>;
-  pool?: {
-    name: string;
-    format: string;
-    event?: Record<string, unknown>;
-    spreads?: Record<string, unknown>;
-    teams: Array<{ id: string; paste: string; seed?: number; source?: Record<string, unknown> }>;
-  };
-  league?: LeagueAssets;
-}
-
-export interface LeagueAssets {
-  rosters?: unknown[];
-  draft?: string;
-  teambuild?: string;
-  window?: Record<string, unknown>;
-  season?: string;
-}
-
-export interface ImportResponse {
-  imported: boolean;
-  duplicate?: boolean;
-  runId: string;
-  seriesId: string;
-  logs: Pid[];
-  games?: string[];
-  pool: 'created' | 'present' | null;
-  league: string[];
 }
 
 export interface ModelsResponse {

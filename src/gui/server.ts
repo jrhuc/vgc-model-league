@@ -1,5 +1,4 @@
-import { fork } from 'node:child_process';
-import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import type http from 'node:http';
 import { createServer } from 'node:http';
@@ -7,13 +6,10 @@ import type { AddressInfo } from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildLeague, buildLeagueGame, buildLeagues, findLiveCliRun, snapshotBattle } from '../archive.js';
-import type { AuthService, AuthSession, AuthUser } from '../auth.js';
-import { AuthError } from '../auth.js';
 import { describeBoardMon, listBoards, loadBoard } from '../draft.js';
 import type { DraftLeagueEvent } from '../draftleague.js';
 import { DRAFT_PROTOCOL_VERSION, roundRobinWeeks, runDraftLeague } from '../draftleague.js';
 import { buildTournamentGame, buildTournaments } from '../evidence.js';
-import { ImportBusyError, ImportError, importSeries, removeImportedRun } from '../import.js';
 import { discoverModels } from '../model-catalog.js';
 import {
   DATA_DIR,
@@ -46,35 +42,27 @@ import type { ExperimentMode, JsonObject, Pid, TimerScale } from '../types.js';
 import { isRecord } from '../value.js';
 import type {
   AppState,
-  AppStateResponse,
   BattleMessage,
-  BattleView,
   BoardResponse,
   BracketView,
   DecisionView,
   DraftView,
   FormatInfo,
-  ImportRequest,
   ModelInfo,
   ModelsResponse,
   PoolTeamsResponse,
-  PublicRunSnapshot,
   RunPauseView,
   RunSnapshot,
-  RunView,
   SampleTeam,
   SeriesRowView,
   ServerEvent,
 } from './api.js';
 import { BattleLog } from './battlelog.js';
-import { buildPublicBattleMessage, projectPublicBracket, projectPublicDraft } from './public.js';
-import type { RunWorkerInput, RunWorkerOutput, RunWorkerStart } from './run-worker-protocol.js';
 import { loadSelectedTrace } from './selected-trace.js';
 
 type SeriesRow = Omit<SeriesRowView, 'turn'>;
 
 const ASSETS_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'gui');
-const RUN_WORKER_PATH = fileURLToPath(new URL('./run-worker.js', import.meta.url));
 const ASSET_TYPES: Record<string, string> = {
   '.png': 'image/png',
   '.html': 'text/html; charset=utf-8',
@@ -88,14 +76,8 @@ const ASSET_TYPES: Record<string, string> = {
 
 const LOCAL_HOSTNAMES: Record<string, true> = { '127.0.0.1': true, localhost: true, '[::1]': true, '::1': true };
 const MUTATING_METHODS: Record<string, true> = { POST: true, PUT: true, PATCH: true, DELETE: true };
-const SESSION_COOKIE = 'vgc_session';
-const OAUTH_STATE_COOKIE = 'vgc_oauth_state';
-const MAX_PUBLIC_SSE_CLIENTS = 32;
-const MAX_FALLBACK_SSE_CLIENTS = 16;
-const MAX_CONTROLLER_SSE_CLIENTS = 16;
-const MAX_SSE_CLIENTS_PER_SESSION = 2;
+const MAX_SSE_CLIENTS = 16;
 const SSE_HEARTBEAT_MS = 25_000;
-const MAX_RATE_BUCKETS = 4096;
 const DEFAULT_MAX_RUN_MS = 4 * 60 * 60 * 1000;
 const SHUTDOWN_ERROR = 'run interrupted by server shutdown';
 const TIMEOUT_ERROR = 'run exceeded its maximum duration';
@@ -108,14 +90,8 @@ interface GuiServerOptions {
   tournamentRunner?: typeof runTournament;
   draftRunner?: typeof runDraftLeague;
   host?: string;
-  publicOrigin?: string;
-  mutationsEnabled?: boolean;
-  auth?: AuthService;
-  importToken?: string;
   logger?: (entry: Record<string, unknown>) => void;
   maxRunMs?: number;
-  workerPath?: string;
-  workerStopGraceMs?: number;
   /** How long a stopped run's task may keep running before it is detached so new runs can start. */
   stopFallbackMs?: number;
 }
@@ -129,45 +105,8 @@ function hostnameFromHost(host: string | undefined): string {
   }
 }
 
-function configuredOrigin(value: string | undefined): URL | undefined {
-  if (!value) return undefined;
-  const url = new URL(value);
-  if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.origin !== value) {
-    throw new Error('VGC_LEAGUE_PUBLIC_ORIGIN must be an exact http(s) origin without a path');
-  }
-  if (url.protocol === 'http:' && !LOCAL_HOSTNAMES[url.hostname.toLowerCase()]) {
-    throw new Error('VGC_LEAGUE_PUBLIC_ORIGIN must use HTTPS for non-loopback hosts');
-  }
-  return url;
-}
-
-function requestCookies(header: string | undefined): Record<string, string> {
-  const result: Record<string, string> = {};
-  for (const part of (header ?? '').split(';')) {
-    const separator = part.indexOf('=');
-    if (separator > 0) result[part.slice(0, separator).trim()] = part.slice(separator + 1).trim();
-  }
-  return result;
-}
-
-function responseCookie(name: string, value: string, maxAge: number, cookiePath: string, secure: boolean): string {
-  return `${name}=${value}; Path=${cookiePath}; Max-Age=${maxAge}; HttpOnly; SameSite=Lax${secure ? '; Secure' : ''}`;
-}
-
-interface RateBucket {
-  count: number;
-  resetAt: number;
-}
-
 interface EventViewer {
-  sessionToken: string | undefined;
-  publicOnly: boolean;
   backpressured: boolean;
-}
-
-interface PendingServerEvent {
-  privateEvent: ServerEvent;
-  publicEvent?: ServerEvent;
 }
 
 interface RunConfig extends ModelReasoningConfig {
@@ -231,13 +170,9 @@ class ActiveRun {
   settling = false;
   detached = false;
   readonly battles = new Map<number, Map<number, GameBattle>>();
-  readonly publicBattles = new Map<number, Map<number, GameBattle>>();
-  readonly publicTeamPreviewed = new Set<number>();
   readonly decisions = new Map<number, DecisionView[]>();
   readonly spend = new Map<number, Record<Pid, { ms: number; tokens: number }>>();
   readonly battleRevisions = new Map<number, number>();
-  readonly publicBattleRevisions = new Map<number, number>();
-  readonly publiclyResolvedGames = new Set<string>();
   readonly controller = new AbortController();
   readonly recovery = new RecoveryGate();
   resumeAction: (() => void) | undefined;
@@ -248,7 +183,6 @@ class ActiveRun {
   constructor(
     readonly config: RunConfig,
     readonly apiKeys: Record<string, string>,
-    readonly owner: AuthUser | undefined,
     runsDir?: string,
   ) {
     this.runDir = makeRunDirectory(runsDir);
@@ -285,13 +219,10 @@ export class GuiServer {
   private runTask: Promise<void> | undefined;
   private shutdownTask: Promise<void> | undefined;
   private readonly clients = new Map<http.ServerResponse, EventViewer>();
-  private readonly pending = new Map<string, () => PendingServerEvent | undefined>();
-  private readonly rateBuckets = new Map<string, RateBucket>();
+  private readonly pending = new Map<string, () => ServerEvent | undefined>();
   private readonly options: GuiServerOptions;
-  private readonly publicOrigin: URL | undefined;
   private readonly bindHost: string;
   private readonly maxRunMs: number;
-  private readonly workerStopGraceMs: number;
   private readonly stopFallbackMs: number;
   private flushTimer: NodeJS.Timeout | undefined;
   private heartbeatTimer: NodeJS.Timeout | undefined;
@@ -300,23 +231,17 @@ export class GuiServer {
 
   constructor(options: GuiServerOptions = {}) {
     this.options = options;
-    this.publicOrigin = configuredOrigin(options.publicOrigin);
-    this.bindHost = options.host?.trim() || (this.publicOrigin ? '0.0.0.0' : '127.0.0.1');
+    this.bindHost = options.host?.trim() || '127.0.0.1';
     this.maxRunMs = options.maxRunMs ?? DEFAULT_MAX_RUN_MS;
     if (!Number.isSafeInteger(this.maxRunMs) || this.maxRunMs < 1) {
       throw new Error('maxRunMs must be a positive integer');
-    }
-    this.workerStopGraceMs = options.workerStopGraceMs ?? 5_000;
-    if (!Number.isSafeInteger(this.workerStopGraceMs) || this.workerStopGraceMs < 1) {
-      throw new Error('workerStopGraceMs must be a positive integer');
     }
     this.stopFallbackMs = options.stopFallbackMs ?? 15_000;
     if (!Number.isSafeInteger(this.stopFallbackMs) || this.stopFallbackMs < 1) {
       throw new Error('stopFallbackMs must be a positive integer');
     }
-    const bindHostname = hostnameFromHost(this.bindHost);
-    if (!this.publicOrigin && !LOCAL_HOSTNAMES[bindHostname]) {
-      throw new Error('a non-loopback host requires VGC_LEAGUE_PUBLIC_ORIGIN');
+    if (!LOCAL_HOSTNAMES[hostnameFromHost(this.bindHost)]) {
+      throw new Error('the GUI server binds loopback only; front it with a local proxy for remote access');
     }
     prepareDataDirectories();
     this.server = createServer((request, response) => {
@@ -330,9 +255,6 @@ export class GuiServer {
       response.setHeader('permissions-policy', 'camera=(), geolocation=(), microphone=(), payment=(), usb=()');
       response.setHeader('referrer-policy', 'no-referrer');
       response.setHeader('x-content-type-options', 'nosniff');
-      if (this.publicOrigin?.protocol === 'https:') {
-        response.setHeader('strict-transport-security', 'max-age=31536000; includeSubDomains');
-      }
       response.once('finish', () => {
         this.options.logger?.({
           timestamp: new Date().toISOString(),
@@ -346,7 +268,7 @@ export class GuiServer {
         });
       });
       void this.route(request, response).catch((error: unknown) => {
-        const expected = error instanceof HttpError || error instanceof AuthError;
+        const expected = error instanceof HttpError;
         const status = expected ? error.status : 500;
         const detail = redactSecrets(
           error instanceof Error ? error.message : String(error),
@@ -381,7 +303,7 @@ export class GuiServer {
     this.server.listen(port, this.bindHost, () => {
       const address = this.server.address() as AddressInfo;
       const localHost = hostnameFromHost(this.bindHost) === '::1' ? '[::1]' : '127.0.0.1';
-      resolve(this.publicOrigin ? `${this.publicOrigin.origin}/` : `http://${localHost}:${address.port}/`);
+      resolve(`http://${localHost}:${address.port}/`);
     });
     return promise;
   }
@@ -431,75 +353,11 @@ export class GuiServer {
     }
 
     const host = request.headers.host;
-    const hostAllowed = this.publicOrigin
-      ? host?.toLowerCase() === this.publicOrigin.host.toLowerCase()
-      : Boolean(LOCAL_HOSTNAMES[hostnameFromHost(host)]);
-    if (!hostAllowed) throw new HttpError(403, 'request host is not allowed');
+    if (!LOCAL_HOSTNAMES[hostnameFromHost(host)]) throw new HttpError(403, 'request host is not allowed');
 
-    const cookies = requestCookies(request.headers.cookie);
-    const sessionToken = cookies[SESSION_COOKIE];
-    const session = this.options.auth?.session(sessionToken);
-    if (key === 'GET /auth/github') {
-      if (!this.options.auth) throw new HttpError(404, 'GitHub login is not configured');
-      this.consumeRateLimit('oauth', request.socket.remoteAddress ?? 'unknown', 20, 10 * 60_000);
-      const login = this.options.auth.beginLogin();
-      this.redirect(response, login.location, [
-        responseCookie(
-          OAUTH_STATE_COOKIE,
-          login.state,
-          600,
-          '/auth/github/callback',
-          this.publicOrigin?.protocol === 'https:',
-        ),
-      ]);
-      return;
-    }
-    if (key === 'GET /auth/github/callback') {
-      if (!this.options.auth) throw new HttpError(404, 'GitHub login is not configured');
-      if (url.searchParams.has('error')) {
-        this.redirect(response, '/?auth=denied', [
-          responseCookie(OAUTH_STATE_COOKIE, '', 0, '/auth/github/callback', this.publicOrigin?.protocol === 'https:'),
-        ]);
-        return;
-      }
-      const result = await this.options.auth.completeLogin(
-        url.searchParams.get('code') ?? '',
-        url.searchParams.get('state') ?? '',
-        cookies[OAUTH_STATE_COOKIE],
-        sessionToken,
-      );
-      this.redirect(response, '/', [
-        responseCookie(
-          SESSION_COOKIE,
-          result.sessionToken,
-          7 * 24 * 60 * 60,
-          '/',
-          this.publicOrigin?.protocol === 'https:',
-        ),
-        responseCookie(OAUTH_STATE_COOKIE, '', 0, '/auth/github/callback', this.publicOrigin?.protocol === 'https:'),
-      ]);
-      return;
-    }
-
-    if (key === 'POST /api/import') {
-      this.authorizeImport(request);
-      this.consumeRateLimit('import', 'operator', 600, 60 * 60_000);
-      this.json(response, 200, this.importBody(await this.readJson(request)));
-      return;
-    }
-
-    if (key === 'POST /api/import/remove') {
-      this.authorizeImport(request);
-      this.consumeRateLimit('import', 'operator', 600, 60 * 60_000);
-      this.json(response, 200, this.importRemoveBody(await this.readJson(request)));
-      return;
-    }
-
-    let actor: AuthUser | undefined;
     if (MUTATING_METHODS[method]) {
       const origin = request.headers.origin;
-      const expectedOrigin = this.publicOrigin?.origin ?? `http://${host}`;
-      if ((this.publicOrigin && origin !== expectedOrigin) || (origin !== undefined && origin !== expectedOrigin)) {
+      if (origin !== undefined && origin !== `http://${host}`) {
         throw new HttpError(403, 'cross-origin requests are not allowed');
       }
       const contentType = String(request.headers['content-type'] ?? '')
@@ -509,31 +367,10 @@ export class GuiServer {
       if (contentType !== 'application/json') {
         throw new HttpError(415, 'content-type must be application/json');
       }
-      if (this.options.auth) {
-        const minimumRole = key === 'POST /api/logout' ? 'reader' : 'contributor';
-        actor = this.options.auth.authorize(
-          sessionToken,
-          typeof request.headers['x-csrf-token'] === 'string' ? request.headers['x-csrf-token'] : undefined,
-          minimumRole,
-        ).user;
-      } else if (
-        this.options.mutationsEnabled === false ||
-        (this.publicOrigin && this.options.mutationsEnabled !== true)
-      ) {
-        throw new HttpError(503, 'mutations are disabled until deployment authentication is configured');
-      }
-    }
-    if (MUTATING_METHODS[method] && this.publicOrigin) {
-      const subject = actor ? `user:${actor.id}` : `network:${request.socket.remoteAddress ?? 'unknown'}`;
-      if (key === 'POST /api/models') this.consumeRateLimit('models', subject, 30, 60_000);
-      else if (key === 'POST /api/team/validate') this.consumeRateLimit('validation', subject, 60, 60_000);
-      else if (key === 'POST /api/team/pokepaste') this.consumeRateLimit('pokepaste', subject, 30, 60_000);
-      else if (key === 'POST /api/pool') this.consumeRateLimit('pool', subject, 10, 60 * 60_000);
-      else if (key === 'POST /api/run') this.consumeRateLimit('run', subject, 6, 60 * 60_000);
     }
 
     if (method === 'GET' && !url.pathname.startsWith('/api/') && this.serveStatic(url.pathname, response)) return;
-    if (key === 'GET /api/state') this.json(response, 200, this.stateBody(session));
+    if (key === 'GET /api/state') this.json(response, 200, this.stateBody());
     else if (key === 'GET /api/selected-trace') this.json(response, 200, this.selectedTrace.view);
     else if (key === 'GET /api/selected-trace/full.json') {
       response.writeHead(200, {
@@ -542,10 +379,9 @@ export class GuiServer {
       });
       response.end(this.selectedTrace.fullJson);
     } else if (key === 'GET /api/tournaments')
-      this.json(response, 200, this.tournamentsBody(url.searchParams.get('pool'), session));
-    else if (key === 'GET /api/leagues') this.json(response, 200, this.leaguesBody(session));
-    else if (key === 'GET /api/league')
-      this.json(response, 200, this.leagueBody(url.searchParams.get('run') ?? '', session));
+      this.json(response, 200, this.tournamentsBody(url.searchParams.get('pool')));
+    else if (key === 'GET /api/leagues') this.json(response, 200, this.leaguesBody());
+    else if (key === 'GET /api/league') this.json(response, 200, this.leagueBody(url.searchParams.get('run') ?? ''));
     else if (key === 'GET /api/tournament/game')
       this.json(
         response,
@@ -554,7 +390,6 @@ export class GuiServer {
           url.searchParams.get('run') ?? '',
           url.searchParams.get('series') ?? '',
           url.searchParams.get('game') ?? '',
-          session,
         ),
       );
     else if (key === 'GET /api/league/game')
@@ -565,7 +400,6 @@ export class GuiServer {
           url.searchParams.get('run') ?? '',
           url.searchParams.get('series') ?? '',
           url.searchParams.get('game') ?? '',
-          session,
         ),
       );
     else if (key === 'GET /api/board') {
@@ -573,46 +407,19 @@ export class GuiServer {
       response.setHeader('cache-control', 'public, max-age=3600');
       this.json(response, 200, board);
     } else if (key === 'GET /api/pool/teams') {
-      if (!this.canReadPrivateTeams(session?.user)) throw new HttpError(403, 'private team data is unavailable');
       this.json(response, 200, this.poolTeamsBody(url.searchParams.get('name') ?? ''));
-    } else if (key === 'GET /api/events/public') {
-      this.openEvents(response, undefined, true);
     } else if (key === 'GET /api/events') {
-      this.requireAuthenticatedViewer(session);
-      this.openEvents(response, sessionToken, false);
-    } else if (key === 'GET /api/battle/public') {
-      this.json(response, 200, this.publicBattleBody(Number(url.searchParams.get('index')), gameParam(url)));
+      this.openEvents(response);
     } else if (key === 'GET /api/battle') {
-      this.requireAuthenticatedViewer(session);
-      this.json(
-        response,
-        200,
-        this.canViewPrivateRun(session?.user)
-          ? this.battleBody(Number(url.searchParams.get('index')), gameParam(url))
-          : this.publicBattleBody(Number(url.searchParams.get('index')), gameParam(url)),
-      );
-    } else if (key === 'POST /api/logout') {
-      this.options.auth?.logout(
-        sessionToken,
-        typeof request.headers['x-csrf-token'] === 'string' ? request.headers['x-csrf-token'] : undefined,
-      );
-      response.setHeader(
-        'set-cookie',
-        responseCookie(SESSION_COOKIE, '', 0, '/', this.publicOrigin?.protocol === 'https:'),
-      );
-      this.json(response, 200, { ok: true });
+      this.json(response, 200, this.battleBody(Number(url.searchParams.get('index')), gameParam(url)));
     } else if (key === 'POST /api/models') {
       const body = await this.readJson(request);
-      const provider = String(body.provider ?? '');
-      const result = await this.modelsBody(provider, String(body.apiKey ?? ''));
-      if (actor && this.options.auth) this.options.auth.recordModelDiscovery(actor, provider);
-      this.json(response, 200, result);
+      this.json(response, 200, await this.modelsBody(String(body.provider ?? ''), String(body.apiKey ?? '')));
     } else if (key === 'POST /api/run') {
-      this.json(response, 200, this.startRun(await this.readJson(request), actor));
+      this.json(response, 200, this.startRun(await this.readJson(request)));
     } else if (key === 'POST /api/run/stop') {
       const run = this.run;
       if (run && isActiveRunState(run.state) && !run.settling) {
-        if (actor && this.options.auth) this.options.auth.stopExperiment(actor, run.runId);
         run.userStopped = true;
         run.controller.abort();
         this.scheduleStopFallback(run);
@@ -621,97 +428,15 @@ export class GuiServer {
     } else if (key === 'POST /api/run/resume') {
       const run = this.run;
       if (run?.state !== 'paused' || run.settling) throw new HttpError(409, 'the run is not paused');
-      if (!this.controlsCurrentRun(actor)) throw new HttpError(403, 'you cannot resume this run');
       run.resumeAction?.();
       this.json(response, 200, { ok: true });
     } else if (key === 'POST /api/pool') {
-      this.json(response, 200, this.makePool(await this.readJson(request), actor));
+      this.json(response, 200, this.makePool(await this.readJson(request)));
     } else if (key === 'POST /api/team/validate') {
-      const body = await this.readJson(request);
-      const result = this.validateDraft(body);
-      if (actor && this.options.auth) this.options.auth.recordValidation(actor, String(body.format ?? ''));
-      this.json(response, 200, result);
+      this.json(response, 200, this.validateDraft(await this.readJson(request)));
     } else if (key === 'POST /api/team/pokepaste') {
       this.json(response, 200, await this.importPokepaste(await this.readJson(request)));
     } else this.json(response, 404, { error: `no route for ${key}` });
-  }
-
-  private consumeRateLimit(scope: string, subject: string, maximum: number, windowMs: number): void {
-    const now = Date.now();
-    const key = `${scope}:${subject}`;
-    let bucket = this.rateBuckets.get(key);
-    if (bucket && bucket.resetAt <= now) {
-      this.rateBuckets.delete(key);
-      bucket = undefined;
-    }
-    if (!bucket) {
-      if (this.rateBuckets.size >= MAX_RATE_BUCKETS) {
-        for (const [candidate, value] of this.rateBuckets) {
-          if (value.resetAt <= now) this.rateBuckets.delete(candidate);
-        }
-      }
-      if (this.rateBuckets.size >= MAX_RATE_BUCKETS) {
-        throw new HttpError(429, 'request rate limit exceeded', 60);
-      }
-      this.rateBuckets.set(key, { count: 1, resetAt: now + windowMs });
-      return;
-    }
-    if (bucket.count >= maximum) {
-      throw new HttpError(429, 'request rate limit exceeded', Math.max(1, Math.ceil((bucket.resetAt - now) / 1000)));
-    }
-    bucket.count += 1;
-  }
-  private redirect(response: http.ServerResponse, location: string, cookies: string[]): void {
-    response.writeHead(302, {
-      'cache-control': 'no-store',
-      location,
-      ...(cookies.length ? { 'set-cookie': cookies } : {}),
-    });
-    response.end();
-  }
-
-  private requireAuthenticatedViewer(session: AuthSession | undefined): void {
-    if (this.options.auth) {
-      if (!session) throw new HttpError(401, 'authentication required');
-      return;
-    }
-    if (this.publicOrigin) throw new HttpError(403, 'private run data is unavailable');
-  }
-
-  private canViewPrivateRun(user: AuthUser | undefined): boolean {
-    if (!this.options.auth) return !this.publicOrigin;
-    if (!user || user.role === 'reader') return false;
-    return user.role === 'operator' || !this.run || this.run.owner?.id === user.id;
-  }
-
-  private canReadPrivateTeams(user: AuthUser | undefined): boolean {
-    if (!this.options.auth) return !this.publicOrigin;
-    return Boolean(user && user.role !== 'reader');
-  }
-
-  private canViewPrivateArchive(user: AuthUser | undefined, runId: string): boolean {
-    if (!this.options.auth) return !this.publicOrigin;
-    if (!user || user.role === 'reader') return false;
-    if (user.role === 'operator' || (this.run?.runId === runId && this.run.owner?.id === user.id)) return true;
-    return this.options.auth.canControlExperiment(user, runId);
-  }
-
-  private hidesActiveArchive(user: AuthUser | undefined, runId: string): boolean {
-    return Boolean(
-      this.run?.runId === runId && isActiveRunState(this.run.state) && !this.canViewPrivateArchive(user, runId),
-    );
-  }
-
-  private eventViewerUser(viewer: EventViewer): AuthUser | undefined {
-    if (viewer.publicOnly) return undefined;
-    return this.options.auth?.session(viewer.sessionToken)?.user;
-  }
-
-  private controlsCurrentRun(user: AuthUser | undefined): boolean {
-    if (!this.options.auth) return !this.publicOrigin || this.options.mutationsEnabled === true;
-    return Boolean(
-      this.run && user && user.role !== 'reader' && (user.role === 'operator' || this.run.owner?.id === user.id),
-    );
   }
 
   private json(response: http.ServerResponse, status: number, body: unknown): void {
@@ -730,7 +455,6 @@ export class GuiServer {
       fs.accessSync(DATA_DIR, fs.constants.R_OK | fs.constants.W_OK);
       if (!listBoards().length) throw new Error('no valid draft boards are installed');
       loadShowdown();
-      this.options.auth?.ready();
       this.json(response, 200, { status: 'ready' });
     } catch (error) {
       this.options.logger?.({
@@ -809,11 +533,9 @@ export class GuiServer {
     };
   }
 
-  private stateBody(session: AuthSession | undefined): AppStateResponse {
+  private stateBody(): AppState {
     const pools = listPools(this.options.teamsDir ?? TEAMS_DIR);
-    const privateView = this.canViewPrivateRun(session?.user);
-    const trustedSetup = this.canReadPrivateTeams(session?.user);
-    const common = {
+    return {
       pools,
       defaultFormat: pools[0]?.format ?? 'gen9championsvgc2026regmbbo3',
       formats: championsFormats(),
@@ -825,34 +547,9 @@ export class GuiServer {
         discovery: option.discovery,
         requiresKey: option.requiresKey,
       })),
-      auth: this.options.auth
-        ? {
-            mode: 'github' as const,
-            user: session
-              ? {
-                  login: session.user.login,
-                  avatarUrl: session.user.avatarUrl,
-                  role: session.user.role,
-                }
-              : null,
-            csrfToken: session?.csrfToken ?? null,
-          }
-        : { mode: this.publicOrigin ? ('read-only' as const) : ('local' as const), user: null, csrfToken: null },
-    };
-    if (!privateView) {
-      const publicState = { ...common, run: this.runBody(true) };
-      return trustedSetup
-        ? {
-            ...publicState,
-            sampleTeams: this.sampleTeamsBody(pools),
-            externalRun: this.externalRunBody(),
-          }
-        : publicState;
-    }
-    return {
-      ...common,
+      auth: { mode: 'local', user: null, csrfToken: null },
       sampleTeams: this.sampleTeamsBody(pools),
-      run: this.runBody(false) as RunSnapshot | null,
+      run: this.runBody(),
       externalRun: this.externalRunBody(),
     };
   }
@@ -889,181 +586,86 @@ export class GuiServer {
     };
   }
 
-  private authorizeImport(request: http.IncomingMessage): void {
-    const configured = this.options.importToken;
-    if (!configured) throw new HttpError(404, 'this deployment does not accept imports');
-    const header = request.headers.authorization ?? '';
-    const offered = header.toLowerCase().startsWith('bearer ') ? header.slice(7).trim() : '';
-    const expected = createHash('sha256').update(configured).digest();
-    const received = createHash('sha256').update(offered).digest();
-    if (!offered || !timingSafeEqual(expected, received)) throw new HttpError(401, 'invalid import token');
-  }
-
-  private importRemoveBody(body: Record<string, unknown>): JsonObject {
-    if (this.run && isActiveRunState(this.run.state)) {
-      throw new HttpError(409, 'stop the active run before removing imported results');
-    }
-    try {
-      const result = removeImportedRun(String(body.runId ?? ''), {
-        recordsPath: this.options.recordsPath ?? RESULTS_PATH,
-        runsDir: this.options.runsDir ?? RUNS_DIR,
-        teamsDir: this.options.teamsDir ?? TEAMS_DIR,
-      });
-      this.options.logger?.({
-        timestamp: new Date().toISOString(),
-        level: 'info',
-        event: 'imported_run_removed',
-        run: String(body.runId ?? ''),
-        series: String(result.removed),
-      });
-      return result as unknown as JsonObject;
-    } catch (error) {
-      if (error instanceof ImportBusyError) throw new HttpError(409, error.message);
-      if (error instanceof ImportError) throw new HttpError(400, error.message);
-      throw error;
-    }
-  }
-
-  private importBody(body: Record<string, unknown>): JsonObject {
-    try {
-      const result = importSeries(body as unknown as ImportRequest, {
-        recordsPath: this.options.recordsPath ?? RESULTS_PATH,
-        runsDir: this.options.runsDir ?? RUNS_DIR,
-        teamsDir: this.options.teamsDir ?? TEAMS_DIR,
-      });
-      this.options.logger?.({
-        timestamp: new Date().toISOString(),
-        level: 'info',
-        event: 'series_imported',
-        run: result.runId,
-        series: result.seriesId,
-        imported: result.imported,
-      });
-      return result as unknown as JsonObject;
-    } catch (error) {
-      if (error instanceof ImportError) throw new HttpError(400, error.message);
-      throw error;
-    }
-  }
-
-  private tournamentsBody(poolParam: string | null, session: AuthSession | undefined): JsonObject {
+  private tournamentsBody(poolParam: string | null): JsonObject {
     const all = loadSeriesRecords(this.options.recordsPath ?? RESULTS_PATH);
     const pool = poolParam?.trim() || null;
     const view = buildTournaments(all, this.options.runsDir ?? RUNS_DIR, pool, this.options.teamsDir ?? TEAMS_DIR);
-    const tournaments = view.tournaments.filter((archive) => !this.hidesActiveArchive(session?.user, archive.runId));
-    const matches = tournaments.reduce(
+    const matches = view.tournaments.reduce(
       (total, archive) =>
         total + archive.rounds.flat().filter((match) => match.seriesIndex !== null && match.score !== null).length,
       0,
     );
     return {
       ...view,
-      tournaments,
       summary: {
-        tournaments: tournaments.filter((archive) => archive.rounds.flat().some((match) => match.score)).length,
+        tournaments: view.tournaments.filter((archive) => archive.rounds.flat().some((match) => match.score)).length,
         matches,
       },
     } as unknown as JsonObject;
   }
 
-  private leaguesBody(session: AuthSession | undefined): JsonObject {
-    const view = buildLeagues(
+  private leaguesBody(): JsonObject {
+    return buildLeagues(
       loadSeriesRecords(this.options.recordsPath ?? RESULTS_PATH),
       this.options.runsDir ?? RUNS_DIR,
-    );
-    return {
-      leagues: view.leagues.filter((archive) => !this.hidesActiveArchive(session?.user, archive.runId)),
-    } as unknown as JsonObject;
+    ) as unknown as JsonObject;
   }
 
-  private leagueBody(run: string, session: AuthSession | undefined): JsonObject {
+  private leagueBody(run: string): JsonObject {
     const runId = run.trim();
-    const league = this.hidesActiveArchive(session?.user, runId)
-      ? null
-      : buildLeague(
-          loadSeriesRecords(this.options.recordsPath ?? RESULTS_PATH),
-          this.options.runsDir ?? RUNS_DIR,
-          runId,
-        );
+    const league = buildLeague(
+      loadSeriesRecords(this.options.recordsPath ?? RESULTS_PATH),
+      this.options.runsDir ?? RUNS_DIR,
+      runId,
+    );
     if (!league) throw new HttpError(404, `no stored draft league ${JSON.stringify(run)}`);
     return league as unknown as JsonObject;
   }
 
-  private leagueGameBody(run: string, series: string, game: string, session: AuthSession | undefined): JsonObject {
+  private leagueGameBody(run: string, series: string, game: string): JsonObject {
     const seriesIndex = Number(series);
     const gameNumber = Number(game);
     if (!Number.isInteger(seriesIndex) || seriesIndex < 0 || !Number.isInteger(gameNumber) || gameNumber < 1) {
       throw new HttpError(400, 'series and game must be non-negative integers');
     }
-    const runId = run.trim();
-    const view = this.hidesActiveArchive(session?.user, runId)
-      ? null
-      : buildLeagueGame(
-          loadSeriesRecords(this.options.recordsPath ?? RESULTS_PATH),
-          this.options.runsDir ?? RUNS_DIR,
-          runId,
-          seriesIndex,
-          gameNumber,
-        );
+    const view = buildLeagueGame(
+      loadSeriesRecords(this.options.recordsPath ?? RESULTS_PATH),
+      this.options.runsDir ?? RUNS_DIR,
+      run.trim(),
+      seriesIndex,
+      gameNumber,
+    );
     if (!view) throw new HttpError(404, `no stored game ${game} for series ${series} of ${JSON.stringify(run)}`);
     return view as unknown as JsonObject;
   }
 
-  private tournamentGameBody(run: string, series: string, game: string, session: AuthSession | undefined): JsonObject {
+  private tournamentGameBody(run: string, series: string, game: string): JsonObject {
     const seriesIndex = Number(series);
     const gameNumber = Number(game);
     if (!Number.isInteger(seriesIndex) || seriesIndex < 0 || !Number.isInteger(gameNumber) || gameNumber < 1) {
       throw new HttpError(400, 'series and game must be non-negative integers');
     }
-    const runId = run.trim();
-    const view = this.hidesActiveArchive(session?.user, runId)
-      ? null
-      : buildTournamentGame(
-          loadSeriesRecords(this.options.recordsPath ?? RESULTS_PATH),
-          this.options.runsDir ?? RUNS_DIR,
-          runId,
-          seriesIndex,
-          gameNumber,
-          this.options.teamsDir ?? TEAMS_DIR,
-        );
+    const view = buildTournamentGame(
+      loadSeriesRecords(this.options.recordsPath ?? RESULTS_PATH),
+      this.options.runsDir ?? RUNS_DIR,
+      run.trim(),
+      seriesIndex,
+      gameNumber,
+      this.options.teamsDir ?? TEAMS_DIR,
+    );
     if (!view) throw new HttpError(404, `no stored game ${game} for series ${series} of ${JSON.stringify(run)}`);
     return view as unknown as JsonObject;
   }
 
-  private runBody(publicView: true): PublicRunSnapshot | null;
-  private runBody(publicView?: false): RunSnapshot | null;
-  private runBody(publicView = false): RunView | null {
+  private runBody(): RunSnapshot | null {
     const run = this.run;
     if (!run) return null;
-    const battles = publicView ? run.publicBattles : run.battles;
     const rows = run.rows.map((row, index) => ({
       ...row,
       players: { ...row.players },
       score: { ...row.score },
-      turn: latestBattle(battles.get(index))?.entry.state.turn ?? 0,
+      turn: latestBattle(run.battles.get(index))?.entry.state.turn ?? 0,
     }));
-    if (publicView) {
-      const active = isActiveRunState(run.state);
-      const started = new Set([
-        ...run.publicTeamPreviewed,
-        ...rows.flatMap((row, index) => (row.status === 'done' ? [index] : [])),
-      ]);
-      return {
-        visibility: 'public',
-        mode: run.config.mode,
-        protocolVersion: run.config.protocolVersion,
-        runId: run.runId,
-        state: run.state,
-        pool: run.config.pool,
-        models: [...run.config.models],
-        startTime: run.startTime,
-        endTime: run.endTime ?? null,
-        rows,
-        bracket: active ? projectPublicBracket(run.bracket, run.config.closedSheets === true) : (run.bracket ?? null),
-        draft: active ? projectPublicDraft(run.draft, run.config.closedSheets === true, started) : (run.draft ?? null),
-        board: run.config.board ?? null,
-      };
-    }
     return {
       mode: run.config.mode,
       protocolVersion: run.config.protocolVersion,
@@ -1076,7 +678,6 @@ export class GuiServer {
       pool: run.config.pool,
       models: run.config.models,
       startTime: run.startTime,
-      owner: run.owner?.login ?? null,
       endTime: run.endTime ?? null,
       canControl: !run.settling,
       rows,
@@ -1108,20 +709,6 @@ export class GuiServer {
     };
   }
 
-  private publicBattleBody(index: number, game?: number): BattleView {
-    const games = this.run?.publicBattles.get(index);
-    const resolved = games
-      ? [...games.entries()]
-          .filter(([, entry]) => entry.log.entries.some((line) => line.kind === 'win'))
-          .map(([number]) => number)
-          .sort((a, b) => a - b)
-      : [];
-    const shown = game !== undefined && resolved.includes(game) ? game : resolved[resolved.length - 1];
-    const revision = this.run?.publicBattleRevisions.get(index) ?? 0;
-    if (shown === undefined) return buildPublicBattleMessage(index, game ?? 0, resolved, revision, []);
-    return buildPublicBattleMessage(index, shown, resolved, revision, games!.get(shown)!.log.entries);
-  }
-
   private async modelsBody(providerId: string, apiKey: string): Promise<ModelsResponse> {
     const option = providerOption(providerId);
     if (!option) throw new HttpError(400, `unknown provider ${JSON.stringify(providerId)}`);
@@ -1135,7 +722,7 @@ export class GuiServer {
     }
   }
 
-  private startRun(body: Record<string, unknown>, owner: AuthUser | undefined): JsonObject {
+  private startRun(body: Record<string, unknown>): JsonObject {
     if (this.run && isActiveRunState(this.run.state)) throw new HttpError(409, 'a run is already in progress');
     const mode = (
       body.mode === undefined || body.mode === 'rotation'
@@ -1149,11 +736,8 @@ export class GuiServer {
     const models = body.nitro === true ? rawModels.map(nitroSpec) : rawModels;
     const effectiveModel = (model: string): string =>
       models.includes(model) ? model : rawModels.includes(model) && body.nitro === true ? nitroSpec(model) : model;
-    const maximumModels = this.publicOrigin && mode === 'rotation' ? 4 : 8;
     if (models.length < 2) throw new HttpError(400, 'a run needs at least two model specs');
-    if (models.length > maximumModels) {
-      throw new HttpError(400, `a run supports at most ${maximumModels} model specs`);
-    }
+    if (models.length > 8) throw new HttpError(400, 'a run supports at most 8 model specs');
     const reasoningValue = body.reasoning ? String(body.reasoning) : undefined;
     if (reasoningValue && !isReasoningLevel(reasoningValue)) {
       throw new HttpError(400, 'reasoning must be one of: minimal, low, medium, high, xhigh');
@@ -1274,8 +858,6 @@ export class GuiServer {
         throw new HttpError(400, 'tradeWindow must be null or an object with afterWeek');
       }
     }
-    const maximumSeriesPerPair = this.publicOrigin ? 4 : 20;
-    const maximumConcurrency = this.publicOrigin ? 2 : 8;
     const config: RunConfig = {
       mode,
       protocolVersion:
@@ -1285,9 +867,9 @@ export class GuiServer {
             ? DRAFT_PROTOCOL_VERSION
             : ROTATION_PROTOCOL_VERSION,
       models,
-      seriesPerPair: mode === 'rotation' ? clampInt(body.seriesPerPair, 1, maximumSeriesPerPair, 2) : 1,
+      seriesPerPair: mode === 'rotation' ? clampInt(body.seriesPerPair, 1, 20, 2) : 1,
       pool,
-      concurrency: clampInt(body.concurrency, 1, maximumConcurrency, 2),
+      concurrency: clampInt(body.concurrency, 1, 8, 2),
       ...(teams === undefined ? {} : { teams }),
       ...(format === undefined ? {} : { format }),
       ...(board === undefined ? {} : { board }),
@@ -1301,16 +883,7 @@ export class GuiServer {
       ...(mode === 'draft' && body.draftOnly === true ? { draftOnly: true } : {}),
       ...(mode === 'tournament' && body.provenance === 'blind' ? { provenance: 'blind' as const } : {}),
     };
-    const run = new ActiveRun(config, apiKeys, owner, this.options.runsDir);
-    if (owner && this.options.auth) {
-      try {
-        this.options.auth.startExperiment(owner, run.runId, pool, config);
-      } catch (error) {
-        run.clearApiKeys();
-        fs.rmSync(run.runDir, { recursive: true, force: true });
-        throw error;
-      }
-    }
+    const run = new ActiveRun(config, apiKeys, this.options.runsDir);
     this.run = run;
     writeRunStatus(run.runDir, {
       state: 'running',
@@ -1378,12 +951,6 @@ export class GuiServer {
   }
 
   private async launch(run: ActiveRun): Promise<void> {
-    const injected =
-      run.config.mode === 'tournament'
-        ? this.options.tournamentRunner
-        : run.config.mode === 'draft'
-          ? this.options.draftRunner
-          : this.options.runner;
     const removeRecoveryListener = run.recovery.onChange((pause) => this.setRecoveryState(run, pause));
     run.resumeAction = () => {
       run.recovery.resume();
@@ -1398,21 +965,10 @@ export class GuiServer {
       ...(run.config.reasoningByModel === undefined ? {} : { reasoningByModel: run.config.reasoningByModel }),
       ...(run.config.timerScale === undefined ? {} : { timerScale: run.config.timerScale }),
       recovery: run.recovery,
-      ...(run.owner
-        ? {
-            contributor: {
-              provider: 'github' as const,
-              subject: run.owner.providerSubject,
-              login: run.owner.login,
-            },
-          }
-        : {}),
       onEvent: (event: DraftLeagueEvent) => this.onEvent(run, event),
     };
     try {
-      if (this.publicOrigin && !injected) {
-        await this.launchWorker(run);
-      } else if (run.config.mode === 'draft') {
+      if (run.config.mode === 'draft') {
         await (this.options.draftRunner ?? runDraftLeague)(run.config.models, run.runDir, {
           ...commonOptions,
           ...(run.config.board === undefined ? {} : { board: run.config.board }),
@@ -1451,25 +1007,6 @@ export class GuiServer {
           runId: run.runId,
         });
       } else {
-        const persistedState = isActiveRunState(run.state) ? 'failed' : run.state;
-        if (this.options.auth && run.owner) {
-          try {
-            this.options.auth.finishExperiment(run.runId, persistedState);
-          } catch (error) {
-            run.state = 'failed';
-            run.error = redactSecrets(
-              error instanceof Error ? error.message : String(error),
-              Object.values(run.apiKeys),
-            );
-            this.options.logger?.({
-              timestamp: new Date().toISOString(),
-              level: 'error',
-              event: 'experiment_persistence_error',
-              runId: run.runId,
-              error: run.error,
-            });
-          }
-        }
         run.clearApiKeys();
         run.endTime = Date.now();
         this.persistStatus(run);
@@ -1493,19 +1030,6 @@ export class GuiServer {
     run.state = state;
     run.error = error;
     run.clearApiKeys();
-    if (this.options.auth && run.owner) {
-      try {
-        this.options.auth.finishExperiment(run.runId, state);
-      } catch (caught) {
-        this.options.logger?.({
-          timestamp: new Date().toISOString(),
-          level: 'error',
-          event: 'experiment_persistence_error',
-          runId: run.runId,
-          error: caught instanceof Error ? caught.message : String(caught),
-        });
-      }
-    }
     this.persistStatus(run);
     this.options.logger?.({
       timestamp: new Date().toISOString(),
@@ -1543,132 +1067,6 @@ export class GuiServer {
     run.stopFallbackTimer.unref();
   }
 
-  private launchWorker(run: ActiveRun): Promise<void> {
-    const child = fork(this.options.workerPath ?? RUN_WORKER_PATH, [], {
-      env: workerEnvironment(),
-      execArgv: ['--max-old-space-size=768'],
-      serialization: 'advanced',
-      stdio: ['ignore', 'ignore', 'pipe', 'ipc'],
-    });
-    child.stderr?.resume();
-    const completion = Promise.withResolvers<void>();
-    let terminal: Extract<RunWorkerOutput, { type: 'done' | 'failed' }> | undefined;
-    let killTimer: NodeJS.Timeout | undefined;
-    let settled = false;
-    const resolve = () => {
-      if (settled) return;
-      settled = true;
-      completion.resolve();
-    };
-    const reject = (error: Error) => {
-      if (settled) return;
-      settled = true;
-      completion.reject(error);
-    };
-    const scheduleKill = () => {
-      if (killTimer) return;
-      killTimer = setTimeout(() => child.kill('SIGKILL'), this.workerStopGraceMs);
-      killTimer.unref();
-    };
-    const markTerminal = (message: NonNullable<typeof terminal>) => {
-      if (terminal) return;
-      terminal = message;
-      run.settling = true;
-      this.queueRun();
-      scheduleKill();
-    };
-    child.on('message', (value: unknown) => {
-      const message = value as Partial<RunWorkerOutput> | null;
-      try {
-        if (message?.type === 'event') {
-          if (!isRecord(message.event) || typeof message.event.type !== 'string') {
-            throw new Error('run worker sent an invalid event');
-          }
-          this.onEvent(run, message.event as DraftLeagueEvent);
-        } else if (message?.type === 'notice') {
-          if (typeof message.message !== 'string') throw new Error('run worker sent an invalid notice');
-          run.notices.push(message.message.slice(0, 2000));
-        } else if (message?.type === 'done') {
-          markTerminal(message as Extract<RunWorkerOutput, { type: 'done' }>);
-        } else if (message?.type === 'failed') {
-          if (typeof message.error !== 'string') throw new Error('run worker sent an invalid failure');
-          markTerminal(message as Extract<RunWorkerOutput, { type: 'failed' }>);
-        } else if (message?.type === 'paused') {
-          if (!isRecord(message.pause) || typeof message.pause.message !== 'string') {
-            throw new Error('run worker sent an invalid pause');
-          }
-          this.setRecoveryState(run, message.pause as unknown as RecoveryPause);
-        } else if (message?.type === 'resumed') {
-          this.setRecoveryState(run, undefined);
-        }
-      } catch (error) {
-        child.kill();
-        reject(error instanceof Error ? error : new Error(String(error)));
-      }
-    });
-    child.once('error', (error) => {
-      child.kill();
-      reject(error);
-    });
-    child.once('exit', (code, signal) => {
-      if (terminal?.type === 'done' && code === 0) resolve();
-      else if (terminal?.type === 'failed') reject(new Error(terminal.error));
-      else reject(new Error(`run worker exited unexpectedly (${signal ?? code ?? 'unknown'})`));
-    });
-    const abort = () => {
-      if (child.connected) child.send({ type: 'abort' } satisfies RunWorkerInput);
-      scheduleKill();
-    };
-    run.controller.signal.addEventListener('abort', abort, { once: true });
-    run.resumeAction = () => {
-      if (child.connected) child.send({ type: 'resume' } satisfies RunWorkerInput);
-    };
-    const message: RunWorkerStart = {
-      type: 'start',
-      mode: run.config.mode === 'tournament' || run.config.mode === 'draft' ? run.config.mode : 'rotation',
-      models: run.config.models,
-      seriesPerPair: run.config.seriesPerPair,
-      runDir: run.runDir,
-      pool: run.config.pool,
-      concurrency: run.config.concurrency,
-      recordsPath: this.options.recordsPath ?? RESULTS_PATH,
-      apiKeys: run.apiKeys,
-      ...(run.config.teams === undefined ? {} : { teams: run.config.teams }),
-      ...(run.config.format === undefined ? {} : { format: run.config.format }),
-      ...(run.config.board === undefined ? {} : { board: run.config.board }),
-      ...(run.config.seed === undefined ? {} : { seed: run.config.seed }),
-      ...(run.config.reasoning === undefined ? {} : { reasoning: run.config.reasoning }),
-      ...(run.config.reasoningByModel === undefined ? {} : { reasoningByModel: run.config.reasoningByModel }),
-      ...(run.config.timerScale === undefined ? {} : { timerScale: run.config.timerScale }),
-      ...(run.config.closedSheets === true ? { closedSheets: true } : {}),
-      ...(run.config.sequentialWeeks === true ? { sequentialWeeks: true } : {}),
-      ...(run.config.tradeWindow === undefined ? {} : { tradeWindow: run.config.tradeWindow }),
-      ...(run.config.draftOnly === true ? { draftOnly: true } : {}),
-      ...(run.config.provenance === undefined ? {} : { provenance: run.config.provenance }),
-      ...(run.owner
-        ? {
-            contributor: {
-              provider: 'github',
-              subject: run.owner.providerSubject,
-              login: run.owner.login,
-            },
-          }
-        : {}),
-    };
-    child.send(message satisfies RunWorkerInput, (error) => {
-      run.clearApiKeys();
-      if (error) {
-        child.kill();
-        reject(error);
-      }
-    });
-    return completion.promise.finally(() => {
-      clearTimeout(killTimer);
-      run.controller.signal.removeEventListener('abort', abort);
-      run.resumeAction = undefined;
-    });
-  }
-
   private onEvent(run: ActiveRun, event: DraftLeagueEvent): void {
     if (run !== this.run) return;
     if (event.type === 'draft') {
@@ -1696,38 +1094,22 @@ export class GuiServer {
       }
     } else if (event.type === 'game-update') {
       if (!run.rows[event.index]) return;
-      if (event.publicLines.includes('|start')) run.publicTeamPreviewed.add(event.index);
-      for (const [store, lines] of [
-        [run.battles, event.lines],
-        [run.publicBattles, event.publicLines],
-      ] as const) {
-        let games = store.get(event.index);
-        if (!games) {
-          games = new Map();
-          store.set(event.index, games);
-        }
-        let entry = games.get(event.game);
-        if (!entry) {
-          entry = { state: new BattleState('p1'), log: new BattleLog() };
-          games.set(event.game, entry);
-        }
-        entry.state.feed(lines);
-        entry.log.feed(lines);
+      let games = run.battles.get(event.index);
+      if (!games) {
+        games = new Map();
+        run.battles.set(event.index, games);
       }
+      let entry = games.get(event.game);
+      if (!entry) {
+        entry = { state: new BattleState('p1'), log: new BattleLog() };
+        games.set(event.game, entry);
+      }
+      entry.state.feed(event.lines);
+      entry.log.feed(event.lines);
       const row = run.rows[event.index];
       if (row && row.status === 'running') row.game = event.game;
       run.battleRevisions.set(event.index, (run.battleRevisions.get(event.index) ?? 0) + 1);
-      const publicGame = run.publicBattles.get(event.index)?.get(event.game);
-      const resolvedKey = `${event.index}:${event.game}`;
-      const newlyResolved =
-        publicGame?.log.entries.some((entry) => entry.kind === 'win') && !run.publiclyResolvedGames.has(resolvedKey);
-      if (newlyResolved) {
-        run.publiclyResolvedGames.add(resolvedKey);
-        run.publicBattleRevisions.set(event.index, (run.publicBattleRevisions.get(event.index) ?? 0) + 1);
-        this.queueBattle(event.index);
-      } else {
-        this.queuePrivateBattle(event.index);
-      }
+      this.queueBattle(event.index);
     } else if (event.type === 'decision') {
       if (!run.rows[event.index]) return;
       const row = event.row;
@@ -1746,7 +1128,7 @@ export class GuiServer {
         run.spend.set(event.index, totals);
         if (row.kind === 'game_reflection') {
           run.battleRevisions.set(event.index, (run.battleRevisions.get(event.index) ?? 0) + 1);
-          this.queuePrivateBattle(event.index);
+          this.queueBattle(event.index);
         }
       }
       if (row.kind === 'decision') {
@@ -1768,7 +1150,7 @@ export class GuiServer {
         if (list.length > 400) list.splice(0, list.length - 400);
         run.decisions.set(event.index, list);
         run.battleRevisions.set(event.index, (run.battleRevisions.get(event.index) ?? 0) + 1);
-        this.queuePrivateBattle(event.index);
+        this.queueBattle(event.index);
       }
       return;
     } else if (event.type === 'game-end') {
@@ -1791,30 +1173,12 @@ export class GuiServer {
   }
 
   private queueBattle(index: number): void {
-    this.queue(
-      `battle:${index}`,
-      () => ({ type: 'battle', ...this.battleBody(index) }),
-      () => ({ type: 'battle', ...this.publicBattleBody(index) }),
-    );
-  }
-
-  private queuePrivateBattle(index: number): void {
-    this.pending.set(`private-battle:${index}`, () => ({
-      privateEvent: { type: 'battle', ...this.battleBody(index) },
-    }));
+    this.pending.set(`battle:${index}`, () => ({ type: 'battle', ...this.battleBody(index) }));
     this.scheduleFlush();
   }
 
   private queueRun(): void {
-    this.queue(
-      'run',
-      () => ({ type: 'run', run: this.runBody() }),
-      () => ({ type: 'run', run: this.runBody(true) }),
-    );
-  }
-
-  private queue(key: string, makePrivate: () => ServerEvent, makePublic: () => ServerEvent = makePrivate): void {
-    this.pending.set(key, () => ({ privateEvent: makePrivate(), publicEvent: makePublic() }));
+    this.pending.set('run', () => ({ type: 'run', run: this.runBody() }));
     this.scheduleFlush();
   }
 
@@ -1836,59 +1200,21 @@ export class GuiServer {
     }
   }
 
-  private broadcast(message: PendingServerEvent): void {
-    const privateData = `data: ${JSON.stringify(message.privateEvent)}\n\n`;
-    const publicData = message.publicEvent ? `data: ${JSON.stringify(message.publicEvent)}\n\n` : undefined;
-    for (const [client, viewer] of this.clients) {
-      const privateViewer = !viewer.publicOnly && this.canViewPrivateRun(this.eventViewerUser(viewer));
-      if (!privateViewer && publicData === undefined) continue;
-      this.writeEvent(client, privateViewer ? privateData : publicData!);
-    }
+  private broadcast(message: ServerEvent): void {
+    const data = `data: ${JSON.stringify(message)}\n\n`;
+    for (const client of this.clients.keys()) this.writeEvent(client, data);
   }
 
-  private openEvents(response: http.ServerResponse, sessionToken: string | undefined, publicOnly: boolean): void {
-    const viewers = [...this.clients.values()];
-    if (publicOnly) {
-      if (viewers.filter((viewer) => viewer.publicOnly).length >= MAX_PUBLIC_SSE_CLIENTS) {
-        throw new HttpError(503, 'too many public event stream clients');
-      }
-    } else {
-      const controllers = viewers.filter(
-        (viewer) => !viewer.publicOnly && this.controlsCurrentRun(this.eventViewerUser(viewer)),
-      ).length;
-      const user = this.options.auth?.session(sessionToken)?.user;
-      if (this.controlsCurrentRun(user)) {
-        if (controllers >= MAX_CONTROLLER_SSE_CLIENTS) {
-          throw new HttpError(503, 'too many controller event stream clients');
-        }
-      } else if (viewers.filter((viewer) => !viewer.publicOnly).length - controllers >= MAX_FALLBACK_SSE_CLIENTS) {
-        throw new HttpError(503, 'too many authenticated spectator event stream clients');
-      }
-      if (
-        sessionToken &&
-        viewers.filter((viewer) => !viewer.publicOnly && viewer.sessionToken === sessionToken).length >=
-          MAX_SSE_CLIENTS_PER_SESSION
-      ) {
-        throw new HttpError(429, 'too many event streams for this session');
-      }
-    }
+  private openEvents(response: http.ServerResponse): void {
+    if (this.clients.size >= MAX_SSE_CLIENTS) throw new HttpError(503, 'too many event stream clients');
     response.writeHead(200, {
       'cache-control': 'no-cache, no-transform',
       'content-type': 'text/event-stream',
       connection: 'keep-alive',
       'x-accel-buffering': 'no',
     });
-    const viewer: EventViewer = { sessionToken, publicOnly, backpressured: false };
-    const publicView = publicOnly || !this.canViewPrivateRun(this.eventViewerUser(viewer));
-    this.clients.set(response, viewer);
-    if (
-      !this.writeEvent(
-        response,
-        `data: ${JSON.stringify({ type: 'run', run: publicView ? this.runBody(true) : this.runBody() })}\n\n`,
-      )
-    ) {
-      return;
-    }
+    this.clients.set(response, { backpressured: false });
+    if (!this.writeEvent(response, `data: ${JSON.stringify({ type: 'run', run: this.runBody() })}\n\n`)) return;
     if (!this.heartbeatTimer) {
       this.heartbeatTimer = setInterval(() => {
         for (const client of this.clients.keys()) this.writeEvent(client, ': heartbeat\n\n');
@@ -1922,7 +1248,7 @@ export class GuiServer {
     }
   }
 
-  private makePool(body: Record<string, unknown>, owner: AuthUser | undefined): JsonObject {
+  private makePool(body: Record<string, unknown>): JsonObject {
     const format = String(body.format ?? '');
     if (!championsFormats().some((option) => option.id === format)) {
       throw new HttpError(400, `unsupported Champions BO3 format ${JSON.stringify(format)}`);
@@ -1949,14 +1275,6 @@ export class GuiServer {
         throw error;
       }
       throw new HttpError(400, error instanceof Error ? error.message : String(error));
-    }
-    if (owner && this.options.auth) {
-      try {
-        this.options.auth.recordPool(owner, path.basename(dir), format);
-      } catch (error) {
-        fs.rmSync(dir, { recursive: true, force: true });
-        throw error;
-      }
     }
     return { ok: true, name: path.basename(dir), pools: listPools(this.options.teamsDir ?? TEAMS_DIR) };
   }
@@ -2001,13 +1319,4 @@ function clampInt(value: unknown, minimum: number, maximum: number, fallback: nu
   const parsed = Number(value);
   if (!Number.isInteger(parsed)) return fallback;
   return Math.min(maximum, Math.max(minimum, parsed));
-}
-
-function workerEnvironment(): NodeJS.ProcessEnv {
-  const environment: NodeJS.ProcessEnv = { NODE_ENV: process.env.NODE_ENV ?? 'production' };
-  for (const name of ['LANG', 'TZ', 'SSL_CERT_FILE', 'NODE_EXTRA_CA_CERTS', 'VGC_LEAGUE_DATA_DIR', 'VGC_LEAGUE_PS']) {
-    const value = process.env[name];
-    if (value) environment[name] = value;
-  }
-  return environment;
 }
