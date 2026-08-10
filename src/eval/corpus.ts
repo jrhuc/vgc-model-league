@@ -5,6 +5,7 @@ import path from 'node:path';
 import { readJsonlObjects } from '../jsonl.js';
 import { SAFE_SEGMENT } from '../path-safety.js';
 import { defaultPsDir, REPO_ROOT, RESULTS_PATH, RUNS_DIR } from '../paths.js';
+import { type ParsedSeriesRecord, parseSeriesRecord } from '../records.js';
 import { resolveAttemptLineage } from '../series.js';
 import { showdownCommit } from '../showdown.js';
 import type { JsonObject, Pid } from '../types.js';
@@ -20,7 +21,7 @@ export interface GameRecord {
   gameNumber: number;
   mode: string;
   format: string;
-  psCommit: string | null;
+  psCommit: string;
   players: Record<Pid, string>;
   scaffold: RunScaffold;
   seed: [number, number, number, number];
@@ -34,9 +35,17 @@ export interface GameRecord {
 export interface CorpusOptions {
   recordsPath?: string;
   runsDir?: string;
-  psDir?: string;
   modes?: readonly string[];
 }
+
+type CorpusInputExclusionReason =
+  | 'malformed-json'
+  | 'not-current-series-record'
+  | 'missing-attempt-id'
+  | 'unsafe-source-identifiers'
+  | 'no-games';
+
+type AdmittedCorpusInput = ParsedSeriesRecord & { attempt_id: string };
 
 function readJson(file: string): JsonObject | null {
   try {
@@ -63,6 +72,57 @@ function readRows(file: string): JsonObject[] {
     }
   }
   return rows;
+}
+
+function admitCorpusInputs(file: string, modes: readonly string[] | undefined): AdmittedCorpusInput[] {
+  let raw: string;
+  try {
+    raw = fs.readFileSync(file, 'utf8');
+  } catch (error) {
+    throw new Error(`unable to read source corpus ${file}`, { cause: error });
+  }
+  const inputs: AdmittedCorpusInput[] = [];
+  const exclusions = new Map<CorpusInputExclusionReason, number>();
+  const exclude = (reason: CorpusInputExclusionReason): void => {
+    exclusions.set(reason, (exclusions.get(reason) ?? 0) + 1);
+  };
+  for (const line of raw.split('\n')) {
+    if (!line.trim()) continue;
+    let value: unknown;
+    try {
+      value = JSON.parse(line) as unknown;
+    } catch {
+      exclude('malformed-json');
+      continue;
+    }
+    let row: ParsedSeriesRecord;
+    try {
+      row = parseSeriesRecord(value, file);
+    } catch {
+      exclude('not-current-series-record');
+      continue;
+    }
+    if (modes && !modes.includes(row.mode)) continue;
+    if (row.attempt_id === undefined) {
+      exclude('missing-attempt-id');
+      continue;
+    }
+    if (!SAFE_SEGMENT.test(row.run_id) || !SAFE_SEGMENT.test(row.series_id)) {
+      exclude('unsafe-source-identifiers');
+      continue;
+    }
+    if (row.games.length === 0) {
+      exclude('no-games');
+      continue;
+    }
+    inputs.push(row as AdmittedCorpusInput);
+  }
+  if (exclusions.size > 0) {
+    const summary = [...exclusions].map(([reason, count]) => `${reason}: ${count}`).join(', ');
+    const excluded = [...exclusions.values()].reduce((total, count) => total + count, 0);
+    throw new Error(`source corpus rejected ${excluded} selected inputs (${summary})`);
+  }
+  return inputs;
 }
 
 function packedDigest(packed: string): string {
@@ -134,31 +194,27 @@ function gameDecisions(
   ) as Record<Pid, JsonObject[]>;
 }
 
-export function loadGameRecords(options: CorpusOptions = {}): GameRecord[] {
+export function loadGameRecordCorpus(options: CorpusOptions = {}): GameRecord[] {
   const runsDir = options.runsDir ?? RUNS_DIR;
+  const inputs = admitCorpusInputs(options.recordsPath ?? RESULTS_PATH, options.modes);
   const scaffolds = new Map<string, RunScaffold>();
   const records: GameRecord[] = [];
   const gameKeys = new Set<string>();
 
-  for (const row of readRows(options.recordsPath ?? RESULTS_PATH)) {
-    const mode = String(row.mode ?? 'unknown');
-    if (options.modes && !options.modes.includes(mode)) continue;
-    const runId = String(row.run_id ?? '');
-    const seriesId = String(row.series_id ?? '');
-    const attemptId = String(row.attempt_id ?? '');
-    const players = row.players as Record<Pid, string>;
-    if (!runId || !attemptId || !players) continue;
-    if (!SAFE_SEGMENT.test(runId) || !SAFE_SEGMENT.test(seriesId)) {
-      throw new Error('source record run_id and series_id must be path-safe identifiers');
-    }
+  for (const row of inputs) {
+    const mode = row.mode;
+    const runId = row.run_id;
+    const seriesId = row.series_id;
+    const attemptId = row.attempt_id;
+    const players = row.players;
     if (!scaffolds.has(runId)) scaffolds.set(runId, readRunScaffold(path.join(runsDir, runId)));
 
-    for (const game of (row.games ?? []) as JsonObject[]) {
+    for (const game of row.games) {
       const gameNumber = Number(game.number);
       const gameKey = `${runId}:${seriesId}:${gameNumber}`;
       if (gameKeys.has(gameKey)) throw new Error(`duplicate source game ${gameKey}`);
       gameKeys.add(gameKey);
-      const seed = game.seed as [number, number, number, number] | undefined;
+      const seed = game.seed as [number, number, number, number];
       const logPath = typeof game.log === 'string' ? path.resolve(REPO_ROOT, game.log) : '';
       const expectedLogPath = path.resolve(runsDir, runId, 'series', seriesId, `game-${gameNumber}.log`);
       const base: Omit<GameRecord, 'candidates' | 'recordedLog' | 'decisions' | 'seed' | 'skipped'> = {
@@ -166,29 +222,21 @@ export function loadGameRecords(options: CorpusOptions = {}): GameRecord[] {
         seriesId,
         gameNumber,
         mode,
-        format: String(row.format ?? ''),
-        psCommit: typeof row.ps_commit === 'string' ? row.ps_commit : null,
+        format: row.format,
+        psCommit: row.ps_commit,
         players,
         scaffold: scaffolds.get(runId) as RunScaffold,
         names: { p1: `p1-${players.p1}`, p2: `p2-${players.p2}` },
       };
       const incomplete = (reason: string): GameRecord => ({
         ...base,
-        seed: seed ?? [0, 0, 0, 0],
+        seed,
         candidates: { p1: [], p2: [] },
         recordedLog: [],
         decisions: { p1: [], p2: [] },
         skipped: reason,
       });
 
-      if (!seed) {
-        records.push(incomplete('no-seed'));
-        continue;
-      }
-      if (!base.psCommit) {
-        records.push(incomplete('no-showdown-revision'));
-        continue;
-      }
       if (logPath !== expectedLogPath) {
         records.push(incomplete('invalid-log-path'));
         continue;
@@ -258,7 +306,7 @@ export function assertGameRecordCorpusDigest(
 
 export function verifyGame(record: GameRecord, psDir?: string): VerifiedGame | null {
   if (record.skipped) return null;
-  if (record.psCommit && record.psCommit !== showdownCommit(psDir ?? defaultPsDir())) return null;
+  if (record.psCommit !== showdownCommit(psDir ?? defaultPsDir())) return null;
   const choices = Object.fromEntries(
     (['p1', 'p2'] as const).map((pid) => [pid, record.decisions[pid].map((row) => String(row.action))]),
   ) as Record<Pid, string[]>;

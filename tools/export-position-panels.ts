@@ -3,7 +3,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { assertGameRecordCorpusDigest, type GameRecord, loadGameRecords, verifyGame } from '../src/eval/corpus.js';
+import { assertGameRecordCorpusDigest, type GameRecord, loadGameRecordCorpus, verifyGame } from '../src/eval/corpus.js';
 import {
   type CounterfactualOptions,
   EXHAUSTIVE_PANEL_PROTOCOL,
@@ -263,7 +263,7 @@ function reopenedGradedCorpus(settings: Settings, manifest: JsonObject): GameRec
   ) {
     throw new Error('graded manifest scope is malformed');
   }
-  const records = loadGameRecords({
+  const sourceRecords = loadGameRecordCorpus({
     ...(scopeObject.modes === null ? {} : { modes: scopeObject.modes as string[] }),
     ...(settings.recordsPath
       ? { recordsPath: settings.recordsPath }
@@ -275,8 +275,11 @@ function reopenedGradedCorpus(settings: Settings, manifest: JsonObject): GameRec
       : scopeObject.runs_dir === null
         ? {}
         : { runsDir: String(scopeObject.runs_dir) }),
-    ...(settings.psDir ? { psDir: settings.psDir } : {}),
-  }).slice(0, scopeObject.limit === null ? Number.POSITIVE_INFINITY : Number(scopeObject.limit));
+  });
+  const records = sourceRecords.slice(
+    0,
+    scopeObject.limit === null ? Number.POSITIVE_INFINITY : Number(scopeObject.limit),
+  );
   const expectedGames = manifest.source_games;
   const expectedDigest = manifest.source_digest;
   if (

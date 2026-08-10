@@ -9,7 +9,7 @@ import {
   assertGameRecordCorpusDigest,
   type CorpusOptions,
   gameRecordCorpusDigest,
-  loadGameRecords,
+  loadGameRecordCorpus,
   verifyGame,
 } from '../src/eval/corpus.js';
 import { type GameSource, newBattle, omniscientLog, pendingSides, requestActionCandidates } from '../src/eval/fork.js';
@@ -123,22 +123,33 @@ function buildCorpus(mutate: (row: JsonObject) => void = () => {}): Corpus {
   );
 
   const row: JsonObject = {
+    schema_version: 1,
     mode: 'tournament',
+    protocol_version: 1,
+    scaffold: 'abcabcabcabc',
+    timestamp: '2026-01-01T00:00:00.000Z',
     run_id: RUN_ID,
     series_id: SERIES_ID,
     attempt_id: ATTEMPT_ID,
+    series_index: 0,
     format: pool.format,
     pool: 'fixture',
     players,
     teams: { p1: first.id, p2: second.id },
-    ps_commit: showdownCommit(defaultPsDir()),
     packed_team_digests: {
       p1: createHash('sha256').update(source.packed.p1).digest('hex'),
       p2: createHash('sha256').update(source.packed.p2).digest('hex'),
     },
+    winner: null,
+    winner_side: null,
+    score: { p1: 0, p2: 0 },
+    turns: 1,
     games: [
       {
         number: 1,
+        winner: null,
+        winner_side: null,
+        turns: 1,
         seed: SEED,
         log: logPath,
         simulator_substitutions: { p1: 0, p2: 0 },
@@ -146,6 +157,11 @@ function buildCorpus(mutate: (row: JsonObject) => void = () => {}): Corpus {
         model_choice_fallbacks: { p1: 0, p2: 0 },
       },
     ],
+    engine_seeds: { p1: 1, p2: 2 },
+    reasoning: null,
+    decision_stats: { p1: {}, p2: {} },
+    run_seed: 1,
+    ps_commit: showdownCommit(defaultPsDir()),
   };
   mutate(row);
   const recordsPath = path.join(root, 'records', 'results.jsonl');
@@ -157,7 +173,7 @@ function buildCorpus(mutate: (row: JsonObject) => void = () => {}): Corpus {
 
 test('a recorded game is found, replayed and verified against its own log', () => {
   const corpus = buildCorpus();
-  const records = loadGameRecords(corpus);
+  const records = loadGameRecordCorpus(corpus);
   assert.equal(records.length, 1);
   const record = records[0];
   assert.ok(record);
@@ -179,7 +195,7 @@ test('a recorded game is found, replayed and verified against its own log', () =
 `,
     'utf8',
   );
-  const mutatedRecords = loadGameRecords(corpus);
+  const mutatedRecords = loadGameRecordCorpus(corpus);
   assert.notEqual(gameRecordCorpusDigest(mutatedRecords), gradedSourceDigest);
   assert.throws(
     () => assertGameRecordCorpusDigest(mutatedRecords, gradedSourceDigest, 'exporter source boundary'),
@@ -214,7 +230,7 @@ test('corpus follows the completing game lineage and keeps every accepted transi
     'utf8',
   );
 
-  const record = loadGameRecords(corpus)[0];
+  const record = loadGameRecordCorpus(corpus)[0];
   assert.ok(record);
   assert.equal(record.skipped, null);
   assert.equal(record.decisions.p1.length, rows.length);
@@ -225,7 +241,7 @@ test('corpus follows the completing game lineage and keeps every accepted transi
 
 test('exact packed teams are bound to the result provenance', () => {
   const corpus = buildCorpus();
-  const record = loadGameRecords(corpus)[0];
+  const record = loadGameRecordCorpus(corpus)[0];
   assert.ok(record);
   assert.equal(record.skipped, null);
 
@@ -234,14 +250,14 @@ test('exact packed teams are bound to the result provenance', () => {
   const packed = identity.packed_teams as Record<Pid, string>;
   packed.p1 = `${packed.p1}x`;
   fs.writeFileSync(path.join(corpus.seriesDir, 'series.json'), JSON.stringify(series), 'utf8');
-  assert.equal(loadGameRecords(corpus)[0]?.skipped, 'unbound-team-provenance');
+  assert.equal(loadGameRecordCorpus(corpus)[0]?.skipped, 'unbound-team-provenance');
 });
 
 test('answer provenance does not remove accepted transitions from exact replay', () => {
   const corpus = buildCorpus((row) => {
     (row.games as JsonObject[])[0]!.timer_autodefaults = { p1: 0, p2: 2 };
   });
-  const record = loadGameRecords(corpus)[0];
+  const record = loadGameRecordCorpus(corpus)[0];
   assert.ok(record);
   assert.equal(record.skipped, null);
   assert.ok(verifyGame(record));
@@ -249,40 +265,69 @@ test('answer provenance does not remove accepted transitions from exact replay',
 
 test('a game whose log does not match the teams on file is refused, not repaired', () => {
   const corpus = buildCorpus();
-  const records = loadGameRecords(corpus);
+  const records = loadGameRecordCorpus(corpus);
   const record = records[0];
   assert.ok(record);
   record.seed = [1, 1, 1, 1];
   assert.equal(verifyGame(record), null);
 });
 
-test('missing pieces are named rather than dropped', () => {
+test('schema-invalid inputs fail closed while missing game evidence remains explicit', () => {
   const seedless = buildCorpus((row) => {
     delete (row.games as JsonObject[])[0]!.seed;
   });
-  assert.equal(loadGameRecords(seedless)[0]?.skipped, 'no-seed');
+  assert.throws(() => loadGameRecordCorpus(seedless), /not-current-series-record: 1/u);
 
   const logless = buildCorpus();
   fs.rmSync(path.join(logless.seriesDir, 'game-1.log'));
-  assert.equal(loadGameRecords(logless)[0]?.skipped, 'no-log');
+  assert.equal(loadGameRecordCorpus(logless)[0]?.skipped, 'no-log');
 
   const teamless = buildCorpus();
   fs.rmSync(path.join(teamless.seriesDir, 'series.json'));
-  assert.equal(loadGameRecords(teamless)[0]?.skipped, 'unbound-team-provenance');
+  assert.equal(loadGameRecordCorpus(teamless)[0]?.skipped, 'unbound-team-provenance');
 
   const decisionless = buildCorpus();
   fs.rmSync(path.join(decisionless.seriesDir, 'p2-decisions.jsonl'));
-  assert.equal(loadGameRecords(decisionless)[0]?.skipped, 'no-decisions');
+  assert.equal(loadGameRecordCorpus(decisionless)[0]?.skipped, 'no-decisions');
+});
+
+test('top-level corpus rejection summarizes every selected exclusion', () => {
+  const corpus = buildCorpus();
+  const current = JSON.parse(fs.readFileSync(corpus.recordsPath, 'utf8')) as JsonObject;
+  const withoutAttempt = { ...current };
+  delete withoutAttempt.attempt_id;
+  const withoutGames = { ...current, games: [] };
+  fs.appendFileSync(
+    corpus.recordsPath,
+    `{"broken"
+${JSON.stringify({ schema_version: 0 })}
+${JSON.stringify(withoutAttempt)}
+${JSON.stringify(withoutGames)}
+`,
+    'utf8',
+  );
+
+  assert.throws(
+    () => loadGameRecordCorpus(corpus),
+    /rejected 4 selected inputs \(malformed-json: 1, not-current-series-record: 1, missing-attempt-id: 1, no-games: 1\)/u,
+  );
+});
+
+test('mode mismatches are unselected and unreadable source corpora fail', () => {
+  const corpus = buildCorpus();
+  assert.deepEqual(loadGameRecordCorpus({ ...corpus, modes: ['draft'] }), []);
+  fs.rmSync(corpus.recordsPath);
+  assert.throws(() => loadGameRecordCorpus(corpus), /unable to read source corpus/u);
 });
 
 test('record identifiers cannot escape the pinned runs root', () => {
   const escapedRun = buildCorpus((row) => {
     row.run_id = '../escape';
   });
-  assert.throws(() => loadGameRecords(escapedRun), /path-safe identifiers/);
+  assert.throws(() => loadGameRecordCorpus(escapedRun), /unsafe-source-identifiers: 1/u);
 
   const escapedSeries = buildCorpus((row) => {
     row.series_id = '..';
   });
-  assert.throws(() => loadGameRecords(escapedSeries), /path-safe identifiers/);
+  assert.throws(() => loadGameRecordCorpus(escapedSeries), /unsafe-source-identifiers: 1/u);
 });

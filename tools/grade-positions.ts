@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isMainThread, parentPort, Worker, workerData } from 'node:worker_threads';
-import { type GameRecord, gameRecordCorpusDigest, loadGameRecords, verifyGame } from '../src/eval/corpus.js';
+import { type GameRecord, gameRecordCorpusDigest, loadGameRecordCorpus, verifyGame } from '../src/eval/corpus.js';
 import {
   type CounterfactualOptions,
   counterfactualProtocol,
@@ -195,11 +195,10 @@ function prepareOutput(settings: Settings, records: GameRecord[]): GradeManifest
 }
 
 function scopedRecords(settings: Settings): GameRecord[] {
-  const records = loadGameRecords({
+  const records = loadGameRecordCorpus({
     ...(settings.modes ? { modes: settings.modes } : {}),
     ...(settings.recordsPath ? { recordsPath: settings.recordsPath } : {}),
     ...(settings.runsDir ? { runsDir: settings.runsDir } : {}),
-    ...(settings.psDir ? { psDir: settings.psDir } : {}),
   });
   return records.slice(0, settings.limit ?? Number.POSITIVE_INFINITY);
 }

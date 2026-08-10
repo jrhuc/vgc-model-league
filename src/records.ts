@@ -102,7 +102,9 @@ const seriesRecordSchema = z.strictObject({
   origin: z.strictObject({ source: z.literal('import'), at: z.string().min(1) }).optional(),
 });
 
-export function parseSeriesRecord(value: unknown, label: string): SeriesRecord {
+export type ParsedSeriesRecord = z.infer<typeof seriesRecordSchema>;
+
+export function parseSeriesRecord(value: unknown, label: string): ParsedSeriesRecord {
   const parsed = seriesRecordSchema.safeParse(value);
   if (!parsed.success) throw new Error(`${label} is not a current series record: ${z.prettifyError(parsed.error)}`);
   return parsed.data;
