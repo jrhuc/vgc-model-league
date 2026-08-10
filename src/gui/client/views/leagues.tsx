@@ -117,6 +117,32 @@ function LeagueCard({ card, onOpen }: { card: LeagueCardView; onOpen: () => void
   );
 }
 
+function LeagueArchivePending() {
+  return (
+    <div class="league-card-grid league-card-grid-pending" aria-busy="true">
+      <p class="archive-loading-status" role="status">
+        Loading draft league archive…
+      </p>
+      {Array.from({ length: 6 }, (_, index) => (
+        <div class="league-card panel league-card-placeholder" aria-hidden="true" key={index}>
+          <span class="placeholder-line placeholder-line-short" />
+          <span class="placeholder-line placeholder-line-title" />
+          <span class="placeholder-line" />
+          <span class="placeholder-line placeholder-line-medium" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function DraftBoardsPending() {
+  return (
+    <div class="board-snapshot board-snapshot-placeholder" role="status" aria-busy="true">
+      Loading draft boards…
+    </div>
+  );
+}
+
 function FranchiseCard({
   franchise,
   spriteFor,
@@ -1199,8 +1225,12 @@ export function LeaguesView({
       );
     if (!league || league.runId !== run)
       return (
-        <div class="archive-route-pending">
+        <div class="archive-route-pending" aria-busy="true">
+          <p class="eyebrow">Records / draft leagues</p>
           <h1>Draft league</h1>
+          <p class="muted" role="status">
+            Loading the stored season…
+          </p>
         </div>
       );
     return (
@@ -1250,7 +1280,7 @@ export function LeaguesView({
         <div class="league-index-layout">
           <div class="league-index-main">
             {list === null && !error ? (
-              <div class="archive-route-pending" aria-hidden="true" />
+              <LeagueArchivePending />
             ) : leagues.length === 0 && !error ? (
               <section class="panel">
                 <div class="results-empty">
@@ -1274,6 +1304,7 @@ export function LeaguesView({
               </div>
             </div>
             <div class="board-snapshot-list">
+              {boards === null ? <DraftBoardsPending /> : null}
               {boards?.map((board) => (
                 <button type="button" class="board-snapshot" key={board.id} onClick={() => setBoardId(board.id)}>
                   <span>

@@ -105,15 +105,12 @@ button.contender-main:hover .contender-name { color: var(--blue-dark); }
 .builder-footer .message { flex: 1 1 320px; margin: 0; }
 .dropdown-option:last-child { border-bottom: 0; }
 .pools-manager > summary:hover { color: var(--ink); border-color: #67809e; }
-.header-state.live, .header-state.paused { color: var(--ink); }
 .mode-tab.on b { color: var(--blue-dark); }
 
 @media (max-width: 980px) {
   .fixture-layout, .pool-layout { grid-template-columns: 1fr; }
   .settings, .pool-rail { position: static; }
   .pool-list { display: grid; grid-template-columns: repeat(3, 1fr); }
-  .app-header { padding: 0 22px; gap: 18px; }
-  .header-state { display: none; }
 }
 
 @media (max-width: 760px) {
@@ -131,16 +128,7 @@ button.contender-main:hover .contender-name { color: var(--blue-dark); }
   .draft-head { grid-template-columns: 34px minmax(0, 1fr) auto; }
   .draft-summary { display: none; }
   .team-sheet, .pool-list { grid-template-columns: 1fr 1fr; }
-  .brand { grid-area: brand; }
-  .header-user { max-width: 100%; }
   .access-gate { padding: 22px 18px 26px; }
-  .brand-mark { width: 30px; height: 30px; }
-  .brand-name { font-size: 12px; }
-  .header-auth-link, .header-logout { font-size: 8px; }
   .section-nav { max-width: 100%; overflow-x: auto; overscroll-behavior-inline: contain; }
   .section-tab { flex: 0 0 auto; min-height: 42px; }
-}
-
-@media (max-width: 480px) {
-  .brand-mark { display: none; }
 }

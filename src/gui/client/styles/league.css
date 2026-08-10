@@ -155,6 +155,15 @@
 .live-schedule-row { background: var(--slate-soft); box-shadow: inset 3px 0 var(--coral); }
 .draft-table { width: 100%; margin-top: 16px; border-collapse: collapse; min-width: 640px; }
 .league-card-grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr)); }
+.league-card-grid-pending { position: relative; min-height: max(730px, calc(100vh - 260px)); align-content: start; }
+.archive-loading-status { position: absolute; z-index: 1; top: 18px; left: 20px; margin: 0; color: var(--ink); font: 800 10px/1.3 var(--mono); letter-spacing: .06em; text-transform: uppercase; }
+.league-card-placeholder { min-height: 190px; justify-content: flex-end; cursor: default; pointer-events: none; }
+.placeholder-line { display: block; width: 100%; height: 12px; background: var(--line); }
+.placeholder-line-short { width: 42%; }
+.placeholder-line-title { width: 76%; height: 34px; }
+.placeholder-line-medium { width: 64%; }
+.board-snapshot-placeholder { min-height: 96px; align-items: center; color: var(--muted); cursor: default; font: 800 10px/1.3 var(--mono); letter-spacing: .06em; text-transform: uppercase; }
+.board-snapshot-placeholder:hover, .league-card-placeholder:hover { background: var(--surface-raised); border-color: var(--line); box-shadow: none; transform: none; }
 .franchise-card-grid { display: grid; gap: 16px; margin-bottom: 26px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); }
 .live-status { display: inline-flex; align-items: center; color: var(--coral); font: 800 9px/1 var(--mono); letter-spacing: 0.06em; text-transform: uppercase; }
 .series-result.lost, .series-result.live { color: var(--coral); }

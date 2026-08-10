@@ -271,3 +271,34 @@ test('public artifact checks allow research locators but reject actual credentia
     fs.rmSync(directory, { recursive: true, force: true });
   }
 });
+
+test('header and theme tokens have one CSS owner and Home motion is finite', () => {
+  const stylesDirectory = path.resolve('src/gui/client/styles');
+  const styles = fs
+    .readdirSync(stylesDirectory)
+    .filter((name) => name.endsWith('.css'))
+    .map((name) => [name, fs.readFileSync(path.join(stylesDirectory, name), 'utf8')] as const);
+  const headerSelector =
+    /\.(?:app-header|brand(?:-mark|-name)?|primary-nav|nav-(?:set(?:-label|-items)?|button)|header-(?:aside|state|readonly|auth-link|logout|user(?:-text)?|avatar|login|role))(?=[\s.:,{])/;
+  const headerOwners = styles.filter(([, source]) => source.split('\n').some((line) => headerSelector.test(line)));
+  assert.deepEqual(
+    headerOwners.map(([name]) => name),
+    ['base.css'],
+  );
+
+  const allStyles = styles.map(([, source]) => source).join('\n');
+  assert.equal((allStyles.match(/:root\s*\{/g) ?? []).length, 1);
+  assert.equal((allStyles.match(/body\.research-dark\s*\{/g) ?? []).length, 1);
+  assert.doesNotMatch(allStyles, /animation:[^;\n]*infinite/);
+
+  const base = fs.readFileSync(path.join(stylesDirectory, 'base.css'), 'utf8');
+  const home = fs.readFileSync(path.join(stylesDirectory, 'home.css'), 'utf8');
+  const html = fs.readFileSync(path.resolve('src/gui/client/index.html'), 'utf8');
+  assert.match(html, /<body class="research-dark">/);
+  assert.match(home, /\.diagram-flow \{[^\n]*animation: flow-dash 9s linear 3;/);
+  assert.match(home, /\.route-flow-line \{[^\n]*animation: route-flow 2\.8s linear 6;/);
+  assert.match(home, /@keyframes flow-dash \{[^\n]*stroke-dashoffset: -90;/);
+  assert.match(home, /@keyframes route-flow \{[^\n]*stroke-dashoffset: -36;/);
+  assert.doesNotMatch(home, /(?:flow-dash|route-flow)[^;\n]*infinite/);
+  assert.match(base, /@media \(prefers-reduced-motion: reduce\)[\s\S]*animation: none !important;/);
+});

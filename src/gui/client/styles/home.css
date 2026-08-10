@@ -1,8 +1,5 @@
 /* biome-ignore-all format: one maintained selector per line */
 /* biome-ignore-all lint/style/noDescendingSpecificity: component roots prevent cross-component matches */
-.brand { min-height: 44px; padding: 3px 5px 3px 0; color: inherit; background: none; border: 0; text-align: left; cursor: pointer; }
-.brand:hover .brand-name { color: var(--yellow); }
-.nav-button { display: inline-flex; min-height: 44px; align-items: center; text-decoration: none; }
 .public-ia-view { max-width: 1380px; margin: 0 auto; }
 .public-ia { position: relative; min-width: 0; isolation: isolate; color: var(--ink); }
 .public-ia .button { min-height: 44px; color: var(--ink); background: var(--surface-raised); border-color: var(--line-strong); }
@@ -46,7 +43,7 @@
 .choice-diagram-scroll { max-width: 100%; margin: auto 0; overflow: hidden; }
 .choice-diagram { display: block; width: 100%; max-width: 760px; min-height: 235px; padding: 8px 14px; }
 .choice-scroll-controls { display: none; min-width: 0; margin: 0; border: 0; }
-.diagram-flow { fill: none; stroke: #64789a; stroke-width: 1.5; marker-end: url("#choice-arrow"); stroke-dasharray: 4 5; }
+.diagram-flow { fill: none; stroke: #64789a; stroke-width: 1.5; marker-end: url("#choice-arrow"); stroke-dasharray: 4 5; animation: flow-dash 9s linear 3; }
 .diagram-arrow-head { fill: #64789a; }
 .diagram-node { fill: var(--surface-raised); stroke: var(--line-strong); stroke-width: 1.5; }
 .diagram-node text { fill: var(--ink); stroke: none; font: 700 10px/1 var(--mono); letter-spacing: .08em; text-anchor: middle; }
@@ -63,7 +60,7 @@
 .compact-season-route { position: relative; margin: 2px 28px 26px; }
 .compact-season-flow { position: absolute; z-index: 0; top: 0; bottom: 0; left: 0; width: 40px; height: 100%; overflow: visible; pointer-events: none; }
 .route-flow-track { fill: none; stroke: #385273; stroke-width: 2; vector-effect: non-scaling-stroke; }
-.route-flow-line { fill: none; stroke: var(--yellow); stroke-width: 2; stroke-linecap: round; stroke-dasharray: 3 15; vector-effect: non-scaling-stroke; }
+.route-flow-line { fill: none; stroke: var(--yellow); stroke-width: 2; stroke-linecap: round; stroke-dasharray: 3 15; vector-effect: non-scaling-stroke; animation: route-flow 2.8s linear 6; }
 .compact-season-route ol { position: relative; z-index: 1; display: grid; margin: 0; padding: 0; list-style: none; }
 .compact-season-route li { display: grid; grid-template-columns: 40px 34px minmax(0,1fr); gap: 9px; min-height: 51px; align-items: center; color: #dce7f4; border-bottom: 1px solid #294268; }
 .route-node { display: block; width: 10px; height: 10px; margin: auto; background: var(--navy); border: 2px solid var(--yellow); border-radius: 50%; box-shadow: 0 0 0 4px var(--navy); }
@@ -196,6 +193,9 @@
 .site-footer-nav { display: flex; flex-direction: column; align-items: flex-start; }
 .site-footer-nav a,.site-footer-project a { display: inline-flex; min-height: 42px; align-items: center; color: #b9c9db; font: 650 10px/1.3 var(--mono); text-decoration: none; }
 .site-footer-project a { margin-top: 10px; color: var(--yellow); }
+@keyframes flow-dash { to { stroke-dashoffset: -90; } }
+@keyframes route-flow { to { stroke-dashoffset: -36; } }
+
 @media (max-width: 1050px) {
   .editorial-section-heading { grid-template-columns: 150px minmax(0,1fr); }
   .editorial-section-heading > p:last-child { grid-column: 2; }
