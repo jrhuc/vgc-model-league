@@ -1,266 +1,282 @@
 # Measurement principles
 
-This document defines what results may mean. Implementation and reports must
-follow it.
+This document defines how to interpret results. Follow these requirements in
+implementations and reports.
 
-## Keep evidence types separate
+## Separate evidence types
 
 1. **Battle outcomes** are Showdown ground truth and the terminal objective for
-   a battle environment. A small uncontrolled match set cannot rank models.
-2. **Counterfactual diagnostics** estimate alternative-action values under a
-   declared reference, horizon, and sampling budget. They are not optimal-play
-   labels.
-3. **Cross-stage evidence** links draft statements, builds, bring choices,
-   actions, and reviews. Mechanical links can be computed; semantic links need
-   audited labels.
+   a battle environment. Do not use a small, uncontrolled set of matches to
+   rank models.
+2. **Counterfactual diagnostics** estimate alternative-action values for a
+   declared reference, horizon, and sampling budget. They are not labels for
+   optimal play.
+3. **Cross-stage evidence** connects draft statements, builds, bring choices,
+   actions, and reviews. Compute mechanical connections. Use audited labels for
+   semantic connections.
 
-Standings describe one run. Only a controlled protocol supports comparison.
+Standings describe one run. Compare results only under a controlled protocol.
 
 ## Information policy
 
-Give each seat information a human competitor would have; withhold strategy it
-would have to derive. The baseline may provide format rules, current public
-mechanics, complete simulator-derived tools for visible and own-team state, the
-public artifact in its normal order, neutral search/filter tools, and identical
-process instructions and schemas.
+Give each seat the information available to a human competitor. Withhold
+strategy that the competitor would need to derive. The baseline may include:
 
-It must not provide strategy, matchup advice, curated good actions, corrections
-for known model weaknesses, derived planning frames, live human-choice search,
-or a required reasoning algorithm, search policy, or subagent topology. Tools
-may calculate mechanics but never choose an action. An authoritative answer must
-include every interaction material to it.
+- format rules and current public mechanics;
+- complete simulator-derived tools for visible and own-team state;
+- the public artifact in its normal order;
+- neutral search and filter tools;
+- identical process instructions and schemas.
 
-The generic format-authority notice is allowed neutral process information. It
-is model-visible across league roles and tells seats that Champions may postdate
-training data, the prompt and pinned simulator are authoritative, and mechanics
-absent from the rules/legal actions are unavailable. It contains no strategy or
-matchup diagnosis. Its exact bytes belong to the affected scaffold identities;
-it is not invisible evidence-only metadata.
+Do not provide strategy, matchup advice, curated good actions, corrections for
+known model weaknesses, derived planning frames, live human-choice search, or a
+required reasoning algorithm, search policy, or subagent topology. Tools may
+calculate mechanics, but they must not choose an action. An authoritative answer
+must include every interaction that materially affects it.
+
+The generic format-authority notice is allowed as neutral process information.
+It is visible to the model across league roles. It tells seats that Champions
+may postdate their training data, that the prompt and pinned simulator are
+authoritative, and that mechanics absent from the rules and legal actions are
+unavailable. It contains no strategy or matchup diagnosis. Include its exact
+bytes in the affected scaffold identities. Do not treat it as invisible,
+evidence-only metadata.
 
 If required information was absent, incomplete, or misleading, fix the harness
-and change its scaffold identity. If visible information was ignored, preserve
-it as a model result rather than coaching it away. Rationale, notebooks,
-reasoning summaries, and reviews are generated statements, not private beliefs;
-disagreement alone is not deception.
+and change its scaffold identity. If the model ignored visible information,
+record that behavior as a model result instead of adding coaching. Rationale,
+notebooks, reasoning summaries, and reviews are generated statements, not
+private beliefs. Disagreement does not by itself indicate deception.
 
 ## Scaffolds and rollout profiles
 
-Record component identities for prompts, state/tool renderers, tool schemas,
-decision/reflection policies, adapter, and model-visible context. Also record
-provider routing, served stack, sampling, timer, Showdown revision, format,
-board, and execution harness. Freeze a comparative condition before rollout and
-never change it mid-run.
+Record component identities for prompts, state and tool renderers, tool schemas,
+decision and reflection policies, the adapter, and model-visible context. Also
+record provider routing, served stack, sampling, timer, Showdown revision,
+format, board, and execution harness. Freeze each comparative condition before
+rollout. Do not change it during the run.
 
-The three named profiles are deliberately non-comparable:
+The three named profiles are not comparable:
 
-- **`controlled-explicit-state` (primary):** exact state scoped to one seat and
-  episode plus that model's per-episode notebook. Harness prompts, memory policy,
-  any harness-supplied initial memory, model-facing skills, and adapter identity
-  are frozen and digested. Seats have isolated roots with no cross-run memory,
-  refinement, A2A, sibling messaging, shared kernel, or shared filesystem.
-- **`controlled-episodic`:** the same explicit-state and isolation boundary, but
-  episode context may be compacted by one declared, fixed, deterministic
-  procedure. Freeze and digest its procedure and inputs/outputs and record every
+- **`controlled-explicit-state` (primary):** Provide exact state scoped to one
+  seat and episode, plus that model's per-episode notebook. Freeze and digest
+  harness prompts, memory policy, any harness-supplied initial memory,
+  model-facing skills, and adapter identity. Give seats isolated roots with no
+  cross-run memory, refinement, A2A, sibling messaging, shared kernel, or shared
+  filesystem.
+- **`controlled-episodic`:** Use the same explicit-state and isolation boundary.
+  One declared, fixed, deterministic procedure may compact episode context.
+  Freeze and digest the procedure and its inputs and outputs. Record each
   compaction event.
-- **`prime-agent-capable`:** a system-level ablation that may use declared,
+- **`prime-agent-capable`:** This system-level ablation may use declared,
   digested Prime Agent RLM refinement, per-seat subagents, and heartbeats while
-  retaining seat isolation. It is not comparable with either controlled
-  profile. A verifiers `Agent` is not a Prime Agent or RLM subagent.
+  preserving seat isolation. A verifiers `Agent` is not a Prime Agent or an RLM
+  subagent.
 
-The internal matchday adapter gives each seat one bounded full-replacement
-notebook submission after each nonterminal game. Omission retains that seat's
-current notebook; an empty replacement clears it. Malformed or over-limit
-returned notebook evidence is model output, so it is diagnosed and treated as
-omission, with the referee-retained value verified; a provider or runtime
-failure during the notebook interaction instead fails the Episode because v0.3
-retains the failed Trace. Report diagnosed retention and failed Episodes
-separately.
+After each nonterminal game, the circuit referee allows each seat one bounded,
+full-replacement notebook submission. Omission retains the seat's current
+notebook. An empty replacement clears it. A malformed or over-limit notebook is
+model output. Diagnose it, treat it as an omission, and verify the value retained
+by the referee. A provider or runtime failure during the notebook interaction
+instead fails the Episode because v0.3 retains the failed Trace. Report
+diagnosed retention and failed Episodes separately.
 
-The adapter's native run metric is the entrant seat's terminal outcome: the
-entrant's single reward carrier is the evaluation policy view, and the
-opponent's mirrored outcome is retained evidence, never a second measurement. A
-self-play matchday validates machinery — its expected outcome is even by
-construction — so strength or comparison claims require a pinned or declared
-baseline opponent condition.
+The circuit metric is the scenario-specific terminal series return defined in
+the [Evaluation plan](evaluation-plan.md#terminal-returns). Game outcomes,
+pre-window and post-window splits, adaptation, standings, champion status,
+transactions, and defaults remain diagnostics. They do not shape the return.
+Use heterogeneous, counterbalanced frontier fields as the primary comparison.
+Same-model symmetric self-play can validate machinery and is not a strength
+comparison.
 
 The notebook is optional generated evidence, not a hidden belief. Replacing it
-has no direct effect on the referee, legality, Showdown state, RNG, score, or
-public observations. The adapter reinjects the retained current value into fresh
-authorized seat prompts, where it may mediate later submitted choices. Its
-elicitation and reinjection prompts are part of the scaffold identity.
+does not directly affect the referee, legality, Showdown state, RNG, score, or
+public observations. The referee inserts the current retained value into new,
+authorized seat prompts, where it may affect later submitted choices. Include
+the elicitation and reinjection prompts in the scaffold identity.
 
-Do not rank profiles against one another. Prime Agent capabilities are fine for
-offline development or operator orchestration but may enter a comparative
-rollout only through the named ablation. The default is untimed and adds no
-search or recursive reasoning harness; timers and other scaffolds are opt-in
-arms.
+Use Prime Agent capabilities for offline development or operator orchestration.
+Include them in a comparative rollout only through the named ablation. By
+default, runs are untimed and do not add a search or recursive reasoning
+harness. Timers and other scaffolds are opt-in arms.
 
-Raw submitted messages/actions, traces, referee transitions, and profile events
-are append-only. Summaries are observational and never affect legality or
-reward. Adding an invisible evidence sink does not change the scaffold; adding a
-retrieval API, tool, prompt, or carried memory does. Do not use an evidence-log
-version as a substitute for scaffold or adapter identity.
+Append raw submitted messages and actions, traces, referee transitions, and
+profile events without modifying previous entries. Summaries are observational
+and must not affect legality or reward. An invisible evidence sink does not
+change the scaffold. A retrieval API, tool, prompt, or carried memory does.
+Evidence-log versions do not replace scaffold or adapter identities.
 
 Keep training exposure, public tasks, private scores, sealed state, and source
-traces distinct. Record contamination and protocol failures rather than
-relabeling them as play quality.
+traces separate. Record contamination and protocol failures. Do not relabel them
+as play quality.
 
 ## Limits and outcomes
 
-Caps stop hung calls and runaway tool loops; they must not shape normal play.
-Raise or remove a limit normal traffic reaches. Record truncations, fallbacks,
-model defaults, simulator substitutions, and timer defaults separately. Silent
-state truncation invalidates the decision.
+Use caps to stop hung calls and runaway tool loops, not to shape normal play.
+Raise or remove a limit if normal traffic reaches it. Record truncations,
+fallbacks, model defaults, simulator substitutions, and timer defaults
+separately. Silent state truncation invalidates the decision.
 
-Win rate requires enough games and controlled opponent, team, side, format, and
-scaffold. The natural league corpus has heterogeneous matchups and protocol
-versions, so:
+A win rate requires enough games and controlled opponent, team, side, format,
+and scaffold conditions. The natural league corpus contains heterogeneous
+matchups and protocol versions. Therefore:
 
-- never derive an Elo or total order from it;
-- report exploratory outcomes with schedule, condition, and sample size;
+- do not derive an Elo or total order from it;
+- report exploratory outcomes with the schedule, condition, and sample size;
 - use mirrored assignments or population evaluation for battle-policy claims;
-- cluster uncertainty by game or episode, not turn.
+- cluster uncertainty by game or episode, not by turn.
 
-Roster fielding counts and a drafted Pokémon's win/draw/loss record are selected,
-conditioned diagnostics: fielding depends on coach, roster, opponent, build,
-bring, pilot, schedule, and prior results, while game outcomes also contain RNG.
-They can motivate a hypothesis about usage, never estimate an asset's causal
-impact or quality. Named Kimi patterns in the legacy archive have the same
-confounds and are neither capability nor rank evidence. A legacy short
-`modelKey` can group multiple provider/model identifiers; provider aliases and
-archive keys do not establish a frozen treatment, served revision, scaffold, or
-sampling condition.
+Roster fielding counts and a drafted Pokémon's win, draw, and loss record are
+selected, conditioned diagnostics. Fielding depends on the coach, roster,
+opponent, build, bring, pilot, schedule, and previous results. Game outcomes
+also include RNG. Use these diagnostics to form hypotheses about usage. Do not
+use them to estimate an asset's causal impact or quality. Named Kimi patterns in
+the legacy archive have the same confounds and do not provide capability or
+rank evidence. A legacy short `modelKey` can group multiple provider and model
+identifiers. Provider aliases and archive keys do not establish a frozen
+treatment, served revision, scaffold, or sampling condition.
 
 ## Counterfactual decision rules
 
-A position is eligible only when its source game replays exactly from the
-recorded seed, teams, actions, format, and Showdown revision. Record the value
-function, horizon, continuation policy, opponent-action sampling design, random
-seeds, sample counts, exhaustive panel protocol, qualification metrics, and
-uncertainty. Never mix values from different references.
+A position is eligible only if its source game replays exactly from the recorded
+seed, teams, actions, format, and Showdown revision. Record the value function,
+horizon, continuation policy, opponent-action sampling design, random seeds,
+sample counts, exhaustive panel protocol, qualification metrics, and
+uncertainty. Do not combine values from different references.
 
-The current prototype uses material differential, seeded simple random sampling
-without replacement from Showdown-accepted request-derived candidate opponent
-actions (or one null opponent slot at a unilateral decision), uniform-random
-continuations, and bounded Monte Carlo rollouts. It evaluates every accepted
-candidate action on common draws; there is no screen, shortlist, or
-actual-opponent estimator. A chosen-action loss derived from those values is
-**reference-relative opportunity loss** (or must attach the reference to
-“regret”). It is short-horizon and evaluates the realized hidden state, including
-information the acting seat may not have known. An ex-ante claim must average a
-published prior over compatible hidden states or retain positions robust across
-those states.
+The current prototype uses:
 
-Every Showdown-accepted action produced by the frozen request-menu candidate
-protocol uses common random draws within a panel. Native `Side.choose` filtering
-removes false positives; the generator does not claim coverage of every custom
-Showdown mechanic, and its declared omissions remain part of the protocol. Two independent qualification panels produce versioned grade-time eligibility
-metrics under a policy calibrated outside the candidate corpus; selection reads
-only the projected qualification span and legal-action count from those metrics.
-The exporter evaluates selected positions again under a separate seed namespace,
-and its untouched measurement panel supplies rewards. A row admitted by
-qualification but missing a complete rectangular action table or a usable
-measurement panel fails the candidate build. Do not select or remove rows using
-measurement values, call a noisy maximum the true best, or silently clamp an
-independent reversal.
+- material differential;
+- seeded simple random sampling without replacement from Showdown-accepted,
+  request-derived candidate opponent actions, or one null opponent slot for a
+  unilateral decision;
+- uniform-random continuations;
+- bounded Monte Carlo rollouts.
 
-A normalized value requires a reliable opportunity span. Qualification
-thresholds and corpus-balance requirements must be calibrated outside the
-candidate corpus, not chosen by exporter discretion. The
-[evaluation plan](evaluation-plan.md) lists the remaining validation gates.
+It evaluates each accepted candidate action on common draws. It does not use a
+screen, shortlist, or actual-opponent estimator. A chosen-action loss calculated
+from these values is **reference-relative opportunity loss**. If you call it
+“regret,” attach the reference. This short-horizon measure evaluates the
+realized hidden state, including information that the acting seat might not have
+known. For an ex-ante claim, average a published prior over compatible hidden
+states or retain positions that are robust across those states.
+
+Within a panel, the frozen request-menu candidate protocol uses common random
+draws for every Showdown-accepted action that it produces. Native `Side.choose`
+filtering removes false positives. The generator does not claim to cover every
+custom Showdown mechanic. Its declared omissions are part of the protocol.
+
+Two independent qualification panels produce versioned grade-time eligibility
+metrics under a policy calibrated outside the candidate corpus. Selection reads
+only the projected qualification span and legal-action count from those
+metrics. The exporter evaluates selected positions again under a separate seed
+namespace. Its untouched measurement panel provides the rewards. The candidate
+build fails if an admitted row lacks a complete rectangular action table or a
+usable measurement panel. Do not use measurement values to select or remove
+rows. Do not call a noisy maximum the true best or silently clamp an independent
+reversal.
+
+A normalized value requires a reliable opportunity span. Calibrate
+qualification thresholds and corpus-balance requirements outside the candidate
+corpus. Do not let the exporter choose them. The [evaluation
+plan](evaluation-plan.md) lists the remaining validation gates.
 
 ## Controlled position sets and artifacts
 
-Every compared model receives the same anonymized prompt renderer, numbered
-action encoding, tools, sampling policy, and scoring reference. Selection is
-seeded, stratified by phase/state, and capped per source game. Source-series and
-near-duplicate groups cannot cross calibration, candidate, and held-out corpora. The first source is
-VGCML-generated play, not representative human VGC without an external holdout
-and coverage argument. Record the generating models for every position: a model
-evaluated on positions arising from its own play holds a distribution
-advantage, so cross-model comparison prefers leave-own-games-out splits.
-Report accuracy as a function of the measured opportunity span alongside any
-scalar mean; below the provider sampling noise floor, model disagreement on
-near-tied positions is not evidence.
+Give each compared model the same anonymized prompt renderer, numbered action
+encoding, tools, sampling policy, and scoring reference. Use seeded selection,
+stratify it by phase and state, and cap positions per source game. Do not place
+source-series or near-duplicate groups in more than one of the calibration,
+candidate, and held-out corpora.
+
+The first source is VGCML-generated play. It is not representative of human VGC
+without an external holdout and a coverage argument. Record the generating
+models for each position. A model evaluated on positions from its own play has
+a distribution advantage, so prefer leave-own-games-out splits for cross-model
+comparisons. Report accuracy as a function of measured opportunity span along
+with any scalar mean. When the opportunity span is below the provider sampling
+noise floor, model disagreement on near-tied positions is not evidence.
 
 A public task contains the tested seat's public history, own request, and legal
-actions. It excludes source identity/action/rationale/notebook, opponent-private
-requests, and simulator snapshots. The original league scaffold is provenance,
-not inherited context.
+actions. It excludes source identity, source action, rationale, notebook,
+opponent-private requests, and simulator snapshots. The original league
+scaffold is provenance, not inherited context.
 
-Public tasks use one immutable public root. Private score tables and sealed
-snapshots/matrices share one physically separate immutable private root.
-Model/browser loaders accept only public artifacts and only with a verified
-complete manifest. Candidate artifacts are not released until every release gate
-passes.
+Public tasks use one immutable public root. Private score tables, sealed
+snapshots, and matrices use one physically separate immutable private root.
+Model and browser loaders accept only public artifacts with a verified, complete
+manifest. Do not release candidate artifacts until every release gate passes.
 
 ## Cross-stage evidence
 
-Temporal adjacency is not causality. A submitted action is not an accepted
-transition; join seat logs to referee evidence for legality, repair,
-substitution, or outcome claims. Deterministic mechanical measures include:
+Do not infer causality from temporal adjacency. A submitted action is not an
+accepted transition. Join seat logs with referee evidence before making claims
+about legality, repair, substitution, or outcomes. Deterministic mechanical
+measures include:
 
 - drafted-to-built and built-to-brought membership;
 - declared versus submitted bring;
 - whether a named canonical move or interaction occurred;
 - legality, repair, and substitution rates.
 
-Mechanical links and audited semantic statement consistency are separate
-evidence products. Semantic analysis requires a written observable rubric,
-identity-stripped traces, multiple blinded labels, agreement estimates, and
-periodic human audit. Human- or LLM-produced labels are diagnostic only and
-never affect task inclusion, legality, action acceptance, seat context, reward,
-`Env.finalize`, or training. Report not-applicable separately and divide rates
-by eligible opportunities. Requiring a rationale changes the task, so compare
-only runs with the same requirement.
+Treat mechanical connections and audited semantic statement consistency as
+separate evidence products. Semantic analysis requires a written observable
+rubric, identity-stripped traces, multiple blinded labels, agreement estimates,
+and periodic human audit. Human- or LLM-produced labels are diagnostic only.
+They must not affect task inclusion, legality, action acceptance, seat context,
+reward, `Env.finalize`, or training. Report not-applicable cases separately and
+divide rates by eligible opportunities. Requiring a rationale changes the task.
+Compare only runs with the same requirement.
 
-A notebook handoff is a mechanical receipt: exact retained bytes appeared in a
-later authorized prompt. A reflection trace adds a generated statement. Neither
-shows that the model used the note, changed behavior because of it, or benefited.
-Causal transfer requires a versioned intervention (for example, crossed
-retained/replaced/withheld notebook conditions), a preregistered later-action
-contrast, fixed downstream controllers/common draws where applicable, and an
-artifact that binds the complete reflection-to-prompt-to-action chain. A
-terminal season review has no later action in the current season and therefore
-cannot demonstrate learning or transfer.
+A notebook handoff is a mechanical receipt showing that exact retained bytes
+appeared in a later authorized prompt. A reflection trace adds a generated
+statement. Neither shows that the model used the note, changed behavior because
+of it, or benefited from it. A causal transfer claim requires:
+
+- a versioned intervention, such as crossed retained, replaced, and withheld
+  notebook conditions;
+- a preregistered later-action contrast;
+- fixed downstream controllers and common draws where applicable;
+- an artifact that binds the complete reflection-to-prompt-to-action chain.
+
+A terminal season review has no later action in the current season, so it cannot
+demonstrate learning or transfer.
 
 Recorded human choices are reference actions, not answer keys. Analyze action
-agreement separately from the paired reference-value difference between the
-human and model actions on the identical frozen action-value matrix. Use the
-already canonical term **reference-relative opportunity loss** for the
-value-derived loss; do not introduce a new `R`-relative term. Join event outcomes
-only after position selection and scoring are frozen. Outcomes are context, not
-optimality evidence.
+agreement separately from the paired reference-value difference between human
+and model actions on the same frozen action-value matrix. Use the existing term
+**reference-relative opportunity loss** for value-derived loss. Do not introduce
+a new `R`-relative term. Join event outcomes only after freezing position
+selection and scoring. Treat outcomes as context, not evidence of optimality.
 
 When recreating a real event, preserve its rules and data vintage and disclose
-deviations. Open team sheets, for example, do not reveal hidden stat points; a
-reconstruction must state where exact spreads came from.
+deviations. For example, open team sheets do not reveal hidden stat points. A
+reconstruction must state the source of exact spreads.
 
 ### Long-horizon claims
 
-Keep three claims distinct:
+Keep these claims separate:
 
-1. **Episode linkage** establishes replay and join completeness. It does not by
-   itself establish behavioral adaptation or benefit.
-2. **Behavioral responsiveness or adaptation** requires a randomized or
+1. **Episode linkage** establishes complete replay and joins. It does not
+   establish behavioral adaptation or benefit.
+2. **Behavioral responsiveness or adaptation** requires randomized or
    counterbalanced condition assignment, or a disclosed observational context,
-   plus a preregistered action contrast.
+   and a preregistered action contrast.
 3. **Beneficial or causal anticipation** requires a crossed intervention or fork
    over the future condition and the upstream choice or policy, with fixed
    downstream controllers and common draws. It also requires placebo and
    cross-phase controls, uncertainty clustered by whole-circuit block, and
    replication across circuit blocks.
 
-An endogenous model choice × condition association is not causal. Changes to a
-public schedule may create whole-circuit interference. Wins, standings, and plan
-prose are insufficient for any of these stronger claims. A backup Mega is only
-an example of a preregistered diagnostic motif, not required behavior or evidence
-by itself.
+Do not infer causality from an endogenous association between a model choice and
+condition. A change to a public schedule can cause whole-circuit interference.
+Wins, standings, and plan text do not support these stronger claims. A backup
+Mega is an example of a preregistered diagnostic motif. It is not required
+behavior or evidence by itself.
 
-Drafting against scarce resources and scheduled future opponents is genuine
-planning *within this VGC environment*; it need not be renamed an engineering or
-software task to count as planning behavior. Episode linkage can make that plan
-inspectable. Whether the behavior transfers to software work, tool-agent tasks,
-open-ended construction, or other real-world domains is a separate external
-validity question requiring matched studies in those domains. Similarity to an
-external benchmark or paper is motivation, never transfer evidence.
+Drafting against scarce resources and scheduled future opponents is planning
+within this VGC environment. Episode linkage can make the plan inspectable. Do
+not use this evidence to claim transfer to software work, tool-agent tasks,
+open-ended construction, or other real-world domains. Such external validity
+claims require matched studies in those domains. Similarity to an external
+benchmark or paper can motivate a study but does not provide transfer evidence.

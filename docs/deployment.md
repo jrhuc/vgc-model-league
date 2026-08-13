@@ -1,44 +1,55 @@
-# Deployment
+# Deploy the public site
 
-The public site is a static GitHub Pages deployment. There is no hosted
-service: no server, database, authentication, or import API. The browser app
-is built once, and every read-only API response it needs is a committed JSON
-file exported from local records.
+The public site uses a static GitHub Pages deployment. It has no hosted server,
+database, authentication, or import API. The build reads every required
+read-only API response from committed JSON files exported from local records.
 
-## Pipeline
+## Publish the site
 
-1. `vgcleague export-site` projects the local archive (terminal, non-test runs
-   by default) into `artifacts/public/site/`. Curate with `--run`, `--pool`,
-   or `--include-test`; the export replaces the directory wholesale, so the
-   committed tree always mirrors exactly one export.
-2. Land `artifacts/public/site` on `main` through a pull request — the `main`
+1. Run `vgcleague export-site`. By default, this command exports terminal,
+   non-test runs from the local archive to `artifacts/public/site/`. Use
+   `--run`, `--pool`, or `--include-test` to curate the export. The command
+   replaces the output directory, so the committed tree represents exactly one
+   export.
+2. Merge `artifacts/public/site` into `main` through a pull request. The `main`
    ruleset rejects direct pushes.
-3. `.github/workflows/pages.yml` builds the client with
-   `vite build --mode static`, copies the committed data to `data/`, and
-   deploys the result to GitHub Pages.
+3. Let `.github/workflows/pages.yml` build the client with
+   `vite build --mode static`, copy the committed data to `data/`, and deploy
+   the result to GitHub Pages.
 
-`pnpm run publish:site` performs all three steps in one command.
+Run all three steps with:
 
-## One-time repository setup
+```sh
+pnpm run publish:site
+```
 
-Under Settings → Pages, set the source to **GitHub Actions**. The workflow
-deploys on pushes that touch the site data or client, and can be run manually
-from the Actions tab.
+## Configure the repository
 
-## What the static build changes
+In **Settings > Pages**, set **Source** to **GitHub Actions**. The workflow runs
+on pushes that change the site data or client. You can also run it manually from
+the **Actions** tab.
 
-`--mode static` defines `__STATIC_SITE__`, which maps API routes onto exported
-files (`/api/league?run=X` → `data/league/X.json`), disables the live event
-stream, and marks the app read-only. Everything else is the same client the
-local console serves.
+## Static build behavior
 
-Live runs never appear on the public site. They are visible only on the local
-operator console (`vgcleague gui`, loopback only) and reach the site by
-finishing and being re-exported.
+The `--mode static` build selects static capability and loader modules. This
+mode:
 
-## Size expectations
+- maps API routes to exported files, such as `/api/league?run=X` to
+  `data/league/X.json`;
+- disables the live event stream;
+- omits **Live** and **New run** from navigation and route resolution; and
+- marks the remaining research and archive views as read-only.
 
-The exported archive is currently ~15 MB of JSON plus ~2 MB of sprites and
-assets. GitHub Pages allows 1 GB per site, so growth headroom is large; if the
-archive ever outgrows Pages, move `data/` to object storage behind the same
-relative paths.
+The static build is an archive-only client. Its build-time capability and loader
+selection excludes the operational Live and New run module graph instead of
+shipping inactive controls. The remaining research and archive views share
+their implementation with the local console.
+
+Live runs appear only in the loopback-only local operator console started by
+`vgcleague gui`. To publish a live run, finish it and export the site again.
+
+## Storage limits
+
+The current export contains about 15 MB of JSON and 2 MB of sprites and other
+assets. GitHub Pages allows 1 GB per site. If the archive exceeds this limit,
+move `data/` to object storage and preserve the same relative paths.
