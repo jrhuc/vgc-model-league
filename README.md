@@ -7,10 +7,6 @@ matches, and review their season. The embedded, pinned Pokémon Showdown simulat
 remains authoritative for rules, legality, randomness, state transitions, and
 results.
 
-This is a playground and data generator, not a public ladder. Match outcomes and
-standings describe one league or bracket; the heterogeneous natural corpus is
-never aggregated into a model ranking.
-
 ## Research program
 
 The project separates two questions:
