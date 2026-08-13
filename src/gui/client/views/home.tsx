@@ -30,10 +30,10 @@ function ChoiceMicroscopeDiagram() {
     <figure class="horizon-card" aria-labelledby="choice-horizon-heading">
       <div class="horizon-card-copy">
         <p class="eyebrow">Battle turn</p>
-        <h3 id="choice-horizon-heading">Replay one turn, fork every legal action</h3>
+        <h3 id="choice-horizon-heading">Replay one turn, fork each accepted action</h3>
         <p>
-          The simulator rewinds to the recorded state, branches down each legal action, and scores the branches under
-          the same luck.
+          The simulator rebuilds the recorded state and evaluates each request-derived action Showdown accepts under
+          common random draws.
         </p>
       </div>
       <div class="choice-diagram-scroll" ref={viewport}>
@@ -45,8 +45,8 @@ function ChoiceMicroscopeDiagram() {
         >
           <title id="choice-diagram-title">Recorded turn comparison flow</title>
           <desc id="choice-diagram-desc">
-            A recorded turn is replayed, branched into accepted actions, and returned as a comparison under shared
-            random draws.
+            A recorded turn is rebuilt, branched into Showdown-accepted actions, and returned as a comparison under
+            common random draws.
           </desc>
           <defs>
             <marker id="choice-arrow" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
@@ -122,7 +122,7 @@ const COMPACT_SEASON_STAGES = [
   ['Fresh bring, lead, and Bo3', 'ordinary VGC game loop'],
   ['Trade window', 'offers and free agents mid-season'],
   ['Finish the round robin', 'every seat plays every seat'],
-  ['Playoffs', 'top seeds advance'],
+  ['Playoffs', 'the top four enter a bracket'],
   ['Season review', 'written self-assessment'],
 ] as const;
 
@@ -131,7 +131,7 @@ function WholeCircuitDiagram({ onOpenMethod }: { onOpenMethod: () => void }) {
     <figure class="horizon-card circuit-horizon" aria-labelledby="circuit-horizon-heading">
       <div class="horizon-card-copy">
         <p class="eyebrow">Draft season</p>
-        <h3 id="circuit-horizon-heading">One season, one paper trail</h3>
+        <h3 id="circuit-horizon-heading">One season, linked decisions</h3>
         <p>Each matchup turns a drafted ten into a fresh six, a bring of four, and a best-of-three.</p>
       </div>
       <div class="compact-season-route">
@@ -238,8 +238,8 @@ function RecordLedger() {
         <p class="eyebrow">The record</p>
         <h2 id="record-title">What gets written down</h2>
         <p>
-          Every stage leaves artifacts. Text the model writes is kept verbatim, commitments bind its later play, and the
-          harness measures the rest. All of it ships with the season archive.
+          Each stage leaves a record. Model-written text is kept verbatim, submitted choices bind later play, and the
+          harness records its own checks separately. The run archive keeps those pieces together.
         </p>
       </header>
       <div class="record-ledger">
@@ -280,20 +280,22 @@ function WorkedExampleTrace({ trace }: { trace: SelectedTraceView }) {
         <div>
           <p class="eyebrow">Selected recorded trace</p>
           <h2 id="worked-trace-title">
-            {trace.seatModel}’s sand plan, in {trace.eventCount} recorded moments
+            One {trace.seatModel} trace in {trace.eventCount} recorded moments
           </h2>
           <p class="lede">
-            Eight moments from a recorded {trace.seatModel} season — the seat played anonymously as {trace.seatAlias}:
-            two mid-draft picks, a matchup build, the preview, the first submitted battle action, trade-window
-            decisions, and the closing review. The complete artifact is linked below.
+            This recorded {trace.seatModel} season used the anonymous seat name {trace.seatAlias}. The selected moments
+            cover two draft picks, a matchup build, preview, the first submitted battle action, trade-window decisions,
+            and the closing review. The full artifact is linked below.
           </p>
         </div>
         <ul class="trace-verification" aria-label="Selected trace contents">
-          {[`${trace.eventCount} recorded moments`, 'Model outputs kept verbatim', 'Commands replay-checked'].map(
-            (status) => (
-              <li key={status}>{status}</li>
-            ),
-          )}
+          {[
+            `${trace.eventCount} recorded moments`,
+            'Model outputs kept verbatim',
+            'Excerpted command replay-checked',
+          ].map((status) => (
+            <li key={status}>{status}</li>
+          ))}
         </ul>
       </header>
 
@@ -430,11 +432,11 @@ export function HomeView({ trace, onOpenMethod, onOpenDocs }: HomeViewProps) {
           <p class="bench-lede">
             Model seats draft on a budget, write plans, trade, and battle through full seasons of a draft league on a
             pinned simulator. Accepted actions are recorded alongside any rationale the model supplied. Eligible battle
-            decisions can be replayed against legal actions not taken.
+            decisions can be replayed against accepted actions not taken.
           </p>
           <p class="bench-note">
-            A personal project — one game, a few evals and environments, built because watching models play a draft
-            league is fun. Code and artifacts are public.
+            This is a personal research project built around one game and a small set of evals and environments. The
+            code and published artifacts are public.
           </p>
           <nav class="bench-links" aria-label="Start here">
             <button type="button" onClick={onOpenMethod}>
@@ -479,8 +481,8 @@ export function HomeView({ trace, onOpenMethod, onOpenDocs }: HomeViewProps) {
           <p class="eyebrow">Research shape</p>
           <h2 id="horizons-title">Two scales, two kinds of evidence</h2>
           <p>
-            One lens replays a single turn and compares the chosen action with every legal alternative. The other
-            follows a whole season and asks whether early commitments showed up in later play.
+            One lens rebuilds a single turn and compares the submitted action with the request-derived alternatives
+            Showdown accepts. The other follows a whole season and asks whether early commitments showed up later.
           </p>
         </header>
         <div class="horizons-grid">

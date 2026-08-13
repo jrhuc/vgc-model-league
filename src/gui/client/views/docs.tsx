@@ -12,8 +12,7 @@ const DOCUMENTS = [
     index: '02',
     title: 'Evaluation plan',
     path: 'docs/evaluation-plan.md',
-    description:
-      'Artifact status, release gates, current compatibility evidence, and the ordered path toward public evaluation.',
+    description: 'Current artifact status, release gates, and the work still needed before a public evaluation.',
   },
   {
     index: '03',
@@ -37,18 +36,18 @@ export function DocsView() {
       <header class="public-page-hero">
         <div>
           <p class="eyebrow">Docs</p>
-          <h1>Project documentation</h1>
+          <h1>Project docs</h1>
         </div>
         <p class="public-page-intro">
-          These repository documents describe the measurement rules, evaluation release plan, system architecture, and
-          local operator workflow.
+          These are the project’s main references for measurement rules, release status, architecture, and local
+          commands.
         </p>
       </header>
 
       <aside class="docs-access-note" role="note">
         <span aria-hidden="true">i</span>
         <div>
-          <strong>Repository documents</strong>
+          <strong>Canonical docs</strong>
           <p>The links below open the canonical source files on GitHub.</p>
         </div>
       </aside>

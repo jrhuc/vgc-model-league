@@ -1,18 +1,14 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { count, decisionLogPath, quantile, readDecisionLog } from './evidence.js';
+import { draftLeagueTopology } from './draftleague-topology.js';
 import type {
-  BattleLogEntryView,
-  BattleSnapshot,
-  DecisionView,
   LeagueCardView,
   LeagueChampionView,
   LeagueDistributionView,
   LeagueFranchiseStatsView,
   LeagueFranchiseView,
-  LeagueGameDecisionView,
-  LeagueGameReflectionView,
   LeagueGameResponse,
+  LeagueLifecycle,
   LeagueLiveSeriesView,
   LeagueRecordView,
   LeagueResponse,
@@ -23,128 +19,28 @@ import type {
   LeagueTeambuildView,
   LeagueTradeWindowView,
   LeagueUsageView,
-  MonView,
   QuartileView,
-  TeambuildSetView,
 } from './gui/api.js';
-import { BattleLog } from './gui/battlelog.js';
 import { SAFE_SEGMENT } from './path-safety.js';
 import { modelKey, type SeriesRecord } from './records.js';
-import { loadShowdown } from './showdown.js';
-import { BattleState, type MonState } from './state.js';
+import {
+  buildSeriesGame,
+  count,
+  decisionLogPath,
+  isRunLive,
+  PIDS,
+  quantile,
+  readDecisionLog,
+  readRunJson,
+  readRunLines,
+  type SeriesSlot,
+  scanUnfinishedSeries,
+  spriteIdFor,
+} from './run-artifacts.js';
+import { decodeArchivedTeamBuildJournalRow } from './teambuild.js';
 import { readCurrentRosterArtifact, readTradeWindow } from './trade-window.js';
 import type { Pid } from './types.js';
-import { afterColon, ordinal, text } from './value.js';
-
-const PIDS: Pid[] = ['p1', 'p2'];
-
-const spriteIds = new Map<string, string>();
-
-function spriteIdFor(species: string): string {
-  const cached = spriteIds.get(species);
-  if (cached !== undefined) return cached;
-  const { Dex } = loadShowdown();
-  const resolved = Dex.mod('champions').species.get(species);
-  const id = resolved.exists ? resolved.spriteid : '';
-  spriteIds.set(species, id);
-  return id;
-}
-
-export function viewTeamSheet(packed: string): TeambuildSetView[] {
-  const { Teams } = loadShowdown();
-  return (Teams.unpack(packed) ?? []).map((set) => {
-    const evs = Object.fromEntries(
-      Object.entries(set.evs ?? {}).filter((entry): entry is [string, number] => typeof entry[1] === 'number'),
-    );
-    const species = set.species || set.name || 'Pokémon';
-    return {
-      species,
-      spriteId: spriteIdFor(species),
-      item: set.item,
-      ability: set.ability,
-      nature: set.nature,
-      moves: set.moves,
-      evs,
-      repaired: false,
-      repairs: [],
-    };
-  });
-}
-
-function snapshotMon(battle: BattleState, pid: Pid, mon: MonState): MonView {
-  const boosts = Object.entries(mon.boosts)
-    .filter(([, value]) => value)
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([stat, value]) => `${stat} ${value > 0 ? '+' : ''}${value}`)
-    .join(', ');
-  const target = mon.lastMove?.target ? ` → ${afterColon(mon.lastMove.target)}` : '';
-  const volatiles = [...mon.volatiles]
-    .map((volatile) => (/^perish(\d)$/i.test(volatile) ? `Perish ${volatile.slice(-1)}` : volatile))
-    .sort()
-    .join(', ');
-  return {
-    species: mon.species,
-    spriteId: spriteIdFor(mon.species),
-    slot: battle.activeSlot(pid, mon)?.toUpperCase() ?? '',
-    hp: mon.fainted ? 'fainted' : (mon.hp ?? ''),
-    status: mon.fainted ? '' : (mon.status ?? ''),
-    fainted: mon.fainted,
-    boosts,
-    volatiles,
-    lastMove: mon.lastMove ? `${mon.lastMove.name}${target} · T${mon.lastMove.turn}` : '',
-  };
-}
-
-export function snapshotBattle(
-  battle: BattleState,
-  players: Record<Pid, string> | undefined,
-  log: BattleLogEntryView[],
-  decisions: DecisionView[] = [],
-  spend?: Record<Pid, { ms: number; tokens: number }>,
-): BattleSnapshot {
-  const side = (pid: Pid) => ({
-    player: players?.[pid] ?? pid,
-    conditions: battle.conditionLabels(pid),
-    mons: battle.visibleMons(pid).map((mon) => snapshotMon(battle, pid, mon)),
-  });
-  const timerView = (pid: Pid) => {
-    const timer = battle.timers[pid];
-    if (!timer) return null;
-    const drained = timer.running ? (Date.now() - timer.at) / 1000 : 0;
-    const remaining = (value: number | null) => (value === null ? null : Math.max(0, Math.round(value - drained)));
-    return {
-      seconds: remaining(timer.seconds),
-      turnSeconds: remaining(timer.turnSeconds),
-      elapsedSeconds: timer.running ? Math.max(0, Math.floor(drained)) : null,
-      running: timer.running,
-    };
-  };
-  const spendView = (pid: Pid) => ({
-    seconds: Math.round((spend?.[pid]?.ms ?? 0) / 1000),
-    tokens: spend?.[pid]?.tokens ?? 0,
-  });
-  return {
-    turn: battle.turn,
-    weather: battle.weatherLabel(),
-    fields: battle.fieldLabels(),
-    sides: { p1: side('p1'), p2: side('p2') },
-    timers: { p1: timerView('p1'), p2: timerView('p2') },
-    spend: { p1: spendView('p1'), p2: spendView('p2') },
-    log,
-    decisions,
-  };
-}
-
-export function isRunLive(runsDir: string, runId: string): boolean {
-  const status = readRunJson(runsDir, runId, 'status.json') as Record<string, unknown> | null;
-  if (status?.state !== 'running' || typeof status.pid !== 'number') return false;
-  try {
-    process.kill(status.pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
+import { ordinal, text } from './value.js';
 
 function draftRunDirs(runsDir: string): string[] {
   let entries: fs.Dirent[];
@@ -191,33 +87,6 @@ function draftRuns(allRows: SeriesRecord[]): Map<string, SeriesRecord[]> {
   }
   for (const list of runs.values()) list.sort((a, b) => count(a.series_index) - count(b.series_index));
   return runs;
-}
-
-function readRunJson(runsDir: string, runId: string, ...segments: string[]): unknown {
-  try {
-    return JSON.parse(fs.readFileSync(path.join(runsDir, runId, ...segments), 'utf8'));
-  } catch {
-    return null;
-  }
-}
-
-function readRunLines(runsDir: string, runId: string, ...segments: string[]): Record<string, unknown>[] {
-  let raw: string;
-  try {
-    raw = fs.readFileSync(path.join(runsDir, runId, ...segments), 'utf8');
-  } catch {
-    return [];
-  }
-  const rows: Record<string, unknown>[] = [];
-  for (const line of raw.split('\n')) {
-    if (!line.trim()) continue;
-    try {
-      rows.push(JSON.parse(line) as Record<string, unknown>);
-    } catch {
-      /** A torn tail line on a live run is not an error. */
-    }
-  }
-  return rows;
 }
 
 function speciesSlug(value: string): string {
@@ -268,57 +137,6 @@ function replaySeriesGames(runsDir: string, runId: string, seriesId: string, gam
 /** A drafted mon enters play under its base species until it megas, so match ids by exact slug or mega prefix. */
 function speciesMatchesPick(pickId: string, species: string): boolean {
   return pickId === species || pickId.startsWith(`${species}-`);
-}
-
-export interface UnfinishedSeries {
-  seriesId: string;
-  seriesIndex: number | null;
-  game: number;
-  turn: number;
-  decisions: number;
-  players: Record<Pid, string> | null;
-}
-
-export function scanUnfinishedSeries(runsDir: string, runId: string, rows: SeriesRecord[]): UnfinishedSeries[] {
-  const seen = new Set(rows.map((row) => String(row.series_id ?? '')));
-  let entries: string[] = [];
-  try {
-    entries = fs.readdirSync(path.join(runsDir, runId, 'series'));
-  } catch {
-    return [];
-  }
-  const found: UnfinishedSeries[] = [];
-  for (const seriesId of entries) {
-    if (!SAFE_SEGMENT.test(seriesId) || seen.has(seriesId)) continue;
-    let decisions = 0;
-    let game = 0;
-    let turn = 0;
-    for (const pid of PIDS) {
-      const lines = readRunLines(runsDir, runId, 'series', seriesId, `${pid}-decisions.jsonl`);
-      decisions += lines.length;
-      const last = lines[lines.length - 1];
-      if (last) {
-        game = Math.max(game, count(last.game_number));
-        turn = Math.max(turn, count(last.turn));
-      }
-    }
-    const meta = readRunJson(runsDir, runId, 'series', seriesId, 'series.json') as Record<string, unknown> | null;
-    const storedIdentity =
-      meta?.schema_version === 3 && meta.identity && typeof meta.identity === 'object' && !Array.isArray(meta.identity)
-        ? (meta.identity as Record<string, unknown>)
-        : null;
-    const raw = (storedIdentity?.players ?? null) as Record<string, unknown> | null;
-    const players = raw && typeof raw.p1 === 'string' && typeof raw.p2 === 'string' ? { p1: raw.p1, p2: raw.p2 } : null;
-    found.push({
-      seriesId,
-      seriesIndex: typeof storedIdentity?.series_index === 'number' ? storedIdentity.series_index : null,
-      game: Math.max(1, game),
-      turn,
-      decisions,
-      players,
-    });
-  }
-  return found.sort((a, b) => a.seriesId.localeCompare(b.seriesId));
 }
 
 function liveSeriesViews(
@@ -418,24 +236,18 @@ interface LeagueProgress {
   eliminatedRound: Map<number, number>;
 }
 
-function playoffRoundsForEntrants(entrants: number): number {
-  return entrants >= 5 ? 2 : 1;
-}
-
 function leagueSeriesSlot(
   seriesIndex: number,
   entrants: number,
 ): { stage: 'roundrobin' | 'playoff'; round: number } | null {
   if (!Number.isSafeInteger(seriesIndex) || seriesIndex < 0 || entrants < 2) return null;
-  const roundRobinSeries = (entrants * (entrants - 1)) / 2;
-  if (seriesIndex < roundRobinSeries) {
+  const topology = draftLeagueTopology(entrants);
+  if (seriesIndex < topology.roundRobinSeries) {
     return { stage: 'roundrobin', round: Math.floor(seriesIndex / Math.floor(entrants / 2)) + 1 };
   }
-  const playoffIndex = seriesIndex - roundRobinSeries;
-  const playoffRounds = playoffRoundsForEntrants(entrants);
-  const playoffSeries = playoffRounds === 2 ? 3 : 1;
-  if (playoffIndex >= playoffSeries) return null;
-  return { stage: 'playoff', round: playoffRounds === 1 || playoffIndex < 2 ? 1 : 2 };
+  const playoffIndex = seriesIndex - topology.roundRobinSeries;
+  if (playoffIndex >= topology.playoffSeries) return null;
+  return { stage: 'playoff', round: topology.playoffRounds === 1 || playoffIndex < 2 ? 1 : 2 };
 }
 
 function leagueProgress(rows: SeriesRecord[], identity: LeagueIdentity): LeagueProgress {
@@ -446,7 +258,7 @@ function leagueProgress(rows: SeriesRecord[], identity: LeagueIdentity): LeagueP
   let finalists: [number, number] | null = null;
   /** Mirrors the bracket in draftleague.ts: the final is the last round, so a lone finished
    * semifinal must not be mistaken for it while the other semifinal is still playing. */
-  const finalRound = playoffRoundsForEntrants(identity.models.length);
+  const finalRound = draftLeagueTopology(identity.models.length).playoffRounds;
   for (const row of playoffRows) {
     const winnerPid = row.winner_side === 'p1' || row.winner_side === 'p2' ? (row.winner_side as Pid) : null;
     if (!winnerPid) continue;
@@ -499,12 +311,29 @@ function leaguePhase(
   if (liveSeries.some((series) => series.stage === 'playoff')) return 'playoffs';
   if (rows.length > 0) return progress.phase;
   /** A draft-only run ends at a full board of picks, so it is complete rather than mid-draft. */
-  if (isDraftOnly(runsDir, runId) && !isRunLive(runsDir, runId)) return 'complete';
+  if (completedDraftOnlyRun(runsDir, runId)) return 'complete';
   return preSeasonPhase(runsDir, runId);
 }
 function isDraftOnly(runsDir: string, runId: string): boolean {
   const config = readRunJson(runsDir, runId, 'config.json') as Record<string, unknown> | null;
   return config?.draft_only === true;
+}
+
+function completedDraftOnlyRun(runsDir: string, runId: string): boolean {
+  if (!isDraftOnly(runsDir, runId)) return false;
+  const status = readRunJson(runsDir, runId, 'status.json') as Record<string, unknown> | null;
+  if (status?.state === 'done') return true;
+  /** Legacy draft-only runs predate status files but persisted complete rosters into config. */
+  const config = readRunJson(runsDir, runId, 'config.json') as Record<string, unknown> | null;
+  return Array.isArray(config?.rosters) && config.rosters.length >= 2;
+}
+
+function leagueLifecycle(runsDir: string, runId: string, champion: LeagueChampionView | null): LeagueLifecycle {
+  if (isRunLive(runsDir, runId)) return 'live';
+  const status = readRunJson(runsDir, runId, 'status.json') as Record<string, unknown> | null;
+  if (status?.state === 'failed' || status?.state === 'stopped') return status.state;
+  if (champion || completedDraftOnlyRun(runsDir, runId)) return 'complete';
+  return 'incomplete';
 }
 
 function tradeWindowAfterWeek(runsDir: string, runId: string): number | null {
@@ -532,10 +361,17 @@ function tradeWindowView(runsDir: string, runId: string): LeagueTradeWindowView 
   if (afterWeek === null) return null;
   const runDir = path.join(runsDir, runId);
   const artifact = readTradeWindow(runDir);
-  if (!artifact) return null;
+  if (!artifact) {
+    return {
+      afterWeek,
+      state: fs.existsSync(path.join(runDir, 'window.jsonl')) ? 'in-progress' : 'scheduled',
+      offers: [],
+      decisions: [],
+    };
+  }
   return {
     afterWeek,
-    complete: true,
+    state: 'complete',
     offers: artifact.offers.map((offer) => ({
       from: offer.from,
       to: offer.to,
@@ -588,7 +424,7 @@ export function buildLeagues(allRows: SeriesRecord[], runsDir: string): LeaguesR
       champion: progress.champion,
       tradeWindowAfterWeek: tradeWindowAfterWeek(runsDir, runId),
       draftOnly: isDraftOnly(runsDir, runId) && rows.length === 0,
-      live,
+      lifecycle: leagueLifecycle(runsDir, runId, progress.champion),
       picks: phase === 'drafting' ? readRunLines(runsDir, runId, 'draft', 'draft.jsonl').length : null,
     });
   }
@@ -815,16 +651,12 @@ export function buildLeague(allRows: SeriesRecord[], runsDir: string, runId: str
   const rankOf = new Map(ranks.map((entrant, index) => [entrant, index + 1]));
   const playoffsSeen = rows.some((row) => row.stage === 'playoff');
 
+  const teambuildFile = path.join(runsDir, runId, 'teambuild', 'teambuild.jsonl');
   const teambuilds: LeagueTeambuildView[] = readRunLines(runsDir, runId, 'teambuild', 'teambuild.jsonl').map(
-    (row): LeagueTeambuildView => ({
-      seriesIndex: count(row.seriesIndex),
-      entrant: count(row.entrant),
-      opponent: count(row.opponent),
-      brought: Array.isArray(row.brought) ? row.brought.map(String) : [],
-      sets: Array.isArray(row.sets) ? (row.sets as TeambuildSetView[]) : [],
-      rationale: typeof row.rationale === 'string' ? row.rationale : '',
-      attempts: Math.max(1, count(row.attempts)),
-    }),
+    (row, index) => {
+      const entry = decodeArchivedTeamBuildJournalRow(row, `${teambuildFile} line ${index + 1}`);
+      return { ...entry.view, notebook: entry.notebook };
+    },
   );
   for (const build of teambuilds) {
     const agg = statsAgg[build.entrant];
@@ -979,12 +811,12 @@ export function buildLeague(allRows: SeriesRecord[], runsDir: string, runId: str
     budget: sample ? sample.spent + sample.budgetLeft : null,
     picksPerEntrant: rosters.find((entry) => entry.roster.length > 0)?.roster.length ?? null,
     weeks: identity.weeks,
-    playoffRounds: playoffRoundsForEntrants(identity.models.length),
+    playoffRounds: draftLeagueTopology(identity.models.length).playoffRounds,
     phase: leaguePhase(runsDir, runId, rows, progress, liveSeries),
     week: progress.week,
     champion: progress.champion,
     draftOnly: isDraftOnly(runsDir, runId) && rows.length === 0,
-    live,
+    lifecycle: leagueLifecycle(runsDir, runId, progress.champion),
     liveSeries,
     tradeWindow: tradeWindowView(runsDir, runId),
     seasonReviews: seasonReviewViews(runsDir, runId),
@@ -1043,15 +875,6 @@ function liveSeriesByIndex(
   return null;
 }
 
-export interface SeriesSlot {
-  seriesId: string;
-  sides: [number, number];
-  stage: 'roundrobin' | 'playoff';
-  round: number;
-  models: string[];
-  labels: string[];
-}
-
 export function buildLeagueGame(
   allRows: SeriesRecord[],
   runsDir: string,
@@ -1082,138 +905,4 @@ export function buildLeagueGame(
     slot = { ...found, models: identity.models, labels: identity.teamNames };
   }
   return buildSeriesGame(runsDir, runId, seriesIndex, game, slot, row);
-}
-
-export function buildSeriesGame(
-  runsDir: string,
-  runId: string,
-  seriesIndex: number,
-  game: number,
-  slot: SeriesSlot,
-  row: SeriesRecord | undefined,
-): LeagueGameResponse | null {
-  const { seriesId, sides, stage, round } = slot;
-  if (!SAFE_SEGMENT.test(runId) || !SAFE_SEGMENT.test(seriesId)) return null;
-
-  let seriesFiles: string[];
-  try {
-    seriesFiles = fs.readdirSync(path.join(runsDir, runId, 'series', seriesId));
-  } catch {
-    return null;
-  }
-  const gameNumbers = new Set<number>();
-  for (const name of seriesFiles) {
-    const match = /^game-(\d+)\.log$/.exec(name);
-    if (match) gameNumbers.add(Number(match[1]));
-  }
-
-  const decisions: LeagueGameDecisionView[] = [];
-  const reflections: LeagueGameReflectionView[] = [];
-  for (const [side, pid] of [
-    [0, 'p1'],
-    [1, 'p2'],
-  ] as const) {
-    for (const entry of readRunLines(runsDir, runId, 'series', seriesId, `${pid}-decisions.jsonl`)) {
-      const entryGame = count(entry.game_number);
-      if (entryGame > 0) gameNumbers.add(entryGame);
-      if (entryGame !== game) continue;
-      if (entry.kind === 'game_reflection') {
-        reflections.push({
-          side,
-          result: entry.result === 'won' ? 'won' : 'lost',
-          summary: typeof entry.summary === 'string' ? entry.summary : '',
-          adjustment: typeof entry.adjustment === 'string' ? entry.adjustment : '',
-          notebook: typeof entry.notebook === 'string' ? entry.notebook : '',
-          fallback: entry.fallback === true,
-          seriesOver: entry.series_over === true,
-        });
-        continue;
-      }
-      if (entry.kind !== 'decision') continue;
-      const numeric = (value: unknown) => (typeof value === 'number' && Number.isFinite(value) ? value : null);
-      decisions.push({
-        side,
-        turn: count(entry.turn),
-        phase: typeof entry.phase === 'string' ? entry.phase : 'turn',
-        selection: Array.isArray(entry.selection) ? entry.selection.map(String) : [],
-        action: typeof entry.action === 'string' ? entry.action : '',
-        rationale: typeof entry.rationale === 'string' ? entry.rationale : '',
-        notebook: typeof entry.notebook === 'string' ? entry.notebook : '',
-        fallback: entry.fallback === true,
-        automatic: entry.automatic === true,
-        latencyMs: numeric(entry.latency_ms),
-        totalTokens: numeric(entry.total_tokens),
-        reasoningTokens: numeric(entry.reasoning_tokens),
-      });
-    }
-  }
-  if (!gameNumbers.has(game)) return null;
-  decisions.sort((first, second) => first.turn - second.turn || first.side - second.side);
-
-  let raw = '';
-  try {
-    raw = fs.readFileSync(path.join(runsDir, runId, 'series', seriesId, `game-${game}.log`), 'utf8');
-  } catch {
-    if (row) return null;
-  }
-  const battleLog = new BattleLog(10_000);
-  battleLog.feed(raw.split('\n'));
-  const live = !row && isRunLive(runsDir, runId);
-  let snapshot: BattleSnapshot | null = null;
-  if (live && !/^\|(?:win\||tie\b)/m.test(raw)) {
-    const state = new BattleState('p1');
-    state.feed(raw.split('\n'));
-    const spendFor = (side: 0 | 1) => ({
-      ms: decisions.reduce((total, entry) => total + (entry.side === side ? (entry.latencyMs ?? 0) : 0), 0),
-      tokens: decisions.reduce((total, entry) => total + (entry.side === side ? (entry.totalTokens ?? 0) : 0), 0),
-    });
-    snapshot = snapshotBattle(state, { p1: slot.models[sides[0]]!, p2: slot.models[sides[1]]! }, [], [], {
-      p1: spendFor(0),
-      p2: spendFor(1),
-    });
-  }
-
-  const gameRows = row && Array.isArray(row.games) ? (row.games as Record<string, unknown>[]) : [];
-  const logWinner = (text: string): number | null => {
-    const lines = text.split('\n');
-    const players = new Map<string, Pid>();
-    for (const line of lines) {
-      const match = /^\|player\|(p[12])\|([^|]+)\|/.exec(line);
-      if (match) players.set(match[2]!, match[1] as Pid);
-    }
-    const winLine = lines.find((line) => line.startsWith('|win|'));
-    const pid = winLine === undefined ? undefined : players.get(winLine.slice(5).trim());
-    return pid === undefined ? null : pid === 'p1' ? sides[0] : sides[1];
-  };
-  const winnerOf = (number: number): number | null => {
-    const gameRow = gameRows[number - 1];
-    if (gameRow?.winner_side === 'p1') return sides[0];
-    if (gameRow?.winner_side === 'p2') return sides[1];
-    if (row) return null;
-    if (number === game) return raw ? logWinner(raw) : null;
-    try {
-      return logWinner(fs.readFileSync(path.join(runsDir, runId, 'series', seriesId, `game-${number}.log`), 'utf8'));
-    } catch {
-      return null;
-    }
-  };
-  const games = [...gameNumbers].sort((first, second) => first - second);
-  return {
-    runId,
-    seriesIndex,
-    seriesId,
-    stage,
-    round,
-    game,
-    games,
-    gameWinners: games.map(winnerOf),
-    sides,
-    teamNames: [slot.labels[sides[0]] ?? `Seat ${sides[0] + 1}`, slot.labels[sides[1]] ?? `Seat ${sides[1] + 1}`],
-    winner: winnerOf(game),
-    live,
-    snapshot,
-    log: battleLog.entries,
-    decisions,
-    reflections,
-  };
 }

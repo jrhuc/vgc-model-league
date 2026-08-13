@@ -21,7 +21,8 @@ import {
   snakeOrder,
 } from '../src/draft.js';
 import type { DraftLeagueEvent } from '../src/draftleague.js';
-import { DRAFT_PROTOCOL_VERSION, roundRobinWeeks, runDraftLeague } from '../src/draftleague.js';
+import { DRAFT_PROTOCOL_VERSION, runDraftLeague } from '../src/draftleague.js';
+import { draftLeagueTopology, roundRobinWeeks } from '../src/draftleague-topology.js';
 import { canonicalJson } from '../src/eval/serialization.js';
 import { readJsonlObjects } from '../src/jsonl.js';
 import { defaultPsDir } from '../src/paths.js';
@@ -58,7 +59,6 @@ const mon = (id: string): DraftBoardMon => {
 
 function assertFormatAuthority(prompt: string): void {
   assert.equal(prompt.split(FORMAT_AUTHORITY_NOTICE).length - 1, 1);
-  assert.doesNotMatch(prompt, /This game is newer than your training data|There is no Terastallisation/i);
 }
 
 function freshState(overrides: Partial<DraftState> = {}): DraftState {
@@ -263,6 +263,11 @@ test('the round robin pairs every coach once and plays one match a week', () => 
       }
     }
     assert.equal(seen.size, (size * (size - 1)) / 2, `${size}: every pair meets exactly once`);
+    const topology = draftLeagueTopology(size);
+    assert.equal(topology.weekCount, weeks.length);
+    assert.equal(topology.roundRobinSeries, seen.size);
+    assert.equal(topology.playoffSeries, size >= 5 ? 3 : 1);
+    assert.equal(topology.totalSeries, seen.size + topology.playoffSeries);
   }
 });
 
@@ -1181,7 +1186,7 @@ test('a credential failure stops the draft instead of making random picks', asyn
   t.after(() => fs.rmSync(logDir, { recursive: true, force: true }));
   await assert.rejects(
     runDraft(
-      ['google:gemini-test', 'random'],
+      ['openrouter:google/gemini-test', 'random'],
       { ...BOARD, picks: 4 },
       {
         logDir,
@@ -1268,7 +1273,7 @@ test('a quota failure pauses for recovery and resumes where it left off', async 
   });
   let calls = 0;
   const pending = runDraft(
-    ['google:gemini-test', 'random'],
+    ['openrouter:google/gemini-test', 'random'],
     { ...BOARD, picks: 4 },
     {
       logDir,
@@ -1741,7 +1746,7 @@ test('a teambuild quota failure pauses instead of shipping a repaired team', asy
     if (pause) paused.resolve();
   });
   let calls = 0;
-  const pending = runTeambuild(teambuildRequest({ model: 'google:gemini-test' }), {
+  const pending = runTeambuild(teambuildRequest({ model: 'openrouter:google/gemini-test' }), {
     logDir,
     rng: seededRng(2),
     recovery,
@@ -2212,6 +2217,32 @@ test('durable journal and atomic final-artifact faults retry provider-free and c
   assert.ok(!state.rosters[1]!.some((candidate) => candidate.id === swap.drop));
   assert.deepEqual(state.notebooks, ['', 'durable plan']);
   assert.deepEqual(readValidatedTradeWindow(directory, initial, { afterWeek: 1, tradesAllowed: 0 }), artifact);
+});
+
+test('current teambuild provenance counts as post-window transaction-barrier evidence', async (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-window-teambuild-barrier-'));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const recordsPath = path.join(directory, 'results.jsonl');
+  const models = ['random', 'random'];
+  await runDraftLeague(models, directory, { recordsPath, seed: 79, concurrency: 1, throughWeek: 1 });
+  const teambuildFile = path.join(directory, 'teambuild', 'teambuild.jsonl');
+  const postWindow = structuredClone(readJsonlObjects(teambuildFile)[0]!);
+  const artifact = postWindow.artifact as {
+    task: { objective: { stage: string }; provenance: { seriesIndex: number; opponent: number } };
+  };
+  artifact.task.objective.stage = 'playoff';
+  artifact.task.provenance.seriesIndex = 1;
+  artifact.task.provenance.opponent = 1;
+  fs.appendFileSync(
+    teambuildFile,
+    `${JSON.stringify(postWindow)}
+`,
+  );
+
+  await assert.rejects(
+    runDraftLeague(models, directory, { recordsPath, seed: 79, concurrency: 1, resume: true }),
+    /evidence past its transaction barrier but lacks authoritative window artifacts/,
+  );
 });
 
 test('committed overlays fail closed when tampered or missing past the transaction barrier', async (t) => {

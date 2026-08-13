@@ -1,3 +1,6 @@
+import { loadBoard } from '../../src/draft.js';
+import { type TeamBuildArtifact, type TeamBuildTask, validateTeamBuildSubmission } from '../../src/teambuild.js';
+
 const LEGAL_TEAM_SETS = [
   {
     id: 'garchomp',
@@ -51,4 +54,51 @@ const LEGAL_TEAM_SETS = [
 
 export function legalTeamResponse(teamPlan: string): string {
   return JSON.stringify({ team_plan: teamPlan, sets: LEGAL_TEAM_SETS });
+}
+
+export const LEGAL_TEAM_IDS = ['garchomp', 'incineroar', 'sinistcha', 'farigiraf', 'whimsicott', 'charizard-mega-y'];
+const BOARD = loadBoard('regmb-202607');
+const CANDIDATES = LEGAL_TEAM_IDS.map((id) => {
+  const candidate = BOARD.mons.find((entry) => entry.id === id);
+  if (!candidate) throw new Error(`board is missing ${id}`);
+  return candidate;
+});
+const artifactCache = new Map<string, TeamBuildArtifact>();
+
+export function leagueTeamBuildJournalRow(options: {
+  teamPlan: string;
+  notebook: string;
+  attempts: number;
+  sheetPolicy?: 'open' | 'closed';
+}): { artifact: TeamBuildArtifact } {
+  const cacheKey = JSON.stringify(options);
+  let artifact = artifactCache.get(cacheKey);
+  if (!artifact) {
+    const task: TeamBuildTask = {
+      id: 'series-0-seat-0',
+      model: 'openai:alpha',
+      format: BOARD.format,
+      sheetPolicy: options.sheetPolicy ?? 'open',
+      executionPolicy: 'strict',
+      constraint: { kind: 'draft-picks', id: 'alpha-roster', teamSize: 6, candidates: CANDIDATES },
+      objective: {
+        kind: 'matchup',
+        stage: 'roundrobin',
+        opponent: { model: 'openai:beta', candidates: CANDIDATES },
+        priorContext: [],
+      },
+      notebook: options.notebook,
+      provenance: { source: 'draft-league', seriesIndex: 0, entrant: 0, opponent: 1 },
+    };
+    const result = validateTeamBuildSubmission(task, legalTeamResponse(options.teamPlan), {
+      attempts: options.attempts,
+      createdAt: '2026-07-20T09:00:00.000Z',
+    });
+    if (result.status !== 'accepted') {
+      throw new Error(`league team-build fixture was rejected: ${result.problems.join('; ')}`);
+    }
+    artifact = result.artifact;
+    artifactCache.set(cacheKey, artifact);
+  }
+  return { artifact: structuredClone(artifact) };
 }

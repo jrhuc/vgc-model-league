@@ -10,9 +10,10 @@ import { defaultPsDir } from './paths.js';
 import { FORMAT_AUTHORITY_NOTICE } from './prompts.js';
 import type { ModelReasoningConfig, ReasoningLevel } from './providers.js';
 import { classifyProviderFailure, makeProvider, parseSpec, reasoningForModel } from './providers.js';
-import { type Rng, shuffle } from './random.js';
+import { type Rng, seededRng, shuffle } from './random.js';
 import type { RecoveryGate } from './recovery.js';
 import { ShowdownReference } from './reference.js';
+import { spriteIdFor } from './run-artifacts.js';
 import type { ShowdownApi } from './showdown.js';
 import { loadShowdown, showdownCommit } from './showdown.js';
 import { normalizeStageEvidence, noStageEvidence, type StageEvidence } from './stage-evidence.js';
@@ -400,6 +401,112 @@ const teamBuildArtifactSchema = z.strictObject({
   createdAt: z.string(),
 });
 
+const teamBuildJournalRowSchema = z.strictObject({ artifact: teamBuildArtifactSchema });
+
+const historicalActionSetSchema = z.strictObject({
+  species: z.string(),
+  spriteId: z.string().optional(),
+  item: z.string(),
+  ability: z.string(),
+  nature: z.string(),
+  moves: z.array(z.string()),
+  evs: statSpreadSchema,
+  note: z.string().optional(),
+  repaired: z.boolean(),
+  repairs: z.array(z.string()),
+});
+const historicalTeamBuildJournalRowSchema = z.strictObject({
+  model: z.string(),
+  team_name: z.string(),
+  seriesIndex: z.number().int().nonnegative(),
+  entrant: z.number().int().nonnegative(),
+  opponent: z.number().int().nonnegative(),
+  brought: z.array(z.string()),
+  sets: z.array(historicalActionSetSchema),
+  rationale: z.string(),
+  attempts: z.number().int().positive(),
+  packed: z.string().optional(),
+  timestamp: z.string(),
+});
+
+export interface TeamBuildJournalEntry {
+  artifact: TeamBuildArtifact;
+  view: TeambuildView;
+  notebook: string;
+}
+
+export function decodeTeamBuildJournalRow(value: unknown, label = 'team-build journal row'): TeamBuildJournalEntry {
+  const parsed = teamBuildJournalRowSchema.safeParse(value);
+  if (!parsed.success)
+    throw new Error(`${label} is not a current team-build journal row: ${z.prettifyError(parsed.error)}`);
+  const artifact = parsed.data.artifact as TeamBuildArtifact;
+  const provenance = artifact.task.provenance;
+  if (
+    provenance.source !== 'draft-league' ||
+    !Number.isSafeInteger(provenance.seriesIndex) ||
+    Number(provenance.seriesIndex) < 0 ||
+    !Number.isSafeInteger(provenance.entrant) ||
+    Number(provenance.entrant) < 0 ||
+    !Number.isSafeInteger(provenance.opponent) ||
+    Number(provenance.opponent) < 0 ||
+    artifact.task.objective.kind !== 'matchup' ||
+    !artifact.action
+  ) {
+    throw new Error(`${label} does not carry complete draft-league provenance and a valid action`);
+  }
+  return {
+    artifact,
+    notebook: artifact.evidence.notebook,
+    view: {
+      seriesIndex: provenance.seriesIndex!,
+      entrant: provenance.entrant!,
+      opponent: provenance.opponent!,
+      brought: [...artifact.action.selected],
+      sets: structuredClone(artifact.action.sets),
+      rationale: artifact.evidence.rationale,
+      attempts: artifact.attempts,
+    },
+  };
+}
+
+export interface ArchivedTeamBuildJournalEntry {
+  view: TeambuildView;
+  notebook: string;
+}
+
+/** Read-only compatibility for archives written before journal rows wrapped the canonical artifact. */
+export function decodeArchivedTeamBuildJournalRow(
+  value: unknown,
+  label = 'archived team-build journal row',
+): ArchivedTeamBuildJournalEntry {
+  if (typeof value === 'object' && value !== null && !Array.isArray(value) && Object.hasOwn(value, 'artifact')) {
+    const { view, notebook } = decodeTeamBuildJournalRow(value, label);
+    return { view, notebook };
+  }
+  const parsed = historicalTeamBuildJournalRowSchema.safeParse(value);
+  if (!parsed.success) {
+    throw new Error(
+      `${label} is neither a current artifact row nor a historical flat archive row: ${z.prettifyError(parsed.error)}`,
+    );
+  }
+  return {
+    notebook: '',
+    view: {
+      seriesIndex: parsed.data.seriesIndex,
+      entrant: parsed.data.entrant,
+      opponent: parsed.data.opponent,
+      brought: [...parsed.data.brought],
+      sets: parsed.data.sets.map(({ spriteId, note, ...set }) => ({
+        ...set,
+        spriteId: spriteId ?? spriteIdFor(set.species),
+        ...(note === undefined ? {} : { note }),
+      })),
+      rationale: parsed.data.rationale,
+      attempts: parsed.data.attempts,
+    },
+  };
+}
+
 function canonicalCandidate(candidate: TeamBuildCandidate): TeamBuildCandidate {
   return {
     id: candidate.id,
@@ -565,6 +672,30 @@ function userPrompt(task: TeamBuildTask, dex: DexLike): string {
     );
   }
   return lines.join('\n');
+}
+
+export function connectedTeamBuildPromptRevision(
+  objective: TeamBuildObjective,
+  sheetPolicy: TeamBuildSheetPolicy,
+): string {
+  return createHash('sha256')
+    .update(JSON.stringify([teamBuildScaffoldRevision(objective, sheetPolicy, 'strict'), 'system-blank-line-user-v1']))
+    .digest('hex')
+    .slice(0, 12);
+}
+
+export function renderStrictTeamBuildPrompt(
+  task: TeamBuildTask,
+  options: Pick<TeamBuildRefereeOptions, 'psDir'> = {},
+): string {
+  const canonical = strictTask(task);
+  validateTeamBuildTask(canonical);
+  const psDir = options.psDir ?? defaultPsDir();
+  const { Dex } = loadShowdown(psDir);
+  const format = Dex.formats.get(canonical.format);
+  const dex = Dex.mod(format.mod || 'base') as unknown as DexLike;
+  const rules = Dex.formats.getRuleTable(format);
+  return [systemPrompt(canonical, dex, rules.evLimit ?? 508, 32), '', userPrompt(canonical, dex)].join('\n');
 }
 
 interface ParsedTeamBuild {
@@ -1088,6 +1219,64 @@ export function validateTeamBuildSubmission(
   }
 }
 
+export interface DeterministicTeamBuildFallback {
+  response: string;
+  validation: Extract<TeamBuildSubmissionValidation, { status: 'accepted' }>;
+}
+
+export function deterministicTeamBuildFallback(
+  task: TeamBuildTask,
+  seed: string | number,
+  options: TeamBuildRefereeOptions = {},
+): DeterministicTeamBuildFallback {
+  const canonical = strictTask(task);
+  validateTeamBuildTask(canonical);
+  const psDir = options.psDir ?? defaultPsDir();
+  const { Dex } = loadShowdown(psDir);
+  const format = Dex.formats.get(canonical.format);
+  const dex = Dex.mod(format.mod || 'base') as unknown as DexLike;
+  const rules = Dex.formats.getRuleTable(format);
+  const random = seededRng(seed);
+  const selected = fallbackSets(
+    canonical.constraint.candidates,
+    canonical.constraint.teamSize,
+    random,
+    rules.evLimit ?? 508,
+    32,
+  );
+  const owned = new Map(canonical.constraint.candidates.map((candidate) => [candidate.id, candidate]));
+  const taken = new Set<string>();
+  const repaired = selected.map((raw) => {
+    const mon = owned.get(raw.id);
+    if (!mon) throw new Error(`fallback selected unknown candidate ${JSON.stringify(raw.id)}`);
+    const moves = legalMoves(dex, mon)
+      .sort((left, right) => {
+        const leftStatus = dex.moves.get(left).category === 'Status' ? 1 : 0;
+        const rightStatus = dex.moves.get(right).category === 'Status' ? 1 : 0;
+        return leftStatus - rightStatus || left.localeCompare(right);
+      })
+      .slice(0, 4);
+    return repairSet(dex, mon, { ...raw, moves }, rules.evLimit ?? 508, 32, taken, random).set;
+  });
+  const response = JSON.stringify({
+    team_plan: 'deterministic legal fallback supplied by the connected referee',
+    sets: repaired.map((set) => ({
+      id: set.id,
+      item: set.item,
+      ability: set.ability,
+      nature: set.nature,
+      moves: [...set.moves],
+      evs: { ...set.evs },
+      note: set.note,
+    })),
+  });
+  const validation = validateTeamBuildSubmission(canonical, response, options);
+  if (validation.status !== 'accepted') {
+    throw new Error(`deterministic strict fallback was rejected: ${validation.problems.join('; ')}`);
+  }
+  return { response, validation };
+}
+
 function attemptLogFile(task: TeamBuildTask, logDir: string): string {
   if (task.provenance.seriesIndex !== undefined && task.provenance.entrant !== undefined) {
     return path.join(
@@ -1370,11 +1559,9 @@ export async function runTeambuild(request: TeambuildRequest, options: Teambuild
     rationale: result.artifact.evidence.rationale,
     attempts: result.artifact.attempts,
   };
-  fs.appendFileSync(
-    path.join(options.logDir, 'teambuild.jsonl'),
-    `${JSON.stringify({ artifact: result.artifact })}\n`,
-    'utf8',
-  );
+  const journalRow = { artifact: result.artifact };
+  decodeTeamBuildJournalRow(journalRow);
+  fs.appendFileSync(path.join(options.logDir, 'teambuild.jsonl'), `${JSON.stringify(journalRow)}\n`, 'utf8');
   return { packed: result.packed, artifact: result.artifact, view };
 }
 

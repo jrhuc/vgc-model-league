@@ -1,23 +1,15 @@
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { counterfactualProtocol, EXHAUSTIVE_PANEL_PROTOCOL } from '../src/eval/counterfactual.js';
 import { ACTION_PROTOCOL } from '../src/eval/fork.js';
 import { POSITION_GRADE_SCHEMA_VERSION } from '../src/eval/positions.js';
-import {
-  assertPinnedShowdownRuntime,
-  captureRuntimeProducerAuthority,
-  PRODUCER_DIGEST_PROTOCOL,
-  rawProducerDigest,
-  showdownRuntimeAuthorityFiles,
-  showdownRuntimeDigest,
-  stableProducerDigest,
-} from '../src/eval/producer.js';
+import { captureRuntimeProducerAuthority, PRODUCER_DIGEST_PROTOCOL, rawProducerDigest } from '../src/eval/producer.js';
 
 test('raw producer framing separates path/content newlines and preserves invalid UTF-8 bytes', () => {
   assert.equal(PRODUCER_DIGEST_PROTOCOL, 'vgc-model-league-runtime-producer-digest-v2');
@@ -54,16 +46,70 @@ test('raw producer framing is deterministic across independently allocated recor
   assert.equal(first, second);
 });
 
-test('stable producer reads reject symlinks, directories, and mutation across descriptor stats', (context) => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'producer-stable-read-'));
-  const regular = path.join(root, 'authority.bin');
-  fs.writeFileSync(regular, Buffer.from([0xff, 0x00, 0x0a]));
-  assert.match(stableProducerDigest(root, ['authority.bin']), /^[0-9a-f]{64}$/u);
-  assert.throws(() => stableProducerDigest(root, ['.']), /regular non-symlink file/u);
+function runtimeAuthorityFixture(): {
+  root: string;
+  entry: string;
+  ownFiles: string[];
+  showdownFile: string;
+} {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'producer-runtime-authority-'));
+  const entry = path.join(root, 'dist', 'tools', 'grade-positions.js');
+  const ownFiles = [path.join(root, 'dist', 'src', 'alpha.js'), path.join(root, 'dist', 'src', 'beta.js')];
+  for (const [file, content] of [
+    [entry, 'export {};\n'],
+    [ownFiles[0]!, 'export const alpha = 1;\n'],
+    [ownFiles[1]!, 'export const beta = 2;\n'],
+    [path.join(root, 'package.json'), '{"type":"module"}\n'],
+    [path.join(root, 'pnpm-lock.yaml'), 'lockfileVersion: 9\n'],
+  ] as const) {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, content);
+  }
+  for (const directory of ['sim', 'data', 'lib', 'server', 'config']) {
+    fs.cpSync(
+      path.resolve('pokemon-showdown', 'dist', directory),
+      path.join(root, 'pokemon-showdown', 'dist', directory),
+      { recursive: true },
+    );
+  }
+  for (const relative of [
+    'showdown.lock.json',
+    'pokemon-showdown/dist/.vgc-model-league-revision',
+    'pokemon-showdown/node_modules/ts-chacha20/package.json',
+    'pokemon-showdown/node_modules/ts-chacha20/build/src/chacha20.js',
+  ]) {
+    const destination = path.join(root, relative);
+    fs.mkdirSync(path.dirname(destination), { recursive: true });
+    fs.copyFileSync(path.resolve(relative), destination);
+  }
+  return {
+    root,
+    entry,
+    ownFiles,
+    showdownFile: path.join(root, 'pokemon-showdown', 'dist', 'sim', 'index.js'),
+  };
+}
 
-  const link = path.join(root, 'authority-link');
+function captureFixture(fixture: ReturnType<typeof runtimeAuthorityFixture>) {
+  return captureRuntimeProducerAuthority(pathToFileURL(fixture.entry).href);
+}
+
+test('runtime producer capture rejects unstable or indirect authority inputs', (context) => {
+  const stable = runtimeAuthorityFixture();
+  context.after(() => fs.rmSync(stable.root, { recursive: true, force: true }));
+  assert.match(captureFixture(stable).producerDigest, /^[0-9a-f]{64}$/u);
+
+  const directory = runtimeAuthorityFixture();
+  context.after(() => fs.rmSync(directory.root, { recursive: true, force: true }));
+  fs.rmSync(directory.entry);
+  fs.mkdirSync(directory.entry);
+  assert.throws(() => captureFixture(directory));
+
+  const linked = runtimeAuthorityFixture();
+  context.after(() => fs.rmSync(linked.root, { recursive: true, force: true }));
+  fs.rmSync(linked.entry);
   try {
-    fs.symlinkSync(regular, link);
+    fs.symlinkSync(linked.ownFiles[0]!, linked.entry);
   } catch (error) {
     if (['EPERM', 'ENOTSUP', 'EACCES'].includes((error as NodeJS.ErrnoException).code ?? '')) {
       context.skip('file symlinks are unavailable');
@@ -71,125 +117,66 @@ test('stable producer reads reject symlinks, directories, and mutation across de
     }
     throw error;
   }
-  assert.throws(() => stableProducerDigest(root, ['authority-link']), /regular non-symlink file/u);
+  assert.throws(() => captureFixture(linked));
 
-  const originalRead = fs.readFileSync;
-  let mutated = false;
+  const changing = runtimeAuthorityFixture();
+  context.after(() => fs.rmSync(changing.root, { recursive: true, force: true }));
+  const ready = path.join(changing.root, 'mutator-ready');
+  const mutator = spawn(
+    process.execPath,
+    [
+      '-e',
+      `const fs = require('node:fs'); fs.writeFileSync(${JSON.stringify(ready)}, ''); setInterval(() => fs.appendFileSync(${JSON.stringify(changing.ownFiles[0]!)}, 'x'), 1);`,
+    ],
+    { stdio: 'ignore' },
+  );
+  const sleeper = new Int32Array(new SharedArrayBuffer(4));
+  const deadline = Date.now() + 5_000;
+  while (!fs.existsSync(ready) && Date.now() < deadline) Atomics.wait(sleeper, 0, 0, 5);
+  assert.equal(fs.existsSync(ready), true);
   try {
-    fs.readFileSync = ((file: fs.PathOrFileDescriptor, options?: unknown) => {
-      const content = originalRead(file, options as never);
-      if (typeof file === 'number' && !mutated) {
-        mutated = true;
-        fs.appendFileSync(regular, Buffer.from([0x01]));
-      }
-      return content;
-    }) as typeof fs.readFileSync;
-    assert.throws(() => stableProducerDigest(root, ['authority.bin']), /changed while it was read/u);
+    assert.throws(() => captureFixture(changing));
   } finally {
-    fs.readFileSync = originalRead;
+    mutator.kill();
   }
 });
-
-test('global restat rejects an OLD-A plus NEW-B hybrid assembled between descriptor reads', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'producer-hybrid-read-'));
-  const first = path.join(root, 'a.bin');
-  const second = path.join(root, 'b.bin');
-  fs.writeFileSync(first, 'OLD-A');
-  fs.writeFileSync(second, 'OLD-B');
-  const originalClose = fs.closeSync;
-  let closes = 0;
-  try {
-    fs.closeSync = ((descriptor: number) => {
-      originalClose(descriptor);
-      closes += 1;
-      if (closes === 1) {
-        fs.writeFileSync(first, 'NEW-A');
-        fs.writeFileSync(second, 'NEW-B');
-      }
-    }) as typeof fs.closeSync;
-    assert.throws(() => stableProducerDigest(root, ['a.bin', 'b.bin']), /changed after it was read/u);
-  } finally {
-    fs.closeSync = originalClose;
-  }
-});
-
-function minimalShowdownAuthority(): { root: string; mutableFile: string; members: number } {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'producer-membership-'));
-  for (const directory of ['sim', 'data', 'lib', 'server', 'config']) {
-    const target = path.join(root, 'pokemon-showdown', 'dist', directory);
-    fs.mkdirSync(target, { recursive: true });
-    fs.writeFileSync(path.join(target, `${directory}.js`), `module.exports = ${JSON.stringify(directory)};\n`);
-  }
-  fs.writeFileSync(path.join(root, 'showdown.lock.json'), '{"commit":"0000000000000000000000000000000000000000"}\n');
-  fs.writeFileSync(path.join(root, 'pokemon-showdown', 'dist', '.vgc-model-league-revision'), 'test\n');
-  const chacha = path.join(root, 'pokemon-showdown', 'node_modules', 'ts-chacha20');
-  fs.mkdirSync(path.join(chacha, 'build', 'src'), { recursive: true });
-  fs.writeFileSync(path.join(chacha, 'package.json'), '{}\n');
-  fs.writeFileSync(path.join(chacha, 'build', 'src', 'chacha20.js'), 'module.exports = {};\n');
-  const mutableFile = path.join(root, 'pokemon-showdown', 'dist', 'sim', 'sim.js');
-  return { root, mutableFile, members: showdownRuntimeAuthorityFiles(root).length };
-}
 
 for (const attack of ['add', 'remove', 'rename'] as const) {
-  test(`Showdown snapshot rejects ${attack} membership during its whole-set read`, () => {
-    const fixture = minimalShowdownAuthority();
-    const originalClose = fs.closeSync;
-    let closes = 0;
-    let attacked = false;
-    try {
-      fs.closeSync = ((descriptor: number) => {
-        originalClose(descriptor);
-        closes += 1;
-        if (closes === fixture.members && !attacked) {
-          attacked = true;
-          if (attack === 'add') {
-            fs.writeFileSync(path.join(fixture.root, 'pokemon-showdown', 'dist', 'sim', 'added.js'), 'added\n');
-          } else if (attack === 'remove') {
-            fs.rmSync(fixture.mutableFile);
-          } else {
-            fs.renameSync(fixture.mutableFile, `${fixture.mutableFile}.renamed.js`);
-          }
-        }
-      }) as typeof fs.closeSync;
-      assert.throws(() => showdownRuntimeDigest(fixture.root), /membership changed/u);
-    } finally {
-      fs.closeSync = originalClose;
+  test(`captured runtime authority rejects ${attack} membership`, (context) => {
+    const fixture = runtimeAuthorityFixture();
+    context.after(() => fs.rmSync(fixture.root, { recursive: true, force: true }));
+    const captured = captureFixture(fixture);
+    if (attack === 'add') {
+      fs.writeFileSync(path.join(path.dirname(fixture.showdownFile), 'added.js'), 'added\n');
+    } else if (attack === 'remove') {
+      fs.rmSync(fixture.showdownFile);
+    } else {
+      fs.renameSync(fixture.showdownFile, `${fixture.showdownFile}.renamed.js`);
     }
-    assert.equal(attacked, true);
+    assert.throws(() => captured.assertUnchanged());
   });
 }
 
-test('reviewed Showdown runtime digest rejects a dirty compiled runtime copy', () => {
-  const repository = path.resolve('.');
-  const expected = showdownRuntimeDigest(repository);
-  assert.equal(assertPinnedShowdownRuntime(repository), expected);
-
-  const copy = fs.mkdtempSync(path.join(os.tmpdir(), 'showdown-runtime-authority-'));
-  for (const relative of showdownRuntimeAuthorityFiles(repository)) {
-    const source = path.join(repository, relative);
-    const destination = path.join(copy, relative);
-    fs.mkdirSync(path.dirname(destination), { recursive: true });
-    fs.copyFileSync(source, destination);
-  }
-  assert.equal(showdownRuntimeDigest(copy), expected);
-  assert.equal(assertPinnedShowdownRuntime(copy), expected);
-  fs.appendFileSync(path.join(copy, 'pokemon-showdown/dist/sim/index.js'), '\n/* tampered compiled runtime */\n');
-  assert.throws(
-    () => assertPinnedShowdownRuntime(copy),
-    /does not match reviewed .* rebuild with pnpm run setup:showdown/u,
-  );
+test('runtime producer capture rejects dirty compiled Showdown bytes', (context) => {
+  const fixture = runtimeAuthorityFixture();
+  context.after(() => fs.rmSync(fixture.root, { recursive: true, force: true }));
+  const expected = captureRuntimeProducerAuthority(
+    new URL('../tools/grade-positions.js', import.meta.url).href,
+  ).showdownRuntimeDigest;
+  const captured = captureFixture(fixture);
+  assert.equal(captured.showdownRuntimeDigest, expected);
+  fs.appendFileSync(fixture.showdownFile, '\ntampered\n');
+  assert.throws(() => captured.assertUnchanged());
+  assert.throws(() => captureFixture(fixture));
 });
 
 test('compiled position tools have distinct identities bound to the pinned Showdown runtime', () => {
-  const repository = path.resolve('.');
-  const expectedShowdownDigest = assertPinnedShowdownRuntime(repository);
   const gradeEntry = new URL('../tools/grade-positions.js', import.meta.url);
   const exporterEntry = new URL('../tools/export-position-panels.js', import.meta.url);
   const grade = captureRuntimeProducerAuthority(gradeEntry.href);
   const exporter = captureRuntimeProducerAuthority(exporterEntry.href);
 
-  assert.equal(grade.showdownRuntimeDigest, expectedShowdownDigest);
-  assert.equal(exporter.showdownRuntimeDigest, expectedShowdownDigest);
+  assert.equal(exporter.showdownRuntimeDigest, grade.showdownRuntimeDigest);
   grade.assertUnchanged();
   exporter.assertUnchanged();
 
@@ -228,14 +215,4 @@ test('compiled position tools have distinct identities bound to the pinned Showd
     assert.notEqual(result.status, 0);
     assert.match(result.stderr, /does not match captured producer runtime/u);
   }
-});
-
-test('freeze package script runs the canonical Showdown check before the freezer', () => {
-  const packageValue = JSON.parse(fs.readFileSync('package.json', 'utf8')) as {
-    scripts: Record<string, string>;
-  };
-  assert.equal(
-    packageValue.scripts['freeze-frozen-matchday-task-source'],
-    'node tools/setup-showdown.mjs --check && node dist/tools/freeze-frozen-matchday-task-source.js',
-  );
 });

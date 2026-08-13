@@ -143,7 +143,7 @@ export interface TradeSwap {
   add: string;
 }
 
-interface TradeOfferOutcome {
+export interface TradeOfferOutcome {
   from: number;
   to: number;
   give: string;
@@ -278,21 +278,21 @@ export interface RunTradeWindowOptions extends ModelReasoningConfig {
   tradesAllowed: number;
 }
 
-interface ParsedTradeDecision {
+export interface ParsedTradeDecision {
   swaps: TradeSwap[];
   reasoning: string;
   notebook: string;
   evidence: StageEvidence;
 }
 
-interface ParsedTradeOffer {
+export interface ParsedTradeOffer {
   offer: { to: number; give: string; get: string; message: string } | null;
   reasoning: string;
   notebook: string;
   evidence: StageEvidence;
 }
 
-interface ParsedTradeResponse {
+export interface ParsedTradeResponse {
   accept: boolean;
   reasoning: string;
   notebook: string;
@@ -315,6 +315,10 @@ export function tradeWindowScaffoldRevision(): string {
     .update(JSON.stringify([TRADE_WINDOW_PROMPT_POLICY, TRADE_OFFER_PROMPT_POLICY]))
     .digest('hex')
     .slice(0, 12);
+}
+
+export function tradeWindowOrder(standings: readonly DraftTableRow[]): number[] {
+  return [...standings].reverse().map((row) => row.entrant);
 }
 
 function slug(value: string): string {
@@ -707,6 +711,35 @@ function responseUserPrompt(
     '',
     ...TRADE_OFFER_PROMPT_POLICY.responseReplyTemplate,
   ].join('\n');
+}
+
+export function connectedTradeWindowPromptRevision(): string {
+  return createHash('sha256')
+    .update(JSON.stringify([tradeWindowScaffoldRevision(), 'system-blank-line-user-v1']))
+    .digest('hex')
+    .slice(0, 12);
+}
+
+export function renderTradeOfferPrompt(state: TradeWindowState, entrant: number, psDir: string): string {
+  validateLeagueRosterState(state);
+  return [offerSystemPrompt(state, entrant), '', offerUserPrompt(state, entrant, psDir)].join('\n');
+}
+
+export function renderTradeResponsePrompt(
+  state: TradeWindowState,
+  offer: { to: number; give: string; get: string; message: string },
+  from: number,
+  psDir: string,
+): string {
+  validateLeagueRosterState(state);
+  const error = validateOfferTerms(state, from, offer);
+  if (error) throw new Error(`invalid trade offer: ${error}`);
+  return [responseSystemPrompt(state, offer.to), '', responseUserPrompt(state, offer, from, psDir)].join('\n');
+}
+
+export function renderFreeAgencyPrompt(state: TradeWindowState, entrant: number, psDir: string): string {
+  validateLeagueRosterState(state);
+  return [systemPrompt(state, entrant), '', userPrompt(state, entrant, psDir)].join('\n');
 }
 
 function rosterArtifact(state: TradeWindowState): TradeWindowRoster[] {

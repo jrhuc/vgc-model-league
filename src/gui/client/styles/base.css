@@ -31,17 +31,13 @@ button.on:focus-visible, button.selected:focus-visible, button[aria-selected="tr
 .nav-button:hover { color: #ffffff; background: #18335e; }
 .nav-button.on { color: var(--yellow); border-color: #476488; border-bottom-color: var(--yellow); }
 .header-aside { display: flex; gap: 12px; align-items: center; justify-content: flex-end; min-width: 0; }
-.header-readonly { padding: 7px 9px; color: #d9e4f2; border: 1px solid #3c5679; font: 700 9px/1 var(--mono); letter-spacing: .06em; text-transform: uppercase; white-space: nowrap; }
 .header-state { padding: 7px 9px; color: #d9e4f2; border: 1px solid #3c5679; font: 700 9px/1 var(--mono); letter-spacing: .06em; text-transform: uppercase; white-space: nowrap; display: flex; gap: 8px; align-items: center; }
 .live-dot { display: inline-block; width: 8px; height: 8px; flex: none; background: var(--line-strong); border-radius: 1px; }
 .header-state.live .live-dot, .live-status .live-dot, .live-now .live-dot, .tournament-card.live .live-dot { background: var(--coral); animation: status-arrival 1.4s ease-out 2; }
 .header-state.paused .live-dot { background: var(--yellow); }
-.header-auth-link, .header-logout { color: #d9e4f2; background: none; border: 0; font: 700 9px/1 var(--mono); letter-spacing: .06em; text-decoration: none; text-transform: uppercase; white-space: nowrap; cursor: pointer; }
-.header-auth-link:hover, .header-logout:hover { color: var(--yellow); }
 .header-user { display: flex; gap: 9px; align-items: center; min-width: 0; }
 .header-avatar { display: grid; width: 28px; height: 28px; flex: none; place-items: center; color: #10213f; background: var(--yellow); font: 800 11px/1 var(--mono); }
 .header-user-text { display: grid; gap: 3px; min-width: 0; }
-.header-login { overflow: hidden; color: #f7fbff; font: 700 11px/1 var(--mono); text-overflow: ellipsis; white-space: nowrap; }
 .header-role { color: #9aabc1; font: 700 8px/1 var(--mono); letter-spacing: .08em; text-transform: uppercase; }
 .shell { max-width: 1460px; margin: 0 auto; padding: 34px clamp(16px, 3vw, 34px) 80px; }
 .route-pending, .archive-route-pending { min-height: 420px; }
@@ -157,12 +153,11 @@ button.game-chip:hover { outline: 2px solid var(--blue-dark); outline-offset: 1p
   /* biome-ignore lint/correctness/noInvalidGridAreas: each conditional mobile row contains one named cell */
   .app-header.has-aside { grid-template-areas: "brand" "aside" "nav"; }
   .header-aside { justify-content: flex-start; flex-wrap: wrap; padding-top: 7px; border-top: 1px solid #294268; }
-  .header-state, .header-readonly { padding: 6px 8px; font-size: 8px; }
+  .header-state { padding: 6px 8px; font-size: 8px; }
   .header-user { max-width: 100%; }
   .header-user-text { display: grid; }
   .brand-mark { width: 30px; height: 30px; }
   .brand-name { font-size: 12px; }
-  .header-auth-link, .header-logout { font-size: 8px; }
   .primary-nav { gap: 14px; min-height: 54px; padding: 7px 0 8px; }
   .nav-set { flex: 0 0 auto; min-width: max-content; }
   .nav-set + .nav-set { padding-left: 14px; }

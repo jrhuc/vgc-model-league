@@ -103,12 +103,12 @@ export function PoolsView({ app, onPools }: PoolsProps) {
           <h2>
             Create a
             <br />
-            team pool.
+            team pool
           </h2>
         </div>
         <p class="lede">
-          Paste Showdown teambuilder exports, validate them, and save a team pool for future runs. Create a new pool
-          when teams change so earlier runs keep their original teams.
+          Paste Showdown teambuilder exports, validate them, and save the pool for later runs. Create a new pool when
+          teams change so earlier runs keep their original teams.
         </p>
       </div>
       <div class="pool-layout">

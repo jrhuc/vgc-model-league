@@ -1,6 +1,6 @@
 node_modules/
 dist/
-dist-matchday/
+dist-circuit/
 *.tsbuildinfo
 gui.log
 
@@ -11,7 +11,6 @@ boards/sources/
 *.sqlite
 *.sqlite-*
 
-# Local configuration and credentials
 .env
 .env.*
 .claude/settings.local.json
@@ -19,9 +18,9 @@ boards/sources/
 .venv/
 __pycache__/
 *.py[cod]
-environments/vgc_frozen_matchday_v0/.pytest_cache/
-environments/vgc_frozen_matchday_v0/build/
-environments/vgc_frozen_matchday_v0/dist/
+environments/vgc_draft_circuit_v1/.pytest_cache/
+environments/vgc_draft_circuit_v1/build/
+environments/vgc_draft_circuit_v1/dist/
 
 .DS_Store
 .idea/

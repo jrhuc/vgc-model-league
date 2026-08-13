@@ -6,6 +6,7 @@ import test from 'node:test';
 
 import { buildLeague, buildLeagueGame, buildLeagues } from '../src/archive.js';
 import type { SeriesRecord } from '../src/records.js';
+import { LEGAL_TEAM_IDS, leagueTeamBuildJournalRow } from './fixtures/team-build.js';
 
 const RUN_ID = 'league-run-1';
 
@@ -67,17 +68,13 @@ function writeLeagueFixture(runsDir: string): void {
   );
   fs.writeFileSync(
     path.join(runDir, 'teambuild', 'teambuild.jsonl'),
-    `${JSON.stringify({
-      model: 'openai:alpha',
-      team_name: 'Alpha Aces',
-      seriesIndex: 0,
-      entrant: 0,
-      opponent: 1,
-      brought: ['pikachu'],
-      sets: [],
-      rationale: 'Lead fast.',
-      attempts: 1,
-    })}\n`,
+    `${JSON.stringify(
+      leagueTeamBuildJournalRow({
+        teamPlan: 'Lead fast while preserving both speed-control modes.',
+        notebook: 'Keep the flexible speed-control plan private.',
+        attempts: 2,
+      }),
+    )}\n`,
   );
   for (const [seriesId, tokens] of [
     ['aaa111', 100],
@@ -175,7 +172,7 @@ test('a finished draft-only run stays listed and stops being draft-only once it 
     const { leagues } = buildLeagues([], runsDir);
     assert.equal(leagues.length, 1, 'a finished draft-only run stays listed without any recorded series');
     assert.equal(leagues[0]!.draftOnly, true);
-    assert.equal(leagues[0]!.live, false);
+    assert.equal(leagues[0]!.lifecycle, 'complete');
     assert.equal(leagues[0]!.phase, 'complete');
 
     const league = buildLeague([], runsDir, runId);
@@ -196,7 +193,7 @@ test('a finished draft-only run stays listed and stops being draft-only once it 
   }
 });
 
-test('a live run with no recorded series surfaces as a drafting league', () => {
+test('a paused live run with no recorded series surfaces as a drafting league', () => {
   const runsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-archive-live-'));
   const liveId = '20260728T210000.000000Z-feed0001';
   const runDir = path.join(runsDir, liveId);
@@ -215,7 +212,7 @@ test('a live run with no recorded series surfaces as a drafting league', () => {
   fs.writeFileSync(
     path.join(runDir, 'status.json'),
     JSON.stringify({
-      state: 'running',
+      state: 'paused',
       error: null,
       notices: [],
       start_time: '2026-07-28T21:00:00.000Z',
@@ -230,13 +227,13 @@ test('a live run with no recorded series surfaces as a drafting league', () => {
   try {
     const { leagues } = buildLeagues([], runsDir);
     assert.equal(leagues.length, 1);
-    assert.equal(leagues[0]!.live, true);
+    assert.equal(leagues[0]!.lifecycle, 'live');
     assert.equal(leagues[0]!.phase, 'drafting');
     assert.equal(leagues[0]!.picks, 1);
 
     const league = buildLeague([], runsDir, liveId);
     assert.ok(league, 'a live run builds a league view before any series lands');
-    assert.equal(league!.live, true);
+    assert.equal(league!.lifecycle, 'live');
     assert.equal(league!.phase, 'drafting');
     const alpha = league!.franchises.find((franchise) => franchise.model === 'openai:alpha');
     assert.equal(alpha?.roster[0]?.id, 'pikachu', 'rosters synthesize from draft picks before rosters.json fills in');
@@ -460,6 +457,12 @@ test('buildLeague joins config, rosters, draft, teambuilds, results, and spend',
     [1, 1],
   );
   assert.equal(league.teambuilds.length, 1);
+  const build = league.teambuilds[0]!;
+  assert.deepEqual(build.brought, LEGAL_TEAM_IDS);
+  assert.equal(build.sets.length, 6);
+  assert.equal(build.rationale, 'Lead fast while preserving both speed-control modes.');
+  assert.equal(build.notebook, 'Keep the flexible speed-control plan private.');
+  assert.equal(build.attempts, 2);
   assert.equal(league.spend.decisions, 44);
   assert.equal(league.spend.tokens, 300);
   assert.equal(league.spend.reasoningTokens, 80);
@@ -470,6 +473,79 @@ test('buildLeague joins config, rosters, draft, teambuilds, results, and spend',
   fs.rmSync(runsDir, { recursive: true, force: true });
 });
 
+test('archive projection reads the validated historical flat journal without weakening malformed rows', () => {
+  const runsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-archive-historical-build-'));
+  try {
+    writeLeagueFixture(runsDir);
+    const artifact = leagueTeamBuildJournalRow({
+      teamPlan: 'Historical matchup rationale.',
+      notebook: 'This was not stored in the historical row.',
+      attempts: 3,
+    }).artifact;
+    assert.ok(artifact.action);
+    const historical = {
+      model: 'openai:alpha',
+      team_name: 'Alpha Aces',
+      seriesIndex: 0,
+      entrant: 0,
+      opponent: 1,
+      brought: artifact.action.selected,
+      sets: artifact.action.sets.map(({ note: _note, ...set }) => set),
+      rationale: artifact.evidence.rationale,
+      attempts: artifact.attempts,
+      packed: artifact.action.packed,
+      timestamp: artifact.createdAt,
+    };
+    const file = path.join(runsDir, RUN_ID, 'teambuild', 'teambuild.jsonl');
+    fs.writeFileSync(
+      file,
+      `${JSON.stringify(historical)}
+`,
+    );
+    const build = buildLeague(LEAGUE_ROWS, runsDir, RUN_ID)?.teambuilds[0];
+    assert.equal(build?.rationale, 'Historical matchup rationale.');
+    assert.equal(build?.sets.length, 6);
+    assert.equal(build?.notebook, '', 'historical rows did not persist the private notebook');
+
+    const malformed = { ...historical } as Partial<typeof historical>;
+    delete malformed.attempts;
+    fs.writeFileSync(
+      file,
+      `${JSON.stringify(malformed)}
+`,
+    );
+    assert.throws(() => buildLeague(LEAGUE_ROWS, runsDir, RUN_ID), /historical flat archive row/);
+  } finally {
+    fs.rmSync(runsDir, { recursive: true, force: true });
+  }
+});
+
+test('archive JSONL readers tolerate only a torn final write, not corruption in the middle', () => {
+  const runsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-archive-jsonl-'));
+  try {
+    writeLeagueFixture(runsDir);
+    const teambuildFile = path.join(runsDir, RUN_ID, 'teambuild', 'teambuild.jsonl');
+    fs.appendFileSync(teambuildFile, '{"artifact":');
+    assert.ok(buildLeague(LEAGUE_ROWS, runsDir, RUN_ID), 'a torn final append is invisible until committed');
+
+    fs.appendFileSync(
+      teambuildFile,
+      `
+${JSON.stringify(
+  leagueTeamBuildJournalRow({
+    teamPlan: 'Lead fast while preserving both speed-control modes.',
+    notebook: 'Keep the flexible speed-control plan private.',
+    attempts: 2,
+  }),
+)}
+`,
+    );
+    assert.throws(() => buildLeague(LEAGUE_ROWS, runsDir, RUN_ID), /invalid JSONL line 2/);
+  } finally {
+    fs.rmSync(runsDir, { recursive: true, force: true });
+  }
+});
+
 test('archived leagues overlay post-window rosters without rewriting the draft', () => {
   const runsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-archive-window-'));
   try {
@@ -478,15 +554,22 @@ test('archived leagues overlay post-window rosters without rewriting the draft',
     const config = JSON.parse(fs.readFileSync(path.join(runDir, 'config.json'), 'utf8')) as Record<string, unknown>;
     config.trade_window = { after_week: 1, trades_allowed: 0 };
     fs.writeFileSync(path.join(runDir, 'config.json'), JSON.stringify(config));
+    assert.deepEqual(buildLeague(LEAGUE_ROWS, runsDir, RUN_ID)?.tradeWindow, {
+      afterWeek: 1,
+      state: 'scheduled',
+      offers: [],
+      decisions: [],
+    });
     fs.writeFileSync(
       path.join(runDir, 'window.jsonl'),
       `${JSON.stringify({ kind: 'offer', from: 0, to: 1, give: 'pikachu', get: 'eevee' })}\n`,
     );
-    assert.equal(
-      buildLeague(LEAGUE_ROWS, runsDir, RUN_ID)?.tradeWindow,
-      null,
-      'an offer journal is not a verified free-agency timeline',
-    );
+    assert.deepEqual(buildLeague(LEAGUE_ROWS, runsDir, RUN_ID)?.tradeWindow, {
+      afterWeek: 1,
+      state: 'in-progress',
+      offers: [],
+      decisions: [],
+    });
     fs.writeFileSync(
       path.join(runDir, 'window.json'),
       JSON.stringify({
@@ -536,7 +619,7 @@ test('archived leagues overlay post-window rosters without rewriting the draft',
     assert.equal(card.tradeWindowAfterWeek, 1);
     const league = buildLeague(LEAGUE_ROWS, runsDir, RUN_ID)!;
     assert.equal(league.tradeWindow?.afterWeek, 1);
-    assert.equal(league.tradeWindow?.complete, true);
+    assert.equal(league.tradeWindow?.state, 'complete');
     assert.deepEqual(league.tradeWindow?.decisions[0]?.swaps, [{ drop: 'pikachu', add: 'raichu' }]);
     assert.equal(league.franchises[0]!.draftRoster[0]!.id, 'pikachu');
     assert.equal(league.franchises[0]!.roster[0]!.id, 'raichu');
@@ -586,4 +669,31 @@ test('a finished semifinal is not mistaken for the final while the bracket is un
   assert.equal(league.franchises[3]!.finish, '', 'a semifinal winner has no placing yet');
   assert.equal(league.franchises[2]!.finish, 'Eliminated in the semifinals');
   fs.rmSync(runsDir, { recursive: true, force: true });
+});
+
+test('league lifecycle distinguishes live, failed, stopped, and incomplete archives', () => {
+  const runsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-archive-lifecycle-'));
+  try {
+    writeLeagueFixture(runsDir);
+    const runDir = path.join(runsDir, RUN_ID);
+    const partial = [LEAGUE_ROWS[0]!];
+
+    assert.equal(buildLeagues(partial, runsDir).leagues[0]?.lifecycle, 'incomplete');
+    assert.equal(buildLeague(partial, runsDir, RUN_ID)?.lifecycle, 'incomplete');
+
+    for (const state of ['failed', 'stopped'] as const) {
+      fs.writeFileSync(
+        path.join(runDir, 'status.json'),
+        JSON.stringify({
+          state,
+          error: state === 'failed' ? 'provider failed' : null,
+          start_time: '2026-07-20T00:00:00Z',
+        }),
+      );
+      assert.equal(buildLeagues(partial, runsDir).leagues[0]?.lifecycle, state);
+      assert.equal(buildLeague(partial, runsDir, RUN_ID)?.lifecycle, state);
+    }
+  } finally {
+    fs.rmSync(runsDir, { recursive: true, force: true });
+  }
 });

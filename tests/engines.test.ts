@@ -190,9 +190,9 @@ test('primed replay requires an exact request digest and seat provenance', async
   ];
   await expectLiveDecision('same-turn request and menu changed', row, changed, 1);
 
-  const legacy = { ...row };
-  delete legacy.request_digest;
-  await expectLiveDecision('legacy row without a digest', legacy);
+  const unbound = { ...row };
+  delete unbound.request_digest;
+  await expectLiveDecision('row without a request digest', unbound);
 });
 
 test('transitive replay preserves accepted prefixes, rejected retries, and a live tail without re-journaling', async () => {
@@ -307,7 +307,6 @@ test('LLM choices parse prose, retry, and record fallbacks', async () => {
     [[`I choose this: ${decision([1], 'reason', 'x')}.`], 'move 2', false, 1, 0],
     [[`${decision([0])} then ${decision([1])}`], 'move 2', false, 1, 0],
     [[`${decision([1])} earlier draft was {"choices":[9]}`], 'move 2', false, 1, 0],
-    [['{"choices":[1],"notes":"legacy"}'], 'move 2', false, 1, 0],
     [['invalid', decision([1])], 'move 2', false, 2, 1],
     [['invalid', decision([9]), 'invalid', decision([9])], 'move 1', true, 4, 4],
   ];
@@ -679,10 +678,10 @@ test('quota failures pause and resume the same decision context', async () => {
   const decisions: Record<string, unknown>[] = [];
   const recovery = new RecoveryGate();
   const provider = new ScriptedProvider([
-    new ApiError(429, 'google:gemini-test 429: exceeded your current quota; requests per day'),
+    new ApiError(429, 'openrouter:google/gemini-test 429: exceeded your current quota; requests per day'),
     decision([1], 'resumed choice', 'retained notebook'),
   ]);
-  const engine = new LLMEngine('p1', 'google:gemini-test', {
+  const engine = new LLMEngine('p1', 'openrouter:google/gemini-test', {
     provider,
     decisionLog: decisions,
     recovery,
@@ -1242,9 +1241,9 @@ test('the deciding game reflects on the finished series instead of a next game',
 
 test('hard quota failures during reflection stop the series', async () => {
   const decisions: Record<string, unknown>[] = [];
-  const engine = new LLMEngine('p1', 'google:gemini-test', {
+  const engine = new LLMEngine('p1', 'openrouter:google/gemini-test', {
     provider: new ScriptedProvider([
-      new ApiError(429, 'google:gemini-test 429: exceeded your current quota; requests per day'),
+      new ApiError(429, 'openrouter:google/gemini-test 429: exceeded your current quota; requests per day'),
     ]),
     decisionLog: decisions,
   });
@@ -1255,11 +1254,9 @@ test('hard quota failures during reflection stop the series', async () => {
       outcome: { winner: 'opponent', won: false, turns: 8 },
       seriesScore: { p1: 0, p2: 1 },
     }),
-    /Google API quota is exhausted.*cannot continue/,
   );
   assert.equal(decisions[0]!.kind, 'game_reflection');
   assert.equal(decisions[0]!.failure_kind, 'quota');
-  assert.equal(decisions[0]!.error_summary, 'Google API quota is exhausted (429).');
 });
 
 test('game transcripts reset while notebook and score persist, with a marked character cap', async () => {

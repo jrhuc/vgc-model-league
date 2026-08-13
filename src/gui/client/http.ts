@@ -1,6 +1,4 @@
-declare const __STATIC_SITE__: boolean;
-/** Resolved through typeof so the module also loads where the bundler define is absent (Node tests). */
-const STATIC_SITE = typeof __STATIC_SITE__ !== 'undefined' && __STATIC_SITE__;
+import { STATIC_SITE } from './capabilities.js';
 
 const IMMUTABLE_PATH = /^\/api\/(?:selected-trace|board)(?:\?|$)/;
 const immutableCache = new Map<string, unknown>();
@@ -55,7 +53,9 @@ async function request<T>(pathname: string, body?: unknown): Promise<T> {
 function immutableResponse(pathname: string, data: unknown): boolean {
   if (IMMUTABLE_PATH.test(pathname)) return true;
   if (!/^\/api\/(?:league(?:\/game)?|tournament\/game)\?/.test(pathname)) return false;
-  return typeof data === 'object' && data !== null && 'live' in data && data.live === false;
+  if (typeof data !== 'object' || data === null) return false;
+  if ('live' in data) return data.live === false;
+  return 'lifecycle' in data && data.lifecycle !== 'live';
 }
 
 function load<T>(pathname: string): Promise<T> {

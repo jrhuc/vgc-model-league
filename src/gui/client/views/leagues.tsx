@@ -6,7 +6,6 @@ import type {
   LeagueFranchiseView,
   LeagueResponse,
   LeagueSeriesView,
-  LeaguesResponse,
   LeagueTeambuildView,
 } from '../../api';
 import { BoardBrowser, type DraftRecord, STAT_ORDER, useBoard } from '../components/boardbrowser';
@@ -16,23 +15,15 @@ import { MatchGame, useMatchGame } from '../components/matchgame';
 import { MatchMenu, MatchMenuRow } from '../components/matchmenu';
 import { SetCard } from '../components/setcard';
 import { Sprite } from '../components/sprite';
-import { api, apiFresh } from '../http';
 import { displaySpec, modelName, when } from '../lib/labels';
+import { useLeague, useLeagueList } from '../lib/league-resources';
+import type { LeagueRoute } from '../routes';
 
 /** Franchise names are display flavor; the model identity is never hidden behind them. */
 function franchiseLabel(league: LeagueResponse, entrant: number): string {
   const franchise = league.franchises[entrant];
   if (!franchise) return `Coach ${entrant + 1}`;
   return franchise.teamName || modelName(franchise.model);
-}
-
-export function teamSlug(name: string): string {
-  return (
-    name
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-|-$/g, '') || 'team'
-  );
 }
 
 function tokensLabel(tokens: number | null): string {
@@ -77,7 +68,7 @@ function LeagueCard({ card, onOpen }: { card: LeagueCardView; onOpen: () => void
           {card.board ? ` · ${card.board}` : ''}
         </span>
         <span class={`phase-pill ${card.phase}`}>
-          {card.live ? <span class="live-dot" role="img" aria-label="live" /> : null}
+          {card.lifecycle === 'live' ? <span class="live-dot" role="img" aria-label="live" /> : null}
           {phaseLabel(card)}
         </span>
       </div>
@@ -92,7 +83,19 @@ function LeagueCard({ card, onOpen }: { card: LeagueCardView; onOpen: () => void
         </div>
       ) : (
         <div class="league-card-champion open">
-          <b>{card.draftOnly ? 'Rosters drafted, no games played' : 'Season in progress'}</b>
+          <b>
+            {card.lifecycle === 'live'
+              ? card.draftOnly
+                ? 'Draft in progress'
+                : 'Season in progress'
+              : card.lifecycle === 'failed'
+                ? `${card.draftOnly ? 'Draft' : 'Season'} failed before completion`
+                : card.lifecycle === 'stopped'
+                  ? `${card.draftOnly ? 'Draft' : 'Season'} stopped before completion`
+                  : card.lifecycle === 'complete' && card.draftOnly
+                    ? 'Rosters drafted, no games played'
+                    : 'Season incomplete'}
+          </b>
         </div>
       )}
       <ul class="league-card-coaches">
@@ -627,7 +630,7 @@ function TeamPage({
           <div>
             <h2>The draft</h2>
             <p>
-              Every pick in draft order, with the recorded reasoning. {franchise.spent} of{' '}
+              Every pick in draft order, with any stored rationale. {franchise.spent} of{' '}
               {franchise.spent + franchise.budgetLeft} points spent.
             </p>
           </div>
@@ -653,8 +656,11 @@ function TeamPage({
             <div>
               <h2>Mid-season trade window</h2>
               <p>
-                After week {league.tradeWindow.afterWeek}, the lowest seed chose first. Coach offers resolved before up
-                to six swaps from the undrafted pool.
+                {league.tradeWindow.state === 'scheduled'
+                  ? `Scheduled after week ${league.tradeWindow.afterWeek}. The lowest seed will choose first, with coach offers before free agency.`
+                  : league.tradeWindow.state === 'in-progress'
+                    ? `Open after week ${league.tradeWindow.afterWeek}. The lowest seed chooses first, with coach offers before free agency.`
+                    : `After week ${league.tradeWindow.afterWeek}, the lowest seed chose first. Coach offers resolved before free agency.`}
               </p>
             </div>
           </div>
@@ -701,7 +707,11 @@ function TeamPage({
               </>
             ) : (
               <p class="muted">
-                {league.tradeWindow.complete ? 'No stored free-agency decision.' : 'This coach has not chosen yet.'}
+                {league.tradeWindow.state === 'complete'
+                  ? 'No stored free-agency decision.'
+                  : league.tradeWindow.state === 'in-progress'
+                    ? 'This coach has not chosen yet.'
+                    : 'The roster window has not opened yet.'}
               </p>
             )}
           </div>
@@ -895,18 +905,16 @@ function LiveNow({
   );
 }
 
+type LeagueDetailRoute = Exclude<LeagueRoute, { page: 'list' }>;
+
 function LeaguePage({
   league,
-  team,
-  series,
-  onOpenTeam,
-  onBack,
+  route,
+  onNavigate,
 }: {
   league: LeagueResponse;
-  team: string | undefined;
-  series: number | undefined;
-  onOpenTeam: (slug: string, series?: number) => void;
-  onBack: () => void;
+  route: LeagueDetailRoute;
+  onNavigate: (route: LeagueRoute) => void;
 }) {
   const { board } = useBoard(league.board ?? '');
   const byId = useMemo(() => new Map((board?.mons ?? []).map((mon) => [mon.id, mon] as const)), [board]);
@@ -931,34 +939,42 @@ function LeaguePage({
     return map;
   }, [league]);
 
-  const openGame = (seriesIndex: number, game: number) => onOpenTeam(`game-${seriesIndex}-${game}`);
-  const openEntrant = (entrant: number, seriesIndex?: number) => {
-    const franchise = league.franchises[entrant];
-    if (franchise) onOpenTeam(teamSlug(franchise.teamName), seriesIndex);
+  const openLeague = () => onNavigate({ view: 'leagues', page: 'league', run: league.runId });
+  const openGame = (series: number, game: number) =>
+    onNavigate({ view: 'leagues', page: 'game', run: league.runId, series, game });
+  const openEntrant = (entrant: number, series?: number) => {
+    if (!league.franchises.some((franchise) => franchise.entrant === entrant)) return;
+    onNavigate({
+      view: 'leagues',
+      page: 'team',
+      run: league.runId,
+      entrant,
+      ...(series === undefined ? {} : { series }),
+    });
   };
-  const gameRoute = team ? /^game-(\d+)-(\d+)$/.exec(team) : null;
-  if (gameRoute) {
+  if (route.page === 'game') {
     return (
       <GamePage
         league={league}
-        seriesIndex={Number(gameRoute[1])}
-        game={Number(gameRoute[2])}
+        seriesIndex={route.series}
+        game={route.game}
         onOpenGame={openGame}
         onOpenTeam={openEntrant}
-        onBack={onBack}
+        onBack={openLeague}
       />
     );
   }
 
-  const selected = league.franchises.find((franchise) => teamSlug(franchise.teamName) === team);
+  const selected =
+    route.page === 'team' ? league.franchises.find((franchise) => franchise.entrant === route.entrant) : undefined;
   if (selected) {
     return (
       <TeamPage
         league={league}
         franchise={selected}
         spriteFor={spriteFor}
-        focusSeries={series}
-        onBack={onBack}
+        focusSeries={route.page === 'team' ? route.series : undefined}
+        onBack={openLeague}
         onOpenGame={openGame}
         onOpenTeam={openEntrant}
       />
@@ -978,25 +994,29 @@ function LeaguePage({
       <header class="page-heading league-heading">
         <div>
           <p class="eyebrow">
-            <button type="button" class="text-link" onClick={onBack}>
+            <button type="button" class="text-link" onClick={() => onNavigate({ view: 'leagues', page: 'list' })}>
               ← Draft leagues
             </button>{' '}
             / {when(league.when)}
           </p>
-          <h1>{league.board ?? 'Draft league'}.</h1>
+          <h1>{league.board ?? 'Draft league'}</h1>
         </div>
         <p class="lede">
           {league.franchises.length} coaches, {league.picksPerEntrant ?? '–'} picks from a {league.budget ?? '–'}-point
           budget{league.format ? `, ${league.format}` : ''}.{' '}
           {league.draftOnly
             ? 'The draft is the whole run: no games were played.'
-            : league.tradeWindow
+            : league.tradeWindow?.state === 'complete'
               ? `Free agency opened after week ${league.tradeWindow.afterWeek}.`
-              : 'Rosters stayed locked after the draft.'}
+              : league.tradeWindow?.state === 'in-progress'
+                ? `Free agency is open after week ${league.tradeWindow.afterWeek}.`
+                : league.tradeWindow
+                  ? `Free agency ${league.lifecycle === 'live' ? 'is' : 'was'} scheduled after week ${league.tradeWindow.afterWeek}.`
+                  : 'Rosters stayed locked after the draft.'}
         </p>
       </header>
 
-      {league.live ? <LiveNow league={league} onOpenTeam={openEntrant} onOpenGame={openGame} /> : null}
+      {league.lifecycle === 'live' ? <LiveNow league={league} onOpenTeam={openEntrant} onOpenGame={openGame} /> : null}
 
       <div class="stat-row">
         <StatTile
@@ -1031,7 +1051,7 @@ function LeaguePage({
             key={franchise.entrant}
             franchise={franchise}
             spriteFor={spriteFor}
-            onOpenTeam={() => onOpenTeam(teamSlug(franchise.teamName))}
+            onOpenTeam={() => openEntrant(franchise.entrant)}
           />
         ))}
       </div>
@@ -1089,11 +1109,7 @@ function LeaguePage({
                       </td>
                       <td>
                         {franchise ? (
-                          <button
-                            type="button"
-                            class="text-link"
-                            onClick={() => onOpenTeam(teamSlug(franchise.teamName))}
-                          >
+                          <button type="button" class="text-link" onClick={() => openEntrant(franchise.entrant)}>
                             {franchise.teamName}
                           </button>
                         ) : (
@@ -1151,77 +1167,29 @@ function LeaguePage({
 export function LeaguesView({
   epoch,
   boards,
-  run,
-  team,
-  series,
-  onOpenLeague,
-  onOpenTeam,
-  onBack,
+  route,
+  onNavigate,
 }: {
   boards: BoardInfo[] | null;
   epoch: number;
-  run: string | undefined;
-  team: string | undefined;
-  series: number | undefined;
-  onOpenLeague: (runId: string) => void;
-  onOpenTeam: (runId: string, slug: string, series?: number) => void;
-  onBack: () => void;
+  route: LeagueRoute;
+  onNavigate: (route: LeagueRoute) => void;
 }) {
-  const [list, setList] = useState<LeaguesResponse | null>(null);
-  const [league, setLeague] = useState<LeagueResponse | null>(null);
-  const [error, setError] = useState('');
+  const run = route.page === 'list' ? undefined : route.run;
+  const listResource = useLeagueList(route.page === 'list', epoch);
+  const leagueResource = useLeague(run, epoch);
+  const list = listResource.value;
+  const league = leagueResource.value;
   const [boardId, setBoardId] = useState('');
   const { board: cleanBoard, error: cleanBoardError } = useBoard(run ? '' : boardId);
   const noOwners = useMemo(() => new Map<string, number>(), []);
 
-  useEffect(() => {
-    if (run) return;
-    api<LeaguesResponse>('/api/leagues')
-      .then((response) => {
-        setList(response);
-        setError('');
-      })
-      .catch((failure: Error) => setError(failure.message));
-  }, [run, epoch]);
-
-  useEffect(() => {
-    if (run || !list?.leagues.some((card) => card.live)) return;
-    const timer = setInterval(() => {
-      apiFresh<LeaguesResponse>('/api/leagues')
-        .then(setList)
-        .catch(() => {});
-    }, 30_000);
-    return () => clearInterval(timer);
-  }, [run, list]);
-
-  useEffect(() => {
-    if (!run) return;
-    if (league?.runId === run) return;
-    setLeague(null);
-    api<LeagueResponse>(`/api/league?run=${encodeURIComponent(run)}`)
-      .then((response) => {
-        setLeague(response);
-        setError('');
-      })
-      .catch((failure: Error) => setError(failure.message));
-  }, [run, epoch, league?.runId]);
-
-  useEffect(() => {
-    if (!run || league?.runId !== run || !league.live) return;
-    const timer = setInterval(() => {
-      apiFresh<LeagueResponse>(`/api/league?run=${encodeURIComponent(run)}`)
-        .then(setLeague)
-        .catch(() => {});
-    }, 20_000);
-    return () => clearInterval(timer);
-  }, [run, league?.runId, league?.live]);
-
-  if (run) {
-    if (error)
+  if (route.page !== 'list') {
+    if (leagueResource.error)
       return (
         <div>
           <h1>Draft league unavailable</h1>
-          <div class="message error">Could not load this league: {error}</div>
+          <div class="message error">Could not load this league: {leagueResource.error}</div>
         </div>
       );
     if (!league || league.runId !== run)
@@ -1234,15 +1202,7 @@ export function LeaguesView({
           </p>
         </div>
       );
-    return (
-      <LeaguePage
-        league={league}
-        team={team}
-        series={series}
-        onOpenTeam={(slug, focus) => onOpenTeam(run, slug, focus)}
-        onBack={() => (team ? onOpenLeague(run) : onBack())}
-      />
-    );
+    return <LeaguePage league={league} route={route} onNavigate={onNavigate} />;
   }
 
   const leagues = list?.leagues ?? [];
@@ -1251,13 +1211,11 @@ export function LeaguesView({
       <header class="page-heading league-heading">
         <div>
           <p class="eyebrow">Records / draft leagues</p>
-          <h1>Draft leagues.</h1>
+          <h1>Draft leagues</h1>
         </div>
-        <p class="lede">
-          Every stored season: who drafted what, how they built for each matchup, and who took the title.
-        </p>
+        <p class="lede">Stored seasons with their drafts, matchup builds, schedules, and results.</p>
       </header>
-      {error ? <div class="message error">Could not load the archive: {error}</div> : null}
+      {listResource.error ? <div class="message error">Could not load the archive: {listResource.error}</div> : null}
       {boardId ? (
         <section class="panel archive-board-view">
           <div class="section-head">
@@ -1280,18 +1238,20 @@ export function LeaguesView({
       ) : (
         <div class="league-index-layout">
           <div class="league-index-main">
-            {list === null && !error ? (
+            {list === null && !listResource.error ? (
               <LeagueArchivePending />
-            ) : leagues.length === 0 && !error ? (
+            ) : leagues.length === 0 && !listResource.error ? (
               <section class="panel">
-                <div class="results-empty">
-                  No draft leagues recorded yet. Start one from <b>New run</b>; finished seasons are archived here.
-                </div>
+                <div class="results-empty">No draft leagues recorded yet.</div>
               </section>
             ) : (
               <div class="league-card-grid">
                 {leagues.map((card) => (
-                  <LeagueCard key={card.runId} card={card} onOpen={() => onOpenLeague(card.runId)} />
+                  <LeagueCard
+                    key={card.runId}
+                    card={card}
+                    onOpen={() => onNavigate({ view: 'leagues', page: 'league', run: card.runId })}
+                  />
                 ))}
               </div>
             )}

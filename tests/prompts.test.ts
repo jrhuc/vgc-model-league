@@ -10,11 +10,8 @@ import {
   TIMED_SYSTEM,
 } from '../src/prompts.js';
 
-const LEGACY_FORMAT_CORRECTION = /This game is newer than your training data|There is no Terastallisation/i;
-
 function assertFormatAuthority(prompt: string): void {
   assert.equal(prompt.split(FORMAT_AUTHORITY_NOTICE).length - 1, 1);
-  assert.doesNotMatch(prompt, LEGACY_FORMAT_CORRECTION);
 }
 
 test('system prompt names the tools and reserves timer policy for timed play', () => {

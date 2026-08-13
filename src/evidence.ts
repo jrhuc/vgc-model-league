@@ -1,7 +1,5 @@
 import fs from 'node:fs';
 import path from 'node:path';
-
-import { buildSeriesGame, isRunLive, scanUnfinishedSeries, viewTeamSheet } from './archive.js';
 import type {
   ArchivedMatchView,
   BracketEntrantView,
@@ -14,75 +12,10 @@ import type {
 } from './gui/api.js';
 import { SAFE_SEGMENT } from './path-safety.js';
 import { type SeriesRecord, TEST_POOL } from './records.js';
+import { buildSeriesGame, count, isRunLive, scanUnfinishedSeries, viewTeamSheet } from './run-artifacts.js';
 import { loadPool } from './teams.js';
 import { buildBracket } from './tournament.js';
 import type { Pid } from './types.js';
-
-export function count(value: unknown): number {
-  return typeof value === 'number' && Number.isFinite(value) ? value : 0;
-}
-
-export function decisionLogPath(runsDir: string, runId: string, seriesId: string, pid: Pid): string | null {
-  if (!SAFE_SEGMENT.test(runId) || !SAFE_SEGMENT.test(seriesId)) return null;
-  return path.join(runsDir, runId, 'series', seriesId, `${pid}-decisions.jsonl`);
-}
-
-export interface DecisionLogRow {
-  kind: string;
-  automatic: boolean;
-  game: number;
-  turn: number;
-  phase: string;
-  latencyMs: number | null;
-  totalTokens: number | null;
-  reasoningTokens: number | null;
-}
-
-const logCache = new Map<string, { mtimeMs: number; size: number; rows: DecisionLogRow[] }>();
-
-/** Cached by mtime and size; decision logs of finished runs never change. */
-export function readDecisionLog(file: string): DecisionLogRow[] {
-  let stat: fs.Stats;
-  try {
-    stat = fs.statSync(file);
-  } catch {
-    logCache.delete(file);
-    return [];
-  }
-  const cached = logCache.get(file);
-  if (cached && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size) return cached.rows;
-  const rows: DecisionLogRow[] = [];
-  for (const line of fs.readFileSync(file, 'utf8').split('\n')) {
-    if (!line.trim()) continue;
-    let entry: Record<string, unknown>;
-    try {
-      entry = JSON.parse(line) as Record<string, unknown>;
-    } catch {
-      continue;
-    }
-    const numeric = (value: unknown) => (typeof value === 'number' && Number.isFinite(value) ? value : null);
-    rows.push({
-      kind: typeof entry.kind === 'string' ? entry.kind : '',
-      automatic: entry.automatic === true,
-      game: count(entry.game_number),
-      turn: count(entry.turn),
-      phase: typeof entry.phase === 'string' ? entry.phase : 'turn',
-      latencyMs: numeric(entry.latency_ms),
-      totalTokens: numeric(entry.total_tokens),
-      reasoningTokens: numeric(entry.reasoning_tokens),
-    });
-  }
-  logCache.set(file, { mtimeMs: stat.mtimeMs, size: stat.size, rows });
-  return rows;
-}
-
-export function quantile(sorted: number[], q: number): number {
-  if (sorted.length === 0) return 0;
-  const position = (sorted.length - 1) * q;
-  const low = Math.floor(position);
-  const high = Math.ceil(position);
-  return sorted[low]! + (sorted[high]! - sorted[low]!) * (position - low);
-}
 
 function summarizeTournaments(tournaments: Array<{ rounds: ArchivedMatchView[][] }>): TournamentSummary {
   const counts = tournaments.map(

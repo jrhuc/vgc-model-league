@@ -1,0 +1,3 @@
+#!/bin/sh
+set -eu
+exec node /opt/vgc-draft-circuit/dist-circuit/tools/frozen-circuit-referee.js "$@"

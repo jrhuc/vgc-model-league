@@ -1,100 +1,132 @@
-# Trade window
+# Configure the transaction window
 
-A draft league opens one transaction window after round-robin week 3 by default,
-or after the final round-robin week when the league is shorter. `--trade-window
-<week>` moves it; `--trade-window off` is the labeled locked-roster control.
-Results record the variant so the conditions are never pooled silently.
+By default, a draft league opens one transaction window after round-robin week
+3. If the league has fewer than three weeks, the window opens after the final
+round-robin week.
 
-## Protocol
+Use `--trade-window <week>` to select another week. Use `--trade-window off` for
+the labeled locked-roster control. Results record the selected variant so that
+analyses do not combine conditions without labeling them.
 
-The window is a barrier: no later matchup may build or start before every series
-through the configured week completes. In the default schedule, those earlier
-round-robin series form one blind, concurrency-limited batch; the remaining
-series form a later batch. `--sequential-weeks` is a labeled alternative, not the
-default. Coaches act sequentially inside the window in inverse standings order,
-using the normal playoff-seeding tiebreak. Earlier transactions are visible to
-later coaches. The complete offer phase runs first, then free agency.
+## Scheduling
 
-For each coach:
+The window acts as a barrier. No later matchup can build or start until every
+series through the configured week finishes. With the default schedule, the
+earlier round-robin series run as one blind, concurrency-limited batch, and the
+remaining series run as a later batch. Use `--sequential-weeks` only as a
+labeled alternative.
 
-1. It may make up to `trades_allowed` one-for-one offers to other coaches.
-   The setting is an integer from zero through three and defaults to one; zero
-   skips this phase but leaves free agency enabled. A counterparty immediately
-   accepts or rejects before the next offer. Each offer is an independent choice
-   against the then-current rosters; no counteroffer or negotiation history is
-   supplied. Offers received are not capped.
-2. It atomically submits zero to six free-agent swaps. Each swap drops one
+Coaches act in inverse standings order, using the standard playoff-seeding
+tiebreak. Earlier transactions are visible to later coaches. The complete trade
+offer phase runs before the free-agency phase.
+
+## Coach actions
+
+Each coach can take these actions:
+
+1. Make up to `trades_allowed` one-for-one offers to other coaches. This integer
+   setting accepts values from zero through three and defaults to one. A value
+   of zero skips trade offers but keeps free agency enabled. The counterparty
+   immediately accepts or rejects each offer before the next offer. Each offer
+   uses the current rosters and does not include counteroffers or negotiation
+   history. The protocol does not cap received offers.
+2. Submit an atomic list of zero to six free-agent swaps. Each swap drops one
    roster entry and adds one currently undrafted board entry.
 
-All resulting rosters must contain ten entries, stay within the original
-100-point ceiling, and satisfy entry exclusivity, one entry per base species,
-and Mega locks. Drops refund full board price. Unequal-price trades are legal
-when both resulting rosters remain legal and within budget. Invalid submissions
-use the normal reject-with-reason retry policy.
+Every resulting roster must:
 
-No offer, rejection, and an empty swap list are complete legal decisions. Prompts
-must frame action and inaction equally; the phase measures diagnosis rather than
-nudging roster churn. There is no counteroffer, multi-round negotiation,
-multi-Pokémon trade, transaction fee, or second window.
+- contain ten entries;
+- remain within the original 100-point limit;
+- preserve entry exclusivity;
+- contain at most one entry for each base species; and
+- satisfy Mega locks.
 
-## Information and responses
+Drops refund the full board price. A trade can exchange entries with different
+prices if both resulting rosters remain legal and within budget. Invalid
+submissions use the standard reject-with-reason retry policy.
 
-Every acting or responding coach receives the same kind of dossier:
+A coach completes a legal decision by making no offer, rejecting an offer, or
+submitting an empty swap list. Prompts must present action and inaction equally
+so that the phase measures diagnosis without encouraging roster changes. The
+protocol does not support counteroffers, multi-round negotiation, multi-Pokémon
+trades, transaction fees, or a second window.
+
+## Prompt information
+
+Each acting or responding coach receives:
 
 - public standings and rosters;
-- its own week-by-week results and opponents;
+- its own weekly results and opponents;
 - its own draft note and series reflections;
-- the remaining priced board and its roster/budget arithmetic;
-- the window rules and, for a response, the exact offer terms.
+- the remaining priced board and its roster and budget calculations;
+- the transaction-window rules; and
+- for a response, the exact offer terms.
 
-The harness supplies no diagnosis, suggested swap, or “good” action. Coaches use
-model/seat identities; presentation-only franchise names are withheld. Draft dex
-and board-search tools remain available.
+The harness does not provide a diagnosis, suggested swap, or preferred action.
+Prompts identify coaches by model and seat identity and omit presentation-only
+franchise names. Draft dex and board-search tools remain available.
 
-An offer contains the recipient, one owned entry to give, one recipient-owned
-entry to receive, and a public message. Private rationale and a full-replacement
-notebook stay with the acting coach. The responder returns accept/reject, private
-rationale, and its own full-replacement notebook. Offer evidence records
-`proposerFallback` and `responderFallback` (`null` when there was no offer): only
-exhausting parse attempts sets the applicable flag, while an explicit no-offer
-or rejection and a random coach's deterministic inaction do not. A fallback
-invents no rationale. Free agency returns an atomic
-swap list, private rationale, and notebook. A supplied notebook becomes that
-coach's plan for later builds; another coach never sees it.
+## Response data
 
-## Evidence
+An offer contains:
 
-The protocol keeps these evidence layers distinct:
+- the recipient;
+- one entry owned by the proposer to give;
+- one entry owned by the recipient to receive; and
+- a public message.
+
+The acting coach also returns a private rationale and a full-replacement
+notebook. The responder returns an accept or reject decision, a private
+rationale, and its own full-replacement notebook.
+
+Offer evidence records `proposerFallback` and `responderFallback`. The value is
+`null` when no offer exists. The applicable flag is set only after all parse
+attempts fail. An explicit no-offer or rejection does not set it, and neither
+does a random coach's deterministic inaction. A fallback does not create a
+rationale.
+
+A free-agency response contains an atomic swap list, a private rationale, and a
+notebook. A supplied notebook becomes that coach's plan for later builds. Other
+coaches cannot access it.
+
+## Interpret the evidence
+
+Keep these evidence layers separate:
 
 - the observable public message;
-- mechanically computed terms, legality, prices, and roster changes;
+- mechanically computed terms, legality, prices, and roster changes; and
 - each coach's private stated rationale.
 
-They support description and consistency checks, not claims about belief,
-honesty, deception, enjoyment, or exploitability. Semantic labels require the
-rubric and audit rules in [Measurement](measurement.md). Deterministic
-roster-to-built-to-brought-to-used links remain primary.
+Use these layers for descriptions and consistency checks. Do not use them to
+claim belief, honesty, deception, enjoyment, or exploitability. Semantic labels
+must follow the rubric and audit rules in [Measurement](measurement.md).
+Deterministic `roster-to-built-to-brought-to-used` links remain the primary
+evidence.
 
-Archive visibility follows the single facts-only projection in
-[Architecture](architecture.md#state-evidence-and-trust); transaction files are
-not an independent publication surface.
+Archive visibility follows the facts-only projection in
+[Architecture](architecture.md#state-evidence-and-trust). Transaction files do
+not define an independent publication surface.
 
 ## Persistence and resume
 
-`window.jsonl` is the append-only decision/replay log, including no-offer,
-declined/accepted offer, and empty-swap decisions. Every physical line is a
-nonblank canonical JSON object, and the file is newline-terminated; resume does
-not normalize older or partial encodings. `window.json` is the completed
-materialization of its order, transactions, private evidence, notes, and
-resulting rosters. `rosters.json` remains the draft-time snapshot; later
-construction uses only a completed transaction overlay.
+`window.jsonl` is the append-only decision and replay log. It includes
+no-offer, declined-offer, accepted-offer, and empty-swap decisions. Each physical
+line is a nonblank canonical JSON object, and the file ends with a newline.
+Resume does not normalize older or partial encodings.
 
-Resume replays retained rows without provider calls and continues unresolved
-coaches. The final artifact is re-read and replayed after its atomic rename and
-before the caller receives the overlay. A stored later matchup build is reusable
-only when its stage, series, seats, models, and both candidate-id lists exactly
-match the current overlaid rosters; artifact-less or stale-candidate rows rebuild.
-A draft-only config is promotable only when no result, build, series, coaching,
-or season evidence exists. An inconsistent journal, completion artifact, result
-prefix, playoff binding, or roster overlay stops resume rather than inventing a continuation.
-Visibility follows [Architecture](architecture.md#state-evidence-and-trust), not file presence.
+`window.json` materializes the completed order, transactions, private evidence,
+notes, and resulting rosters. `rosters.json` remains the draft-time snapshot.
+Later construction uses only a completed transaction overlay.
+
+On resume, the league replays retained rows without provider calls and continues
+with unresolved coaches. After atomically renaming the final artifact, it reads
+and replays that artifact before returning the overlay to the caller.
+
+A stored build for a later matchup is reusable only if its stage, series, seats,
+models, and both candidate-ID lists exactly match the current overlaid rosters.
+Rows without artifacts and rows with stale candidates rebuild.
+
+A draft-only configuration can be promoted only if no result, build, series,
+coaching, or season evidence exists. Resume stops rather than constructing a
+continuation when it finds an inconsistent journal, completion artifact, result
+prefix, playoff binding, or roster overlay.

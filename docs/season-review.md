@@ -1,72 +1,85 @@
-# Season review
+# Generate season reviews
 
-Every coach writes one retrospective at the moment its own season ends. Access
-follows the evidence projection in
+Each coach generates one retrospective when its season ends. The access rules
+follow the evidence projection in
 [Architecture](architecture.md#state-evidence-and-trust).
 
-## What this records
+## Evidence limits
 
-The review is a terminal retrospective generated with the season outcome and the
-coach's earlier draft, build, window, and match record in context. It records
-what the coach **states** worked, failed, and should change. Comparing that text
-to earlier stated plans and mechanically observed drafted-to-built-to-brought-
-to-used links can measure statement consistency.
+The review provides the coach with its season outcome and earlier draft, build,
+transaction-window, and match records. It records the coach's statements about
+what worked, what failed, and what it would change. You can compare these
+statements with earlier plans and with mechanically observed
+`drafted-to-built-to-brought-to-used` links to measure statement consistency.
 
-It is not direct evidence of belief, causal attribution, self-awareness, or
-whether earlier behavior was deliberate rather than noise. A loss cannot label
-one draft or piloting decision, and eloquent hindsight is not a calibrated
-explanation. Any semantic plan-fidelity or attribution score needs a
-preregistered observable rubric, identity-stripped traces, several independent
-graders, reported disagreement, and blinded human audit.
+Do not treat a review as direct evidence of belief, causal attribution,
+self-awareness, or deliberate earlier behavior. A loss cannot label a specific
+draft or piloting decision, and a fluent retrospective is not a calibrated
+explanation. Any semantic plan-fidelity or attribution score requires:
 
-Nothing the review says changes the completed season or reaches another seat
-during play. There is no later action in that coach's current season, so the
-review cannot demonstrate a notebook handoff, behavioral change, learning, or
-causal transfer. Prompt context and expected later review can still shape the
-text, so the artifact is never treated as incentive-free ground truth. A
-reflection intervention must be separately versioned and bind a complete
+- a preregistered observable rubric;
+- identity-stripped traces;
+- several independent graders;
+- reported grader disagreement; and
+- blinded human audit.
+
+The review does not change the completed season or reach another active seat.
+Because the coach takes no later action in the same season, the review cannot
+demonstrate a notebook handoff, behavioral change, learning, or causal transfer.
+Prompt context and the expectation of a later review can still affect its text,
+so the artifact is not incentive-free ground truth. Evaluate a reflection
+intervention separately, assign it a version, and bind its complete
 reflection-to-later-prompt-to-action chain.
 
-## When it fires
+## Timing
 
-At the moment a season closes, never in a single batch at the end — a team
-knocked out in the round robin judges its draft without seeing playoff results
-it was never part of.
+Generate each review as soon as the corresponding coach's season ends:
 
-- Teams outside the playoff cut, once round-robin standings are final.
-- Semifinal losers, once their semifinal resolves.
-- The runner-up and the champion, once the final resolves.
+- Generate reviews for teams outside the playoff cut after finalizing the
+  round-robin standings.
+- Generate reviews for semifinal losers after resolving their semifinal.
+- Generate reviews for the runner-up and champion after resolving the final.
 
-The bracket does not wait for any of them. A review is bought alongside the
-games still being played — the seats knocked out of the round robin write theirs
-while the semifinals run, the semifinal losers while the final runs — and the
-seats within one batch answer concurrently. The run joins any outstanding
-reviews before it returns, so a failed review still fails the run, just later.
+Do not generate all reviews in a single end-of-season batch. A team eliminated
+in the round robin reviews its draft without seeing playoff results in which it
+did not participate.
 
-## Prompt
+Reviews do not block the bracket. Eliminated round-robin seats generate reviews
+while semifinals run, and semifinal losers generate reviews while the final
+runs. Seats in the same review batch respond concurrently. The run waits for all
+outstanding reviews before returning, so a failed review causes the run to fail
+after the concurrent games complete.
 
-Same voice and dex-tool access as the draft and window prompts, with its own
-policy object and hash. Seats and standings use coach/model identities;
-spectator-facing franchise names never enter the review prompt. The seat
-receives, in one prompt: how its season ended, the final standings, its own
-draft in pick order with the reasoning it gave at the time, its free-agency
-decision and every other seat's, its final roster, each of its series in order,
-and its final private notebook.
+## Prompt contents
 
-The instruction asks it to separate the three things that can lose a series —
-the roster it drafted, the six it registered, and how it piloted them — and to
-credit what worked as plainly as what did not. It does not ask leading
-questions about specific picks, and the harness contributes no analysis of the
-seat's play. The resulting attribution is generated evidence, not a measurement
-of the coach's hidden mental state.
+The review uses the same voice and dex-tool access as the draft and transaction
+window prompts. It has a separate policy object and hash. Prompts identify seats
+by coach and model identity. They do not include spectator-facing franchise
+names.
 
-Reply shape:
+The prompt contains:
+
+- how the coach's season ended;
+- final standings;
+- the coach's draft in pick order, including its original reasoning;
+- its free-agency decision and every other seat's decision;
+- its final roster;
+- each of its series in order; and
+- its final private notebook.
+
+The instruction asks the coach to distinguish among roster drafting, registration
+of six Pokémon, and piloting as possible causes of a series loss. It also asks
+the coach to identify what worked. The instruction does not lead the coach
+toward specific picks, and the harness does not analyze the coach's play. Treat
+the resulting attribution as generated evidence, not as a measurement of hidden
+mental state.
+
+The coach returns
 `{"summary": ..., "did_well": ..., "did_poorly": ..., "would_change": ...}`.
 
-## Persistence
+## Persistence and resume
 
-`season.jsonl` in the run dir holds one row per coach, with per-seat prompt and
-response-attempt traces under `season/`. A resumed league replays rows already
-written rather than re-buying a retrospective whose season is already closed.
-Storage does not change the projection or publication boundary defined in
-[Architecture](architecture.md#state-evidence-and-trust).
+The run directory stores one row per coach in `season.jsonl`. It stores
+per-seat prompt and response-attempt traces under `season/`. On resume, the
+league replays existing rows instead of requesting another retrospective for a
+coach whose season has ended.

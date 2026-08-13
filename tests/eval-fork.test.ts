@@ -6,16 +6,15 @@ import {
   deterministicBattleSnapshot,
   type GameSource,
   newBattle,
-  omniscientLog,
   openPosition,
   pendingSides,
   playJoint,
   replayGame,
   requestActionCandidateEntries,
-  requestActionCandidates,
 } from '../src/eval/fork.js';
 import { loadPool } from '../src/teams.js';
 import type { BattleRequest, Pid } from '../src/types.js';
+import { omniscientLog, requestActionCandidates } from './fixtures/eval.js';
 
 const SEED: [number, number, number, number] = [11, 22, 33, 44];
 

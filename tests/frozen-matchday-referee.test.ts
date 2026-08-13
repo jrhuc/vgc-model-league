@@ -115,7 +115,13 @@ test('final game POV remains seat-isolated and is delivered exactly once across 
 });
 
 test('same registered six start fresh deterministic previews through a Bo3', () => {
-  const referee = new FrozenMatchdayReferee(options());
+  const configured = options();
+  const privateConstruction = configured.seats.flatMap((seat) =>
+    seat.construction.status === 'accepted'
+      ? [seat.construction.packed, seat.construction.artifact.evidence.notebook]
+      : [],
+  );
+  const referee = new FrozenMatchdayReferee(configured);
   const game1 = finishGame(referee);
   assert.equal(game1.phase, 'between-games');
   startNextGame(referee, { notebookReplacement: 'new plan' });
@@ -141,7 +147,10 @@ test('same registered six start fresh deterministic previews through a Bo3', () 
     terminal.games.map((game) => game.seed),
     MATCHDAY_SEEDS.slice(0, terminal.games.length),
   );
-  assert.doesNotMatch(JSON.stringify(terminal), /packedTeam|initial notebook|new plan/);
+  const published = JSON.stringify(terminal);
+  for (const privateValue of [...privateConstruction, 'new plan']) {
+    assert.equal(published.includes(privateValue), false);
+  }
 });
 
 test('between-game notebook evidence is private and cannot change the next game', () => {

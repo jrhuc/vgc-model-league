@@ -105,7 +105,7 @@ test('exhausting the tool budget is announced before the forced-text round', asy
     provider,
     system: 'sys',
     messages,
-    spec: 'google:gemini-3.6-flash',
+    spec: 'openrouter:google/gemini-3.6-flash',
     reference,
     policy: POLICY,
   });

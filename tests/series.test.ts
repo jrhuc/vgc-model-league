@@ -12,6 +12,7 @@ import {
   playBo3,
   resolveAttemptLineage,
   SINGLE_ELIMINATION_GAME_LIMIT,
+  seriesSeedSchedule,
 } from '../src/series.js';
 import { showdownCommit } from '../src/showdown.js';
 
@@ -128,6 +129,24 @@ test('a result log is not adoptable until both post-game hooks finish', async (t
       .digest('hex'),
   );
   assert.deepEqual({ number: marker.game_number, seed: marker.seed, ...marker.summary }, result.games[0]);
+});
+
+test('single-elimination seed schedule precommits all deterministic regulation and extension seeds', () => {
+  const regulation: Array<[number, number, number, number]> = [
+    [1, 2, 3, 4],
+    [5, 6, 7, 8],
+    [9, 10, 11, 12],
+  ];
+  const schedule = seriesSeedSchedule(regulation, true);
+  assert.equal(schedule.length, SINGLE_ELIMINATION_GAME_LIMIT);
+  assert.deepEqual(schedule.slice(0, 3), regulation);
+  const tiedPrefix = schedule.slice(0, 4).map((seed, index) => ({
+    number: index + 1,
+    seed,
+    winner_side: null,
+  }));
+  assert.deepEqual(foldSeriesGames(regulation, tiedPrefix, { requireWinner: true }).nextSeed, schedule[4]);
+  assert.deepEqual(seriesSeedSchedule(regulation, false), regulation);
 });
 
 test('foldSeriesGames derives deterministic terminal playoff tiebreaks for games four through nine', () => {
