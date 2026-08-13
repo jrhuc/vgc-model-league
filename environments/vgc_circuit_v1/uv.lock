@@ -2380,7 +2380,7 @@ wheels = [
 ]
 
 [[package]]
-name = "vgc-draft-circuit-v1"
+name = "vgc-circuit-v1"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [

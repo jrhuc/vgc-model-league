@@ -7,7 +7,7 @@ from typing import Any, Callable
 
 import pytest
 
-from vgc_draft_circuit_v1.protocol import (
+from vgc_circuit_v1.protocol import (
     BATTLE_PROTOCOL_VERSION,
     CIRCUIT_PROTOCOL_VERSION,
     JSONL_PROTOCOL_VERSION,
@@ -16,7 +16,7 @@ from vgc_draft_circuit_v1.protocol import (
     SCENARIO_IDS,
     SHOWDOWN_REVISION,
     ProtocolError,
-    VgcDraftCircuitProtocolClient,
+    VgcCircuitProtocolClient,
 )
 
 _READY = {
@@ -133,7 +133,7 @@ def _binding(params: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-async def _start(client: VgcDraftCircuitProtocolClient) -> Any:
+async def _start(client: VgcCircuitProtocolClient) -> Any:
     return await client.start(
         episode_id="episode",
         condition_digest="a" * 64,
@@ -168,7 +168,7 @@ async def test_fragmented_utf8_bound_runtime_process_and_exact_method_surface() 
         process.output(*_chunks(response))
 
     process = FakeProcess(_chunks(_encoded(_READY)), handler)
-    client = await VgcDraftCircuitProtocolClient.launch(
+    client = await VgcCircuitProtocolClient.launch(
         FakeRuntime(process), executable="referee", line_limit=4096
     )
     async with client:
@@ -209,7 +209,7 @@ async def test_binding_mismatch_timeout_and_shutdown_kill_fail_closed() -> None:
         process.output(_encoded({"id": request["id"], "ok": True, "result": result}))
 
     mismatch_process = FakeProcess([_encoded(_READY)], mismatch_handler)
-    mismatch = await VgcDraftCircuitProtocolClient.launch(
+    mismatch = await VgcCircuitProtocolClient.launch(
         FakeRuntime(mismatch_process), executable="referee", shutdown_timeout=0.05
     )
     await _start(mismatch)
@@ -220,7 +220,7 @@ async def test_binding_mismatch_timeout_and_shutdown_kill_fail_closed() -> None:
     await mismatch.aclose(check_protocol=False)
 
     silent = FakeProcess([_encoded(_READY)])
-    client = await VgcDraftCircuitProtocolClient.launch(
+    client = await VgcCircuitProtocolClient.launch(
         FakeRuntime(silent),
         executable="referee",
         shutdown_timeout=0.05,
@@ -237,7 +237,7 @@ async def test_binding_mismatch_timeout_and_shutdown_kill_fail_closed() -> None:
         await never.wait()
 
     hanging.terminate_impl = hang
-    client = await VgcDraftCircuitProtocolClient.launch(
+    client = await VgcCircuitProtocolClient.launch(
         FakeRuntime(hanging), executable="referee", shutdown_timeout=0.01
     )
     await client.aclose(check_protocol=False)
@@ -260,7 +260,7 @@ async def test_start_rejects_unbound_config_digest() -> None:
         )
 
     process = FakeProcess([_encoded(_READY)], handler)
-    client = await VgcDraftCircuitProtocolClient.launch(
+    client = await VgcCircuitProtocolClient.launch(
         FakeRuntime(process), executable="referee", shutdown_timeout=0.05
     )
     with pytest.raises(ProtocolError, match="configDigest"):
@@ -272,7 +272,7 @@ async def test_start_rejects_unbound_config_digest() -> None:
 async def test_oversized_output_and_early_process_exit_fail_closed() -> None:
     oversized = FakeProcess([b"{" + b"x" * 32])
     with pytest.raises(ProtocolError):
-        await VgcDraftCircuitProtocolClient.launch(
+        await VgcCircuitProtocolClient.launch(
             FakeRuntime(oversized),
             executable="referee",
             line_limit=16,
@@ -301,7 +301,7 @@ async def test_oversized_output_and_early_process_exit_fail_closed() -> None:
         process.exit(17)
 
     exited = FakeProcess([_encoded(_READY)], exit_handler)
-    client = await VgcDraftCircuitProtocolClient.launch(
+    client = await VgcCircuitProtocolClient.launch(
         FakeRuntime(exited), executable="referee", shutdown_timeout=0.05
     )
     await _start(client)

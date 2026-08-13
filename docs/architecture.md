@@ -176,10 +176,10 @@ Keep these package boundaries separate:
 - `vgc-positions-v1` is specified as a static native-v1 Python `Taskset`.
   TypeScript exports frozen tables. At rollout time, Python strictly parses one
   action and performs a deterministic lookup without a Node service.
-- `vgc-draft-circuit-v1` provides exactly one native-v1 `Taskset` and one
-  native-v1 `Env`. Its finite built-in taskset selects either implemented
-  scenario or both. The environment connects eight configurable player roles
-  and one non-playing referee role for a whole circuit.
+- `vgc-circuit-v1` provides exactly one native-v1 `Taskset` and one
+  native-v1 `Env`. Its finite taskset selects exactly one implemented scenario
+  per evaluation. The environment connects eight configurable player roles and
+  one non-playing referee role for a complete league or tournament.
 
 Only the [Evaluation plan](evaluation-plan.md#program-status) defines
 implementation, release, compatibility, and support status for these packages.
@@ -243,7 +243,7 @@ prompt revision, and a configuration digest. The session is a trusted referee
 interface, not seat authentication.
 
 The [internal package
-README](../environments/vgc_draft_circuit_v1/README.md) defines the detailed
+README](../environments/vgc_circuit_v1/README.md) defines the detailed
 scenario, role, runtime, trace, reward, and failure contracts.
 
 ## State, evidence, and trust

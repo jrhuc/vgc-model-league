@@ -52,9 +52,9 @@ from .protocol import (
     SHOWDOWN_REVISION,
     ProtocolBinding,
     ProtocolError,
-    VgcDraftCircuitProtocolClient,
+    VgcCircuitProtocolClient,
 )
-from .taskset import VgcDraftCircuitTask
+from .taskset import VgcCircuitTask
 
 _NULL_HARNESS = vf.HarnessConfig(id="null")
 _NO_RETRIES = vf.RetryConfig(max_retries=0)
@@ -77,7 +77,7 @@ def _referee_config() -> vf.AgentConfig:
     )
 
 
-class VgcDraftCircuitEnvConfig(vf.EnvConfig):
+class VgcCircuitEnvConfig(vf.EnvConfig):
     seat1: vf.AgentConfig = _player_config()
     seat2: vf.AgentConfig = _player_config()
     seat3: vf.AgentConfig = _player_config()
@@ -95,7 +95,7 @@ class VgcDraftCircuitEnvConfig(vf.EnvConfig):
     debug_allow_subprocess: bool = False
 
     @model_validator(mode="after")
-    def _circuit_policy(self) -> "VgcDraftCircuitEnvConfig":
+    def _circuit_policy(self) -> "VgcCircuitEnvConfig":
         _validate_config(self)
         return self
 
@@ -109,15 +109,15 @@ class _Seat:
     traces: list[Any] = field(default_factory=list)
 
 
-class VgcDraftCircuitEnv(vf.Env[VgcDraftCircuitEnvConfig]):
+class VgcCircuitEnv(vf.Env[VgcCircuitEnvConfig]):
     async def setup(self, agents: vf.Agents) -> None:
         for seat_id in _PLAYERS:
             getattr(agents, seat_id).trainable = True
         agents.referee.trainable = False
 
     async def run(self, task: vf.Task, agents: vf.Agents) -> None:
-        if not isinstance(task, VgcDraftCircuitTask):
-            raise TypeError("VgcDraftCircuitEnv requires VgcDraftCircuitTask")
+        if not isinstance(task, VgcCircuitTask):
+            raise TypeError("VgcCircuitEnv requires VgcCircuitTask")
         _validate_config(self.config)
         _validate_agents(agents)
 
@@ -131,7 +131,7 @@ class VgcDraftCircuitEnv(vf.Env[VgcDraftCircuitEnvConfig]):
             transport, runtime_ids = _runtime_layout(
                 runtimes, self.config.debug_allow_subprocess
             )
-            client = await VgcDraftCircuitProtocolClient.launch(
+            client = await VgcCircuitProtocolClient.launch(
                 runtimes["referee"],
                 executable=self.config.referee_executable,
                 stderr_tail_bytes=self.config.referee_stderr_tail_bytes,
@@ -169,8 +169,8 @@ class VgcDraftCircuitEnv(vf.Env[VgcDraftCircuitEnvConfig]):
 
     async def _play(
         self,
-        task: VgcDraftCircuitTask,
-        client: VgcDraftCircuitProtocolClient,
+        task: VgcCircuitTask,
+        client: VgcCircuitProtocolClient,
         seats: dict[str, _Seat],
         binding: ProtocolBinding,
         transport: str,
@@ -222,7 +222,7 @@ class VgcDraftCircuitEnv(vf.Env[VgcDraftCircuitEnvConfig]):
 
     async def _call_pending(
         self,
-        task: VgcDraftCircuitTask,
+        task: VgcCircuitTask,
         turns: list[_PendingTurn],
         seats: dict[str, _Seat],
         binding: ProtocolBinding,
@@ -266,8 +266,8 @@ class VgcDraftCircuitEnv(vf.Env[VgcDraftCircuitEnvConfig]):
         return completed
 
     async def finalize(self, task: vf.Task, episode: vf.Episode) -> None:
-        if not isinstance(task, VgcDraftCircuitTask):
-            raise TypeError("VgcDraftCircuitEnv requires VgcDraftCircuitTask")
+        if not isinstance(task, VgcCircuitTask):
+            raise TypeError("VgcCircuitEnv requires VgcCircuitTask")
         if not episode.traces:
             raise ValueError("circuit episode has no player decision traces")
 
@@ -440,7 +440,7 @@ def _terminal_metrics(
     return metrics
 
 
-def _validate_config(config: VgcDraftCircuitEnvConfig) -> None:
+def _validate_config(config: VgcCircuitEnvConfig) -> None:
     if config.retries.max_retries != 0:
         raise ValueError("circuit episodes use zero retries")
     for role in _ROLES:
@@ -607,7 +607,7 @@ def _projected_seat(value: Any) -> dict[str, Any]:
 
 
 def _projected_terminal(
-    task: VgcDraftCircuitTask,
+    task: VgcCircuitTask,
     binding: dict[str, Any],
     series_count: int,
     champion: str,
@@ -720,7 +720,7 @@ def _runtime_ids(value: Any) -> dict[str, str]:
     return value
 
 
-def _binding(value: Any, task: VgcDraftCircuitTask) -> dict[str, Any]:
+def _binding(value: Any, task: VgcCircuitTask) -> dict[str, Any]:
     binding = _object(value, "trace binding")
     if set(binding) != {
         "episodeId",

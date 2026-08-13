@@ -11,12 +11,12 @@ import pytest
 from pydantic import ValidationError
 from verifiers import v1 as vf
 
-import vgc_draft_circuit_v1.env as env_module
-from vgc_draft_circuit_v1.env import (
-    VgcDraftCircuitEnv,
-    VgcDraftCircuitEnvConfig,
+import vgc_circuit_v1.env as env_module
+from vgc_circuit_v1.env import (
+    VgcCircuitEnv,
+    VgcCircuitEnvConfig,
 )
-from vgc_draft_circuit_v1.protocol import (
+from vgc_circuit_v1.protocol import (
     BATTLE_PROTOCOL_VERSION,
     CIRCUIT_PROTOCOL_VERSION,
     DEFAULT_REFEREE_EXECUTABLE,
@@ -28,9 +28,9 @@ from vgc_draft_circuit_v1.protocol import (
     ProtocolBinding,
     ProtocolError,
 )
-from vgc_draft_circuit_v1.taskset import (
-    VgcDraftCircuitTask,
-    VgcDraftCircuitTasksetConfig,
+from vgc_circuit_v1.taskset import (
+    VgcCircuitTask,
+    VgcCircuitTasksetConfig,
 )
 
 _ROLES = tuple(f"seat{index}" for index in range(1, 9))
@@ -59,7 +59,7 @@ class FakeRuntime:
 
 
 class FakeInteraction:
-    def __init__(self, agent: "FakeAgent", task: VgcDraftCircuitTask, reply: str | None, concurrency: Concurrency) -> None:
+    def __init__(self, agent: "FakeAgent", task: VgcCircuitTask, reply: str | None, concurrency: Concurrency) -> None:
         self.reply = reply
         self.concurrency = concurrency
         self.prompts: list[str] = []
@@ -92,7 +92,7 @@ class FakeAgent:
     def __init__(
         self,
         role: str,
-        task: VgcDraftCircuitTask,
+        task: VgcCircuitTask,
         replies: list[str | None],
         concurrency: Concurrency,
         runtime_id: str | None = None,
@@ -115,7 +115,7 @@ class FakeAgent:
         )
 
     @asynccontextmanager
-    async def provision(self, task: VgcDraftCircuitTask):
+    async def provision(self, task: VgcCircuitTask):
         assert task is self.task
         self.provision_entered += 1
         try:
@@ -124,7 +124,7 @@ class FakeAgent:
             self.provision_exited += 1
 
     @asynccontextmanager
-    async def interaction(self, task: VgcDraftCircuitTask, *, runtime: FakeRuntime):
+    async def interaction(self, task: VgcCircuitTask, *, runtime: FakeRuntime):
         assert self.role != "referee"
         assert task is self.task and runtime is self.runtime
         if not self.replies:
@@ -532,13 +532,13 @@ async def _run(
     failed_role: str | None = None,
     duplicate_runtime: bool = False,
     scenario_id: str = "draft-league-v1",
-) -> tuple[VgcDraftCircuitEnv, VgcDraftCircuitTask, SimpleNamespace, ScriptedCircuitReferee, vf.Episode, Concurrency]:
-    config = VgcDraftCircuitEnvConfig(
-        taskset=VgcDraftCircuitTasksetConfig(
-            id="vgc-draft-circuit-v1", scenario=scenario_id
+) -> tuple[VgcCircuitEnv, VgcCircuitTask, SimpleNamespace, ScriptedCircuitReferee, vf.Episode, Concurrency]:
+    config = VgcCircuitEnvConfig(
+        taskset=VgcCircuitTasksetConfig(
+            id="vgc-circuit-v1", scenario=scenario_id
         )
     )
-    env = VgcDraftCircuitEnv(config)
+    env = VgcCircuitEnv(config)
     task = next(iter(env.taskset))
     concurrency = Concurrency()
     agents_by_name: dict[str, FakeAgent] = {}
@@ -560,7 +560,7 @@ async def _run(
         assert kwargs["executable"] == DEFAULT_REFEREE_EXECUTABLE
         return referee
 
-    monkeypatch.setattr(env_module.VgcDraftCircuitProtocolClient, "launch", classmethod(launch))
+    monkeypatch.setattr(env_module.VgcCircuitProtocolClient, "launch", classmethod(launch))
     await env.setup(agents)
     await env.run(task, agents)
     traces = [interaction.trace for role in _ROLES for interaction in getattr(agents, role).interactions]
@@ -692,19 +692,19 @@ async def test_provider_failure_and_runtime_alias_fail_without_reward(monkeypatc
 
 
 def test_config_nine_roles_defaults_and_concurrency_floor() -> None:
-    config = VgcDraftCircuitEnvConfig()
+    config = VgcCircuitEnvConfig()
     assert config.max_concurrent_agents == 8
     assert config.referee.runtime.image == DEFAULT_REFEREE_IMAGE
     assert config.referee_executable == DEFAULT_REFEREE_EXECUTABLE
     assert all(getattr(config, role).runtime.type == "docker" for role in _ROLES)
     with pytest.raises(ValidationError):
-        VgcDraftCircuitEnvConfig(max_concurrent_agents=7)
+        VgcCircuitEnvConfig(max_concurrent_agents=7)
     with pytest.raises(ValidationError):
-        VgcDraftCircuitEnvConfig(
+        VgcCircuitEnvConfig(
             seat1=vf.AgentConfig(harness=vf.HarnessConfig(id="bash"), runtime=vf.DockerConfig())
         )
     with pytest.raises(ValidationError):
-        VgcDraftCircuitEnvConfig(
+        VgcCircuitEnvConfig(
             seat1=vf.AgentConfig(
                 harness=vf.HarnessConfig(id="null"),
                 runtime=vf.DockerConfig(),
@@ -712,8 +712,8 @@ def test_config_nine_roles_defaults_and_concurrency_floor() -> None:
             )
         )
     with pytest.raises(ValidationError):
-        VgcDraftCircuitEnvConfig(retries=vf.RetryConfig(max_retries=1))
+        VgcCircuitEnvConfig(retries=vf.RetryConfig(max_retries=1))
     with pytest.raises(ValidationError, match="debug_allow_subprocess"):
-        VgcDraftCircuitEnvConfig(
+        VgcCircuitEnvConfig(
             seat1=vf.AgentConfig(harness=vf.HarnessConfig(id="null"), runtime=vf.SubprocessConfig())
         )

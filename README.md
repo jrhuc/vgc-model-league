@@ -77,7 +77,7 @@ conditions. See [Usage](docs/usage.md) for commands.
 - [Evaluation plan](docs/evaluation-plan.md)
 - [Architecture](docs/architecture.md)
 - [Usage](docs/usage.md)
-- [Internal Draft Circuit package](environments/vgc_draft_circuit_v1/README.md)
+- [Internal VGC Circuit package](environments/vgc_circuit_v1/README.md)
 - [Deployment](docs/deployment.md)
 - [Trade window](docs/trade-window.md)
 - [Season review](docs/season-review.md)

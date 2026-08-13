@@ -17,8 +17,8 @@ MATCHDAY_PROTOCOL_VERSION: Final = 1
 BATTLE_PROTOCOL_VERSION: Final = 1
 SHOWDOWN_REVISION: Final = "6a1836dd71c0718e923206f3d089e61074410868"
 SCENARIO_IDS: Final = ("victory-road-top8-v1", "draft-league-v1")
-DEFAULT_REFEREE_EXECUTABLE: Final = "/usr/local/bin/vgc-draft-circuit-referee"
-DEFAULT_REFEREE_IMAGE: Final = "ghcr.io/jrhuc/vgc-draft-circuit-referee:0.1.0"
+DEFAULT_REFEREE_EXECUTABLE: Final = "/usr/local/bin/vgc-circuit-referee"
+DEFAULT_REFEREE_IMAGE: Final = "ghcr.io/jrhuc/vgc-circuit-referee:0.1.0"
 MAX_ENCODED_LINE_BYTES: Final = 32 * 1024 * 1024
 DEFAULT_STDERR_TAIL_BYTES: Final = 64 * 1024
 DEFAULT_REQUEST_TIMEOUT: Final = 600.0
@@ -64,7 +64,7 @@ class ProtocolBinding:
 
 
 
-class VgcDraftCircuitProtocolClient:
+class VgcCircuitProtocolClient:
 
     def __init__(
         self,
@@ -113,7 +113,7 @@ class VgcDraftCircuitProtocolClient:
         stderr_tail_bytes: int = DEFAULT_STDERR_TAIL_BYTES,
         shutdown_timeout: float = 5.0,
         request_timeout: float = DEFAULT_REQUEST_TIMEOUT,
-    ) -> "VgcDraftCircuitProtocolClient":
+    ) -> "VgcCircuitProtocolClient":
         if not executable:
             raise ValueError("referee executable must be nonempty")
         if line_limit < 1 or stderr_tail_bytes < 0:
@@ -154,7 +154,7 @@ class VgcDraftCircuitProtocolClient:
             raise
         return client
 
-    async def __aenter__(self) -> VgcDraftCircuitProtocolClient:
+    async def __aenter__(self) -> VgcCircuitProtocolClient:
         return self
 
     async def __aexit__(self, exc_type, exc, traceback) -> None:

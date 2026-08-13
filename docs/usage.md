@@ -25,36 +25,39 @@ pnpm run update:showdown
 The update command builds and tests the candidate. If either step fails, the
 command restores the previous revision.
 
-## Validate the internal Draft Circuit package
+## Validate the internal VGC Circuit package
 
 Build and test the TypeScript circuit bundle and root integration first. Then
 run the standalone Python package tests and build its wheel:
 
 ```sh
 pnpm test
-pnpm run test:draft-circuit-package
-pnpm run build:draft-circuit-package
+pnpm run test:circuit-package
+pnpm run build:circuit-package
 ```
 
 The root CI uses the same circuit build and copies
-`environments/vgc_draft_circuit_v1/` to a standalone upload boundary before it
+`environments/vgc_circuit_v1/` to a standalone upload boundary before it
 runs the Python suite. To reproduce the package-local steps directly, run:
 
 ```sh
-cd environments/vgc_draft_circuit_v1
+cd environments/vgc_circuit_v1
 uv sync --locked --group test
 uv run --locked --group test pytest
-uv run --locked --group test eval vgc-draft-circuit-v1 \
+uv run --locked --group test eval vgc-circuit-v1 \
+  --env.taskset.scenario draft-league-v1 \
   -n 1 -r 1 --dry-run --no-push --rich false \
-  -o /tmp/vgc-draft-circuit-dry-run
+  -o /tmp/vgc-circuit-dry-run
 uv build --wheel --clear
 ```
 
-The dry run checks native-v1 discovery and configuration. It does not execute a
+Select `victory-road-top8-v1` instead to configure the tournament. One taskset
+never combines the two scenarios. The dry run checks native-v1 discovery and
+configuration. It does not execute a
 circuit or validate a provider, player runtime, referee image, or hosted path.
 The [evaluation support table](evaluation-plan.md#verifiers-boundary-and-support)
 tracks current evidence. The
-[package README](../environments/vgc_draft_circuit_v1/README.md) defines the
+[package README](../environments/vgc_circuit_v1/README.md) defines the
 runtime and scenario contract.
 
 The package, referee image, and Environment Hub entry are unpublished. A remote

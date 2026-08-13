@@ -1,4 +1,4 @@
-# vgc-draft-circuit-v1
+# vgc-circuit-v1
 
 This directory contains the internal native-v1 environment for whole VGC
 circuits. The package, referee image, and Environment Hub entry are unpublished.
@@ -9,18 +9,20 @@ No hosted execution path has been validated.
 The package uses exact `verifiers==0.3.0` and exports exactly two public
 classes:
 
-- `VgcDraftCircuitTaskset`, the only `Taskset`;
-- `VgcDraftCircuitEnv`, the only `Env`.
+- `VgcCircuitTaskset`, the only `Taskset`;
+- `VgcCircuitEnv`, the only `Env`.
 
 The import package is at the environment root, not under a `src/` directory.
 The CI upload-boundary smoke copies this directory without its local `.venv` or
 `dist` output and verifies native-v1 discovery from that flat layout.
 
 The finite built-in taskset accepts `scenario`, `seed_start`, and `num_blocks`.
-The default produces one task for each implemented scenario at seed 0. Selecting
-`all` produces both scenarios for every seed block. Task data contains only its
-index, scenario and case IDs, seed, and condition digest. It does not contain a
-private source path, referee options, prompt, or system prompt.
+`scenario` selects exactly one lifecycle for an evaluation; it never mixes the
+league and tournament in one taskset. It defaults to `draft-league-v1` for
+native plugin discovery, and `victory-road-top8-v1` must be selected explicitly.
+Task data contains only its index, scenario and case IDs, seed, and condition
+digest. It does not contain a private source path, referee options, prompt, or
+system prompt.
 
 ## Scenarios
 
@@ -58,7 +60,7 @@ winner, with a nine-game limit.
 
 ## Roles and interactions
 
-`VgcDraftCircuitEnvConfig` exposes configurable `seat1` through `seat8` player
+`VgcCircuitEnvConfig` exposes configurable `seat1` through `seat8` player
 roles and one `referee` role. All nine roles require the built-in null harness,
 zero verifiers retries, and distinct runtimes. The eight player roles are
 trainable. The referee is nontrainable, never receives a model turn, and must
@@ -157,8 +159,10 @@ standing, champion, invalid-output, or default shaping.
 The primary evaluation uses heterogeneous frontier-model fields with model
 allocations counterbalanced across seats and declared seed blocks. Construct and
 preregister those allocations outside the package; the taskset does not claim
-to generate a complete counterbalancing design. Treat a whole circuit as the
-replication and uncertainty block.
+to generate a complete counterbalancing design. Treat one complete scenario as
+the replication and uncertainty block. Run and report the league and tournament
+as separate evaluations because their lifecycles, starting resources, rewards,
+and estimands are not interchangeable.
 
 Configuring the same model for all eight roles is a supported symmetric
 self-play target. The trainable roles also make multi-agent `prime-rl` a target.
@@ -171,19 +175,20 @@ From the repository root, run the commands used by the package and CI:
 
 ```console
 pnpm test
-pnpm run test:draft-circuit-package
-pnpm run build:draft-circuit-package
+pnpm run test:circuit-package
+pnpm run build:circuit-package
 ```
 
 To run the standalone package steps directly:
 
 ```console
-cd environments/vgc_draft_circuit_v1
+cd environments/vgc_circuit_v1
 uv sync --locked --group test
 uv run --locked --group test pytest
-uv run --locked --group test eval vgc-draft-circuit-v1 \
+uv run --locked --group test eval vgc-circuit-v1 \
+  --env.taskset.scenario draft-league-v1 \
   -n 1 -r 1 --dry-run --no-push --rich false \
-  -o /tmp/vgc-draft-circuit-dry-run
+  -o /tmp/vgc-circuit-dry-run
 uv build --wheel --clear
 ```
 

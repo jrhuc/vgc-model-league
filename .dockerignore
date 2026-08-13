@@ -14,7 +14,7 @@
 !tools/
 !tools/setup-showdown.mjs
 !tools/frozen-circuit-referee.ts
-!tools/vgc-draft-circuit-referee
+!tools/vgc-circuit-referee
 !boards/
 !boards/regmb-202607.json
 !teams/

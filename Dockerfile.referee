@@ -23,8 +23,8 @@ RUN pnpm install --prod --frozen-lockfile
 FROM node:24.18.1-bookworm-slim@sha256:235600a8101ab264e117b1768e925532262668dc9b581ef1dd7d96ced463b8e7 AS runtime
 
 ENV NODE_ENV=production \
-    VGC_LEAGUE_PS=/opt/vgc-draft-circuit/pokemon-showdown
-WORKDIR /opt/vgc-draft-circuit
+    VGC_LEAGUE_PS=/opt/vgc-circuit/pokemon-showdown
+WORKDIR /opt/vgc-circuit
 
 COPY --from=production-dependencies --chown=node:node /deps/node_modules ./node_modules
 COPY --from=build --chown=node:node /build/dist-circuit ./dist-circuit
@@ -40,7 +40,7 @@ COPY --chown=node:node \
     teams/vr-aug26-top8/spreads.json \
     teams/vr-aug26-top8/*.team \
     ./teams/vr-aug26-top8/
-COPY --chmod=0555 tools/vgc-draft-circuit-referee /usr/local/bin/vgc-draft-circuit-referee
+COPY --chmod=0555 tools/vgc-circuit-referee /usr/local/bin/vgc-circuit-referee
 
 USER node
-ENTRYPOINT ["/usr/local/bin/vgc-draft-circuit-referee"]
+ENTRYPOINT ["/usr/local/bin/vgc-circuit-referee"]
