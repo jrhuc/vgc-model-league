@@ -10,6 +10,7 @@ import { buildTournamentGame, buildTournaments } from '../src/evidence.js';
 import { GuiServer } from '../src/gui/server.js';
 import { TEAMS_DIR } from '../src/paths.js';
 import { loadSeriesRecords } from '../src/records.js';
+import { leagueTeamBuildJournalRow } from './fixtures/team-build.js';
 
 const LEAGUE_RUN = '20260808T120000.000000Z-public01';
 const TOURNAMENT_RUN = '20260808T130000.000000Z-public02';
@@ -63,28 +64,15 @@ function writeArchiveFixture(root: string): { runsDir: string; recordsPath: stri
     rationale: 'Drafted for exact speed control.',
     fallback: false,
   });
-  writeJson(path.join(leagueDir, 'teambuild', 'teambuild.jsonl'), {
-    seriesIndex: 0,
-    entrant: 0,
-    opponent: 1,
-    brought: ['pikachu'],
-    sets: [
-      {
-        species: 'Pikachu',
-        spriteId: 'pikachu',
-        item: 'Light Ball',
-        ability: 'Static',
-        nature: 'Timid',
-        moves: ['Thunderbolt', 'Protect'],
-        evs: { spa: 251, spe: 251 },
-        note: 'The exact imported matchup note.',
-        repaired: true,
-        repairs: ['Adjusted two EVs.'],
-      },
-    ],
-    rationale: 'The exact imported build rationale.',
-    attempts: 7,
-  });
+  writeJson(
+    path.join(leagueDir, 'teambuild', 'teambuild.jsonl'),
+    leagueTeamBuildJournalRow({
+      teamPlan: 'The exact imported build rationale.',
+      notebook: 'The exact imported matchup notebook.',
+      attempts: 7,
+      sheetPolicy: 'closed',
+    }),
+  );
   writeJson(path.join(leagueDir, 'window.json'), {
     after_week: 1,
     order: [0, 1],
@@ -282,8 +270,9 @@ test('the archive routes render imported league and tournament evidence exactly'
   assert.equal(league.status, 200);
   assert.deepEqual(league.json, buildLeague(rows, fixture.runsDir, LEAGUE_RUN));
   assert.match(league.body, /Drafted for exact speed control/);
-  assert.match(league.body, /"evs":\{"spa":251,"spe":251\}/);
+  assert.match(league.body, /"evs":\{"hp":2,"atk":32,"def":0,"spa":0,"spd":0,"spe":32\}/);
   assert.match(league.body, /exact imported build rationale/);
+  assert.match(league.body, /exact imported matchup notebook/);
   assert.match(league.body, /exact imported window reasoning/);
   assert.match(league.body, /exact imported season review/);
   assert.match(league.body, /"toolLookups":99/);

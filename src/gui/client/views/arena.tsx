@@ -322,7 +322,7 @@ export function ArenaView({
             </div>
             <p class="eyebrow">League in progress</p>
             <h1>A draft league is already in progress</h1>
-            <p class="lede">Follow the draft board, teambuilds, and series as they land.</p>
+            <p class="lede">Follow the draft board, teambuilds, and series as they are recorded.</p>
             <button
               type="button"
               class="button primary"
@@ -341,7 +341,7 @@ export function ArenaView({
           <div class="no-run-mark">VS</div>
           <p class="eyebrow">No active run</p>
           <h1>No run in progress</h1>
-          <p class="lede">Set up models and start a run. Live turns appear here as Showdown resolves them.</p>
+          <p class="lede">Set up a run first. Showdown turns appear here while it runs.</p>
           <button type="button" class="button primary" style="margin-top:22px" onClick={onGoFixtures}>
             Set up a run
           </button>

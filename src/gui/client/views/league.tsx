@@ -87,9 +87,9 @@ export function DraftRoomView({ run }: { run: RunView }) {
       <header class="page-heading league-heading">
         <div>
           <p class="eyebrow">Live run / draft league</p>
-          <h1>Draft room.</h1>
+          <h1>Draft room</h1>
         </div>
-        <p class="lede">Follow the franchises, submitted team builds, board, and recorded picks.</p>
+        <p class="lede">Current franchises, submitted team builds, board state, and recorded picks.</p>
       </header>
       <section class="panel">
         <div class="section-head">
@@ -184,7 +184,7 @@ export function DraftRoomView({ run }: { run: RunView }) {
         <div class="section-head">
           <div>
             <h2>Board &amp; picks</h2>
-            <p>Availability across the board, plus the pick log.</p>
+            <p>Current availability and the pick log.</p>
           </div>
         </div>
         {boardError ? <p class="empty-note">Could not load the board: {boardError}</p> : null}

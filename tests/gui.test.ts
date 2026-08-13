@@ -111,8 +111,9 @@ test('gui serves the built app shell and setup state', async () => {
     const formats = data.formats as Array<{ id: string; label: string }>;
     assert.ok(formats.some((format) => format.id === FORMAT));
     assert.ok(formats.every((format) => format.id.startsWith('gen9champions') && format.id.endsWith('bo3')));
-    assert.deepEqual(data.auth, { mode: 'local', user: null, csrfToken: null });
+    assert.equal('auth' in data, false);
     assert.equal(data.run, null);
+    assert.equal(data.externalRun, null);
     assert.equal((await fetch(`${base}healthz`)).status, 200);
     assert.equal((await fetch(`${base}readyz`)).status, 200);
     const missing = await fetch(`${base}api/nothing`);
@@ -423,14 +424,13 @@ test('gui Nitro launch maps raw model credentials and reasoning to the effective
   }
 });
 
-test('local GUI rejects removed CLI and direct provider specs', async () => {
+test('local GUI accepts only registered, well-formed provider specs', async () => {
   const gui = new GuiServer({ runsDir: RUNS_SCRATCH });
   const base = await gui.listen(0);
   try {
-    for (const model of ['omp:provider/model', 'claude-cli:model', 'openai:model', 'compat:https://host/v1:model']) {
+    for (const model of ['unknown:model', 'openrouter:', 'prime:', 'random:extra']) {
       const rejected = await apiJson(`${base}api/run`, { models: [model, 'random'], pool: 'test' });
       assert.equal(rejected.status, 400);
-      assert.match(String(rejected.data.error), /openrouter:<model-id>, prime:<model-id>, or random/);
     }
   } finally {
     gui.close();

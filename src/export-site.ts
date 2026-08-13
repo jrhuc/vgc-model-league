@@ -80,7 +80,6 @@ export function exportSite(options: ExportSiteOptions): ExportSiteSummary {
       discovery: option.discovery,
       requiresKey: option.requiresKey,
     })),
-    auth: { mode: 'read-only', user: null, csrfToken: null },
     sampleTeams: [],
     run: null,
     externalRun: null,
@@ -103,7 +102,9 @@ export function exportSite(options: ExportSiteOptions): ExportSiteSummary {
     });
   }
 
-  const leagues = buildLeagues(rows, options.runsDir).leagues.filter((card) => allowed.has(card.runId) && !card.live);
+  const leagues = buildLeagues(rows, options.runsDir).leagues.filter(
+    (card) => allowed.has(card.runId) && card.lifecycle !== 'live',
+  );
   write('leagues.json', { leagues });
   for (const card of leagues) {
     const league = buildLeague(rows, options.runsDir, card.runId) as LeagueResponse | null;

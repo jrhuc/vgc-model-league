@@ -326,7 +326,8 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
         'draft-only': { type: 'boolean', default: false },
       },
     });
-    const { runDraftLeague, roundRobinWeeks } = await import('./draftleague.js');
+    const { runDraftLeague } = await import('./draftleague.js');
+    const { draftLeagueTopology } = await import('./draftleague-topology.js');
     const resumeDir = values.resume ? path.resolve(values.resume) : undefined;
     const storedConfig = resumeDir
       ? (JSON.parse(fs.readFileSync(path.join(resumeDir, 'config.json'), 'utf8')) as {
@@ -419,7 +420,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
       }),
     );
     printResults(rows);
-    const totalSeries = roundRobinWeeks(models.length).flat().length + (models.length >= 5 ? 3 : 1);
+    const totalSeries = draftLeagueTopology(models.length).totalSeries;
     if (values['draft-only']) {
       console.log(`Draft complete; no games played. Rosters: ${path.join(runDir, 'rosters.json')}`);
       console.log(`Play the season later with: vgcleague draft --resume ${runDir}`);

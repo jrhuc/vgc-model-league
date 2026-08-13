@@ -5,62 +5,36 @@ import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { buildLeague, buildLeagueGame, buildLeagues, findLiveCliRun, snapshotBattle } from '../archive.js';
+import { buildLeague, buildLeagueGame, buildLeagues, findLiveCliRun } from '../archive.js';
 import { describeBoardMon, listBoards, loadBoard } from '../draft.js';
-import type { DraftLeagueEvent } from '../draftleague.js';
-import { DRAFT_PROTOCOL_VERSION, roundRobinWeeks, runDraftLeague } from '../draftleague.js';
+import type { runDraftLeague } from '../draftleague.js';
 import { buildTournamentGame, buildTournaments } from '../evidence.js';
 import { discoverModels } from '../model-catalog.js';
-import {
-  DATA_DIR,
-  defaultPsDir,
-  makeRunDirectory,
-  prepareDataDirectories,
-  RESULTS_PATH,
-  RUNS_DIR,
-  TEAMS_DIR,
-} from '../paths.js';
+import { DATA_DIR, defaultPsDir, prepareDataDirectories, RESULTS_PATH, RUNS_DIR, TEAMS_DIR } from '../paths.js';
 import type { DiscoveredModel } from '../provider-registry.js';
 import { PROVIDER_OPTIONS, providerOption } from '../provider-registry.js';
-import type { ModelReasoningConfig, ReasoningLevel } from '../providers.js';
-import { classifyProviderFailure, isReasoningLevel, nitroSpec, parseSpec, validateReasoning } from '../providers.js';
 import { loadSeriesRecords } from '../records.js';
-import type { RecoveryPause } from '../recovery.js';
-import { RecoveryGate } from '../recovery.js';
-import { ROTATION_PROTOCOL_VERSION, runRotation } from '../rotation.js';
-import { writeRunStatus } from '../run-status.js';
+import type { runRotation } from '../rotation.js';
 import { redactSecrets } from '../sanitize.js';
 import { loadShowdown } from '../showdown.js';
-import { BattleState } from '../state.js';
-import type { Team, TeamDraft } from '../teams.js';
+import type { TeamDraft } from '../teams.js';
 import { createPool, exportTeam, inspectTeam, listPools, loadPool, packTeam, validateTeam } from '../teams.js';
-import { parseTimerScale } from '../timer.js';
-import type { ProvenanceMode } from '../tournament.js';
-import { runTournament, TOURNAMENT_PROTOCOL_VERSION } from '../tournament.js';
-import { DEFAULT_TRADE_WINDOW, MAX_TRADE_OFFERS, type TradeWindowConfig } from '../trade-window.js';
-import type { ExperimentMode, JsonObject, Pid, TimerScale } from '../types.js';
+import type { runTournament } from '../tournament.js';
+import type { JsonObject } from '../types.js';
 import { isRecord } from '../value.js';
 import type {
   AppState,
-  BattleMessage,
   BoardResponse,
-  BracketView,
-  DecisionView,
-  DraftView,
   FormatInfo,
   ModelInfo,
   ModelsResponse,
   PoolTeamsResponse,
-  RunPauseView,
-  RunSnapshot,
   SampleTeam,
-  SeriesRowView,
   ServerEvent,
 } from './api.js';
-import { BattleLog } from './battlelog.js';
+import { parseRunRequest, RunRequestError } from './run-request.js';
+import { RunSupervisor } from './run-supervisor.js';
 import { loadSelectedTrace } from './selected-trace.js';
-
-type SeriesRow = Omit<SeriesRowView, 'turn'>;
 
 const ASSETS_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'gui');
 const ASSET_TYPES: Record<string, string> = {
@@ -79,8 +53,6 @@ const MUTATING_METHODS: Record<string, true> = { POST: true, PUT: true, PATCH: t
 const MAX_SSE_CLIENTS = 16;
 const SSE_HEARTBEAT_MS = 25_000;
 const DEFAULT_MAX_RUN_MS = 4 * 60 * 60 * 1000;
-const SHUTDOWN_ERROR = 'run interrupted by server shutdown';
-const TIMEOUT_ERROR = 'run exceeded its maximum duration';
 
 interface GuiServerOptions {
   teamsDir?: string;
@@ -109,89 +81,11 @@ interface EventViewer {
   backpressured: boolean;
 }
 
-interface RunConfig extends ModelReasoningConfig {
-  mode: ExperimentMode;
-  protocolVersion: number;
-  models: string[];
-  seriesPerPair: number;
-  pool: string;
-  concurrency: number;
-  teams?: Team[];
-  format?: string;
-  board?: string;
-  seed?: number;
-  timerScale?: TimerScale;
-  closedSheets?: boolean;
-  sequentialWeeks?: boolean;
-  tradeWindow?: TradeWindowConfig | null;
-  draftOnly?: boolean;
-  provenance?: ProvenanceMode;
-}
-
-function isActiveRunState(state: RunSnapshot['state']): state is 'running' | 'paused' {
-  return state === 'running' || state === 'paused';
-}
-
-interface GameBattle {
-  state: BattleState;
-  log: BattleLog;
-}
-
 function gameParam(url: URL): number | undefined {
   const raw = url.searchParams.get('game');
   if (raw === null) return undefined;
   const value = Number(raw);
   return Number.isInteger(value) && value > 0 ? value : undefined;
-}
-
-function latestBattle(games: Map<number, GameBattle> | undefined): { game: number; entry: GameBattle } | null {
-  if (!games?.size) return null;
-  const game = Math.max(...games.keys());
-  return { game, entry: games.get(game) as GameBattle };
-}
-
-class ActiveRun {
-  rows: SeriesRow[] = [];
-  bracket: BracketView | undefined;
-  draft: DraftView | undefined;
-  pause: RunPauseView | undefined;
-  state: RunSnapshot['state'] = 'running';
-  error = '';
-  notices: string[] = [];
-  seed: number | undefined;
-  endTime: number | undefined;
-  timeoutTimer: NodeJS.Timeout | undefined;
-  timeoutRemainingMs = 0;
-  timeoutStartedAt: number | undefined;
-  stopFallbackTimer: NodeJS.Timeout | undefined;
-  timedOut = false;
-  interrupted = false;
-  userStopped = false;
-  settling = false;
-  detached = false;
-  readonly battles = new Map<number, Map<number, GameBattle>>();
-  readonly decisions = new Map<number, DecisionView[]>();
-  readonly spend = new Map<number, Record<Pid, { ms: number; tokens: number }>>();
-  readonly battleRevisions = new Map<number, number>();
-  readonly controller = new AbortController();
-  readonly recovery = new RecoveryGate();
-  resumeAction: (() => void) | undefined;
-  readonly runDir: string;
-  readonly runId: string;
-  readonly startTime = Date.now();
-
-  constructor(
-    readonly config: RunConfig,
-    readonly apiKeys: Record<string, string>,
-    runsDir?: string,
-  ) {
-    this.runDir = makeRunDirectory(runsDir);
-    this.runId = path.basename(this.runDir);
-  }
-
-  clearApiKeys(): void {
-    for (const model of Object.keys(this.apiKeys)) delete this.apiKeys[model];
-  }
 }
 
 class HttpError extends Error {
@@ -215,8 +109,7 @@ function championsFormats(): FormatInfo[] {
 
 export class GuiServer {
   readonly server: http.Server;
-  private run: ActiveRun | undefined;
-  private runTask: Promise<void> | undefined;
+  private readonly runs: RunSupervisor;
   private shutdownTask: Promise<void> | undefined;
   private readonly clients = new Map<http.ServerResponse, EventViewer>();
   private readonly pending = new Map<string, () => ServerEvent | undefined>();
@@ -243,6 +136,18 @@ export class GuiServer {
     if (!LOCAL_HOSTNAMES[hostnameFromHost(this.bindHost)]) {
       throw new Error('the GUI server binds loopback only; front it with a local proxy for remote access');
     }
+    this.runs = new RunSupervisor({
+      maxRunMs: this.maxRunMs,
+      stopFallbackMs: this.stopFallbackMs,
+      onRunChange: () => this.queueRun(),
+      onBattleChange: (index) => this.queueBattle(index),
+      ...(options.recordsPath === undefined ? {} : { recordsPath: options.recordsPath }),
+      ...(options.runsDir === undefined ? {} : { runsDir: options.runsDir }),
+      ...(options.runner === undefined ? {} : { runner: options.runner }),
+      ...(options.tournamentRunner === undefined ? {} : { tournamentRunner: options.tournamentRunner }),
+      ...(options.draftRunner === undefined ? {} : { draftRunner: options.draftRunner }),
+      ...(options.logger === undefined ? {} : { logger: options.logger }),
+    });
     prepareDataDirectories();
     this.server = createServer((request, response) => {
       const requestId = randomUUID();
@@ -270,10 +175,7 @@ export class GuiServer {
       void this.route(request, response).catch((error: unknown) => {
         const expected = error instanceof HttpError;
         const status = expected ? error.status : 500;
-        const detail = redactSecrets(
-          error instanceof Error ? error.message : String(error),
-          Object.values(this.run?.apiKeys ?? {}),
-        );
+        const detail = redactSecrets(error instanceof Error ? error.message : String(error), this.runs.apiKeySecrets());
         if (!expected) {
           this.options.logger?.({
             timestamp: new Date().toISOString(),
@@ -315,25 +217,21 @@ export class GuiServer {
   shutdown(graceMs = 10_000): Promise<void> {
     if (this.shutdownTask) return this.shutdownTask;
     this.shutdownTask = (async () => {
-      const run = this.run;
-      if (run && isActiveRunState(run.state) && !run.settling) {
-        run.interrupted = true;
-        run.controller.abort();
-      }
+      const runShutdown = this.runs.beginShutdown();
       clearTimeout(this.flushTimer);
       clearInterval(this.heartbeatTimer);
       for (const client of this.clients.keys()) client.end();
       this.clients.clear();
       const closed = Promise.withResolvers<void>();
       this.server.close((error) => (error ? closed.reject(error) : closed.resolve()));
-      const settled = this.runTask
-        ? Promise.allSettled([closed.promise, this.runTask]).then(() => undefined)
+      const settled = runShutdown.task
+        ? Promise.allSettled([closed.promise, runShutdown.task]).then(() => undefined)
         : closed.promise;
       const timeout = Promise.withResolvers<void>();
       const timer = setTimeout(timeout.resolve, Math.max(0, graceMs));
       await Promise.race([settled, timeout.promise]);
       clearTimeout(timer);
-      if (run && isActiveRunState(run.state)) this.detachRun(run, 'failed', SHUTDOWN_ERROR);
+      runShutdown.detach();
       this.server.closeAllConnections();
     })();
     return this.shutdownTask;
@@ -418,17 +316,10 @@ export class GuiServer {
     } else if (key === 'POST /api/run') {
       this.json(response, 200, this.startRun(await this.readJson(request)));
     } else if (key === 'POST /api/run/stop') {
-      const run = this.run;
-      if (run && isActiveRunState(run.state) && !run.settling) {
-        run.userStopped = true;
-        run.controller.abort();
-        this.scheduleStopFallback(run);
-      }
+      this.runs.stop();
       this.json(response, 200, { ok: true });
     } else if (key === 'POST /api/run/resume') {
-      const run = this.run;
-      if (run?.state !== 'paused' || run.settling) throw new HttpError(409, 'the run is not paused');
-      run.resumeAction?.();
+      if (!this.runs.resume()) throw new HttpError(409, 'the run is not paused');
       this.json(response, 200, { ok: true });
     } else if (key === 'POST /api/pool') {
       this.json(response, 200, this.makePool(await this.readJson(request)));
@@ -501,10 +392,6 @@ export class GuiServer {
     return data as Record<string, unknown>;
   }
 
-  private defaultFormatId(): string {
-    return listPools(this.options.teamsDir ?? TEAMS_DIR)[0]?.format ?? 'gen9championsvgc2026regmbbo3';
-  }
-
   private sampleTeamsBody(pools: { name: string }[]): SampleTeam[] {
     const source = pools[0]?.name;
     if (!source) return [];
@@ -547,15 +434,14 @@ export class GuiServer {
         discovery: option.discovery,
         requiresKey: option.requiresKey,
       })),
-      auth: { mode: 'local', user: null, csrfToken: null },
       sampleTeams: this.sampleTeamsBody(pools),
-      run: this.runBody(),
+      run: this.runs.snapshot(),
       externalRun: this.externalRunBody(),
     };
   }
 
   private externalRunBody(): AppState['externalRun'] {
-    if (this.run && isActiveRunState(this.run.state)) return null;
+    if (this.runs.hasActiveRun()) return null;
     return findLiveCliRun(this.options.runsDir ?? RUNS_DIR);
   }
 
@@ -657,56 +543,12 @@ export class GuiServer {
     return view as unknown as JsonObject;
   }
 
-  private runBody(): RunSnapshot | null {
-    const run = this.run;
-    if (!run) return null;
-    const rows = run.rows.map((row, index) => ({
-      ...row,
-      players: { ...row.players },
-      score: { ...row.score },
-      turn: latestBattle(run.battles.get(index))?.entry.state.turn ?? 0,
-    }));
-    return {
-      mode: run.config.mode,
-      protocolVersion: run.config.protocolVersion,
-      runId: run.runId,
-      state: run.state,
-      error: run.error,
-      pause: run.pause ?? null,
-      notices: run.notices.slice(-3),
-      seed: run.seed ?? null,
-      pool: run.config.pool,
-      models: run.config.models,
-      startTime: run.startTime,
-      endTime: run.endTime ?? null,
-      canControl: !run.settling,
-      rows,
-      bracket: run.bracket ?? null,
-      draft: run.draft ?? null,
-      board: run.config.board ?? null,
-    };
+  private runBody() {
+    return this.runs.snapshot();
   }
 
-  private battleBody(index: number, game?: number): BattleMessage {
-    const games = this.run?.battles.get(index);
-    const latest = latestBattle(games);
-    if (!games || !latest) return { index, game: 0, games: [], revision: 0, snapshot: null };
-    const shown = game !== undefined && games.has(game) ? game : latest.game;
-    const entry = games.get(shown) as GameBattle;
-    const decisions = (this.run?.decisions.get(index) ?? []).filter((decision) => decision.game === shown);
-    return {
-      index,
-      game: shown,
-      games: [...games.keys()].sort((a, b) => a - b),
-      revision: this.run?.battleRevisions.get(index) ?? 0,
-      snapshot: snapshotBattle(
-        entry.state,
-        this.run?.rows[index]?.players,
-        entry.log.entries,
-        decisions,
-        this.run?.spend.get(index),
-      ),
-    };
+  private battleBody(index: number, game?: number) {
+    return this.runs.battle(index, game);
   }
 
   private async modelsBody(providerId: string, apiKey: string): Promise<ModelsResponse> {
@@ -723,453 +565,33 @@ export class GuiServer {
   }
 
   private startRun(body: Record<string, unknown>): JsonObject {
-    if (this.run && isActiveRunState(this.run.state)) throw new HttpError(409, 'a run is already in progress');
-    const mode = (
-      body.mode === undefined || body.mode === 'rotation'
-        ? 'rotation'
-        : body.mode === 'tournament' || body.mode === 'draft'
-          ? body.mode
-          : undefined
-    ) as ExperimentMode | undefined;
-    if (!mode) throw new HttpError(400, 'unknown run mode');
-    const rawModels = Array.isArray(body.models) ? body.models.map(String).filter(Boolean) : [];
-    const models = body.nitro === true ? rawModels.map(nitroSpec) : rawModels;
-    const effectiveModel = (model: string): string =>
-      models.includes(model) ? model : rawModels.includes(model) && body.nitro === true ? nitroSpec(model) : model;
-    if (models.length < 2) throw new HttpError(400, 'a run needs at least two model specs');
-    if (models.length > 8) throw new HttpError(400, 'a run supports at most 8 model specs');
-    const reasoningValue = body.reasoning ? String(body.reasoning) : undefined;
-    if (reasoningValue && !isReasoningLevel(reasoningValue)) {
-      throw new HttpError(400, 'reasoning must be one of: minimal, low, medium, high, xhigh');
-    }
-    const reasoning = reasoningValue as ReasoningLevel | undefined;
-    if (body.reasoningByModel !== undefined && !isRecord(body.reasoningByModel)) {
-      throw new HttpError(400, 'reasoningByModel must be an object');
-    }
-    const reasoningByModel: Record<string, ReasoningLevel> = {};
-    for (const [rawModel, value] of Object.entries(isRecord(body.reasoningByModel) ? body.reasoningByModel : {})) {
-      const model = effectiveModel(rawModel);
-      if (!models.includes(model)) throw new HttpError(400, `reasoning configured for unselected model ${rawModel}`);
-      if (model === 'random') throw new HttpError(400, 'random does not support configurable reasoning');
-      if (!isReasoningLevel(value)) {
-        throw new HttpError(400, `reasoning for ${rawModel} must be one of: minimal, low, medium, high, xhigh`);
-      }
-      reasoningByModel[model] = value;
-    }
-    if (reasoning && Object.keys(reasoningByModel).length) {
-      throw new HttpError(400, 'choose either shared reasoning or per-model reasoning, not both');
-    }
-    const suppliedKeys = isRecord(body.apiKeys) ? body.apiKeys : {};
-    const apiKeys: Record<string, string> = {};
-    const missing: string[] = [];
-    for (const [index, model] of models.entries()) {
-      if (model === 'random') continue;
-      try {
-        const spec = parseSpec(model);
-        validateReasoning(spec, reasoningByModel[model] ?? reasoning);
-        const suppliedKey = suppliedKeys[model] ?? suppliedKeys[rawModels[index]!];
-        const apiKey = typeof suppliedKey === 'string' ? suppliedKey.trim() : '';
-        const option = providerOption(spec.provider);
-        const requiresKey = option?.requiresKey ?? true;
-        if (!apiKey && requiresKey) {
-          missing.push(`${option?.label ?? spec.provider} (${model})`);
-        } else {
-          apiKeys[model] = apiKey || 'none';
-        }
-      } catch (error) {
-        throw new HttpError(400, error instanceof Error ? error.message : String(error));
-      }
-    }
-    if (missing.length) throw new HttpError(400, `API key required for: ${missing.join(', ')}`);
-    const inlinePastes = mode === 'tournament' && Array.isArray(body.teams) ? body.teams.map(String) : undefined;
-    let pool = '';
-    let teams: Team[] | undefined;
-    let format: string | undefined;
-    let board: string | undefined;
-    if (mode === 'draft') {
-      const boards = listBoards();
-      board = String(body.board ?? '') || boards[0]?.id || '';
-      const info = boards.find((entry) => entry.id === board);
-      if (!info) throw new HttpError(400, `unknown draft board ${JSON.stringify(board)}`);
-      if (models.length > info.maxEntrants) {
-        throw new HttpError(400, `board ${JSON.stringify(board)} supports at most ${info.maxEntrants} models`);
-      }
-    } else if (inlinePastes) {
-      if (inlinePastes.length !== models.length) {
-        throw new HttpError(400, 'provide exactly one team paste per model');
-      }
-      format = String(body.format ?? '').trim() || this.defaultFormatId();
-      if (!championsFormats().some((info) => info.id === format)) {
-        throw new HttpError(400, `unknown format ${JSON.stringify(format)}`);
-      }
-      teams = inlinePastes.map((paste, index) => {
-        if (!paste.trim() || paste.length > 20_000) {
-          throw new HttpError(400, `team ${index + 1} must be a non-empty paste under 20k characters`);
-        }
-        try {
-          const packed = packTeam(paste, defaultPsDir(), format!);
-          validateTeam(packed, format!);
-          return { id: `paste-${index + 1}`, packed };
-        } catch (error) {
-          const detail = error instanceof Error ? error.message : String(error);
-          throw new HttpError(400, `team ${index + 1} is not legal in ${format}: ${detail}`);
-        }
+    if (!this.runs.canStart()) throw new HttpError(409, 'a run is already in progress');
+    const teamsDir = this.options.teamsDir ?? TEAMS_DIR;
+    try {
+      const request = parseRunRequest(body, {
+        get boards() {
+          return listBoards();
+        },
+        get pools() {
+          return listPools(teamsDir);
+        },
+        get formats() {
+          return championsFormats();
+        },
+        get defaultFormatId() {
+          return listPools(teamsDir)[0]?.format ?? 'gen9championsvgc2026regmbbo3';
+        },
+        packAndValidateTeam(paste, format) {
+          const packed = packTeam(paste, defaultPsDir(), format);
+          validateTeam(packed, format);
+          return packed;
+        },
       });
-    } else {
-      pool = String(body.pool ?? '');
-      const info = listPools(this.options.teamsDir ?? TEAMS_DIR).find((entry) => entry.name === pool);
-      if (!info) throw new HttpError(400, `unknown team pool ${JSON.stringify(pool)}`);
-      if (mode === 'tournament' && info.teamCount < models.length) {
-        throw new HttpError(
-          400,
-          `pool ${JSON.stringify(pool)} has ${info.teamCount} teams for ${models.length} entrants`,
-        );
-      }
-    }
-    const seed = body.seed === undefined || body.seed === null || body.seed === '' ? undefined : Number(body.seed);
-    if (seed !== undefined && !Number.isSafeInteger(seed)) throw new HttpError(400, 'seed must be an integer');
-    let timerScale: TimerScale | undefined;
-    try {
-      timerScale = parseTimerScale(body.timerScale);
+      return this.runs.start(request);
     } catch (error) {
-      throw new HttpError(400, error instanceof Error ? error.message : String(error));
+      if (error instanceof RunRequestError) throw new HttpError(400, error.message);
+      throw error;
     }
-    let tradeWindow: TradeWindowConfig | null | undefined;
-    if (mode === 'draft') {
-      const weeks = roundRobinWeeks(models.length).length;
-      if (body.tradeWindow === undefined) {
-        tradeWindow = { afterWeek: Math.min(3, weeks), tradesAllowed: DEFAULT_TRADE_WINDOW.tradesAllowed };
-      } else if (body.tradeWindow === null) {
-        tradeWindow = null;
-      } else if (isRecord(body.tradeWindow)) {
-        const afterWeek = Number(body.tradeWindow.afterWeek);
-        if (!Number.isSafeInteger(afterWeek) || afterWeek < 1 || afterWeek > weeks) {
-          throw new HttpError(400, `trade window week must be between 1 and ${weeks}`);
-        }
-        const tradesAllowed =
-          body.tradeWindow.tradesAllowed === undefined
-            ? DEFAULT_TRADE_WINDOW.tradesAllowed
-            : Number(body.tradeWindow.tradesAllowed);
-        if (!Number.isSafeInteger(tradesAllowed) || tradesAllowed < 0 || tradesAllowed > MAX_TRADE_OFFERS) {
-          throw new HttpError(400, `trade window tradesAllowed must be an integer between 0 and ${MAX_TRADE_OFFERS}`);
-        }
-        tradeWindow = { afterWeek, tradesAllowed };
-      } else {
-        throw new HttpError(400, 'tradeWindow must be null or an object with afterWeek');
-      }
-    }
-    const config: RunConfig = {
-      mode,
-      protocolVersion:
-        mode === 'tournament'
-          ? TOURNAMENT_PROTOCOL_VERSION
-          : mode === 'draft'
-            ? DRAFT_PROTOCOL_VERSION
-            : ROTATION_PROTOCOL_VERSION,
-      models,
-      seriesPerPair: mode === 'rotation' ? clampInt(body.seriesPerPair, 1, 20, 2) : 1,
-      pool,
-      concurrency: clampInt(body.concurrency, 1, 8, 2),
-      ...(teams === undefined ? {} : { teams }),
-      ...(format === undefined ? {} : { format }),
-      ...(board === undefined ? {} : { board }),
-      ...(seed === undefined ? {} : { seed }),
-      ...(reasoning === undefined ? {} : { reasoning }),
-      ...(Object.keys(reasoningByModel).length ? { reasoningByModel } : {}),
-      ...(timerScale === undefined ? {} : { timerScale }),
-      ...(mode === 'draft' && body.closedSheets === true ? { closedSheets: true } : {}),
-      ...(mode === 'draft' && body.sequentialWeeks === true ? { sequentialWeeks: true } : {}),
-      ...(mode === 'draft' ? { tradeWindow: tradeWindow! } : {}),
-      ...(mode === 'draft' && body.draftOnly === true ? { draftOnly: true } : {}),
-      ...(mode === 'tournament' && body.provenance === 'blind' ? { provenance: 'blind' as const } : {}),
-    };
-    const run = new ActiveRun(config, apiKeys, this.options.runsDir);
-    this.run = run;
-    writeRunStatus(run.runDir, {
-      state: 'running',
-      error: null,
-      notices: [],
-      start_time: new Date(run.startTime).toISOString(),
-      end_time: null,
-      pid: process.pid,
-    });
-    run.timeoutRemainingMs = this.maxRunMs;
-    this.armRunTimeout(run);
-    this.runTask = this.launch(run);
-    this.queueRun();
-    return { ok: true, runId: run.runId };
-  }
-
-  private armRunTimeout(run: ActiveRun): void {
-    clearTimeout(run.timeoutTimer);
-    run.timeoutStartedAt = Date.now();
-    run.timeoutTimer = setTimeout(() => {
-      if (run !== this.run || run.state !== 'running' || run.settling) return;
-      run.timedOut = true;
-      run.notices.push('run stopped after reaching its maximum duration');
-      run.controller.abort();
-      this.scheduleStopFallback(run);
-      this.queueRun();
-    }, run.timeoutRemainingMs);
-    run.timeoutTimer.unref();
-  }
-
-  private setRecoveryState(run: ActiveRun, pause: RecoveryPause | undefined): void {
-    if (run !== this.run || run.settling || !isActiveRunState(run.state)) return;
-    if (pause) {
-      if (run.state === 'running') {
-        clearTimeout(run.timeoutTimer);
-        if (run.timeoutStartedAt !== undefined) {
-          run.timeoutRemainingMs = Math.max(1, run.timeoutRemainingMs - (Date.now() - run.timeoutStartedAt));
-        }
-      }
-      run.state = 'paused';
-      run.pause = pause;
-    } else if (run.state === 'paused') {
-      run.state = 'running';
-      run.pause = undefined;
-      this.armRunTimeout(run);
-    }
-    this.queueRun();
-  }
-
-  private settleRun(run: ActiveRun, failed: boolean, error?: unknown): void {
-    if (run.timedOut) {
-      run.state = 'failed';
-      run.error = TIMEOUT_ERROR;
-    } else if (run.interrupted) {
-      run.state = 'failed';
-      run.error = SHUTDOWN_ERROR;
-    } else if (run.userStopped) {
-      run.state = 'stopped';
-    } else if (failed) {
-      run.state = 'failed';
-      run.error = redactSecrets(error instanceof Error ? error.message : String(error), Object.values(run.apiKeys));
-    } else {
-      run.state = 'done';
-    }
-  }
-
-  private async launch(run: ActiveRun): Promise<void> {
-    const removeRecoveryListener = run.recovery.onChange((pause) => this.setRecoveryState(run, pause));
-    run.resumeAction = () => {
-      run.recovery.resume();
-    };
-    const commonOptions = {
-      concurrency: run.config.concurrency,
-      recordsPath: this.options.recordsPath ?? RESULTS_PATH,
-      apiKeys: run.apiKeys,
-      signal: run.controller.signal,
-      ...(run.config.seed === undefined ? {} : { seed: run.config.seed }),
-      ...(run.config.reasoning === undefined ? {} : { reasoning: run.config.reasoning }),
-      ...(run.config.reasoningByModel === undefined ? {} : { reasoningByModel: run.config.reasoningByModel }),
-      ...(run.config.timerScale === undefined ? {} : { timerScale: run.config.timerScale }),
-      recovery: run.recovery,
-      onEvent: (event: DraftLeagueEvent) => this.onEvent(run, event),
-    };
-    try {
-      if (run.config.mode === 'draft') {
-        await (this.options.draftRunner ?? runDraftLeague)(run.config.models, run.runDir, {
-          ...commonOptions,
-          ...(run.config.board === undefined ? {} : { board: run.config.board }),
-          ...(run.config.closedSheets === true ? { closedSheets: true } : {}),
-          ...(run.config.sequentialWeeks === true ? { sequentialWeeks: true } : {}),
-          ...(run.config.tradeWindow === undefined ? {} : { tradeWindow: run.config.tradeWindow }),
-          ...(run.config.draftOnly === true ? { draftOnly: true } : {}),
-        });
-      } else if (run.config.mode === 'tournament') {
-        await (this.options.tournamentRunner ?? runTournament)(run.config.models, run.runDir, {
-          ...commonOptions,
-          ...(run.config.pool ? { pool: run.config.pool } : {}),
-          ...(run.config.teams === undefined ? {} : { teams: run.config.teams }),
-          ...(run.config.format === undefined ? {} : { format: run.config.format }),
-          ...(run.config.provenance === undefined ? {} : { provenance: run.config.provenance }),
-        });
-      } else {
-        await (this.options.runner ?? runRotation)(run.config.models, run.config.seriesPerPair, run.runDir, {
-          ...commonOptions,
-          pool: run.config.pool,
-          onNotice: (message) => run.notices.push(message),
-        });
-      }
-      this.settleRun(run, false);
-    } catch (error) {
-      this.settleRun(run, true, error);
-    } finally {
-      clearTimeout(run.timeoutTimer);
-      clearTimeout(run.stopFallbackTimer);
-      if (run.detached) {
-        run.clearApiKeys();
-        this.options.logger?.({
-          timestamp: new Date().toISOString(),
-          level: 'info',
-          event: 'detached_run_settled',
-          runId: run.runId,
-        });
-      } else {
-        run.clearApiKeys();
-        run.endTime = Date.now();
-        this.persistStatus(run);
-        this.options.logger?.({
-          timestamp: new Date().toISOString(),
-          level: run.state === 'failed' ? 'error' : 'info',
-          event: 'run_finished',
-          runId: run.runId,
-          state: run.state,
-          durationMs: run.endTime - run.startTime,
-        });
-        this.queueRun();
-      }
-      removeRecoveryListener();
-      run.resumeAction = undefined;
-    }
-  }
-
-  private detachRun(run: ActiveRun, state: 'stopped' | 'failed', error: string): void {
-    run.detached = true;
-    run.state = state;
-    run.error = error;
-    run.clearApiKeys();
-    this.persistStatus(run);
-    this.options.logger?.({
-      timestamp: new Date().toISOString(),
-      level: 'error',
-      event: 'run_detached',
-      runId: run.runId,
-      state,
-    });
-    this.queueRun();
-  }
-
-  private persistStatus(run: ActiveRun): void {
-    run.endTime ??= Date.now();
-    writeRunStatus(run.runDir, {
-      state: run.state,
-      error: run.error || null,
-      notices: run.notices,
-      start_time: new Date(run.startTime).toISOString(),
-      end_time: new Date(run.endTime ?? Date.now()).toISOString(),
-    });
-  }
-
-  /**
-   * A stop or timeout only aborts the run task; if the task ignores the abort
-   * (a wedged provider or simulator), detach it after a grace period so the
-   * server never stays locked in a permanently "running" run.
-   */
-  private scheduleStopFallback(run: ActiveRun): void {
-    if (run.stopFallbackTimer) return;
-    run.stopFallbackTimer = setTimeout(() => {
-      if (!isActiveRunState(run.state) || run.settling) return;
-      run.notices.push('the run task did not shut down cleanly and was detached');
-      this.detachRun(run, run.timedOut ? 'failed' : 'stopped', run.timedOut ? TIMEOUT_ERROR : '');
-    }, this.stopFallbackMs);
-    run.stopFallbackTimer.unref();
-  }
-
-  private onEvent(run: ActiveRun, event: DraftLeagueEvent): void {
-    if (run !== this.run) return;
-    if (event.type === 'draft') {
-      run.draft = event.draft;
-    } else if (event.type === 'bracket') {
-      run.bracket = event.bracket;
-    } else if (event.type === 'series-players') {
-      const row = run.rows[event.index];
-      if (row) row.players = event.players;
-    } else if (event.type === 'plans') {
-      run.seed = event.seed;
-      run.rows = event.plans.map((plan) => ({
-        players: plan.players,
-        status: 'queued' as const,
-        score: { p1: 0, p2: 0 } as Record<Pid, number>,
-        game: 0,
-        turns: 0,
-        winner: null,
-      }));
-    } else if (event.type === 'series-start') {
-      const row = run.rows[event.index];
-      if (row) {
-        row.status = 'running';
-        row.game = 1;
-      }
-    } else if (event.type === 'game-update') {
-      if (!run.rows[event.index]) return;
-      let games = run.battles.get(event.index);
-      if (!games) {
-        games = new Map();
-        run.battles.set(event.index, games);
-      }
-      let entry = games.get(event.game);
-      if (!entry) {
-        entry = { state: new BattleState('p1'), log: new BattleLog() };
-        games.set(event.game, entry);
-      }
-      entry.state.feed(event.lines);
-      entry.log.feed(event.lines);
-      const row = run.rows[event.index];
-      if (row && row.status === 'running') row.game = event.game;
-      run.battleRevisions.set(event.index, (run.battleRevisions.get(event.index) ?? 0) + 1);
-      this.queueBattle(event.index);
-    } else if (event.type === 'decision') {
-      if (!run.rows[event.index]) return;
-      const row = event.row;
-      const rawError = typeof row.error === 'string' ? row.error : '';
-      let error = typeof row.error_summary === 'string' ? row.error_summary.slice(0, 500) : '';
-      if (!error && rawError) {
-        error =
-          row.fallback === true && row.action !== 'abandoned'
-            ? 'The model returned no usable decision; a legal fallback was selected.'
-            : classifyProviderFailure(rawError, run.rows[event.index]!.players[event.pid]).summary;
-      }
-      if (row.kind === 'decision' || row.kind === 'game_reflection') {
-        const totals = run.spend.get(event.index) ?? { p1: { ms: 0, tokens: 0 }, p2: { ms: 0, tokens: 0 } };
-        if (row.kind === 'decision') totals[event.pid].ms += Number(row.latency_ms) || 0;
-        totals[event.pid].tokens += Number(row.total_tokens) || 0;
-        run.spend.set(event.index, totals);
-        if (row.kind === 'game_reflection') {
-          run.battleRevisions.set(event.index, (run.battleRevisions.get(event.index) ?? 0) + 1);
-          this.queueBattle(event.index);
-        }
-      }
-      if (row.kind === 'decision') {
-        const list = run.decisions.get(event.index) ?? [];
-        list.push({
-          game: Number(row.game_number) || 0,
-          turn: Number(row.turn) || 0,
-          pid: event.pid,
-          phase: typeof row.phase === 'string' ? row.phase.slice(0, 100) : '',
-          selection: Array.isArray(row.selection)
-            ? row.selection.slice(0, 16).map((value) => String(value).slice(0, 500))
-            : [],
-          rationale: typeof row.rationale === 'string' ? row.rationale.slice(0, 20_000) : '',
-          error,
-          automatic: row.automatic === true,
-          fallback: row.fallback === true,
-          substituted: typeof row.substitution_reason === 'string',
-        });
-        if (list.length > 400) list.splice(0, list.length - 400);
-        run.decisions.set(event.index, list);
-        run.battleRevisions.set(event.index, (run.battleRevisions.get(event.index) ?? 0) + 1);
-        this.queueBattle(event.index);
-      }
-      return;
-    } else if (event.type === 'game-end') {
-      const row = run.rows[event.index];
-      if (row) {
-        row.score = event.score;
-        row.game = event.game + 1;
-        row.turns += event.turns;
-      }
-    } else if (event.type === 'series-end') {
-      const row = run.rows[event.index];
-      if (row) {
-        row.status = 'done';
-        row.winner = typeof event.record.winner === 'string' ? event.record.winner : null;
-        row.score = event.record.score as Record<Pid, number>;
-        row.turns = Number(event.record.turns ?? row.turns);
-      }
-    }
-    this.queueRun();
   }
 
   private queueBattle(index: number): void {
@@ -1313,10 +735,4 @@ export class GuiServer {
     if (paste.length > 64_000) throw new HttpError(400, 'a team paste must be at most 64 KB');
     return inspectTeam(paste, format) as unknown as JsonObject;
   }
-}
-
-function clampInt(value: unknown, minimum: number, maximum: number, fallback: number): number {
-  const parsed = Number(value);
-  if (!Number.isInteger(parsed)) return fallback;
-  return Math.min(maximum, Math.max(minimum, parsed));
 }

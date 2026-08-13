@@ -323,7 +323,7 @@ export function TournamentsView({
             <p class="eyebrow">
               <span class="live-dot" aria-hidden="true" /> Live run / tournament
             </p>
-            <h1>{archive?.event?.name || 'Tournament live.'}</h1>
+            <h1>{archive?.event?.name || 'Live tournament'}</h1>
           </div>
           <p class="lede">
             The bracket and battle logs update live. Open a match to follow the field, model decisions, and turn-by-turn
@@ -353,11 +353,11 @@ export function TournamentsView({
       <header class="page-heading league-heading">
         <div>
           <p class="eyebrow">Records / tournaments</p>
-          <h1>Tournaments.</h1>
+          <h1>Tournaments</h1>
         </div>
         <p class="lede">
-          Single-elimination brackets, live and archived. A pool taken from a real event keeps that event's seeding, so
-          the top cut meets in the pairings the field earned. Each archive retains its own teams, schedule, and results.
+          Single-elimination brackets from local runs. Event pools keep their seeded slots while models are shuffled
+          across teams. Each record keeps its own teams, schedule, and results.
         </p>
       </header>
       {error ? <div class="message error">Could not load the brackets: {error}</div> : null}
@@ -379,9 +379,7 @@ export function TournamentsView({
           </div>
           {archives.length === 0 && !error ? (
             <section class="panel">
-              <div class="results-empty">
-                No tournaments recorded yet. Start one from the New run tab; finished brackets are archived here.
-              </div>
+              <div class="results-empty">No tournaments recorded yet.</div>
             </section>
           ) : (
             archives.map((archive) => (

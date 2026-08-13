@@ -17,18 +17,18 @@ const POSITION_STEPS = [
   },
   {
     index: '02',
-    title: 'Fork every legal action',
-    body: 'Branch the simulator down each action the rules accept for the tested seat.',
+    title: 'Fork each accepted action',
+    body: 'Generate actions from the live request, then keep the ones Showdown accepts for the tested seat.',
   },
   {
     index: '03',
-    title: 'Replay under shared luck',
-    body: 'Play every branch out with identical random draws, then score each action against a named baseline, with error bars.',
+    title: 'Evaluate with common draws',
+    body: 'Play every branch out with common random draws, then report its value under the named reference and sampling budget.',
   },
   {
     index: '04',
-    title: 'Wall off the answers',
-    body: 'Scores, scoring draws, and the opponent’s private view live in sealed artifacts, away from anything a model can read.',
+    title: 'Keep the answers private',
+    body: 'Keep scores, draws, snapshots, and the opponent’s private request in a separate private artifact root.',
   },
 ] as const;
 
@@ -89,36 +89,35 @@ function ConstructBoundary() {
       <div class="construct-grid">
         <article>
           <span>Battle position</span>
-          <h3>Was this move good?</h3>
+          <h3>How did this action compare?</h3>
           <p>
-            Rewind to any recorded turn and fork the simulator down every legal action, replaying each branch under the
-            same luck. The chosen move gets a score relative to its alternatives — specific to that position, that
-            opponent, and the horizon searched.
+            Rebuild a recorded turn and evaluate each request-derived action Showdown accepts under common random draws.
+            The submitted action gets a reference-relative score for that position, opponent, horizon, and sampling
+            budget.
           </p>
         </article>
         <article>
           <span>Connected episode</span>
-          <h3>Did the plan hold up?</h3>
+          <h3>Did later choices use the plan?</h3>
           <p>
-            A draft season forces early commitments: budget spent on ten Pokémon, a written plan for each opponent. The
-            season record shows whether later builds, trades, and battle turns actually used them.
+            A draft season makes each seat commit early: spend a budget on ten Pokémon, then plan and build for each
+            opponent. The record links those choices to later builds, trades, brings, and battle turns.
           </p>
         </article>
       </div>
       <aside class="construct-bridge">
-        <span>Bridge · internal infrastructure</span>
+        <span>Long episode · internal environment</span>
         <p>
-          Between the two sits a frozen matchday: one team-registration-to-best-of-three tie, replayed as a single
-          episode inside Prime Intellect’s verifiers library. The playing seat, its opponent, and the referee run
-          isolated from one another, and a private notebook is all that carries between games. Today it is internal
-          infrastructure; the support table records what has been verified.
+          The Draft Circuit packages one eight-seat season as a single verifiers episode. It connects eight separately
+          configured player runtimes to the TypeScript referee and pinned simulator. The internal package exists, but it
+          has not been published or validated for hosted execution.
         </p>
         <a
-          href={`${REPOSITORY_ROOT}/blob/main/docs/evaluation-plan.md#verifiers-boundary-and-target-architecture`}
+          href={`${REPOSITORY_ROOT}/blob/main/docs/evaluation-plan.md#vgc-draft-circuit-v1`}
           target="_blank"
           rel="noreferrer"
         >
-          Support table <span aria-hidden="true">↗</span>
+          Draft Circuit status <span aria-hidden="true">↗</span>
         </a>
       </aside>
       <div class="construct-boundary" role="note">
@@ -161,7 +160,7 @@ function StaticPositionMethod() {
         ))}
       </div>
       <aside class="method-status">
-        <p>Task packages ship only after these separations are verified.</p>
+        <p>The position task is still a prototype. It is not a released evaluation.</p>
         <a
           href={`${REPOSITORY_ROOT}/blob/main/docs/evaluation-plan.md#vgc-positions-v1`}
           target="_blank"
@@ -195,8 +194,8 @@ function ConnectedEpisodeMethod() {
       </ol>
       <div class="episode-boundary" role="note">
         The joins are mechanical: drafted to built, built to brought, submitted to accepted. Claims about adaptation or
-        plan-following need more evidence — complete records, controlled comparisons, and season-level error bars.
-        Standings describe a season; the decisions inside it are what get measured.
+        plan-following need complete records, controlled comparisons, and repeated whole-circuit runs. Standings
+        describe a season; they are not the result being measured.
       </div>
     </section>
   );
@@ -207,7 +206,7 @@ function RecordedTurn({ trace }: { trace: SelectedTraceView }) {
   return (
     <section class="method-section" aria-labelledby="recorded-turn-title">
       <header class="editorial-section-heading compact">
-        <p class="eyebrow">Artifact-backed demonstration</p>
+        <p class="eyebrow">Recorded example</p>
         <h2 id="recorded-turn-title">One recorded turn, fact by fact</h2>
         <p>Game 1, Turn 1 of a recorded series, pulled from the same published artifact as the home page.</p>
       </header>
@@ -281,10 +280,10 @@ function ValidityLimits() {
       </header>
       <div class="method-gap-grid">
         <article>
-          <h3>The yardstick has limits</h3>
+          <h3>The reference has limits</h3>
           <p>
             Short-horizon value under sampled opponent responses can miss setup moves, information plays, and long-term
-            positioning. Every score is relative to its baseline.
+            positioning. Every score is relative to its declared reference.
           </p>
         </article>
         <article>
@@ -341,7 +340,7 @@ export function MethodView({ trace, onOpenDocs }: MethodViewProps) {
       <header class="public-page-hero">
         <div>
           <p class="eyebrow">Method</p>
-          <h1>How the evaluation works</h1>
+          <h1>How the experiments work</h1>
         </div>
         <p class="public-page-intro">
           Language models play a competitive Pokémon draft league: they draft on a budget, build for specific opponents,

@@ -1,20 +1,14 @@
-import { useEffect, useRef, useState } from 'preact/hooks';
+import { useState } from 'preact/hooks';
 
-import type {
-  AppState,
-  ModelInfo,
-  ModelsResponse,
-  PokepasteResponse,
-  PoolInfo,
-  PoolTeamsResponse,
-  ProviderInfo,
-  RunSnapshot,
-  RunView,
-  ValidateResponse,
-} from '../../api';
-import { Dropdown, resolveOption } from '../components/dropdown';
+import { draftLeagueTopology } from '../../../draftleague-topology';
+
+import type { AppState, PoolInfo, PoolTeamsResponse, RunSnapshot, RunView } from '../../api';
+import { Dropdown } from '../components/dropdown';
 import { api } from '../http';
+import { buildStartRunRequest, type RunMode, runReadiness, type TeamSource } from '../lib/run-draft';
+import { keyStatus, useModelLineup } from '../lib/use-model-lineup';
 import { PoolsView } from './pools';
+import { type TeamAssignment, TeamEditor } from './team-editor';
 
 interface FixturesProps {
   app: AppState;
@@ -22,8 +16,6 @@ interface FixturesProps {
   onStarted: (run: RunSnapshot) => void;
   onPools: (pools: PoolInfo[]) => void;
 }
-
-type RunMode = 'match' | 'tournament' | 'draft' | 'rotation';
 
 const MODES: Array<{ id: RunMode; label: string; hint: string }> = [
   { id: 'match', label: 'Match', hint: 'Two models, two teams, one best-of-three' },
@@ -90,21 +82,6 @@ function pairings(models: string[]): Array<[string, string]> {
   return pairs;
 }
 
-function needsKey(providers: ProviderInfo[], spec: string): boolean {
-  if (spec === 'random') return false;
-  const providerId = spec.split(':')[0]!;
-  const info = providers.find((item) => item.id === providerId);
-  return info?.requiresKey ?? true;
-}
-
-function keyStatus(providers: ProviderInfo[], keys: Record<string, string>, spec: string) {
-  if (spec === 'random') return { text: 'Random baseline', cls: '' };
-  if (keys[spec]) return { text: 'Run-only key ready', cls: 'good' };
-  return needsKey(providers, spec)
-    ? { text: 'Bring an API key', cls: 'bad' }
-    : { text: 'No key required', cls: 'warn' };
-}
-
 function bracketPreview(count: number): string {
   if (count < 2) return '';
   if (count === 2) return 'A direct final. One best-of-three decides it.';
@@ -118,244 +95,34 @@ function bracketPreview(count: number): string {
 const HEADINGS: Record<RunMode, { eyebrow: string; title: [string, string]; lede: string }> = {
   match: {
     eyebrow: 'Exhibition match',
-    title: ['Set up an', 'exhibition match.'],
+    title: ['Set up an', 'exhibition match'],
     lede: 'Pick two models and assign each a team from a pool or a Poképaste export. The match runs on the pinned Pokémon Showdown simulator.',
   },
   tournament: {
     eyebrow: 'Tournament',
-    title: ['Set up a', 'tournament.'],
+    title: ['Set up a', 'tournament'],
     lede: 'Assign each model a team from a pool draw or by hand. Models keep that team through a single-elimination best-of-three bracket.',
   },
   draft: {
     eyebrow: 'Draft league',
-    title: ['Set up a', 'draft league.'],
-    lede: 'Coaches snake-draft ten Pokémon each inside a points budget, then before every match pick six and build each set themselves. A weekly round robin, then playoffs.',
+    title: ['Set up a', 'draft league'],
+    lede: 'Coaches snake-draft ten Pokémon each under a points budget, then build six for each matchup. A full season adds a round robin, roster window, and playoffs.',
   },
   rotation: {
     eyebrow: 'Rotation run',
-    title: ['Set up a', 'rotation run.'],
-    lede: 'Pick an immutable team pool and at least two models. Every pairing plays mirrored best-of-three series. Results append to the local record book.',
+    title: ['Set up a', 'rotation run'],
+    lede: 'Pick an immutable team pool and at least two models. Every pairing plays mirrored best-of-three series. Results append to the local records.',
   },
 };
 
-export interface TeamAssignment {
-  paste: string;
-  label: string;
-}
-
-function TeamEditor({
-  slot,
-  spec,
-  team,
-  pools,
-  poolTeams,
-  onLoadPool,
-  onAssign,
-  formatLabel,
-  format,
-  onDone,
-}: {
-  slot: number;
-  spec: string;
-  team: TeamAssignment | null;
-  pools: PoolInfo[];
-  poolTeams: Record<string, PoolTeamsResponse | 'loading' | { error: string } | undefined>;
-  onLoadPool: (name: string, force?: boolean) => void;
-  onAssign: (team: TeamAssignment | null, format?: string) => void;
-  formatLabel: string;
-  format: string;
-  onDone: () => void;
-}) {
-  const [selPool, setSelPool] = useState(
-    () => pools.find((info) => info.name !== 'test')?.name ?? pools[0]?.name ?? '',
-  );
-  const [selTeam, setSelTeam] = useState('');
-  const [problems, setProblems] = useState<string[]>([]);
-  const [checking, setChecking] = useState(false);
-  const [pasteLink, setPasteLink] = useState('');
-  const [importing, setImporting] = useState(false);
-  useEffect(() => {
-    if (selPool) onLoadPool(selPool);
-  }, [selPool]);
-  const loaded = poolTeams[selPool];
-  const teams = loaded && typeof loaded === 'object' && 'teams' in loaded ? loaded : null;
-  const teamOptions = teams ? teams.teams.map((entry) => ({ value: entry.name, label: entry.name })) : [];
-  const insert = () => {
-    if (!teams) return;
-    const found = teams.teams.find((entry) => entry.name === selTeam);
-    if (!found) return;
-    onAssign({ paste: found.paste, label: `${selPool} · ${found.name}` }, teams.format);
-    onDone();
-  };
-  const validatePaste = (paste: string) => {
-    if (!paste.trim()) return;
-    setChecking(true);
-    setProblems([]);
-    api<ValidateResponse>('/api/team/validate', { paste, format })
-      .then((data) => {
-        if (data.problems.length) {
-          setProblems(data.problems);
-          return;
-        }
-        onAssign({ paste, label: `Pasted team ✓ (${data.species.length})` });
-        onDone();
-      })
-      .catch((error: Error) => setProblems([error.message]))
-      .finally(() => setChecking(false));
-  };
-  const importPokepaste = () => {
-    if (!pasteLink.trim() || importing) return;
-    setImporting(true);
-    setProblems([]);
-    api<PokepasteResponse>('/api/team/pokepaste', { url: pasteLink.trim() })
-      .then((data) => {
-        onAssign({ paste: data.paste, label: 'Poképaste import' });
-        setPasteLink('');
-        validatePaste(data.paste);
-      })
-      .catch((error: Error) => setProblems([error.message]))
-      .finally(() => setImporting(false));
-  };
-  const clearTeam = () => {
-    setProblems([]);
-    setPasteLink('');
-    onAssign(null);
-  };
-  return (
-    <div class="team-editor">
-      <div class="team-editor-head">
-        <b>
-          Team {String.fromCharCode(65 + slot)} · {spec}
-        </b>
-        <span>{formatLabel} · Poképaste export</span>
-      </div>
-      {pools.length > 0 && (
-        <div class="team-editor-pool">
-          <Dropdown
-            id={`teamPool${slot}`}
-            label="From pool"
-            options={pools.map((info) => ({
-              value: info.name,
-              label: info.name,
-              description: `${info.teamCount} teams`,
-            }))}
-            value={selPool}
-            onChange={(name) => {
-              setSelPool(name);
-              setSelTeam('');
-            }}
-          />
-          <Dropdown
-            id={`teamPick${slot}`}
-            label="Pool team"
-            options={teamOptions}
-            value={selTeam}
-            onChange={setSelTeam}
-            placeholder={
-              loaded === 'loading'
-                ? 'Loading teams…'
-                : loaded && typeof loaded === 'object' && 'error' in loaded
-                  ? 'Pool teams unavailable'
-                  : 'Pick a team'
-            }
-            disabled={loaded === 'loading' || (loaded !== undefined && typeof loaded === 'object' && 'error' in loaded)}
-          />
-          <button type="button" class="button" disabled={!selTeam || !teams} onClick={insert}>
-            Use this team
-          </button>
-        </div>
-      )}
-      {loaded && typeof loaded === 'object' && 'error' in loaded && (
-        <div class="message error" role="alert">
-          {loaded.error}{' '}
-          <button type="button" class="button" onClick={() => onLoadPool(selPool, true)}>
-            Retry
-          </button>
-        </div>
-      )}
-      <div class="field">
-        <label class="field-label" for={`teamLink${slot}`}>
-          Import from a Poképaste link
-        </label>
-        <div class="paste-import">
-          <input
-            id={`teamLink${slot}`}
-            autocomplete="off"
-            spellcheck={false}
-            placeholder="https://pokepast.es/0123456789abcdef"
-            value={pasteLink}
-            onInput={(event) => setPasteLink(event.currentTarget.value)}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter') importPokepaste();
-            }}
-          />
-          <button type="button" class="button" disabled={importing || !pasteLink.trim()} onClick={importPokepaste}>
-            {importing ? 'Importing…' : 'Import'}
-          </button>
-        </div>
-      </div>
-      <div class="field">
-        <label class="field-label" for={`teamPaste${slot}`}>
-          Or paste a team
-        </label>
-        <textarea
-          id={`teamPaste${slot}`}
-          rows={8}
-          spellcheck={false}
-          value={team?.paste ?? ''}
-          onInput={(event) => {
-            const value = event.currentTarget.value;
-            setProblems([]);
-            onAssign(value.trim() ? { paste: value, label: 'Pasted team' } : null);
-          }}
-        />
-        <div class="paste-actions">
-          <button
-            type="button"
-            class="button"
-            disabled={checking || !team?.paste.trim()}
-            onClick={() => validatePaste(team?.paste ?? '')}
-          >
-            {checking ? 'Validating…' : 'Validate team'}
-          </button>
-          <button type="button" class="button" disabled={checking || !team} onClick={clearTeam}>
-            Clear team
-          </button>
-        </div>
-        {problems.length > 0 && (
-          <div class="message error" role="alert">
-            {problems.join('\n')}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
 export function FixturesView({ app, run, onStarted, onPools }: FixturesProps) {
-  const providers = app.providers.filter((provider) => provider.id !== 'random');
   const [mode, setMode] = useState<RunMode>('match');
   const board = app.boards[0] ?? null;
-  const [models, setModels] = useState<string[]>([]);
-  const [reasoningLevelsByModel, setReasoningLevelsByModel] = useState<Record<string, string[]>>({});
-  const apiKeysRef = useRef<Record<string, string>>({});
-  const catalogKeyRef = useRef('');
-  const providerSessionsRef = useRef<Record<string, { key: string; catalog: ModelInfo[] }>>({});
-  const catalogGenerationRef = useRef(0);
-  const [providerId, setProviderId] = useState(providers[0]?.id ?? '');
-  const [apiKeyText, setApiKeyText] = useState('');
-  const [keyHeld, setKeyHeld] = useState(false);
-  const [catalog, setCatalog] = useState<ModelInfo[]>([]);
-  const [catalogProvider, setCatalogProvider] = useState('');
-  const [modelText, setModelText] = useState('');
-  const [loadingModels, setLoadingModels] = useState(false);
-  const [setupMsg, setSetupMsg] = useState('');
   const [launchMsg, setLaunchMsg] = useState('');
-  const [manualSpec, setManualSpec] = useState('');
   const [pool, setPool] = useState(
     () => app.pools.find((info) => info.name !== 'test')?.name ?? app.pools[0]?.name ?? '',
   );
-  const [teamSource, setTeamSource] = useState<'pool' | 'custom'>('pool');
+  const [teamSource, setTeamSource] = useState<TeamSource>('pool');
   const [teamBySlot, setTeamBySlot] = useState<Array<TeamAssignment | null>>([]);
   const [editingTeam, setEditingTeam] = useState<number | null>(null);
   const [assignFormat, setAssignFormat] = useState(app.defaultFormat);
@@ -369,22 +136,73 @@ export function FixturesView({ app, run, onStarted, onPools }: FixturesProps) {
   const [draftOnly, setDraftOnly] = useState(false);
   const [tradeWindow, setTradeWindow] = useState('default');
   const [nitro, setNitro] = useState(false);
-  const [reasoning, setReasoning] = useState('');
-  const [sharedReasoning, setSharedReasoning] = useState(true);
-  const [reasoningByModel, setReasoningByModel] = useState<Record<string, string>>({});
   const [timerScale, setTimerScale] = useState('off');
   const [seed, setSeed] = useState('');
   const [starting, setStarting] = useState(false);
-
-  const provider = providers.find((item) => item.id === providerId) ?? null;
-  const discoverable = provider?.discovery === 'list';
   const maxModels = mode === 'match' ? 2 : mode === 'draft' ? Math.min(8, board?.maxEntrants ?? 8) : 8;
-  const draftWeeks = models.length < 2 ? 7 : models.length % 2 === 0 ? models.length - 1 : models.length;
+  const lineup = useModelLineup({
+    app,
+    mode,
+    maxModels,
+    onAddSlot: (slot) => {
+      const sample = mode === 'match' ? app.sampleTeams[slot] : undefined;
+      setTeamBySlot((previous) => [
+        ...previous,
+        sample ? { paste: sample.paste, label: `Sample · ${sample.name}` } : null,
+      ]);
+    },
+    onRemoveSlot: (slot) => {
+      setEditingTeam(null);
+      setTeamBySlot((previous) => {
+        const next = [...previous];
+        next.splice(slot, 1);
+        return next;
+      });
+    },
+  });
+  const {
+    providers,
+    models,
+    provider,
+    providerId,
+    setProviderId,
+    discoverable,
+    apiKeyText,
+    setApiKeyText,
+    keyHeld,
+    catalog,
+    modelText,
+    setModelText,
+    modelOptions,
+    loadingModels,
+    setupMsg,
+    setSetupMsg,
+    manualSpec,
+    setManualSpec,
+    reasoning,
+    setReasoning,
+    sharedReasoning,
+    reasoningByModel,
+    setReasoningByModel,
+    reasoningLevelsByModel,
+    reasoningModels,
+    sharedReasoningLevels,
+    addModel,
+    removeModel,
+    connect,
+    addFromCatalog,
+    addManual,
+    selectSharedReasoning,
+    selectIndividualReasoning,
+    clearCatalogKey,
+  } = lineup;
+  const draftTopology = draftLeagueTopology(models.length);
+  const draftWeeks = models.length < 2 ? 7 : draftTopology.weekCount;
   const tradeWindowOptions = [
     {
       value: 'default',
       label: 'Mid-season trade window (default)',
-      description: 'Coach trades run before free agency after week 3, or the final week in a shorter league.',
+      description: `Coach trades run before free agency after week ${Math.min(3, draftWeeks)}.`,
     },
     {
       value: 'off',
@@ -400,96 +218,6 @@ export function FixturesView({ app, run, onStarted, onPools }: FixturesProps) {
       })),
   ];
   const teamsMode = mode === 'match' || (mode === 'tournament' && teamSource === 'custom');
-  const lineupRef = useRef({ models, maxModels, mode });
-  lineupRef.current = { models, maxModels, mode };
-  const reasoningModels = models.filter((model) => model !== 'random');
-  const sharedReasoningLevels =
-    reasoningModels.length > 0
-      ? (reasoningLevelsByModel[reasoningModels[0]!] ?? []).filter((level) =>
-          reasoningModels.every((model) => reasoningLevelsByModel[model]?.includes(level)),
-        )
-      : [];
-  const sharedReasoningKey = sharedReasoningLevels.join('\0');
-
-  useEffect(() => {
-    catalogGenerationRef.current += 1;
-    setLoadingModels(false);
-    setApiKeyText('');
-    setKeyHeld(false);
-    setSetupMsg('');
-    setModelText('');
-    catalogKeyRef.current = '';
-    const session = providerSessionsRef.current[providerId];
-    if (session) {
-      setCatalog(session.catalog);
-      setCatalogProvider(providerId);
-      catalogKeyRef.current = session.key;
-      setKeyHeld(true);
-    } else {
-      setCatalog([]);
-      setCatalogProvider('');
-    }
-  }, [providerId]);
-
-  useEffect(() => {
-    if (reasoning && !sharedReasoningLevels.includes(reasoning)) setReasoning('');
-  }, [reasoning, sharedReasoningKey]);
-
-  const addModel = (spec: string, key: string, supportedReasoning: string[] = []) => {
-    setSetupMsg('');
-    const { models: current, maxModels: limit, mode: currentMode } = lineupRef.current;
-    if (current.length >= limit) {
-      setSetupMsg(
-        currentMode === 'match' ? 'An exhibition match takes exactly two models.' : `At most ${limit} models.`,
-      );
-      return;
-    }
-    const slot = current.length;
-    if (key.trim()) apiKeysRef.current[spec] = key.trim();
-    setReasoningLevelsByModel((previous) => ({ ...previous, [spec]: supportedReasoning }));
-    const sample = currentMode === 'match' ? app.sampleTeams[slot] : undefined;
-    setTeamBySlot((previous) => [
-      ...previous,
-      sample ? { paste: sample.paste, label: `Sample · ${sample.name}` } : null,
-    ]);
-    setModels((previous) => (previous.length >= limit ? previous : [...previous, spec]));
-    lineupRef.current = { models: [...current, spec], maxModels: limit, mode: currentMode };
-  };
-
-  const removeModel = (index: number) => {
-    setEditingTeam(null);
-    setTeamBySlot((previous) => {
-      const next = [...previous];
-      next.splice(index, 1);
-      return next;
-    });
-    setModels((previous) => {
-      const next = [...previous];
-      const [removed] = next.splice(index, 1);
-      if (removed !== undefined && !next.includes(removed)) {
-        delete apiKeysRef.current[removed];
-        const removedProvider = removed.split(':')[0]!;
-        if (!next.some((spec) => spec.startsWith(`${removedProvider}:`))) {
-          delete providerSessionsRef.current[removedProvider];
-          if (catalogProvider === removedProvider) {
-            catalogKeyRef.current = '';
-            setKeyHeld(false);
-          }
-        }
-        setReasoningLevelsByModel((levels) => {
-          const updated = { ...levels };
-          delete updated[removed];
-          return updated;
-        });
-        setReasoningByModel((levels) => {
-          const updated = { ...levels };
-          delete updated[removed];
-          return updated;
-        });
-      }
-      return next;
-    });
-  };
 
   const loadPoolTeams = (name: string, force = false) => {
     if (!name) return;
@@ -515,150 +243,36 @@ export function FixturesView({ app, run, onStarted, onPools }: FixturesProps) {
     if (format) setAssignFormat(format);
   };
 
-  const connect = () => {
-    const apiKey = apiKeyText.trim();
-    const selectedProvider = providerId;
-    const generation = ++catalogGenerationRef.current;
-    setSetupMsg('');
-    if (!apiKey) {
-      setSetupMsg(`Paste your ${providerId} API key to load its current models.`);
-      return;
-    }
-    setLoadingModels(true);
-    api<ModelsResponse>('/api/models', { provider: selectedProvider, apiKey })
-      .then((data) => {
-        if (generation !== catalogGenerationRef.current) return;
-        setCatalog(data.models);
-        setCatalogProvider(selectedProvider);
-        catalogKeyRef.current = apiKey;
-        providerSessionsRef.current[selectedProvider] = { key: apiKey, catalog: data.models };
-        for (const spec of lineupRef.current.models) {
-          if (spec.startsWith(`${selectedProvider}:`)) apiKeysRef.current[spec] = apiKey;
-        }
-        setModelText('');
-        setApiKeyText('');
-        setKeyHeld(true);
-      })
-      .catch((error: Error) => {
-        if (generation !== catalogGenerationRef.current) return;
-        setCatalog([]);
-        setCatalogProvider('');
-        catalogKeyRef.current = '';
-        setSetupMsg(error.message);
-      })
-      .finally(() => {
-        if (generation === catalogGenerationRef.current) setLoadingModels(false);
-      });
-  };
-
-  const addFromCatalog = () => {
-    if (!provider || !catalog.length) return;
-    const option = resolveOption(modelOptions, modelText);
-    if (!option) {
-      setSetupMsg('Pick a model from the search list first.');
-      return;
-    }
-    const spec = `${provider.id}:${option.value}`;
-    const key = catalogKeyRef.current && catalogProvider === provider.id ? catalogKeyRef.current : apiKeyText.trim();
-    if (needsKey(providers, spec) && !key) {
-      setSetupMsg(`Paste a run-only ${provider.label} key first.`);
-      return;
-    }
-    addModel(spec, key, catalog.find((model) => model.id === option.value)?.reasoningLevels ?? []);
-    setApiKeyText('');
-    setModelText('');
-  };
-
-  const addManual = () => {
-    if (provider?.discovery !== 'manual') return;
-    const model = manualSpec.trim();
-    if (!model) return;
-    const spec = `${provider.id}:${model}`;
-    const key = apiKeyText.trim();
-    if (!key) {
-      setSetupMsg(`Paste a run-only ${provider.label} key first.`);
-      return;
-    }
-    setSetupMsg('');
-    addModel(spec, key);
-    setManualSpec('');
-    setApiKeyText('');
-  };
-
-  const selectSharedReasoning = () => {
-    const configured = reasoningModels.map((model) => reasoningByModel[model] ?? '');
-    const first = configured[0] ?? '';
-    setReasoning(
-      first && configured.every((level) => level === first) && sharedReasoningLevels.includes(first) ? first : '',
-    );
-    setSharedReasoning(true);
-  };
-
-  const selectIndividualReasoning = () => {
-    if (reasoning) {
-      setReasoningByModel((previous) => ({
-        ...previous,
-        ...Object.fromEntries(reasoningModels.map((model) => [model, reasoning])),
-      }));
-    }
-    setSharedReasoning(false);
-  };
-
   const start = () => {
     setLaunchMsg('');
     setStarting(true);
-    const apiKeys: Record<string, string> = {};
-    for (const spec of models) if (apiKeysRef.current[spec]) apiKeys[spec] = apiKeysRef.current[spec]!;
-    const selectedReasoning = Object.fromEntries(
-      Object.entries(reasoningByModel).filter(([model, level]) => models.includes(model) && level),
-    );
-    const reasoningRequest = sharedReasoning
-      ? { ...(reasoning ? { reasoning } : {}) }
-      : { ...(Object.keys(selectedReasoning).length ? { reasoningByModel: selectedReasoning } : {}) };
-    const request = {
+    const request = buildStartRunRequest({
+      mode,
       models,
-      apiKeys,
-      seed: seed.trim(),
-      ...reasoningRequest,
-      ...(nitro ? { nitro: true } : {}),
-      timerScale: timerScale === 'off' ? 'off' : Number(timerScale),
-      ...(mode === 'match'
-        ? {
-            mode: 'tournament',
-            teams: models.map((_, index) => teamBySlot[index]?.paste ?? ''),
-            format: assignFormat,
-            concurrency: 1,
-          }
-        : mode === 'tournament'
-          ? teamSource === 'custom'
-            ? {
-                mode: 'tournament',
-                teams: models.map((_, index) => teamBySlot[index]?.paste ?? ''),
-                format: assignFormat,
-                concurrency: Number(concurrency),
-              }
-            : { mode: 'tournament', pool, concurrency: Number(concurrency) }
-          : mode === 'draft'
-            ? {
-                mode: 'draft',
-                board: board?.id ?? '',
-                concurrency: Number(concurrency),
-                ...(closedSheets ? { closedSheets: true } : {}),
-                ...(sequentialWeeks ? { sequentialWeeks: true } : {}),
-                ...(draftOnly ? { draftOnly: true } : {}),
-                ...(tradeWindow === 'default'
-                  ? {}
-                  : { tradeWindow: tradeWindow === 'off' ? null : { afterWeek: Number(tradeWindow) } }),
-              }
-            : { pool, seriesPerPair: Number(series), concurrency: Number(concurrency) }),
-    };
+      apiKeys: lineup.apiKeys(),
+      teamBySlot,
+      teamSource,
+      assignFormat,
+      pool,
+      series,
+      concurrency,
+      closedSheets,
+      sequentialWeeks,
+      draftOnly,
+      tradeWindow,
+      nitro,
+      sharedReasoning,
+      reasoning,
+      reasoningByModel,
+      timerScale,
+      seed,
+      board: board?.id ?? '',
+    });
     api('/api/run', request)
       .then(() => api<AppState>('/api/state'))
       .then((state) => {
         if (!state.run) throw new Error('The run started, but its live state is unavailable.');
-        catalogKeyRef.current = '';
-        setApiKeyText('');
-        setKeyHeld(false);
+        clearCatalogKey();
         onStarted(state.run);
       })
       .catch((error: Error) => setLaunchMsg(error.message))
@@ -666,11 +280,6 @@ export function FixturesView({ app, run, onStarted, onPools }: FixturesProps) {
   };
 
   const providerOptions = providers.map((item) => ({ value: item.id, label: item.label }));
-  const modelOptions = catalog.map((model) => ({
-    value: model.id,
-    label: model.id,
-    ...(model.label && model.label !== model.id ? { description: model.label } : {}),
-  }));
   const poolOptions = app.pools.map((info) => ({
     value: info.name,
     label: info.name,
@@ -689,55 +298,21 @@ export function FixturesView({ app, run, onStarted, onPools }: FixturesProps) {
   ];
   const pairs = pairings(models);
   const seriesPerPair = Math.max(1, Number(series) || 1);
-  const draftSeries = models.length >= 2 ? pairs.length + (models.length >= 4 ? 3 : 1) : 0;
   const total =
     mode === 'rotation'
       ? pairs.length * seriesPerPair
       : mode === 'draft'
-        ? draftSeries
+        ? draftOnly
+          ? 0
+          : draftTopology.totalSeries
         : Math.max(0, models.length - 1);
-  const active = run?.state === 'running' || run?.state === 'paused';
-  const missingKeys = models.filter((spec) => needsKey(providers, spec) && !apiKeysRef.current[spec]);
   const poolInfo = app.pools.find((info) => info.name === pool);
   const shownPairs = pairs.slice(0, 8);
   const heading = HEADINGS[mode];
   const formatLabel = app.formats.find((info) => info.id === assignFormat)?.label ?? assignFormat;
-
-  const missingTeam = teamsMode && models.some((_, index) => !teamBySlot[index]?.paste.trim());
-  const poolTooSmall =
-    mode === 'tournament' && teamSource === 'pool' && poolInfo !== undefined && poolInfo.teamCount < models.length;
-  const boardOverflow = mode === 'draft' && (!board || models.length > board.maxEntrants);
-  const startDisabled =
-    models.length < 2 ||
-    active ||
-    missingKeys.length > 0 ||
-    starting ||
-    (mode === 'match'
-      ? models.length !== 2 || missingTeam
-      : mode === 'draft'
-        ? boardOverflow
-        : mode === 'tournament' && teamSource === 'custom'
-          ? missingTeam
-          : !pool || poolTooSmall);
-  const startLabel = active
-    ? 'Run already in progress'
-    : models.length < 2
-      ? 'Add two models'
-      : missingKeys.length
-        ? 'Add run-only API keys'
-        : mode === 'match'
-          ? models.length !== 2
-            ? 'Exactly two models'
-            : missingTeam
-              ? 'Assign both teams'
-              : 'Start the match'
-          : mode === 'tournament'
-            ? missingTeam
-              ? 'Assign every team'
-              : `Start the ${models.length}-model bracket`
-            : mode === 'draft'
-              ? `Start the ${models.length}-coach draft`
-              : `Start ${total} series`;
+  const apiKeys = lineup.apiKeys();
+  const readiness = runReadiness({ mode, models, apiKeys, teamBySlot, teamSource, pool, series }, app, run, starting);
+  const { active, missingKeys, missingTeam, poolTooSmall, boardOverflow } = readiness;
   const launchNote = active
     ? run?.state === 'paused'
       ? 'Resume or stop the current run before starting another.'
@@ -758,7 +333,9 @@ export function FixturesView({ app, run, onStarted, onPools }: FixturesProps) {
             ? boardOverflow
               ? `Board ${board?.id ?? ''} supports at most ${board?.maxEntrants ?? 0} coaches.`
               : models.length >= 2
-                ? `${models.length * (board?.picks ?? 10)} picks, then ${pairs.length} round-robin and ${models.length >= 4 ? 3 : 1} playoff series, each preceded by two teambuilds.`
+                ? draftOnly
+                  ? `${models.length * (board?.picks ?? 10)} picks; the run ends when every roster is drafted.`
+                  : `${models.length * (board?.picks ?? 10)} picks, then ${draftTopology.roundRobinSeries} round-robin and ${draftTopology.playoffSeries} playoff series, each preceded by two teambuilds.`
                 : 'Add models to shape the draft.'
             : pairs.length
               ? `${total} best-of-three series, mirrored in pairs · up to ${concurrency} in parallel.`
@@ -837,7 +414,7 @@ export function FixturesView({ app, run, onStarted, onPools }: FixturesProps) {
               </div>
             ) : (
               models.map((spec, index) => {
-                const status = keyStatus(providers, apiKeysRef.current, spec);
+                const status = keyStatus(providers, apiKeys, spec);
                 const team = teamBySlot[index] ?? null;
                 const identity = (
                   <span class="contender-name">
@@ -1002,7 +579,9 @@ export function FixturesView({ app, run, onStarted, onPools }: FixturesProps) {
                       : 'Waiting for models'
                     : mode === 'draft'
                       ? models.length >= 2
-                        ? `${models.length} coaches · ${total} series after the draft`
+                        ? draftOnly
+                          ? `${models.length} coaches · draft only`
+                          : `${models.length} coaches · ${total} series after the draft`
                         : 'Waiting for models'
                       : pairs.length
                         ? `${pairs.length} matchup${pairs.length === 1 ? '' : 's'} · ${total} series · mirrored in pairs`
@@ -1023,12 +602,17 @@ export function FixturesView({ app, run, onStarted, onPools }: FixturesProps) {
               ) : mode === 'draft' ? (
                 models.length < 2 ? (
                   <p class="muted">Add at least two models to plan the draft.</p>
+                ) : draftOnly ? (
+                  <p class="muted">
+                    Snake draft over {board?.monCount ?? '?'} priced species with a {board?.budget ?? '?'}-point budget.
+                    The run records every pick and any supplied rationale, then stops with the completed rosters.
+                  </p>
                 ) : (
                   <p class="muted">
                     Snake draft over {board?.monCount ?? '?'} priced species with a {board?.budget ?? '?'}-point budget.
-                    Coaches rebuild their six before every match. A weekly round robin then seeds the{' '}
-                    {models.length >= 4 ? 'top-four playoffs' : 'final'}. Picks, teambuilds and rationale appear live in
-                    the draft league view.
+                    Coaches rebuild their six before every matchup. The round robin seeds a{' '}
+                    {draftTopology.playoffEntrants === 4 ? 'top-four playoff' : 'two-coach final'}. Picks, teambuilds,
+                    and any supplied rationale appear in the draft league view.
                   </p>
                 )
               ) : mode === 'tournament' ? (
@@ -1068,7 +652,7 @@ export function FixturesView({ app, run, onStarted, onPools }: FixturesProps) {
         <aside class="panel settings" aria-labelledby="settingsTitle">
           <div class="section-head">
             <div>
-              <p class="eyebrow">Launch</p>
+              <p class="eyebrow">Start</p>
               <h2 id="settingsTitle">Run settings</h2>
             </div>
           </div>
@@ -1288,8 +872,8 @@ export function FixturesView({ app, run, onStarted, onPools }: FixturesProps) {
                 />
                 <p class="reasoning-help">
                   {timerScale === 'off'
-                    ? 'Models reason at full length every decision; token spend can be far larger than a timed run.'
-                    : 'The Showdown clock caps thinking time, so slow providers can lose decisions to the timer.'}
+                    ? 'No Showdown clock is applied. Provider calls still have failure guards.'
+                    : 'The Showdown clock caps decision time, so a slow provider can lose a turn to the timer.'}
                 </p>
               </div>
               <div class="field wide">
@@ -1306,8 +890,8 @@ export function FixturesView({ app, run, onStarted, onPools }: FixturesProps) {
               </div>
             </div>
             <div class="run-launch">
-              <button type="button" class="button primary" disabled={startDisabled} onClick={start}>
-                {startLabel}
+              <button type="button" class="button primary" disabled={readiness.disabled} onClick={start}>
+                {readiness.label}
               </button>
               <p class="launch-note">{launchNote}</p>
               {launchMsg && (

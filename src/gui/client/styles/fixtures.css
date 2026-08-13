@@ -1,6 +1,4 @@
 /* biome-ignore-all format: one maintained selector per line */
-.access-gate { max-width: 680px; padding: 28px 30px 32px; }
-.access-gate .button { margin-top: 18px; }
 .fixture-layout { display: grid; grid-template-columns: minmax(0, 1.65fr) minmax(300px, .75fr); gap: 20px; align-items: start; }
 .stage { position: relative; border-top: 4px solid var(--yellow); }
 .settings { position: sticky; top: 98px; border-top: 4px solid var(--blue-dark); }
@@ -128,7 +126,6 @@ button.contender-main:hover .contender-name { color: var(--blue-dark); }
   .draft-head { grid-template-columns: 34px minmax(0, 1fr) auto; }
   .draft-summary { display: none; }
   .team-sheet, .pool-list { grid-template-columns: 1fr 1fr; }
-  .access-gate { padding: 22px 18px 26px; }
   .section-nav { max-width: 100%; overflow-x: auto; overscroll-behavior-inline: contain; }
   .section-tab { flex: 0 0 auto; min-height: 42px; }
 }

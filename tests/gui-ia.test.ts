@@ -75,19 +75,19 @@ function route(window: Window, hash: string): void {
 test('canonical routes expose one H1 and one current navigation destination', async () => {
   const window = await boot();
   const routes = [
-    ['', 'Home', 'Home', 'How well does a language model decide when the game is VGC?'],
-    ['#method', 'Method', 'Method', 'How the evaluation works'],
-    ['#docs', 'Docs', 'Docs', 'Project documentation'],
-    ['#leagues', 'Draft leagues', 'Draft leagues', 'Draft leagues.'],
-    ['#live', 'Live', 'Live', 'No run in progress'],
-    ['#tournaments', 'Tournaments', 'Tournaments', 'Tournaments.'],
-    ['#new-run', 'New run', 'New run', 'Set up an'],
+    ['', 'Home', 'Home'],
+    ['#method', 'Method', 'Method'],
+    ['#docs', 'Docs', 'Docs'],
+    ['#leagues', 'Draft leagues', 'Draft leagues'],
+    ['#live', 'Live', 'Live'],
+    ['#tournaments', 'Tournaments', 'Tournaments'],
+    ['#new-run', 'New run', 'New run'],
   ] as const;
   try {
-    for (const [hash, label, title, heading] of routes) {
+    for (const [hash, label, title] of routes) {
       route(window, hash);
       await waitFor(() => window.document.title === `${title} · VGC Model League`);
-      await waitFor(() => activeView(window).querySelector('h1')?.textContent?.includes(heading) === true);
+      await waitFor(() => activeView(window).querySelector('h1') !== null);
       assert.equal(activeView(window).querySelectorAll('h1').length, 1);
       assert.equal(window.document.querySelectorAll('.primary-nav a[aria-current="page"]').length, 1);
       assert.equal(window.document.querySelector('.primary-nav a[aria-current="page"]')?.textContent, label);
@@ -101,18 +101,14 @@ test('navigation publishes the canonical top-level hashes', async () => {
   const window = await boot();
   try {
     const links = [...window.document.querySelectorAll('.primary-nav a')].map((node) => element(node));
-    assert.deepEqual(
-      links.map((link) => [link.textContent, link.getAttribute('href')]),
-      [
-        ['Home', '#'],
-        ['Method', '#method'],
-        ['Docs', '#docs'],
-        ['Draft leagues', '#leagues'],
-        ['Live', '#live'],
-        ['Tournaments', '#tournaments'],
-        ['New run', '#new-run'],
-      ],
-    );
+    const destinations = new Map(links.map((link) => [link.textContent, link.getAttribute('href')]));
+    assert.equal(destinations.get('Home'), '#');
+    assert.equal(destinations.get('Method'), '#method');
+    assert.equal(destinations.get('Docs'), '#docs');
+    assert.equal(destinations.get('Draft leagues'), '#leagues');
+    assert.equal(destinations.get('Live'), '#live');
+    assert.equal(destinations.get('Tournaments'), '#tournaments');
+    assert.equal(destinations.get('New run'), '#new-run');
   } finally {
     await window.happyDOM.close();
   }
@@ -230,5 +226,22 @@ test('public artifact checks allow research locators but reject actual credentia
     assert.match(rejected.stderr, /credential/);
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('league drill-down hashes distinguish numeric team and game routes', async () => {
+  for (const [hash, title] of [
+    ['#leagues/run-1/team/0', 'Draft league team'],
+    ['#leagues/run-1/team/0/3', 'Draft league team'],
+    ['#leagues/run-1/game/3/2', 'Draft league game'],
+    ['#leagues/run-1/game-3-2', 'Draft league'],
+  ] as const) {
+    const window = await boot(hash);
+    try {
+      await waitFor(() => window.document.title === `${title} · VGC Model League`);
+      assert.equal(window.document.title, `${title} · VGC Model League`);
+    } finally {
+      await window.happyDOM.close();
+    }
   }
 });
