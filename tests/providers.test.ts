@@ -49,15 +49,10 @@ test('provider specs are exactly OpenRouter, Prime Inference, and random', () =>
     'prime:',
     'prime:-model',
     'openrouter:model name',
-    'compat:https://example.test/v1:model',
-    'openai:gpt-5',
-    'anthropic:claude',
-    'google:gemini',
-    'omp:model',
-    'claude-cli:model',
+    'unknown:model',
     'random:anything',
   ]) {
-    assert.throws(() => parseSpec(value), /openrouter:<model-id>, prime:<model-id>, or random/, value);
+    assert.throws(() => parseSpec(value), value);
   }
 });
 

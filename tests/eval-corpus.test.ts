@@ -12,11 +12,12 @@ import {
   loadGameRecordCorpus,
   verifyGame,
 } from '../src/eval/corpus.js';
-import { type GameSource, newBattle, omniscientLog, pendingSides, requestActionCandidates } from '../src/eval/fork.js';
+import { type GameSource, newBattle, pendingSides } from '../src/eval/fork.js';
 import { defaultPsDir } from '../src/paths.js';
 import { showdownCommit } from '../src/showdown.js';
 import { loadPool } from '../src/teams.js';
 import type { JsonObject, Pid } from '../src/types.js';
+import { omniscientLog, requestActionCandidates } from './fixtures/eval.js';
 
 const SEED: [number, number, number, number] = [7, 14, 21, 28];
 const RUN_ID = '20260101T000000.000000Z-testrun';

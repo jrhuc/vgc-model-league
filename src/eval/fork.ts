@@ -74,15 +74,6 @@ function routeState() {
   };
 }
 
-export function omniscientLog(lines: string[]): string[] {
-  const state = routeState();
-  routeUpdateLines(
-    lines.filter((line) => line),
-    state,
-  );
-  return state.log;
-}
-
 function comparable(lines: string[]): string[] {
   return lines.filter((line) => line && !line.startsWith('|t:|') && !line.startsWith('|timer|'));
 }
@@ -127,10 +118,6 @@ export function requestActionCandidateEntries(request: BattleRequest): LegalActi
   return [...actions.values()]
     .sort((a, b) => Buffer.compare(Buffer.from(a.command), Buffer.from(b.command)))
     .map((entry, number) => ({ ...entry, number }));
-}
-
-export function requestActionCandidates(request: BattleRequest): string[] {
-  return requestActionCandidateEntries(request).map((entry) => entry.command);
 }
 
 type NativeBattleConstructor = {

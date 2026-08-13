@@ -237,13 +237,6 @@ function stableFileSetSnapshot(
   };
 }
 
-/** Reads an explicit file set through stable descriptors and globally restats it before hashing. */
-export function stableProducerDigest(root: string, relativeFiles: readonly string[]): string {
-  const membership = exactMembership(relativeFiles);
-  const snapshot = stableFileSetSnapshot(root, () => membership);
-  return rawProducerDigest(snapshot.records);
-}
-
 function visitFiles(directory: string, accept: (file: string) => boolean): string[] {
   const directoryStat = fs.lstatSync(directory, { bigint: true });
   assertStableDirectory(directory, directoryStat, 'producer authority directory');
@@ -288,12 +281,6 @@ function enumerateShowdownRuntimeAuthority(root: string): string[] {
   return [...new Set([...compiled, ...explicit].map((file) => path.relative(root, file)))];
 }
 
-/** Returns the pinned compiled Showdown files whose bytes can exercise referee simulation or timer authority. */
-export function showdownRuntimeAuthorityFiles(root: string): string[] {
-  const identity = captureRootIdentity(root);
-  return exactMembership(enumerateShowdownRuntimeAuthority(identity.realpath));
-}
-
 function pinnedShowdownRevision(records: readonly RawProducerDigestRecord[]): string {
   const lockPath = Buffer.from('showdown.lock.json', 'utf8');
   const lockRecord = records.find((record) => bytes(record.path).equals(lockPath));
@@ -316,20 +303,6 @@ function assertReviewedShowdownRecords(records: readonly RawProducerDigestRecord
     );
   }
   return actual;
-}
-
-function showdownFileSet(root: string): StableFileSetSnapshot {
-  return stableFileSetSnapshot(root, enumerateShowdownRuntimeAuthority);
-}
-
-/** Computes the raw-framed digest of one stable compiled pinned Showdown runtime file-set snapshot. */
-export function showdownRuntimeDigest(root: string): string {
-  return rawProducerDigest(showdownFileSet(root).records);
-}
-
-/** Rejects compiled Showdown bytes that do not match the reviewed build for the pinned revision. */
-export function assertPinnedShowdownRuntime(root: string): string {
-  return assertReviewedShowdownRecords(showdownFileSet(root).records);
 }
 
 function runtimeRelativeFiles(entry: string, root: string): { own: string[]; showdown: string[] } {
