@@ -110,7 +110,7 @@ and programmatically legible state. It also distinguishes a generic shared
 harness from model-native harnesses instead of treating them as the same
 scaffold.
 
-Apply these requirements to `vgc-draft-circuit-v1`:
+Apply these requirements to `vgc-circuit-v1`:
 
 - use generic opponent names;
 - expose an authorized seat API to both human and agent clients;

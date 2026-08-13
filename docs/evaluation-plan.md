@@ -9,13 +9,13 @@ order.
 | Track | Unit | Status |
 | --- | --- | --- |
 | `vgc-positions-v1` | one battle choice | TypeScript replay/fork/export prototype exists; Python package and model runner do not |
-| `vgc-draft-circuit-v1` | one shared eight-seat circuit episode | Implemented internally as a TypeScript referee and native-v1 Python `Taskset` plus `Env`; package, referee image, and Environment Hub entry are unpublished; hosted execution is not validated |
+| `vgc-circuit-v1` | one eight-seat league or tournament episode | Implemented internally as a TypeScript referee and native-v1 Python `Taskset` plus `Env`; package, referee image, and Environment Hub entry are unpublished; hosted execution is not validated |
 | local league | exploratory full runs | Working |
 
 The public program separates the lower-cost controlled choice task from the
-delayed draft-to-battle task. Positions remain the first release track. Draft
-Circuit is the long-horizon track; a draft-only task with an artificial roster
-reward is not.
+long-horizon circuit track. Positions remain the first release track. The
+league and tournament are distinct circuit evaluations; a draft-only task with
+an artificial roster reward is neither one.
 
 The current branch can:
 
@@ -146,12 +146,12 @@ these gates pass:
 Candidate export does not by itself pass the criterion, horizon,
 hidden-information, packaging, or hosted gates.
 
-## `vgc-draft-circuit-v1`
+## `vgc-circuit-v1`
 
-The package implements one shared eight-seat circuit Episode. It exports exactly
-one native-v1 `Taskset` and one native-v1 `Env`. The taskset is finite and can
-select either scenario or both for each seed block. The environment exposes
-configurable `seat1` through `seat8` agent roles and one non-playing
+The package implements two distinct eight-seat circuit lifecycles behind one
+generic native-v1 `Taskset` and `Env`. A taskset selects exactly one scenario;
+it cannot combine the league and tournament in one evaluation. The environment
+exposes configurable `seat1` through `seat8` agent roles and one non-playing
 `referee` role.
 
 ### Implemented scenarios
@@ -237,10 +237,12 @@ return as causal credit for a particular draft pick or decision.
 ### Evaluation design
 
 The primary comparative design uses heterogeneous frontier-model fields. Build
-counterbalanced whole-circuit blocks so that model assignment rotates across
-seats and the declared seeds, sides, schedules, and scenarios. Keep the entire
-circuit as the uncertainty block. Do not treat a game, series, seat, or turn as
-an independent replication.
+counterbalanced complete-scenario blocks so that model assignment rotates across
+seats and the declared seeds, sides, and schedules. Keep one complete league or
+one complete tournament as the uncertainty block. Run, analyze, and report the
+two scenarios separately: they have different starting resources, lifecycle,
+reward, and estimand. Do not treat a game, series, seat, or turn as an
+independent replication.
 
 The eight separately configurable roles also support a same-model symmetric
 self-play target and a multi-agent `prime-rl` target. These paths can validate
@@ -248,9 +250,9 @@ machinery or support self-managed experiments, but they are not substitutes for
 the heterogeneous counterbalanced evaluation. Neither target has been validated
 on Hosted Evaluation or Hosted Training.
 
-### Draft Circuit release gates
+### VGC Circuit release gates
 
-Do not release a Draft Circuit comparison, training recipe, or long-horizon
+Do not release a VGC Circuit comparison, training recipe, or long-horizon
 result until all of these gates pass:
 
 1. Keep the implemented v1 terminal-return and failure semantics frozen for
@@ -303,7 +305,7 @@ Before releasing a contingency, adaptation, or anticipation claim, pass
 ## Verifiers boundary and support
 
 The package uses `import verifiers.v1 as vf` with exact `verifiers==0.3.0` and
-exports exactly `VgcDraftCircuitTaskset` and `VgcDraftCircuitEnv`. Verifiers
+exports exactly `VgcCircuitTaskset` and `VgcCircuitEnv`. Verifiers
 controls task loading, the eight configured agents, the referee role, runtimes,
 traces, evaluation output, and Episode control. TypeScript and Showdown remain
 authoritative for prompts, native action acceptance, state, schedules, battle
@@ -317,7 +319,7 @@ Do not treat untested paths as supported.
 | local TypeScript circuit suite | The post-decomposition full `pnpm test` run passed, including the deterministic 31-series draft lifecycle and the frozen-circuit build |
 | copied Hub-boundary Python suite | `uv lock --check` and the locked package suite passed against exact `verifiers==0.3.0` after the package decomposition |
 | local native dry run and wheel | Native-v1 dry run, wheel build, and isolated Python 3.13.15 install and plugin discovery passed |
-| GitHub CI | The workflow builds the circuit bundle, runs the copied standalone package suite, performs the native-v1 dry run, builds a wheel, and tests clean-wheel plugin discovery; the current change has no recorded green run yet |
+| GitHub CI | The workflow builds the circuit bundle, runs the copied standalone package suite, performs the native-v1 dry run, builds a wheel, and tests clean-wheel plugin discovery; PR #79 passed both package and root jobs before merge |
 | Prime private push preflight | Built the wheel, then stopped at `No API key configured` before upload; this proves neither authentication nor Hub publication |
 | real provider or model | Not run |
 | same-model symmetric self-play | Supported configuration target; no real-model or hosted validation |
@@ -363,12 +365,12 @@ Do not treat untested paths as supported.
 10. Run separate Docker, Prime runtime, Environment Hub, and Hosted Evaluation
     smokes for the exact wheel and image digest. Do not infer one path from
     another.
-11. Preregister heterogeneous frontier fields and complete counterbalanced
-    allocations across seats, scenarios, sides, schedules, and seeds. Set the
-    number of independent whole-circuit blocks and analysis before rollout.
-12. Run the controlled circuit evaluation. Publish configuration, terminal
-    returns, diagnostics, failures, uncertainty, and cost. Do not publish only a
-    standing or champion list.
+11. Preregister heterogeneous frontier fields and separate counterbalanced
+    allocations for each scenario across seats, sides, schedules, and seeds. Set
+    each scenario's independent block count and analysis before rollout.
+12. Run the controlled league and tournament evaluations separately. Publish
+    configuration, terminal returns, diagnostics, failures, uncertainty, and
+    cost. Do not publish only a standing or champion list.
 13. Validate same-model symmetric self-play and `prime-rl` separately. Do not
     present machinery validation or symmetric self-play as the primary frontier
     comparison.

@@ -49,44 +49,45 @@ jobs:
           version: 0.12.3
           enable-cache: true
           cache-dependency-glob: |
-            environments/vgc_draft_circuit_v1/pyproject.toml
-            environments/vgc_draft_circuit_v1/uv.lock
+            environments/vgc_circuit_v1/pyproject.toml
+            environments/vgc_circuit_v1/uv.lock
       - name: Copy the Environment Hub upload boundary
         shell: bash
         run: |
           set -euo pipefail
-          package_dir="${RUNNER_TEMP}/vgc_draft_circuit_v1"
+          package_dir="${RUNNER_TEMP}/vgc_circuit_v1"
           mkdir "$package_dir"
-          cp -R environments/vgc_draft_circuit_v1/. "$package_dir/"
+          cp -R environments/vgc_circuit_v1/. "$package_dir/"
           rm -rf "$package_dir/.venv" "$package_dir/dist"
       - name: Run locked standalone package tests
         shell: bash
         run: |
           set -euo pipefail
-          package_dir="${RUNNER_TEMP}/vgc_draft_circuit_v1"
+          package_dir="${RUNNER_TEMP}/vgc_circuit_v1"
           uv sync --directory "$package_dir" --locked --group test
           uv run --directory "$package_dir" --locked --group test pytest
       - name: Validate the secret-free native v1 Hub entry
         shell: bash
         run: |
           set -euo pipefail
-          package_dir="${RUNNER_TEMP}/vgc_draft_circuit_v1"
-          test -f "$package_dir/vgc_draft_circuit_v1/__init__.py"
+          package_dir="${RUNNER_TEMP}/vgc_circuit_v1"
+          test -f "$package_dir/vgc_circuit_v1/__init__.py"
           test ! -e "$package_dir/src"
-          uv run --directory "$package_dir" --locked --group test eval vgc-draft-circuit-v1 \
+          uv run --directory "$package_dir" --locked --group test eval vgc-circuit-v1 \
+            --env.taskset.scenario draft-league-v1 \
             -n 1 -r 1 --dry-run --no-push --rich false \
-            -o "${RUNNER_TEMP}/vgc-draft-circuit-dry-run"
+            -o "${RUNNER_TEMP}/vgc-circuit-dry-run"
       - name: Build wheel
         shell: bash
-        run: uv build --directory "${RUNNER_TEMP}/vgc_draft_circuit_v1" --wheel --clear
+        run: uv build --directory "${RUNNER_TEMP}/vgc_circuit_v1" --wheel --clear
       - name: Smoke test clean wheel and native v1 discovery
         shell: bash
         run: |
           set -euo pipefail
           shopt -s nullglob
-          wheels=("${RUNNER_TEMP}"/vgc_draft_circuit_v1/dist/*.whl)
+          wheels=("${RUNNER_TEMP}"/vgc_circuit_v1/dist/*.whl)
           test "${#wheels[@]}" -eq 1
-          clean_venv="${RUNNER_TEMP}/vgc-draft-circuit-wheel"
+          clean_venv="${RUNNER_TEMP}/vgc-circuit-wheel"
           uv venv --python "${{ steps.python.outputs.python-path }}" "$clean_venv"
           uv pip install --python "$clean_venv/bin/python" "${wheels[0]}"
           cd "$RUNNER_TEMP"
@@ -94,28 +95,28 @@ jobs:
           import sys
           from pathlib import Path
 
-          import vgc_draft_circuit_v1 as package
+          import vgc_circuit_v1 as package
           from verifiers import v1 as vf
-          from vgc_draft_circuit_v1.env import VgcDraftCircuitEnvConfig
-          from vgc_draft_circuit_v1.taskset import VgcDraftCircuitTasksetConfig
+          from vgc_circuit_v1.env import VgcCircuitEnvConfig
+          from vgc_circuit_v1.taskset import VgcCircuitTasksetConfig
 
-          plugin_id = "vgc_draft_circuit_v1"
+          plugin_id = "vgc_circuit_v1"
           assert vf.import_taskset(plugin_id) is package
           assert len(package.__all__) == 2
-          assert set(package.__all__) == {"VgcDraftCircuitTaskset", "VgcDraftCircuitEnv"}
-          taskset_config = VgcDraftCircuitTasksetConfig(id=plugin_id)
+          assert set(package.__all__) == {"VgcCircuitTaskset", "VgcCircuitEnv"}
+          taskset_config = VgcCircuitTasksetConfig(id=plugin_id, scenario="draft-league-v1")
           taskset = vf.load_taskset(taskset_config)
-          environment = vf.load_environment(VgcDraftCircuitEnvConfig(taskset=taskset_config))
-          assert type(taskset) is package.VgcDraftCircuitTaskset
-          assert len(list(taskset)) == 2
-          assert vf.taskset_config_type(plugin_id) is VgcDraftCircuitTasksetConfig
-          assert vf.environment_class(plugin_id) is package.VgcDraftCircuitEnv
-          assert type(environment) is package.VgcDraftCircuitEnv
-          assert vf.env_config_type(plugin_id) is VgcDraftCircuitEnvConfig
+          environment = vf.load_environment(VgcCircuitEnvConfig(taskset=taskset_config))
+          assert type(taskset) is package.VgcCircuitTaskset
+          assert len(list(taskset)) == 1
+          assert vf.taskset_config_type(plugin_id) is VgcCircuitTasksetConfig
+          assert vf.environment_class(plugin_id) is package.VgcCircuitEnv
+          assert type(environment) is package.VgcCircuitEnv
+          assert vf.env_config_type(plugin_id) is VgcCircuitEnvConfig
           assert Path(package.__file__).resolve().is_relative_to(Path(sys.prefix).resolve())
           PY
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: vgc-draft-circuit-wheel
-          path: ${{ runner.temp }}/vgc_draft_circuit_v1/dist/*.whl
+          name: vgc-circuit-wheel
+          path: ${{ runner.temp }}/vgc_circuit_v1/dist/*.whl
           if-no-files-found: error

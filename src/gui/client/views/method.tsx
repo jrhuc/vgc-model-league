@@ -108,16 +108,16 @@ function ConstructBoundary() {
       <aside class="construct-bridge">
         <span>Long episode · internal environment</span>
         <p>
-          The Draft Circuit packages one eight-seat season as a single verifiers episode. It connects eight separately
-          configured player runtimes to the TypeScript referee and pinned simulator. The internal package exists, but it
-          has not been published or validated for hosted execution.
+          The VGC Circuit runs one eight-seat lifecycle per verifiers evaluation: either a drafted league or a frozen
+          tournament bracket. It connects eight separately configured player runtimes to the TypeScript referee and
+          pinned simulator. The internal package exists, but it has not been published or hosted-validated.
         </p>
         <a
-          href={`${REPOSITORY_ROOT}/blob/main/docs/evaluation-plan.md#vgc-draft-circuit-v1`}
+          href={`${REPOSITORY_ROOT}/blob/main/docs/evaluation-plan.md#vgc-circuit-v1`}
           target="_blank"
           rel="noreferrer"
         >
-          Draft Circuit status <span aria-hidden="true">↗</span>
+          VGC Circuit status <span aria-hidden="true">↗</span>
         </a>
       </aside>
       <div class="construct-boundary" role="note">

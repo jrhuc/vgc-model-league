@@ -18,9 +18,9 @@ boards/sources/
 .venv/
 __pycache__/
 *.py[cod]
-environments/vgc_draft_circuit_v1/.pytest_cache/
-environments/vgc_draft_circuit_v1/build/
-environments/vgc_draft_circuit_v1/dist/
+environments/vgc_circuit_v1/.pytest_cache/
+environments/vgc_circuit_v1/build/
+environments/vgc_circuit_v1/dist/
 
 .DS_Store
 .idea/

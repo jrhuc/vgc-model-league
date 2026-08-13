@@ -24,7 +24,7 @@ on:
       - 'teams/vr-aug26-top8/**'
       - 'tools/frozen-circuit-referee.ts'
       - 'tools/setup-showdown.mjs'
-      - 'tools/vgc-draft-circuit-referee'
+      - 'tools/vgc-circuit-referee'
       - 'tsconfig.json'
       - 'tsconfig.frozen-circuit.json'
       - '.github/workflows/referee-image.yml'
@@ -38,7 +38,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  IMAGE: ghcr.io/jrhuc/vgc-draft-circuit-referee
+  IMAGE: ghcr.io/jrhuc/vgc-circuit-referee
 
 jobs:
   build:
@@ -58,8 +58,8 @@ jobs:
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
           labels: |
-            org.opencontainers.image.title=VGC Draft Circuit Referee
-            org.opencontainers.image.description=Pinned JSONL referee for the VGC draft circuit environment
+            org.opencontainers.image.title=VGC Circuit Referee
+            org.opencontainers.image.description=Pinned JSONL referee for the VGC circuit environment
       - if: github.event_name != 'pull_request'
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f
         with:
