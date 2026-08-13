@@ -13,7 +13,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  verify:
+  root:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -27,6 +27,19 @@ jobs:
           node-version: 24.18.1
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run setup:showdown
+      - run: pnpm run check
+      - run: pnpm run check:artifacts
+      - run: pnpm run build
+      - run: pnpm run build:frozen-circuit
+      - run: pnpm run test:unit
+
+  environment-package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - id: python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
         with:
@@ -36,39 +49,73 @@ jobs:
           version: 0.12.3
           enable-cache: true
           cache-dependency-glob: |
-            environments/vgc_frozen_matchday_v0/pyproject.toml
-            environments/vgc_frozen_matchday_v0/uv.lock
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm run setup:showdown
-      - run: pnpm run check
-      - run: pnpm run check:artifacts
-      - run: pnpm run build
-      - run: pnpm run build:frozen-matchday
-      - run: pnpm run test:unit
-      - run: uv sync --locked --group test
-        working-directory: environments/vgc_frozen_matchday_v0
-      - run: uv run --locked --group test pytest
-        working-directory: environments/vgc_frozen_matchday_v0
-      - run: uv build --clear
-        working-directory: environments/vgc_frozen_matchday_v0
-      - name: Smoke test the clean wheel
+            environments/vgc_draft_circuit_v1/pyproject.toml
+            environments/vgc_draft_circuit_v1/uv.lock
+      - name: Copy the Environment Hub upload boundary
         shell: bash
         run: |
           set -euo pipefail
-          wheels=(environments/vgc_frozen_matchday_v0/dist/*.whl)
+          package_dir="${RUNNER_TEMP}/vgc_draft_circuit_v1"
+          mkdir "$package_dir"
+          cp -R environments/vgc_draft_circuit_v1/. "$package_dir/"
+          rm -rf "$package_dir/.venv" "$package_dir/dist"
+      - name: Run locked standalone package tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          package_dir="${RUNNER_TEMP}/vgc_draft_circuit_v1"
+          uv sync --directory "$package_dir" --locked --group test
+          uv run --directory "$package_dir" --locked --group test pytest
+      - name: Validate the secret-free native v1 Hub entry
+        shell: bash
+        run: |
+          set -euo pipefail
+          package_dir="${RUNNER_TEMP}/vgc_draft_circuit_v1"
+          test -f "$package_dir/vgc_draft_circuit_v1/__init__.py"
+          test ! -e "$package_dir/src"
+          uv run --directory "$package_dir" --locked --group test eval vgc-draft-circuit-v1 \
+            -n 1 -r 1 --dry-run --no-push --rich false \
+            -o "${RUNNER_TEMP}/vgc-draft-circuit-dry-run"
+      - name: Build wheel
+        shell: bash
+        run: uv build --directory "${RUNNER_TEMP}/vgc_draft_circuit_v1" --wheel --clear
+      - name: Smoke test clean wheel and native v1 discovery
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          wheels=("${RUNNER_TEMP}"/vgc_draft_circuit_v1/dist/*.whl)
           test "${#wheels[@]}" -eq 1
-          clean_venv="${RUNNER_TEMP}/vgc-frozen-matchday-wheel"
+          clean_venv="${RUNNER_TEMP}/vgc-draft-circuit-wheel"
           uv venv --python "${{ steps.python.outputs.python-path }}" "$clean_venv"
           uv pip install --python "$clean_venv/bin/python" "${wheels[0]}"
-          "$clean_venv/bin/python" - <<'PY'
-          import vgc_frozen_matchday_v0 as package
-          from verifiers import v1 as vf
-          from vgc_frozen_matchday_v0.env import FrozenMatchdayEnvConfig
-          from vgc_frozen_matchday_v0.taskset import FrozenMatchdayTasksetConfig
+          cd "$RUNNER_TEMP"
+          PYTHONNOUSERSITE=1 "$clean_venv/bin/python" - <<'PY'
+          import sys
+          from pathlib import Path
 
-          module = vf.import_taskset("vgc_frozen_matchday_v0")
-          assert module is package
-          assert vf.taskset_config_type("vgc_frozen_matchday_v0") is FrozenMatchdayTasksetConfig
-          assert vf.environment_class("vgc_frozen_matchday_v0") is package.FrozenMatchdayEnv
-          assert vf.env_config_type("vgc_frozen_matchday_v0") is FrozenMatchdayEnvConfig
+          import vgc_draft_circuit_v1 as package
+          from verifiers import v1 as vf
+          from vgc_draft_circuit_v1.env import VgcDraftCircuitEnvConfig
+          from vgc_draft_circuit_v1.taskset import VgcDraftCircuitTasksetConfig
+
+          plugin_id = "vgc_draft_circuit_v1"
+          assert vf.import_taskset(plugin_id) is package
+          assert len(package.__all__) == 2
+          assert set(package.__all__) == {"VgcDraftCircuitTaskset", "VgcDraftCircuitEnv"}
+          taskset_config = VgcDraftCircuitTasksetConfig(id=plugin_id)
+          taskset = vf.load_taskset(taskset_config)
+          environment = vf.load_environment(VgcDraftCircuitEnvConfig(taskset=taskset_config))
+          assert type(taskset) is package.VgcDraftCircuitTaskset
+          assert len(list(taskset)) == 2
+          assert vf.taskset_config_type(plugin_id) is VgcDraftCircuitTasksetConfig
+          assert vf.environment_class(plugin_id) is package.VgcDraftCircuitEnv
+          assert type(environment) is package.VgcDraftCircuitEnv
+          assert vf.env_config_type(plugin_id) is VgcDraftCircuitEnvConfig
+          assert Path(package.__file__).resolve().is_relative_to(Path(sys.prefix).resolve())
           PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: vgc-draft-circuit-wheel
+          path: ${{ runner.temp }}/vgc_draft_circuit_v1/dist/*.whl
+          if-no-files-found: error

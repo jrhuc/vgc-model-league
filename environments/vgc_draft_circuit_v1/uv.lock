@@ -2380,7 +2380,7 @@ wheels = [
 ]
 
 [[package]]
-name = "vgc-frozen-matchday-v0"
+name = "vgc-draft-circuit-v1"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [

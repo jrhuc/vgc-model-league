@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import math
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Final
@@ -10,51 +11,60 @@ from typing import Any, Final
 from verifiers.v1 import Runtime, RuntimeProcess
 
 JSONL_PROTOCOL_VERSION: Final = 1
+CIRCUIT_PROTOCOL_VERSION: Final = 2
+PROMPT_PROTOCOL_VERSION: Final = 2
 MATCHDAY_PROTOCOL_VERSION: Final = 1
 BATTLE_PROTOCOL_VERSION: Final = 1
 SHOWDOWN_REVISION: Final = "6a1836dd71c0718e923206f3d089e61074410868"
-FROZEN_MATCHDAY_FORMAT: Final = "gen9championsvgc2026regmbbo3"
-DEFAULT_REFEREE_EXECUTABLE: Final = "/usr/local/bin/vgc-frozen-matchday-referee"
+SCENARIO_IDS: Final = ("victory-road-top8-v1", "draft-league-v1")
+DEFAULT_REFEREE_EXECUTABLE: Final = "/usr/local/bin/vgc-draft-circuit-referee"
+DEFAULT_REFEREE_IMAGE: Final = "ghcr.io/jrhuc/vgc-draft-circuit-referee:0.1.0"
 MAX_ENCODED_LINE_BYTES: Final = 32 * 1024 * 1024
 DEFAULT_STDERR_TAIL_BYTES: Final = 64 * 1024
 DEFAULT_REQUEST_TIMEOUT: Final = 600.0
 
-_ALLOWED_METHODS = {
-    "observe",
-    "private_evidence",
-    "legal_actions",
-    "submit",
-    "ready_next_game",
-    "terminal",
-}
+_ALLOWED_METHODS = {"observe", "pending_turns", "submit", "terminal"}
+_SHA256 = re.compile(r"^[0-9a-f]{64}$")
 
 
 class ProtocolError(RuntimeError):
-    """The referee transport or its episode binding failed."""
+    pass
 
 
 @dataclass(frozen=True)
 class ProtocolBinding:
     episode_id: str
     condition_digest: str
+    scenario_id: str
+    seed: int
     config_digest: str
     showdown_revision: str
+    jsonl_protocol_version: int
+    circuit_protocol_version: int
+    prompt_protocol_version: int
     matchday_protocol_version: int
     battle_protocol_version: int
+    prompt_revision: str
 
     def to_wire(self) -> dict[str, Any]:
         return {
             "episodeId": self.episode_id,
             "conditionDigest": self.condition_digest,
+            "scenarioId": self.scenario_id,
+            "seed": self.seed,
             "configDigest": self.config_digest,
             "showdownRevision": self.showdown_revision,
+            "jsonlProtocolVersion": self.jsonl_protocol_version,
+            "circuitProtocolVersion": self.circuit_protocol_version,
+            "promptProtocolVersion": self.prompt_protocol_version,
             "matchdayProtocolVersion": self.matchday_protocol_version,
             "battleProtocolVersion": self.battle_protocol_version,
+            "promptRevision": self.prompt_revision,
         }
 
 
-class FrozenMatchdayProtocolClient:
-    """One bounded, bound JSONL session over a v0.3 ``RuntimeProcess``."""
+
+class VgcDraftCircuitProtocolClient:
 
     def __init__(
         self,
@@ -83,9 +93,9 @@ class FrozenMatchdayProtocolClient:
         self._stdout_eof_before_close = False
         self._exit_before_close: tuple[int] | None = None
         self._close_task: asyncio.Task[None] | None = None
-        self._wait_task = asyncio.create_task(self._wait(), name="matchday-process-wait")
-        self._stdout_task = asyncio.create_task(self._stdout(), name="matchday-stdout")
-        self._stderr_task = asyncio.create_task(self._stderr_pump(), name="matchday-stderr")
+        self._wait_task = asyncio.create_task(self._wait(), name="circuit-process-wait")
+        self._stdout_task = asyncio.create_task(self._stdout(), name="circuit-stdout")
+        self._stderr_task = asyncio.create_task(self._stderr_pump(), name="circuit-stderr")
 
     @classmethod
     async def launch(
@@ -95,13 +105,15 @@ class FrozenMatchdayProtocolClient:
         executable: str = DEFAULT_REFEREE_EXECUTABLE,
         showdown_revision: str = SHOWDOWN_REVISION,
         jsonl_protocol_version: int = JSONL_PROTOCOL_VERSION,
+        circuit_protocol_version: int = CIRCUIT_PROTOCOL_VERSION,
+        prompt_protocol_version: int = PROMPT_PROTOCOL_VERSION,
         matchday_protocol_version: int = MATCHDAY_PROTOCOL_VERSION,
         battle_protocol_version: int = BATTLE_PROTOCOL_VERSION,
         line_limit: int = MAX_ENCODED_LINE_BYTES,
         stderr_tail_bytes: int = DEFAULT_STDERR_TAIL_BYTES,
         shutdown_timeout: float = 5.0,
         request_timeout: float = DEFAULT_REQUEST_TIMEOUT,
-    ) -> FrozenMatchdayProtocolClient:
+    ) -> "VgcDraftCircuitProtocolClient":
         if not executable:
             raise ValueError("referee executable must be nonempty")
         if line_limit < 1 or stderr_tail_bytes < 0:
@@ -118,9 +130,12 @@ class FrozenMatchdayProtocolClient:
             ready={
                 "kind": "ready",
                 "protocolVersion": jsonl_protocol_version,
+                "circuitProtocolVersion": circuit_protocol_version,
+                "promptProtocolVersion": prompt_protocol_version,
                 "matchdayProtocolVersion": matchday_protocol_version,
                 "battleProtocolVersion": battle_protocol_version,
                 "showdownRevision": showdown_revision,
+                "scenarios": list(SCENARIO_IDS),
             },
             line_limit=line_limit,
             stderr_tail_bytes=stderr_tail_bytes,
@@ -128,9 +143,8 @@ class FrozenMatchdayProtocolClient:
             request_timeout=request_timeout,
         )
         try:
-            if not _exact_mapping(
-                await client._receive_bounded("ready envelope"), client.ready
-            ):
+            ready = await client._receive_bounded("ready envelope")
+            if not _exact_mapping(ready, client.ready):
                 raise client._poison_with("referee ready envelope mismatch")
         except BaseException as primary:
             try:
@@ -140,7 +154,7 @@ class FrozenMatchdayProtocolClient:
             raise
         return client
 
-    async def __aenter__(self) -> FrozenMatchdayProtocolClient:
+    async def __aenter__(self) -> VgcDraftCircuitProtocolClient:
         return self
 
     async def __aexit__(self, exc_type, exc, traceback) -> None:
@@ -327,43 +341,37 @@ class FrozenMatchdayProtocolClient:
         *,
         episode_id: str,
         condition_digest: str,
-        expected_config_digest: str,
-        showdown_revision: str,
-        options: dict[str, Any],
-        matchday_protocol_version: int = MATCHDAY_PROTOCOL_VERSION,
-        battle_protocol_version: int = BATTLE_PROTOCOL_VERSION,
+        scenario_id: str,
+        seed: int,
     ) -> Any:
         if self.binding is not None:
             raise ProtocolError("referee is already bound")
-        binding = ProtocolBinding(
-            episode_id,
-            condition_digest,
-            expected_config_digest,
-            showdown_revision,
-            matchday_protocol_version,
-            battle_protocol_version,
-        )
-        result = await self._request(
+        raw = await self._request(
             "start",
             {
                 "episodeId": episode_id,
                 "conditionDigest": condition_digest,
-                "showdownRevision": showdown_revision,
-                "options": options,
+                "showdownRevision": SHOWDOWN_REVISION,
+                "options": {"scenarioId": scenario_id, "seed": seed},
             },
         )
+        if not isinstance(raw, dict) or set(raw) != {"binding", "value"}:
+            raise self._poison_with("start returned an incomplete binding")
+        binding = _parse_start_binding(
+            raw["binding"],
+            episode_id=episode_id,
+            condition_digest=condition_digest,
+            scenario_id=scenario_id,
+            seed=seed,
+        )
         self.binding = binding
-        try:
-            return self._unwrap("start", result)
-        except BaseException:
-            self.binding = None
-            raise
+        return raw["value"]
 
     async def call(self, method: str, params: Mapping[str, Any] | None = None) -> Any:
         if self.binding is None:
             raise ProtocolError("start must bind the referee before calls")
         if method not in _ALLOWED_METHODS:
-            raise ProtocolError(f"unsupported matchday method {method!r}")
+            raise ProtocolError(f"unsupported circuit method {method!r}")
         return self._unwrap(method, await self._request(method, params or {}))
 
     def _unwrap(self, method: str, result: Any) -> Any:
@@ -375,7 +383,7 @@ class FrozenMatchdayProtocolClient:
         return result["value"]
 
     async def _operation(self, name: str, operation: Any) -> ProtocolError | None:
-        task = asyncio.create_task(operation(), name=f"matchday-{name}")
+        task = asyncio.create_task(operation(), name=f"circuit-{name}")
         try:
             await asyncio.wait_for(task, timeout=self.shutdown_timeout)
         except asyncio.TimeoutError:
@@ -452,7 +460,7 @@ class FrozenMatchdayProtocolClient:
             return
         if self._close_task is None:
             self._close_task = asyncio.create_task(
-                self._shutdown(check_protocol), name="matchday-close"
+                self._shutdown(check_protocol), name="circuit-close"
             )
         cancellation: asyncio.CancelledError | None = None
         while not self._close_task.done():
@@ -472,6 +480,68 @@ class FrozenMatchdayProtocolClient:
         if error is not None:
             raise error
 
+
+
+def _parse_start_binding(
+    value: Any,
+    *,
+    episode_id: str,
+    condition_digest: str,
+    scenario_id: str,
+    seed: int,
+) -> ProtocolBinding:
+    if not isinstance(value, dict) or set(value) != {
+        "episodeId",
+        "conditionDigest",
+        "scenarioId",
+        "seed",
+        "configDigest",
+        "showdownRevision",
+        "jsonlProtocolVersion",
+        "circuitProtocolVersion",
+        "promptProtocolVersion",
+        "matchdayProtocolVersion",
+        "battleProtocolVersion",
+        "promptRevision",
+    }:
+        raise ProtocolError("start binding has an unexpected schema")
+    expected = {
+        "episodeId": episode_id,
+        "conditionDigest": condition_digest,
+        "scenarioId": scenario_id,
+        "seed": seed,
+        "showdownRevision": SHOWDOWN_REVISION,
+        "jsonlProtocolVersion": JSONL_PROTOCOL_VERSION,
+        "circuitProtocolVersion": CIRCUIT_PROTOCOL_VERSION,
+        "promptProtocolVersion": PROMPT_PROTOCOL_VERSION,
+        "matchdayProtocolVersion": MATCHDAY_PROTOCOL_VERSION,
+        "battleProtocolVersion": BATTLE_PROTOCOL_VERSION,
+    }
+    if any(
+        type(value.get(key)) is not type(item) or value.get(key) != item
+        for key, item in expected.items()
+    ):
+        raise ProtocolError("start binding does not match the requested case")
+    digest = value.get("configDigest")
+    if not isinstance(digest, str) or _SHA256.fullmatch(digest) is None:
+        raise ProtocolError("start binding configDigest must be lowercase 64-hex")
+    prompt_revision = value.get("promptRevision")
+    if not isinstance(prompt_revision, str) or not prompt_revision:
+        raise ProtocolError("start binding promptRevision must be nonempty text")
+    return ProtocolBinding(
+        episode_id=episode_id,
+        condition_digest=condition_digest,
+        scenario_id=scenario_id,
+        seed=seed,
+        config_digest=digest,
+        showdown_revision=SHOWDOWN_REVISION,
+        jsonl_protocol_version=JSONL_PROTOCOL_VERSION,
+        circuit_protocol_version=CIRCUIT_PROTOCOL_VERSION,
+        prompt_protocol_version=PROMPT_PROTOCOL_VERSION,
+        matchday_protocol_version=MATCHDAY_PROTOCOL_VERSION,
+        battle_protocol_version=BATTLE_PROTOCOL_VERSION,
+        prompt_revision=prompt_revision,
+    )
 
 def _exact_mapping(value: Any, expected: Mapping[str, Any]) -> bool:
     return (
