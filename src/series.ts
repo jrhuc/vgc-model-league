@@ -210,6 +210,19 @@ export const SINGLE_ELIMINATION_GAME_LIMIT = 9;
 
 export type GameSeed = [number, number, number, number];
 
+export function seriesSeedSchedule(regulationSeeds: readonly GameSeed[], requireWinner = false): GameSeed[] {
+  if (requireWinner && regulationSeeds.length !== 3) {
+    throw new Error('single-elimination series requires exactly three regulation game seeds');
+  }
+  const seeds = regulationSeeds.map((seed) => [...seed] as GameSeed);
+  if (!requireWinner) return seeds;
+  const random = seededRng(JSON.stringify(regulationSeeds));
+  while (seeds.length < SINGLE_ELIMINATION_GAME_LIMIT) {
+    seeds.push(Array.from({ length: 4 }, () => 1 + Math.floor(random() * 0xffff)) as GameSeed);
+  }
+  return seeds;
+}
+
 export interface SeriesFold {
   score: Record<Pid, number>;
   winnerSide: Pid | undefined;
@@ -230,13 +243,11 @@ export function foldSeriesGames(
 ): SeriesFold {
   const label = options.label ?? 'series';
   const requireWinner = options.requireWinner === true;
-  if (requireWinner && regulationSeeds.length !== 3) {
-    throw new Error(`${label} single-elimination series requires exactly three regulation game seeds`);
-  }
-  const seeds = regulationSeeds.map((seed) => [...seed] as GameSeed);
-  const random = seededRng(JSON.stringify(regulationSeeds));
-  while (seeds.length < Math.min(games.length + 1, SINGLE_ELIMINATION_GAME_LIMIT)) {
-    seeds.push(Array.from({ length: 4 }, () => 1 + Math.floor(random() * 0xffff)) as GameSeed);
+  let seeds: GameSeed[];
+  try {
+    seeds = seriesSeedSchedule(regulationSeeds, requireWinner);
+  } catch (cause) {
+    throw new Error(`${label} ${cause instanceof Error ? cause.message : String(cause)}`);
   }
   const score: Record<Pid, number> = { p1: 0, p2: 0 };
   const isComplete = (count: number): boolean => {

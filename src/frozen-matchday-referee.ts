@@ -8,6 +8,7 @@ import {
   type FrozenBattleTerminalEvidence,
   type FrozenLegalActions,
 } from './frozen-battle-referee.js';
+import { foldSeriesGames, seriesSeedSchedule } from './series.js';
 import { loadShowdown, showdownCommit } from './showdown.js';
 import { replayTeamBuildArtifact, type TeamBuildSubmissionValidation } from './teambuild.js';
 import type { Pid } from './types.js';
@@ -30,6 +31,7 @@ export interface FrozenMatchdaySeat {
 export interface FrozenMatchdayRefereeOptions {
   format: string;
   gameSeeds: readonly [Seed, Seed, Seed];
+  requireWinner?: boolean;
   seats: readonly FrozenMatchdaySeat[];
 }
 
@@ -116,6 +118,7 @@ export interface FrozenMatchdayTerminalEvidence {
     constructionSha256: string;
   }>;
   gameSeeds: Array<[number, number, number, number]>;
+  requireWinner?: true;
   score: FrozenMatchdayScore;
   result: FrozenMatchdayResult;
   games: FrozenBattleTerminalEvidence[];
@@ -220,8 +223,20 @@ function foldScore(games: readonly FrozenBattleTerminalEvidence[]): FrozenMatchd
   return score;
 }
 
-function matchEnded(score: FrozenMatchdayScore, games: number): boolean {
-  return score.p1 >= 2 || score.p2 >= 2 || games >= 3;
+function foldMatchday(
+  gameSeeds: readonly Seed[],
+  games: readonly FrozenBattleTerminalEvidence[],
+  requireWinner: boolean,
+) {
+  return foldSeriesGames(
+    gameSeeds.map((seed) => [...seed]),
+    games.map((game, index) => ({
+      number: index + 1,
+      seed: game.seed,
+      winner_side: game.result.type === 'win' ? game.result.winner.pid : null,
+    })),
+    { requireWinner, label: 'frozen matchday' },
+  );
 }
 
 function resultFor(
@@ -247,6 +262,9 @@ function copiedOptions(options: FrozenMatchdayRefereeOptions): FrozenMatchdayRef
   if (options.gameSeeds.length !== 3) {
     throw new FrozenMatchdayRefereeError('invalid-construction', 'a matchday needs exactly three game seeds');
   }
+  if (options.requireWinner !== undefined && typeof options.requireWinner !== 'boolean') {
+    throw new FrozenMatchdayRefereeError('invalid-construction', 'requireWinner must be a boolean when supplied');
+  }
   return {
     format: options.format,
     gameSeeds: options.gameSeeds.map(copySeed) as [
@@ -254,6 +272,7 @@ function copiedOptions(options: FrozenMatchdayRefereeOptions): FrozenMatchdayRef
       [number, number, number, number],
       [number, number, number, number],
     ],
+    ...(options.requireWinner === true ? { requireWinner: true } : {}),
     seats,
   };
 }
@@ -282,6 +301,7 @@ function assertFormat(format: string): void {
 export class FrozenMatchdayReferee {
   readonly format: string;
   readonly gameSeeds: readonly [Seed, Seed, Seed];
+  readonly requireWinner: boolean;
   readonly showdownRevision: string;
   readonly configDigest: string;
 
@@ -302,6 +322,7 @@ export class FrozenMatchdayReferee {
     this.format = this.options.format;
     assertFormat(this.format);
     this.gameSeeds = this.options.gameSeeds;
+    this.requireWinner = this.options.requireWinner === true;
     this.showdownRevision = showdownCommit();
     const registrations = this.options.seats.map((seat) =>
       assertConstruction(seat, this.format, this.showdownRevision),
@@ -316,6 +337,16 @@ export class FrozenMatchdayReferee {
       showdownRevision: this.showdownRevision,
       format: this.format,
       gameSeeds: this.gameSeeds.map((seed) => [...seed]),
+      ...(this.requireWinner
+        ? {
+            requireWinner: true,
+            winnerExtension: 'foldSeriesGames-v1-deterministic-up-to-nine',
+            completeGameSeedSchedule: seriesSeedSchedule(
+              this.gameSeeds.map((seed) => [...seed]),
+              true,
+            ),
+          }
+        : {}),
       registrations: (['p1', 'p2'] as const).map((pid) => ({
         pid,
         name: this.registrations[pid].name,
@@ -462,7 +493,10 @@ export class FrozenMatchdayReferee {
         teamSha256: this.registrations[pid].teamSha256,
         constructionSha256: this.registrations[pid].constructionSha256,
       })),
-      gameSeeds: this.gameSeeds.map((seed) => [...seed]),
+      gameSeeds: this.requireWinner
+        ? this.completedGames.map((game) => [...game.seed])
+        : this.gameSeeds.map((seed) => [...seed]),
+      ...(this.requireWinner ? { requireWinner: true as const } : {}),
       score: copyScore(this.score),
       result: resultFor(this.score, this.registrations),
       games: structuredClone(this.completedGames),
@@ -474,7 +508,8 @@ export class FrozenMatchdayReferee {
   }
 
   private newBattle(index: number): FrozenBattleReferee {
-    const seed = this.gameSeeds[index];
+    const folded = foldMatchday(this.gameSeeds, this.completedGames, this.requireWinner);
+    const seed = index < this.gameSeeds.length ? this.gameSeeds[index] : folded.nextSeed;
     if (!seed) throw new Error('no scheduled seed remains');
     return new FrozenBattleReferee({
       format: this.format,
@@ -497,11 +532,15 @@ export class FrozenMatchdayReferee {
     this.score = foldScore(this.completedGames);
     this.battle = null;
     this.ready = {};
-    this.phase = matchEnded(this.score, this.completedGames.length) ? 'terminal' : 'between-games';
+    const folded = foldMatchday(this.gameSeeds, this.completedGames, this.requireWinner);
+    if (!folded.complete && !folded.nextSeed) {
+      throw new Error('single-elimination frozen matchday remained tied after the authority game limit');
+    }
+    this.phase = folded.complete ? 'terminal' : 'between-games';
   }
 
   private gameNumber(): number {
-    return Math.min(this.completedGames.length + 1, 3);
+    return Math.min(this.completedGames.length + 1, this.requireWinner ? 9 : 3);
   }
 
   private stateHash(): string {

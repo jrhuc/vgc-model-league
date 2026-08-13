@@ -21,12 +21,6 @@ export interface PoolInfo {
   teamCount: number;
 }
 
-export interface AuthView {
-  mode: 'local' | 'read-only';
-  user: null;
-  csrfToken: null;
-}
-
 export interface FormatInfo {
   id: string;
   label: string;
@@ -150,11 +144,13 @@ export interface RunPauseView {
   since: number;
 }
 
+export type RunState = 'running' | 'paused' | 'done' | 'failed' | 'stopped';
+
 export interface RunSnapshot {
   runId: string;
   mode: ExperimentMode;
   protocolVersion: number;
-  state: 'running' | 'paused' | 'done' | 'failed' | 'stopped';
+  state: RunState;
   error: string;
   pause: RunPauseView | null;
   notices: string[];
@@ -232,7 +228,6 @@ export interface AppState {
   providers: ProviderInfo[];
   sampleTeams: SampleTeam[];
   boards: BoardInfo[];
-  auth: AuthView;
   run: RunSnapshot | null;
   externalRun: { runId: string; mode: 'draft' | 'tournament' } | null;
 }
@@ -378,6 +373,7 @@ export interface LeagueChampionView {
 }
 
 export type LeaguePhase = 'drafting' | 'building' | 'roundrobin' | 'window' | 'playoffs' | 'complete';
+export type LeagueLifecycle = 'live' | 'complete' | 'failed' | 'stopped' | 'incomplete';
 
 export interface LeagueCardView {
   runId: string;
@@ -393,7 +389,7 @@ export interface LeagueCardView {
   champion: LeagueChampionView | null;
   tradeWindowAfterWeek: number | null;
   draftOnly: boolean;
-  live: boolean;
+  lifecycle: LeagueLifecycle;
   picks: number | null;
 }
 
@@ -477,6 +473,7 @@ export interface LeagueTeambuildView {
   brought: string[];
   sets: TeambuildSetView[];
   rationale: string;
+  notebook: string;
   attempts: number;
 }
 
@@ -590,7 +587,7 @@ export interface LeagueTradeOfferView {
 
 export interface LeagueTradeWindowView {
   afterWeek: number;
-  complete: boolean;
+  state: 'scheduled' | 'in-progress' | 'complete';
   offers: LeagueTradeOfferView[];
   decisions: LeagueTradeWindowDecisionView[];
 }
@@ -619,7 +616,7 @@ export interface LeagueResponse {
   week: number;
   champion: LeagueChampionView | null;
   draftOnly: boolean;
-  live: boolean;
+  lifecycle: LeagueLifecycle;
   liveSeries: LeagueLiveSeriesView[];
   tradeWindow: LeagueTradeWindowView | null;
   seasonReviews: LeagueSeasonReviewView[];

@@ -5,6 +5,7 @@ import { isDeepStrictEqual } from 'node:util';
 
 import type { DraftBoard, DraftBoardMon } from './draft.js';
 import { draftScaffoldRevision, loadBoard, runDraft, snakeOrder } from './draft.js';
+import { draftLeagueTopology, roundRobinWeeks } from './draftleague-topology.js';
 import type { BracketView, DraftPickView, DraftTableRow, DraftView, TeambuildView } from './gui/api.js';
 import { appendJsonlObject, readJsonlObjects } from './jsonl.js';
 import { scaffoldComponents, scaffoldRevision } from './llm-engine.js';
@@ -18,8 +19,10 @@ import type { ExperimentOptions, RecordedSeriesContext } from './series.js';
 import { mapLimit, playRecordedSeries, readCompletedSeriesEvidence } from './series.js';
 import { showdownCommit } from './showdown.js';
 import {
+  decodeTeamBuildJournalRow,
   replayTeamBuildArtifact,
   runTeambuild,
+  type TeamBuildJournalEntry,
   type TeamBuildSheetPolicy,
   teambuildScaffoldRevision,
 } from './teambuild.js';
@@ -58,7 +61,7 @@ export interface DraftLeagueOptions extends ExperimentOptions {
   draftOnly?: boolean;
 }
 
-interface SeriesPlanned {
+export interface DraftLeagueSeriesPlan {
   index: number;
   stage: 'roundrobin' | 'playoff';
   round: number;
@@ -72,7 +75,10 @@ interface StoredSeriesOutcome {
   winnerSide: Pid | undefined;
 }
 
-function buildDraftPlayoffBracket(plans: readonly SeriesPlanned[], seeding: readonly number[]): BracketMatch[][] {
+export function buildDraftPlayoffBracket(
+  plans: readonly DraftLeagueSeriesPlan[],
+  seeding: readonly number[],
+): BracketMatch[][] {
   return plans.length === 3
     ? [
         [
@@ -131,25 +137,36 @@ function loadStoredPicks(runDir: string, entrants: number, board: DraftBoard): D
   });
 }
 
-function playoffReview(summary: string, build: TeambuildView, notebook: string): string {
+export function draftLeaguePlayoffReview(summary: string, build: TeambuildView, notebook: string): string {
   return `${summary}. ${builtTeamSummary(build)} Final private battle note: ${notebook || '(empty)'}`;
 }
 
-export function roundRobinWeeks(entrants: number): Array<Array<[number, number]>> {
-  const seats = [...Array(entrants).keys()];
-  if (seats.length % 2) seats.push(-1);
-  const weeks: Array<Array<[number, number]>> = [];
-  for (let week = 0; week < seats.length - 1; week += 1) {
-    const pairs: Array<[number, number]> = [];
-    for (let match = 0; match < seats.length / 2; match += 1) {
-      const home = seats[match]!;
-      const away = seats[seats.length - 1 - match]!;
-      if (home >= 0 && away >= 0) pairs.push(week % 2 ? [away, home] : [home, away]);
+export function buildDraftLeagueSchedule(entrants: number, seed: number) {
+  const weeks = roundRobinWeeks(entrants);
+  const topology = draftLeagueTopology(entrants);
+  const { playoffRounds } = topology;
+  const plans: DraftLeagueSeriesPlan[] = [];
+  for (const [week, pairs] of weeks.entries()) {
+    for (const pair of pairs) {
+      plans.push({
+        index: plans.length,
+        stage: 'roundrobin',
+        round: week + 1,
+        entrants: pair,
+        ...seriesEntropy(seededRng(`${seed}:series:${plans.length}`)),
+      });
     }
-    weeks.push(pairs);
-    seats.splice(1, 0, seats.pop()!);
   }
-  return weeks;
+  for (let series = 0; series < topology.playoffSeries; series += 1) {
+    plans.push({
+      index: plans.length,
+      stage: 'playoff',
+      round: playoffRounds === 1 || series < 2 ? 1 : 2,
+      entrants: null,
+      ...seriesEntropy(seededRng(`${seed}:series:${plans.length}`)),
+    });
+  }
+  return { weeks, playoffRounds, plans };
 }
 
 export async function runDraftLeague(
@@ -219,7 +236,7 @@ export async function runDraftLeague(
   }
   if (tradeWindow) validateTradesAllowed(tradeWindow.tradesAllowed, 'trade window trades allowed');
   const entrants = stored ? stored.entrants : shuffle(models, random);
-  const weeks = roundRobinWeeks(entrants.length);
+  const { weeks, playoffRounds, plans } = buildDraftLeagueSchedule(entrants.length, seed);
   if (tradeWindow && tradeWindow.afterWeek > weeks.length) {
     if (storedWindow === undefined && options.tradeWindow === undefined) {
       tradeWindow = { afterWeek: weeks.length, tradesAllowed: DEFAULT_TRADE_WINDOW.tradesAllowed };
@@ -228,29 +245,6 @@ export async function runDraftLeague(
   const sequentialWeeks = stored
     ? stored.sequentialWeeks
     : options.sequentialWeeks === true || options.throughWeek !== undefined;
-  const playoffRounds = entrants.length >= 5 ? 2 : 1;
-  const playoffSeriesCount = playoffRounds === 2 ? 3 : 1;
-  const plans: SeriesPlanned[] = [];
-  for (const [week, pairs] of weeks.entries()) {
-    for (const pair of pairs) {
-      plans.push({
-        index: plans.length,
-        stage: 'roundrobin',
-        round: week + 1,
-        entrants: pair,
-        ...seriesEntropy(seededRng(`${seed}:series:${plans.length}`)),
-      });
-    }
-  }
-  for (let series = 0; series < playoffSeriesCount; series += 1) {
-    plans.push({
-      index: plans.length,
-      stage: 'playoff',
-      round: playoffRounds === 1 || series < 2 ? 1 : 2,
-      entrants: null,
-      ...seriesEntropy(seededRng(`${seed}:series:${plans.length}`)),
-    });
-  }
   const runId = path.basename(runDir);
   if (stored && storedWindow === undefined) {
     const storedRows = loadSeriesRecords(recordsPath).filter((row) => row.run_id === runId);
@@ -486,7 +480,7 @@ export async function runDraftLeague(
 
   const storedTeambuilds = stored ? loadStoredTeambuilds(path.join(runDir, 'teambuild')) : new Map();
   const storedBuildFor = (
-    plan: SeriesPlanned,
+    plan: DraftLeagueSeriesPlan,
     entrant: number,
     opponent: number,
     rosterState: readonly DraftBoardMon[][],
@@ -494,7 +488,7 @@ export async function runDraftLeague(
     const rows = storedTeambuilds.get(`${plan.index}:${entrant}`) ?? [];
     const row = rows.at(-1);
     const linked = row
-      ? linkedStoredArtifact(row.artifact, {
+      ? linkedStoredArtifact(row, {
           model: entrants[entrant]!,
           opponentModel: entrants[opponent]!,
           format: board.format,
@@ -517,7 +511,7 @@ export async function runDraftLeague(
   };
   const validateStoredSeriesEvidence = (
     row: SeriesRecord,
-    plan: SeriesPlanned,
+    plan: DraftLeagueSeriesPlan,
     pair: [number, number],
     builds: Record<Pid, { packed: string; view: TeambuildView }>,
     rosterState: readonly DraftBoardMon[][],
@@ -593,12 +587,12 @@ export async function runDraftLeague(
     return { score: canonical.fields.score, winnerSide: canonical.winnerSide };
   };
 
-  const teambuildFor = async (plan: SeriesPlanned, entrant: number, opponent: number, signal: AbortSignal) => {
+  const teambuildFor = async (plan: DraftLeagueSeriesPlan, entrant: number, opponent: number, signal: AbortSignal) => {
     const storedRows = storedTeambuilds.get(`${plan.index}:${entrant}`) ?? [];
     let reused: { packed: string; view: TeambuildView } | undefined;
     for (let index = storedRows.length - 1; index >= 0 && !reused; index -= 1) {
       const row = storedRows[index]!;
-      reused = linkedStoredArtifact(row.artifact, {
+      reused = linkedStoredArtifact(row, {
         model: entrants[entrant]!,
         opponentModel: entrants[opponent]!,
         format: board.format,
@@ -660,7 +654,7 @@ export async function runDraftLeague(
   const results: SeriesRecord[] = [];
   let seeding: number[] = [];
   let playoffBracketRounds: BracketMatch[][] | undefined;
-  const playSeries = async (plan: SeriesPlanned, signal: AbortSignal): Promise<SeriesRecord> => {
+  const playSeries = async (plan: DraftLeagueSeriesPlan, signal: AbortSignal): Promise<SeriesRecord> => {
     const [a, b] = plan.entrants!;
     const players: Record<Pid, string> = { p1: entrants[a]!, p2: entrants[b]! };
     options.onEvent?.({ type: 'series-players', index: plan.index, players });
@@ -736,7 +730,7 @@ export async function runDraftLeague(
   };
 
   const applyOutcome = (
-    plan: SeriesPlanned,
+    plan: DraftLeagueSeriesPlan,
     row: SeriesRecord,
     coaching?: Record<Pid, { build: TeambuildView; notebook: string }>,
   ): void => {
@@ -753,7 +747,9 @@ export async function runDraftLeague(
       const summary =
         `${plan.stage === 'playoff' ? `Playoff round ${plan.round}` : `Round-robin week ${plan.round}`}: ${result} ` +
         `${entrants[opponent]} ${score[side]}-${score[side === 'p1' ? 'p2' : 'p1']}`;
-      const context = coaching ? playoffReview(summary, coaching[side].build, coaching[side].notebook) : summary;
+      const context = coaching
+        ? draftLeaguePlayoffReview(summary, coaching[side].build, coaching[side].notebook)
+        : summary;
       if (coaching || !playoffContext[entrant]!.has(plan.index)) {
         playoffContext[entrant]!.set(plan.index, context);
       }
@@ -780,7 +776,7 @@ export async function runDraftLeague(
     }
   };
 
-  const validateStoredRoundRobin = (include: (plan: SeriesPlanned) => boolean): void => {
+  const validateStoredRoundRobin = (include: (plan: DraftLeagueSeriesPlan) => boolean): void => {
     for (const [seriesIndex, row] of storedRoundRobinRows) {
       const plan = plans[seriesIndex]!;
       if (completed.has(plan.index) || !include(plan)) continue;
@@ -1020,7 +1016,7 @@ export async function runDraftLeague(
     if (seasonFailure !== undefined && !options.signal?.aborted) throw seasonFailure;
     return sorted(results);
   };
-  const scheduleRoundRobin = async (scheduled: SeriesPlanned[]): Promise<void> => {
+  const scheduleRoundRobin = async (scheduled: DraftLeagueSeriesPlan[]): Promise<void> => {
     results.push(
       ...(await mapLimit(scheduled, options.concurrency ?? 2, options.signal, (plan, signal) =>
         playSeries(plan, signal),
@@ -1195,7 +1191,7 @@ function draftOnlyPromotionEvidence(runDir: string, rows: readonly SeriesRecord[
 function postWindowEvidence(
   runDir: string,
   rows: readonly SeriesRecord[],
-  plans: readonly SeriesPlanned[],
+  plans: readonly DraftLeagueSeriesPlan[],
   afterWeek: number,
 ): string[] {
   const pastBarrier = new Set(
@@ -1204,13 +1200,15 @@ function postWindowEvidence(
   const evidence = rows
     .filter((row) => pastBarrier.has(row.series_index as number))
     .map((row) => `result series ${String(row.series_index)}`);
-  for (const [relative, key] of [
-    ['teambuild/teambuild.jsonl', 'seriesIndex'],
-    ['coaching.jsonl', 'series_index'],
-  ] as const) {
-    const file = path.join(runDir, relative);
-    for (const row of readJsonlObjects(file)) {
-      if (pastBarrier.has(row[key] as number)) evidence.push(`${relative} series ${String(row[key])}`);
+  const teambuildFile = path.join(runDir, 'teambuild', 'teambuild.jsonl');
+  for (const [index, row] of readJsonlObjects(teambuildFile).entries()) {
+    const { seriesIndex } = decodeTeamBuildJournalRow(row, `${teambuildFile} line ${index + 1}`).view;
+    if (pastBarrier.has(seriesIndex)) evidence.push(`teambuild/teambuild.jsonl series ${seriesIndex}`);
+  }
+  const coachingFile = path.join(runDir, 'coaching.jsonl');
+  for (const row of readJsonlObjects(coachingFile)) {
+    if (pastBarrier.has(row.series_index as number)) {
+      evidence.push(`coaching.jsonl series ${String(row.series_index)}`);
     }
   }
   const seriesRoot = path.join(runDir, 'series');
@@ -1247,7 +1245,7 @@ function postWindowEvidence(
 function requireTransactionResultPrefix(
   runId: string,
   rows: readonly SeriesRecord[],
-  plans: readonly SeriesPlanned[],
+  plans: readonly DraftLeagueSeriesPlan[],
   afterWeek: number,
 ): void {
   const expected = plans.filter((plan) => plan.stage === 'roundrobin' && plan.round <= afterWeek);
@@ -1334,14 +1332,14 @@ function promoteDraftOnlyConfig(runDir: string, stored: StoredLeague, tradeWindo
 
 /** A resume reuses only a current construction artifact whose semantics replay exactly. */
 function linkedStoredArtifact(
-  value: unknown,
+  entry: TeamBuildJournalEntry,
   context: {
     model: string;
     opponentModel: string;
     format: string;
     psDir: string;
     sheetPolicy: TeamBuildSheetPolicy;
-    stage: SeriesPlanned['stage'];
+    stage: DraftLeagueSeriesPlan['stage'];
     seriesIndex: number;
     entrant: number;
     opponent: number;
@@ -1351,13 +1349,12 @@ function linkedStoredArtifact(
 ): { packed: string; view: TeambuildView } | undefined {
   let replayed: ReturnType<typeof replayTeamBuildArtifact>;
   try {
-    replayed = replayTeamBuildArtifact(value, { psDir: context.psDir });
+    replayed = replayTeamBuildArtifact(entry.artifact, { psDir: context.psDir });
   } catch {
     return undefined;
   }
   const artifact = replayed.artifact;
   const task = artifact.task;
-  const action = artifact.action!;
   if (
     artifact.executionPolicy !== 'league-resilient' ||
     task.executionPolicy !== 'league-resilient' ||
@@ -1383,39 +1380,18 @@ function linkedStoredArtifact(
   ) {
     return undefined;
   }
-  return {
-    packed: replayed.packed,
-    view: {
-      seriesIndex: context.seriesIndex,
-      entrant: context.entrant,
-      opponent: context.opponent,
-      brought: [...action.selected],
-      sets: structuredClone(action.sets),
-      rationale: artifact.evidence.rationale,
-      attempts: artifact.attempts,
-    },
-  };
+  return { packed: replayed.packed, view: structuredClone(entry.view) };
 }
 
-interface StoredTeambuildRow {
-  artifact: unknown;
-}
-
-function loadStoredTeambuilds(teambuildDir: string): Map<string, StoredTeambuildRow[]> {
-  const rowsBySeries = new Map<string, StoredTeambuildRow[]>();
-  for (const row of readJsonlObjects(path.join(teambuildDir, 'teambuild.jsonl'))) {
-    const artifact = row.artifact;
-    if (typeof artifact !== 'object' || artifact === null || Array.isArray(artifact)) continue;
-    const task = (artifact as { task?: unknown }).task;
-    if (typeof task !== 'object' || task === null || Array.isArray(task)) continue;
-    const provenance = (task as { provenance?: unknown }).provenance;
-    if (typeof provenance !== 'object' || provenance === null || Array.isArray(provenance)) continue;
-    const entrant = Number((provenance as Record<string, unknown>).entrant);
-    const seriesIndex = Number((provenance as Record<string, unknown>).seriesIndex);
-    if (!Number.isSafeInteger(entrant) || !Number.isSafeInteger(seriesIndex)) continue;
+function loadStoredTeambuilds(teambuildDir: string): Map<string, TeamBuildJournalEntry[]> {
+  const rowsBySeries = new Map<string, TeamBuildJournalEntry[]>();
+  const file = path.join(teambuildDir, 'teambuild.jsonl');
+  for (const [index, row] of readJsonlObjects(file).entries()) {
+    const entry = decodeTeamBuildJournalRow(row, `${file} line ${index + 1}`);
+    const { seriesIndex, entrant } = entry.view;
     const key = `${seriesIndex}:${entrant}`;
     const stored = rowsBySeries.get(key) ?? [];
-    stored.push({ artifact });
+    stored.push(entry);
     rowsBySeries.set(key, stored);
   }
   return rowsBySeries;
@@ -1497,6 +1473,6 @@ function loadStoredLeague(runDir: string): StoredLeague | undefined {
   };
 }
 
-function rankedTable(table: DraftTableRow[]): DraftTableRow[] {
+export function rankedTable(table: DraftTableRow[]): DraftTableRow[] {
   return [...table].sort((a, b) => b.w - a.w || b.gw - b.gl - (a.gw - a.gl) || b.gw - a.gw || a.entrant - b.entrant);
 }

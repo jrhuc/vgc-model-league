@@ -530,6 +530,36 @@ export function draftUserPrompt(
   return lines.join('\n');
 }
 
+const CONNECTED_DRAFT_PROMPT_POLICY = {
+  framing: 'system-blank-line-user-v1',
+  boardProjection: 'current-legal-picks-only-v1',
+} as const;
+
+export function connectedDraftPromptRevision(): string {
+  return createHash('sha256')
+    .update(JSON.stringify([draftScaffoldRevision(), CONNECTED_DRAFT_PROMPT_POLICY]))
+    .digest('hex')
+    .slice(0, 12);
+}
+
+export function renderDraftPickPrompt(
+  state: DraftState,
+  drafter: number,
+  models: string[],
+  pickNumber: number,
+  notebook: string,
+  options: { psDir?: string; rosterPolicy: string },
+): string {
+  const psDir = options.psDir ?? defaultPsDir();
+  const rosterPolicy = options.rosterPolicy;
+  const legalBoard: DraftBoard = { ...state.board, mons: legalPicks(state, drafter) };
+  return [
+    draftSystemPrompt(legalBoard, models, drafter, psDir, rosterPolicy),
+    '',
+    draftUserPrompt(state, drafter, models, pickNumber, notebook),
+  ].join('\n');
+}
+
 interface ParsedPick {
   mon: DraftBoardMon;
   reasoning: string;
