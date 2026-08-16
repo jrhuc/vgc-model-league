@@ -8,33 +8,61 @@ order.
 
 | Track | Unit | Status |
 | --- | --- | --- |
-| `vgc-positions-v1` | one battle choice | TypeScript replay/fork/export prototype exists; Python package and model runner do not |
-| `vgc-circuit-v1` | one eight-seat league or tournament episode | Implemented internally as a TypeScript referee and native-v1 Python `Taskset` plus `Env`; package, referee image, and Environment Hub entry are unpublished; hosted execution is not validated |
-| local league | exploratory full runs | Working |
+| `vgc-strategic-interventions-v1` | one attributable decision or short intervention chain | Framework-agnostic kernel, information-set/reference/task contracts, and strict matchday and circuit replay/fork adapters are implemented; a native model/runtime shard package and calibrated corpora are not |
+| `vgc-positions-v1` | one battle choice | Retained as a legacy realized-state random-continuation material diagnostic; the TypeScript replay/fork/export prototype exists, but it is not the primary ranking or release track |
+| `vgc-circuit-v1` | one eight-seat league or tournament episode | Implemented as an ecological arena and case source; the native-v1 adapter defaults to metrics-only terminal reporting, while package publication and hosted execution remain unvalidated |
+| local league | exploratory full runs | Working ecological arena |
 
-The public program separates the lower-cost controlled choice task from the
-long-horizon circuit track. Positions remain the first release track. The
-league and tournament are distinct circuit evaluations; a draft-only task with
-an artificial roster reward is neither one.
+The public program now treats controlled strategic interventions as the primary
+evaluation track. The static positions package remains a named legacy
+diagnostic, and complete circuits remain ecological validation and case
+sources. Neither supporting artifact substitutes for matched causal shards.
 
 The current branch can:
 
-- replay a game from its format, Showdown revision, seed, teams, and actions;
-- reject mismatched logs;
-- reopen snapshots;
-- enumerate legal joint actions;
-- grade each eligible decision with one complete exhaustive action table; and
-- select seeded, stratified positions from versioned grade-time qualification
-  metrics.
+- replay exact games, matchdays, and circuit receipt histories under the pinned
+  Showdown and referee authorities;
+- create verified pre-decision checkpoints and invalidate endogenous source
+  suffixes after a replacement;
+- bind downstream controller identities and common hidden-state, opponent,
+  battle, continuation, and schedule draws;
+- evaluate complete action-by-reference rectangles in absolute utility with
+  clustered uncertainty and reference-sensitivity diagnostics;
+- render opaque, independently shuffled strategic actions and report invalid
+  output separately from legal-action utility;
+- fork exact between-game notebook bytes under strict no-fallback continuation;
+- fork draft, construction, trade, notebook, and battle responses through the
+  authoritative circuit referee; and
+- project the existing position matrices into the new reference-suite contract
+  only as a named raw-material legacy arm.
 
-The internal circuit track also implements both whole-circuit scenarios, their
-terminal returns, and the native-v1 adapter described below.
+The repository does not provide a public strategic-shard package, a supported
+real-provider intervention run, calibrated intervention corpora, or a validated
+benchmark. Treat every current strategic, position, and circuit result as
+exploratory.
 
-The repository does not provide a public verifiers package, a supported
-real-provider frozen evaluation, a calibrated public reward, or a validated
-benchmark. Treat all `grade-positions` output as exploratory.
+## `vgc-strategic-interventions-v1`
 
-## `vgc-positions-v1`
+The intended unit is one decision node or short intervention chain whose source
+state, replacement, downstream controllers, common draws, and utility unit are
+all content-addressed. The current implementation supplies the framework-neutral
+TypeScript contracts and strict Showdown/referee adapters. It does not yet
+supply a public native environment, model/runtime controller, hidden-state prior
+corpus, external policy population, or calibrated release set.
+
+A treatment must change only its declared information or action. The complete
+execution identity binds the checkpoint, matched fork plan, arm, draw, focal
+seat, treatment bytes, and controller set. In the v1 notebook adapter, the
+non-focal seat always retains its checkpoint notebook; changing that seat
+requires a future explicitly crossed treatment rather than an unbound runtime
+argument.
+
+Do not publish a ranking until the strategic release gates in
+[Strategic evaluation kernel](strategic-evals.md#release-gates) pass, including
+known-intervention validity and demonstrated held-out value beyond the
+unmodified Pokémon harness.
+
+## Legacy diagnostic: `vgc-positions-v1`
 
 ### Public task and private grader data
 

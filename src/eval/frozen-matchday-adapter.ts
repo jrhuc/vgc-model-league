@@ -20,6 +20,8 @@ export const FROZEN_MATCHDAY_ADAPTER_PROTOCOL = {
   replay: 'accepted-actions-and-private-notebook-intervals-v1',
   futureSeeds: 'first-common-battle-seed-then-continuation-derived-v1',
   continuation: 'strict-no-fallback-controller-loop-v1',
+  nonFocalNotebook: 'retain-checkpoint-bytes-v1',
+  executionIdentity: 'checkpoint-plan-arm-draw-treatment-controller-focal-v1',
 } as const;
 
 type MatchdayGameEvidence = FrozenMatchdayTerminalEvidence['games'][number];
@@ -85,6 +87,7 @@ export interface FrozenMatchdayContinuationControllers {
 }
 
 export interface FrozenMatchdayForkOutcome extends AdaptationForkOutcome {
+  executionDigest: string;
   diagnostic: string | null;
   sourceCheckpointDigest: string;
   sourceConfigDigest: string;
@@ -342,6 +345,28 @@ export function notebookTreatmentActionDigest(treatment: NotebookTreatment): str
   return canonicalJsonDigest(['notebook-replacement-v1', treatment.notebook]);
 }
 
+function forkExecutionDigest(input: {
+  checkpoint: FrozenMatchdayBetweenGameCheckpoint;
+  plan: MatchedForkPlan;
+  armId: string;
+  draw: CommonForkDraw;
+  focalPid: Pid;
+  treatment: NotebookTreatment;
+  controllers: FrozenMatchdayContinuationControllers;
+}): string {
+  return canonicalJsonDigest({
+    protocolVersion: FROZEN_MATCHDAY_ADAPTER_PROTOCOL.version,
+    checkpointDigest: input.checkpoint.checkpointDigest,
+    planDigest: input.plan.planDigest,
+    armId: input.armId,
+    draw: input.draw,
+    focalPid: input.focalPid,
+    treatmentDigest: input.treatment.treatmentDigest,
+    controllerSetDigest: input.controllers.controllerSetDigest,
+    nonFocalNotebook: FROZEN_MATCHDAY_ADAPTER_PROTOCOL.nonFocalNotebook,
+  });
+}
+
 function terminalUtility(
   terminal: FrozenMatchdayTerminalEvidence,
   focalPid: Pid,
@@ -367,6 +392,7 @@ function failureOutcome(input: {
   diagnostic: string;
   actionId: string | null;
   modeForecast?: OpponentModeProbability[];
+  executionDigest: string;
 }): FrozenMatchdayForkOutcome {
   return {
     caseId: input.checkpoint.caseId,
@@ -379,6 +405,7 @@ function failureOutcome(input: {
     utility: null,
     treatmentKind: input.treatment.kind,
     actionId: input.actionId,
+    executionDigest: input.executionDigest,
     ...(input.modeForecast === undefined ? {} : { modeForecast: input.modeForecast }),
     diagnostic: input.diagnostic,
     sourceCheckpointDigest: input.checkpoint.checkpointDigest,
@@ -431,25 +458,33 @@ export async function runFrozenMatchdayNotebookFork(input: {
   clusterId: string;
   focalPid: Pid;
   treatment: NotebookTreatment;
-  otherSeatInput?: FrozenBetweenGameInput;
   controllers: FrozenMatchdayContinuationControllers;
   maxDecisions?: number;
   realizedMode?(terminal: FrozenMatchdayTerminalEvidence, focalPid: Pid, draw: CommonForkDraw): string;
 }): Promise<FrozenMatchdayForkOutcome> {
   if (!input.clusterId) throw new Error('matchday fork clusterId must be non-empty');
   const { draw } = planBindings(input);
+  const executionDigest = forkExecutionDigest({
+    checkpoint: input.checkpoint,
+    plan: input.plan,
+    armId: input.armId,
+    draw,
+    focalPid: input.focalPid,
+    treatment: input.treatment,
+    controllers: input.controllers,
+  });
   const referee = restoreFrozenMatchdayBetweenGameCheckpoint(input.checkpoint, draw);
   let latest: FrozenMatchdaySubmissionResult | null = null;
   for (const pid of ['p1', 'p2'] as const) {
     const state = referee.currentState();
-    const notebookInput =
-      pid === input.focalPid ? { notebookReplacement: input.treatment.notebook } : (input.otherSeatInput ?? {});
+    const notebookInput = pid === input.focalPid ? { notebookReplacement: input.treatment.notebook } : {};
     try {
       latest = referee.readyNextGame(pid, notebookInput, state.revision, state.stateHash);
     } catch (cause) {
       return failureOutcome({
         checkpoint: input.checkpoint,
         referee,
+        executionDigest,
         armId: input.armId,
         drawId: input.drawId,
         clusterId: input.clusterId,
@@ -465,6 +500,7 @@ export async function runFrozenMatchdayNotebookFork(input: {
     return failureOutcome({
       checkpoint: input.checkpoint,
       referee,
+      executionDigest,
       armId: input.armId,
       drawId: input.drawId,
       clusterId: input.clusterId,
@@ -498,6 +534,7 @@ export async function runFrozenMatchdayNotebookFork(input: {
           return failureOutcome({
             checkpoint: input.checkpoint,
             referee,
+            executionDigest,
             armId: input.armId,
             drawId: input.drawId,
             clusterId: input.clusterId,
@@ -523,6 +560,7 @@ export async function runFrozenMatchdayNotebookFork(input: {
           return failureOutcome({
             checkpoint: input.checkpoint,
             referee,
+            executionDigest,
             armId: input.armId,
             drawId: input.drawId,
             clusterId: input.clusterId,
@@ -538,6 +576,7 @@ export async function runFrozenMatchdayNotebookFork(input: {
           return failureOutcome({
             checkpoint: input.checkpoint,
             referee,
+            executionDigest,
             armId: input.armId,
             drawId: input.drawId,
             clusterId: input.clusterId,
@@ -553,6 +592,7 @@ export async function runFrozenMatchdayNotebookFork(input: {
           return failureOutcome({
             checkpoint: input.checkpoint,
             referee,
+            executionDigest,
             armId: input.armId,
             drawId: input.drawId,
             clusterId: input.clusterId,
@@ -575,6 +615,7 @@ export async function runFrozenMatchdayNotebookFork(input: {
         return failureOutcome({
           checkpoint: input.checkpoint,
           referee,
+          executionDigest,
           armId: input.armId,
           drawId: input.drawId,
           clusterId: input.clusterId,
@@ -594,6 +635,7 @@ export async function runFrozenMatchdayNotebookFork(input: {
           return failureOutcome({
             checkpoint: input.checkpoint,
             referee,
+            executionDigest,
             armId: input.armId,
             drawId: input.drawId,
             clusterId: input.clusterId,
@@ -631,6 +673,7 @@ export async function runFrozenMatchdayNotebookFork(input: {
         return failureOutcome({
           checkpoint: input.checkpoint,
           referee,
+          executionDigest,
           armId: input.armId,
           drawId: input.drawId,
           clusterId: input.clusterId,
@@ -650,6 +693,7 @@ export async function runFrozenMatchdayNotebookFork(input: {
     return failureOutcome({
       checkpoint: input.checkpoint,
       referee,
+      executionDigest,
       armId: input.armId,
       drawId: input.drawId,
       clusterId: input.clusterId,
@@ -676,6 +720,7 @@ export async function runFrozenMatchdayNotebookFork(input: {
     utility: terminalUtility(terminal, input.focalPid, input.plan.utilityUnit),
     treatmentKind: input.treatment.kind,
     actionId: firstFocalActionId,
+    executionDigest,
     ...(firstModeForecast === undefined ? {} : { modeForecast: firstModeForecast }),
     ...(realizedMode === undefined ? {} : { realizedMode }),
     diagnostic: null,

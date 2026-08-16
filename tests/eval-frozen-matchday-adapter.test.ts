@@ -212,6 +212,9 @@ test('notebook forks replay one prefix and continue strict matched arms on commo
   assert.notEqual(control.actionId, treatment.actionId);
   assert.equal(control.sourceCheckpointDigest, treatment.sourceCheckpointDigest);
   assert.equal(control.forkConfigDigest, treatment.forkConfigDigest);
+  assert.match(control.executionDigest, /^[0-9a-f]{64}$/u);
+  assert.match(treatment.executionDigest, /^[0-9a-f]{64}$/u);
+  assert.notEqual(control.executionDigest, treatment.executionDigest);
   assert.ok(control.terminalDigest);
   assert.ok(treatment.terminalDigest);
 });
