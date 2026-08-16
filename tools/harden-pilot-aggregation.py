@@ -119,11 +119,9 @@ replace(
 )
 replace(
     "tests/eval-frontier-pilot.test.ts",
-    """    '2026-08-16T00:00:03.000Z',
-  );
+    """  const repeated = aggregateFrontierPilotReports([report, replication], '2026-08-16T00:00:03.000Z');
 """,
-    """    '2026-08-16T00:00:05.000Z',
-  );
+    """  const repeated = aggregateFrontierPilotReports([report, replication], '2026-08-16T00:00:05.000Z');
 """,
 )
 
