@@ -8,7 +8,11 @@ export const REFERENCE_SUITE_PROTOCOL = {
   regret: 'absolute-utility-units-v1',
 } as const;
 
-export type StrategicUtilityUnit = 'game-win-probability' | 'series-win-probability' | 'series-return';
+export type StrategicUtilityUnit =
+  | 'game-win-probability'
+  | 'material-differential'
+  | 'series-win-probability'
+  | 'series-return';
 
 export interface ReferenceArm {
   id: string;

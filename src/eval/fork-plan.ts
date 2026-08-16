@@ -15,6 +15,8 @@ export const MATCHED_FORK_PLAN_PROTOCOL = {
   parity: 'controller-equality-except-declared-stages-v1',
 } as const;
 
+export type MatchedForkUtilityUnit = Exclude<StrategicUtilityUnit, 'material-differential'>;
+
 export interface CommonForkDraw {
   id: string;
   hiddenStateSeed: string;
@@ -36,7 +38,7 @@ export interface MatchedForkPlan {
   protocolVersion: typeof MATCHED_FORK_PLAN_PROTOCOL.version;
   id: string;
   decisionNode: DecisionNode;
-  utilityUnit: StrategicUtilityUnit;
+  utilityUnit: MatchedForkUtilityUnit;
   allowedControllerDifferences: StrategicControllerStage[];
   arms: Array<MatchedForkArm & { controllerSetDigest: string }>;
   draws: CommonForkDraw[];
@@ -62,7 +64,7 @@ function assertDraw(draw: CommonForkDraw): void {
 export function buildMatchedForkPlan(input: {
   id: string;
   decisionNode: DecisionNode;
-  utilityUnit: StrategicUtilityUnit;
+  utilityUnit: MatchedForkUtilityUnit;
   arms: readonly MatchedForkArm[];
   draws: readonly CommonForkDraw[];
   allowedControllerDifferences?: readonly StrategicControllerStage[];

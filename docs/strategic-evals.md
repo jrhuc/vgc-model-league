@@ -29,7 +29,9 @@ do not publish the evaluation layer.
 
 ## Implemented kernel
 
-The first refactor slice is framework-agnostic TypeScript under `src/eval/`.
+The refactor is framework-agnostic TypeScript under `src/eval/`. Adapters can
+use verifiers, local providers, or external policy populations without changing
+the experiment identity or scoring contract.
 
 ### Replay and forks
 
@@ -67,6 +69,13 @@ single hidden answer key. It reports:
 
 Per-position min-max normalization is not part of this contract.
 
+`legacy-position-reference.ts` reads the current exhaustive counterfactual
+panels into the same contract as a named legacy arm. It uses the raw matrix
+material differential, preserves opponent-action clusters and common draws, and
+ignores the panel's normalized reward. This keeps old artifacts reproducible
+without turning the realized-state random-continuation target into the primary
+benchmark score.
+
 ### Model-facing tasks
 
 `strategic-task.ts` assigns stable opaque action IDs and independently shuffles
@@ -84,10 +93,12 @@ outcomes. Authentic-memory lift, stale-memory effect, false-memory harm,
 placebo effect, oracle lift, protocol validity, legality, and belief calibration
 remain separate outputs.
 
-The current module is the measurement and artifact contract. The next slice
-must connect it to replayed `FrozenMatchdayReferee` cases so every treatment
-shares the public history, hidden-state draw, opponent controller, battle RNG,
-and continuation controller.
+`frozen-matchday-adapter.ts` verifies a completed source matchday by replaying
+its accepted battle actions and private notebook intervals. It creates a
+content-addressed between-game checkpoint, replaces exact notebook bytes,
+changes only preregistered future seeds, and continues through strict declared
+controllers with no fallback. Source, checkpoint, fork configuration, and
+terminal evidence digests remain joined in every outcome.
 
 ## Required experiment shape
 
@@ -109,18 +120,18 @@ state prior, reference policy, or utility creates a new condition identity.
 
 ### Matchday adapter
 
-Add a replay adapter that reconstructs a frozen matchday to a declared
-between-game or battle decision, applies a notebook treatment, and continues
-with fixed controllers on common draws. The adapter must emit the generic event
-and fork artifacts rather than inventing a second scoring schema.
+The strict replay and notebook-fork adapter is implemented. The next matchday
+work is a model/runtime adapter that produces the same controller interface and
+a corpus builder that selects nonterminal between-game checkpoints without
+using treatment outcomes.
 
 ### Information-set battle scorer
 
-Refactor `counterfactual.ts` behind the reference-runner interface. Preserve the
-existing native Showdown acceptance filter and common-random-number matrices,
-but replace the realized-state, uniform-random, material-only singleton
-reference with versioned arms. Keep the old reference available only as a
-named diagnostic arm.
+The existing exhaustive panels now enter the generic reference suite only as a
+named raw-material diagnostic. Next, move panel generation behind the
+reference-runner interface and add versioned compatible-hidden-state,
+opponent-policy, continuation-policy, horizon, and series-utility arms. Preserve
+the native Showdown acceptance filter and rectangular common-draw matrices.
 
 ### Circuit event adapter
 
