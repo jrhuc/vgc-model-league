@@ -8,6 +8,8 @@ from typing import Literal
 from pydantic import ConfigDict, Field, SerializeAsAny
 from verifiers import v1 as vf
 
+from .protocol import SUBSTRATE_PIN
+
 ScenarioId = Literal["victory-road-top8-v1", "draft-league-v1"]
 
 
@@ -58,10 +60,12 @@ class VgcCircuitTaskset(
                 self.config.seed_start + self.config.num_blocks,
             )
         ):
+            case_id = f"{scenario_id}:{seed}"
             identity = {
-                "caseId": scenario_id,
+                "caseId": case_id,
                 "scenarioId": scenario_id,
                 "seed": seed,
+                **SUBSTRATE_PIN,
             }
             condition_digest = hashlib.sha256(
                 json.dumps(
@@ -75,7 +79,7 @@ class VgcCircuitTaskset(
                     idx=idx,
                     scenario_id=scenario_id,
                     seed=seed,
-                    case_id=scenario_id,
+                    case_id=case_id,
                     condition_digest=condition_digest,
                 ),
                 self.config.task,

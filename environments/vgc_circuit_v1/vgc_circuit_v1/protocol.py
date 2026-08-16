@@ -16,12 +16,24 @@ PROMPT_PROTOCOL_VERSION: Final = 2
 MATCHDAY_PROTOCOL_VERSION: Final = 1
 BATTLE_PROTOCOL_VERSION: Final = 1
 SHOWDOWN_REVISION: Final = "6a1836dd71c0718e923206f3d089e61074410868"
+CIRCUIT_FORMAT_ID: Final = "gen9championsvgc2026regmbbo3"
 SCENARIO_IDS: Final = ("victory-road-top8-v1", "draft-league-v1")
 DEFAULT_REFEREE_EXECUTABLE: Final = "/usr/local/bin/vgc-circuit-referee"
+# Mutable unpublished tag. Hosted runs must override with a reviewed digest.
 DEFAULT_REFEREE_IMAGE: Final = "ghcr.io/jrhuc/vgc-circuit-referee:0.1.0"
 MAX_ENCODED_LINE_BYTES: Final = 32 * 1024 * 1024
 DEFAULT_STDERR_TAIL_BYTES: Final = 64 * 1024
 DEFAULT_REQUEST_TIMEOUT: Final = 600.0
+
+SUBSTRATE_PIN: Final = {
+    "format": CIRCUIT_FORMAT_ID,
+    "showdownRevision": SHOWDOWN_REVISION,
+    "jsonlProtocolVersion": JSONL_PROTOCOL_VERSION,
+    "circuitProtocolVersion": CIRCUIT_PROTOCOL_VERSION,
+    "promptProtocolVersion": PROMPT_PROTOCOL_VERSION,
+    "matchdayProtocolVersion": MATCHDAY_PROTOCOL_VERSION,
+    "battleProtocolVersion": BATTLE_PROTOCOL_VERSION,
+}
 
 _ALLOWED_METHODS = {"observe", "pending_turns", "submit", "terminal"}
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")

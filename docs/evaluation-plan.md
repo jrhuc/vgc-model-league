@@ -228,6 +228,14 @@ The denominator represents the three possible top-cut series for one seat. The
 reward name is `tournament_series_return_v1`. An opportunity that the seat does
 not reach contributes zero to the numerator.
 
+Both returns partition one series ledger, so the eight seat returns of a
+complete Episode sum to exactly zero. Python enforces that conservation before
+scoring. A mean taken across all eight seats is therefore zero whatever the
+field played, and a trace-level mean is not even zero because a seat's return
+repeats on each of its decision traces and playoff seats produce more of them.
+Report seat or model means and reweight trace exports by
+`circuit_seat_decisions_v1`.
+
 Game records, pre-window and post-window splits, game-one-loss conversion as an
 adaptation diagnostic, standings, playoff qualification, champion status, transactions, invalid turns,
 and defaults are diagnostics. They do not add semantic, transaction, champion,
@@ -360,7 +368,10 @@ Do not treat untested paths as supported.
 8. Review the implemented circuit scenarios, return and failure semantics,
    complete terminal joins, role isolation, and private-information projections.
 9. Publish the referee runtime image at a reviewed immutable digest and make its
-   authenticated pull path available to the intended runtime. Publish the exact
+   authenticated pull path available to the intended runtime. Record the
+   reviewed referee's `configDigest` and `promptRevision` in the environment's
+   `expected_config_digest` and `expected_prompt_revision`, which fail an
+   Episode whose referee content drifts from the reviewed one. Publish the exact
    package only after its wheel and plugin smokes pass.
 10. Run separate Docker, Prime runtime, Environment Hub, and Hosted Evaluation
     smokes for the exact wheel and image digest. Do not infer one path from

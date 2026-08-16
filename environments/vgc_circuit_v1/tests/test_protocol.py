@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import AsyncIterator
+from pathlib import Path
 from typing import Any, Callable
 
 import pytest
@@ -310,3 +311,11 @@ async def test_oversized_output_and_early_process_exit_fail_closed() -> None:
     await asyncio.sleep(0)
     assert b"private referee failure" in client.stderr_tail
     await client.aclose(check_protocol=False)
+
+
+def test_showdown_revision_matches_repo_lock_when_present() -> None:
+    lock_path = Path(__file__).resolve().parents[3] / "showdown.lock.json"
+    if not lock_path.is_file():
+        pytest.skip("standalone package checkout has no repository showdown lock")
+    lock = json.loads(lock_path.read_text(encoding="utf-8"))
+    assert SHOWDOWN_REVISION == lock["commit"]
