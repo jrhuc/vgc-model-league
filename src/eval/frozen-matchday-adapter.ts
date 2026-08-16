@@ -1,18 +1,15 @@
-import { seededRng } from '../random.js';
 import {
   type FrozenBetweenGameInput,
   type FrozenMatchdayObservation,
   type FrozenMatchdayPrivateEvidence,
+  FrozenMatchdayReferee,
   type FrozenMatchdayRefereeOptions,
   type FrozenMatchdaySubmissionResult,
   type FrozenMatchdayTerminalEvidence,
-  FrozenMatchdayReferee,
 } from '../frozen-matchday-referee.js';
+import { seededRng } from '../random.js';
 import type { Pid } from '../types.js';
-import {
-  type AdaptationForkOutcome,
-  type NotebookTreatment,
-} from './bo3-adaptation.js';
+import type { AdaptationForkOutcome, NotebookTreatment } from './bo3-adaptation.js';
 import type { CommonForkDraw, MatchedForkPlan } from './fork-plan.js';
 import { canonicalJsonDigest } from './serialization.js';
 import type { OpponentModeProbability } from './strategic-task.js';
@@ -79,9 +76,7 @@ export interface FrozenMatchdayContinuationController {
   decideAction(
     context: FrozenMatchdayActionContext,
   ): FrozenMatchdayActionDecision | Promise<FrozenMatchdayActionDecision>;
-  decideNotebook?(
-    context: FrozenMatchdayNotebookContext,
-  ): FrozenBetweenGameInput | Promise<FrozenBetweenGameInput>;
+  decideNotebook?(context: FrozenMatchdayNotebookContext): FrozenBetweenGameInput | Promise<FrozenBetweenGameInput>;
 }
 
 export interface FrozenMatchdayContinuationControllers {
@@ -127,10 +122,7 @@ function intervalInput(interval: PrivateInterval): FrozenBetweenGameInput {
   return interval.supplied ? { notebookReplacement: interval.notebook } : {};
 }
 
-function replayGameActions(
-  referee: FrozenMatchdayReferee,
-  game: MatchdayGameEvidence,
-): FrozenMatchdaySubmissionResult {
+function replayGameActions(referee: FrozenMatchdayReferee, game: MatchdayGameEvidence): FrozenMatchdaySubmissionResult {
   let latest: FrozenMatchdaySubmissionResult | null = null;
   for (const action of game.submittedActions) {
     const state = referee.currentState();
@@ -219,7 +211,10 @@ function verifyCompletedSource(source: FrozenMatchdayCompletedSource): void {
   for (const pid of ['p1', 'p2'] as const) {
     const privateEvidence = source.privateEvidence[pid];
     if (privateEvidence.pid !== pid) throw new Error(`source private evidence is bound to the wrong ${pid} seat`);
-    if (canonicalJsonDigest(receipts(privateEvidence)) !== canonicalJsonDigest(receiptEvidence(source.terminalEvidence, pid))) {
+    if (
+      canonicalJsonDigest(receipts(privateEvidence)) !==
+      canonicalJsonDigest(receiptEvidence(source.terminalEvidence, pid))
+    ) {
       throw new Error(`${pid} private notebook bytes do not match the terminal receipt ledger`);
     }
   }

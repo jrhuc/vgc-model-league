@@ -1,29 +1,25 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-
+import { buildNotebookTreatment } from '../src/eval/bo3-adaptation.js';
 import {
   controllerSetDigest,
   STRATEGIC_CONTROLLER_STAGES,
   type StrategicControllerSet,
 } from '../src/eval/controllers.js';
 import type { DecisionNode } from '../src/eval/experiment-kernel.js';
-import {
-  buildMatchedForkPlan,
-  type MatchedForkArm,
-} from '../src/eval/fork-plan.js';
+import { buildMatchedForkPlan, type MatchedForkArm } from '../src/eval/fork-plan.js';
 import {
   buildFrozenMatchdayBetweenGameCheckpoint,
+  type FrozenMatchdayCompletedSource,
+  type FrozenMatchdayContinuationControllers,
   notebookTreatmentActionDigest,
   restoreFrozenMatchdayBetweenGameCheckpoint,
   runFrozenMatchdayNotebookFork,
-  type FrozenMatchdayCompletedSource,
-  type FrozenMatchdayContinuationControllers,
 } from '../src/eval/frozen-matchday-adapter.js';
 import { canonicalJsonDigest } from '../src/eval/serialization.js';
-import { buildNotebookTreatment } from '../src/eval/bo3-adaptation.js';
 import {
-  FrozenMatchdayReferee,
   type FrozenMatchdayPhase,
+  FrozenMatchdayReferee,
   type FrozenMatchdaySubmissionResult,
 } from '../src/frozen-matchday-referee.js';
 import type { Pid } from '../src/types.js';
@@ -107,9 +103,11 @@ function controllerIdentities(): StrategicControllerSet {
 
 function controllers(identities: StrategicControllerSet): FrozenMatchdayContinuationControllers {
   const seat = (pid: Pid) => ({
-    decideAction: ({ legalActions, currentNotebook, decisionIndex }: Parameters<
-      FrozenMatchdayContinuationControllers['seats'][Pid]['decideAction']
-    >[0]) => {
+    decideAction: ({
+      legalActions,
+      currentNotebook,
+      decisionIndex,
+    }: Parameters<FrozenMatchdayContinuationControllers['seats'][Pid]['decideAction']>[0]) => {
       const alternate = pid === 'p1' && decisionIndex === 0 && currentNotebook.includes('alternate preview');
       const selected = alternate ? legalActions.at(-1) : legalActions[0];
       assert.ok(selected);
@@ -164,10 +162,7 @@ test('completed matchdays produce exact restorable between-game checkpoints', ()
 
   const tampered = structuredClone(checkpoint);
   tampered.completedGames[0]!.turns += 1;
-  assert.throws(
-    () => restoreFrozenMatchdayBetweenGameCheckpoint(tampered),
-    /checkpoint digest does not match/u,
-  );
+  assert.throws(() => restoreFrozenMatchdayBetweenGameCheckpoint(tampered), /checkpoint digest does not match/u);
 });
 
 test('notebook forks replay one prefix and continue strict matched arms on common seeds', async () => {
