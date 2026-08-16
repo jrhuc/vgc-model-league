@@ -178,6 +178,21 @@ pnpm run strategic-pilot -- \
   --out runs/strategic-pilot-confirmation
 ```
 
+After collecting independent source directories, validate every digest and
+aggregate at the source-cluster level:
+
+```sh
+pnpm run summarize-strategic-pilots -- \
+  --out runs/strategic-pilot-aggregate.json \
+  runs/source-1 runs/source-2 runs/source-3 runs/source-4
+```
+
+The summarizer scans model report JSON recursively, rejects broken plan, call,
+treatment, execution, analysis, or report joins, averages repeated provider-call
+runs inside each source first, and computes uncertainty across source means. It
+marks fewer than four valid source clusters as insufficient and never emits a
+ranking.
+
 Add preregistered negative and upper-bound controls with exact notebook files:
 
 ```sh
@@ -190,8 +205,10 @@ pnpm run strategic-pilot -- \
   --treatment oracle=<oracle.txt>
 ```
 
-The output directory is private evidence. `source.json` contains exact private
-source evidence; each model JSON contains prompts and raw provider responses;
+The output directory is private evidence and must be new or empty. Every
+artifact is written create-only; reruns require a new directory rather than
+silently replacing evidence. `source.json` contains exact private source
+evidence; each model JSON contains prompts and raw provider responses;
 `summary.json` is only a batch index. Do not publish these files through the
 static-site exporter. One team pair is one uncertainty cluster, so one command
 can establish plumbing and discover gross effects but cannot support a model

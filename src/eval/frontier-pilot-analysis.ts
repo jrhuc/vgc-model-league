@@ -1,4 +1,4 @@
-import { BO3_ADAPTATION_PROTOCOL, analyzeBo3Adaptation } from './bo3-adaptation.js';
+import { analyzeBo3Adaptation, BO3_ADAPTATION_PROTOCOL } from './bo3-adaptation.js';
 import {
   FRONTIER_STRATEGIC_PILOT_PROTOCOL,
   type FrontierPilotCallTrace,
@@ -215,10 +215,7 @@ function sourceAggregate(sourceArtifactDigest: string, reports: readonly Frontie
   return {
     sourceArtifactDigest,
     runs: reports.length,
-    matchedPairs: reports.reduce(
-      (sum, report) => sum + (report.analysis.authenticVsWithheld?.matchedPairs ?? 0),
-      0,
-    ),
+    matchedPairs: reports.reduce((sum, report) => sum + (report.analysis.authenticVsWithheld?.matchedPairs ?? 0), 0),
     validPairs: reports.reduce((sum, report) => sum + (report.analysis.authenticVsWithheld?.validPairs ?? 0), 0),
     meanDifference: differences.length ? mean(differences) : null,
     replicationStandardError: standardError(differences),
@@ -247,10 +244,7 @@ export function aggregateFrontierPilotReports(
         if (canonicalJsonDigest(report.model) !== canonicalJsonDigest(first.model)) {
           throw new Error(`model config digest ${modelConfigDigest} joins different model configs`);
         }
-        bySource.set(report.sourceArtifactDigest, [
-          ...(bySource.get(report.sourceArtifactDigest) ?? []),
-          report,
-        ]);
+        bySource.set(report.sourceArtifactDigest, [...(bySource.get(report.sourceArtifactDigest) ?? []), report]);
       }
       const sources = [...bySource.entries()]
         .map(([sourceDigest, sourceReports]) => sourceAggregate(sourceDigest, sourceReports))
@@ -295,7 +289,7 @@ export function aggregateFrontierPilotReports(
         reasoningTokens: modelReports.reduce((sum, report) => sum + report.summary.reasoningTokens, 0),
         reportedCost: modelReports.reduce((sum, report) => sum + report.summary.reportedCost, 0),
         sources,
-        readiness: sources.length < 4 ? 'insufficient-source-clusters' : 'pilot-estimate-only',
+        readiness: sourceMeans.length < 4 ? 'insufficient-source-clusters' : 'pilot-estimate-only',
       } satisfies FrontierPilotModelAggregate;
     })
     .sort((left, right) => left.modelSpec.localeCompare(right.modelSpec));

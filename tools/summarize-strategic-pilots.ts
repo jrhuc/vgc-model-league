@@ -3,12 +3,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
-
+import type { FrontierStrategicPilotReport } from '../src/eval/frontier-pilot.js';
 import {
   aggregateFrontierPilotReports,
   type FrontierPilotAggregateReport,
 } from '../src/eval/frontier-pilot-analysis.js';
-import type { FrontierStrategicPilotReport } from '../src/eval/frontier-pilot.js';
 import { canonicalJson } from '../src/eval/serialization.js';
 
 const HELP = `Usage: pnpm run summarize-strategic-pilots -- [options] <report-or-directory>...

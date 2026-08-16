@@ -141,6 +141,11 @@ provider, treatment bytes, fork execution identities, and terminal evidence.
 No rejected response receives a random or deterministic fallback utility. A
 single run is one source cluster and cannot be interpreted as a ranking.
 
+`tools/summarize-strategic-pilots.ts` validates the complete private report
+join and aggregates repeated runs within source before computing uncertainty
+across source-cluster means. It labels fewer than four valid sources as
+insufficient and does not produce a model ranking.
+
 The pilot is a falsification milestone. Expand the evaluation only if authentic
 memory beats withholding on independently selected source clusters, false
 memory is worse than placebo, oracle memory supplies a sensible upper bound,

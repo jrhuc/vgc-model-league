@@ -41,7 +41,7 @@ Options:
   --source <path>            reuse a previously written source.json
   --authentic-notebook <path> use supplied authentic notebook bytes instead of asking the model
   --treatment <kind=path>    add stale, false, placebo, or oracle notebook bytes
-  --out <directory>          private report directory
+  --out <directory>          new or empty private report directory
 
 Model specs are openrouter:<model-id> or prime:<model-id>. The command reads
 OPENROUTER_API_KEY or PRIME_API_KEY. It writes private prompts, responses,
@@ -85,13 +85,17 @@ function filename(value: string): string {
   return safe || 'model';
 }
 
+function modelStem(value: string): string {
+  return `${filename(value)}-${canonicalJsonDigest(value).slice(0, 8)}`;
+}
+
 function defaultOutputDirectory(): string {
   return path.resolve('runs', `strategic-pilot-${new Date().toISOString().replace(/[:.]/gu, '-')}`);
 }
 
 function writeCanonical(file: string, value: unknown): void {
   fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, `${canonicalJson(value)}\n`);
+  fs.writeFileSync(file, `${canonicalJson(value)}\n`, { flag: 'wx' });
 }
 
 function readSource(file: string): FrontierPilotSourceArtifact {
@@ -196,7 +200,14 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
   const timeoutSeconds = integer(values.timeout, 'timeout');
   const maxDecisions = integer(values['max-decisions'], 'max-decisions');
   const outputDirectory = path.resolve(values.out ?? defaultOutputDirectory());
-  fs.mkdirSync(outputDirectory, { recursive: true });
+  if (fs.existsSync(outputDirectory)) {
+    const stat = fs.statSync(outputDirectory);
+    if (!stat.isDirectory() || fs.readdirSync(outputDirectory).length) {
+      throw new Error(`frontier pilot output must be a new or empty directory: ${outputDirectory}`);
+    }
+  } else {
+    fs.mkdirSync(outputDirectory, { recursive: true });
+  }
 
   const sourceArtifact = values.source
     ? readSource(path.resolve(values.source))
@@ -234,7 +245,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
       });
       notebookTrace = generated.trace;
       if (generated.status !== 'valid' || generated.treatment === null) {
-        const traceFile = `${filename(modelSpec)}-notebook-failure.json`;
+        const traceFile = `${modelStem(modelSpec)}-notebook-failure.json`;
         writeCanonical(path.join(outputDirectory, traceFile), generated.trace);
         results.push({
           modelSpec,
@@ -262,7 +273,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
         maxDecisions,
         ...(notebookTrace === undefined ? {} : { notebookTrace }),
       });
-      const reportFile = `${filename(modelSpec)}.json`;
+      const reportFile = `${modelStem(modelSpec)}.json`;
       writeCanonical(path.join(outputDirectory, reportFile), report);
       results.push({
         modelSpec,

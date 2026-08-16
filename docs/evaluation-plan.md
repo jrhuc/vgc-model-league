@@ -101,6 +101,13 @@ the individual future seed. Provider temperature is zero and OpenRouter
 fallback is disabled, but provider calls do not expose a portable random seed;
 record this residual randomness and balance arm execution order.
 
+Aggregate completed private reports with `pnpm run
+summarize-strategic-pilots -- <report-or-directory>...`. The validator
+recomputes report, model, fork-plan, call, treatment, execution, analysis, and
+summary identities. Repeated provider-call runs are averaged within their
+source before uncertainty is computed across source-cluster means. Fewer than
+four valid source clusters remains explicitly insufficient evidence.
+
 ### Go/no-go criteria
 
 Continue toward a public strategic-shard package only when all of these are

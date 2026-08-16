@@ -10,6 +10,10 @@ import {
   generateFrontierAuthenticNotebook,
   runFrontierStrategicPilot,
 } from '../src/eval/frontier-pilot.js';
+import {
+  aggregateFrontierPilotReports,
+  validateFrontierStrategicPilotReport,
+} from '../src/eval/frontier-pilot-analysis.js';
 import type { FrozenMatchdayActionContext } from '../src/eval/frozen-matchday-adapter.js';
 import { buildFrozenMatchdayBetweenGameCheckpoint } from '../src/eval/frozen-matchday-adapter.js';
 import { canonicalJsonDigest } from '../src/eval/serialization.js';
@@ -206,4 +210,27 @@ test('frontier pilot runs balanced authentic and withheld forks with private cal
   assert.equal(report.summary.legalOutcomes, 2);
   assert.notEqual(report.executionOrder[0]!.outcomeExecutionDigest, report.executionOrder[1]!.outcomeExecutionDigest);
   assert.match(report.reportDigest, /^[0-9a-f]{64}$/u);
+
+  validateFrontierStrategicPilotReport(report);
+  const aggregate = aggregateFrontierPilotReports([report], '2026-08-16T00:00:01.000Z');
+  assert.equal(aggregate.models.length, 1);
+  assert.equal(aggregate.models[0]!.sourceClusters, 1);
+  assert.equal(aggregate.models[0]!.validSourceClusters, 1);
+  assert.equal(aggregate.models[0]!.readiness, 'insufficient-source-clusters');
+  assert.equal(aggregate.models[0]!.meanSourceDifference, report.analysis.authenticVsWithheld?.meanDifference ?? null);
+
+  const changed = structuredClone(report);
+  changed.generatedAt = '2026-08-16T00:00:02.000Z';
+  const { reportDigest: priorDigest, ...changedBase } = changed;
+  assert.ok(priorDigest);
+  const replication = { ...changedBase, reportDigest: canonicalJsonDigest(changedBase) };
+  const repeated = aggregateFrontierPilotReports([report, replication], '2026-08-16T00:00:03.000Z');
+  assert.equal(repeated.models[0]!.runs, 2);
+  assert.equal(repeated.models[0]!.sourceClusters, 1);
+  assert.equal(repeated.models[0]!.sources[0]!.runs, 2);
+  assert.equal(repeated.models[0]!.standardError, null);
+
+  const tampered = structuredClone(report);
+  tampered.calls[0]!.prompt += 'tampered';
+  assert.throws(() => validateFrontierStrategicPilotReport(tampered), /report digest does not match/u);
 });
