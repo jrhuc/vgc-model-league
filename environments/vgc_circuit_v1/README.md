@@ -20,9 +20,17 @@ The finite built-in taskset accepts `scenario`, `seed_start`, and `num_blocks`.
 `scenario` selects exactly one lifecycle for an evaluation; it never mixes the
 league and tournament in one taskset. It defaults to `draft-league-v1` for
 native plugin discovery, and `victory-road-top8-v1` must be selected explicitly.
-Task data contains only its index, scenario and case IDs, seed, and condition
-digest. It does not contain a private source path, referee options, prompt, or
-system prompt.
+Task data contains only its index, scenario ID, a seed-unique `case_id`, seed,
+and condition digest. It does not contain a private source path, referee
+options, prompt, or system prompt.
+
+The condition digest hashes the case identity together with the substrate pin:
+the format ID, the pinned Showdown revision, and the five protocol versions. A
+pin change therefore produces different digests for the same scenario and seed,
+so results from two substrate revisions cannot pool under one condition. The
+digest does not cover the TypeScript referee's own configuration, which fixes
+the seat permutation, draft board, team pool, schedule, and series seeds; see
+the referee content pins below.
 
 ## Scenarios
 
@@ -92,6 +100,25 @@ matchday protocol 1, battle protocol 1, and the pinned Showdown revision. The
 client exposes only `observe`, `pending_turns`, `submit`, and `terminal` after
 `start`. Every response must carry the exact Episode binding.
 
+`observe` results are validated and discarded. A seat's prompt comes from
+`pending_turns`, so `observe` acts only as a tripwire that the referee's
+per-seat view agrees with the pending decision. Seat isolation itself is a
+TypeScript authority that Python cannot check; Python sees no seat's private
+state.
+
+### Referee content pins
+
+The Python constants pin the format, Showdown revision, and protocol versions,
+and the start binding must match them exactly. They do not pin the referee's
+own configuration. `expected_config_digest` and `expected_prompt_revision` pin
+that half: when set, the referee's `configDigest` and `promptRevision` must
+match at `start` and again at every trace join, or the Episode fails before
+scoring. The referee's config digest covers the protocol versions, Showdown
+revision, scenario, format, prompt revision, fixture digests, seed, seat
+permutation, pool, board, schedule, and series seeds, so pinning it detects a
+referee image that changed content behind a mutable tag. Both default to
+unset, which pins nothing.
+
 `src/frozen-circuit-referee.ts` reuses the repository's existing draft,
 strict-construction, round-robin, playoff, and transaction authorities. It
 creates a `FrozenMatchdayReferee` for each series, which reuses the
@@ -148,11 +175,20 @@ The three opportunities are the possible quarterfinal, semifinal, and final for
 one seat. An opportunity that the seat does not reach contributes zero to the
 numerator.
 
+Both formulas are frozen. The eight seat returns therefore sum to exactly zero
+in every complete Episode, because every series win is another seat's loss and
+the denominator is a constant.
+
 The environment also records game results, game differential, pre-window and
 post-window splits, game-one-loss conversion, standings, playoff qualification,
 champion status, transactions, invalid turns, and defaults. These values are
 diagnostics only. They do not provide game, semantic, transaction, adaptation,
 standing, champion, invalid-output, or default shaping.
+
+`circuit_seat_decisions_v1` records how many decision traces a seat produced.
+It exists so a consumer can undo the trace weighting described under
+publication blockers: weighting each trace by the reciprocal of this metric
+recovers a per-seat mean from a trace-level export.
 
 ## Evaluation and training targets
 
@@ -197,19 +233,45 @@ nine runtimes or play either scenario.
 
 ## Publication blockers
 
-The package classifier prevents an accidental public Python upload. The
+The package classifier prevents an accidental public Python upload. Hub
+visibility is a separate flag and must be set at `prime env push`. The
 repository contains a referee Dockerfile and image workflow, but no reviewed,
-published image digest is recorded. The default referee image reference is not
-proof that the image is available.
+published image digest is recorded. The default referee image tag
+`ghcr.io/jrhuc/vgc-circuit-referee:0.1.0` and the default player image tag
+`python:3.11-slim` are mutable and unpublished as hosted contracts.
 
 Before a Docker, Prime runtime, Hub, Hosted Evaluation, or Hosted Training run:
 
 1. publish and review the exact referee image;
 2. configure reviewed immutable digests for the referee and player runtime
    images instead of mutable tags;
-3. provide runtime authentication that can pull the referee image;
-4. publish and load the exact environment package; and
-5. validate that execution path independently.
+3. record the reviewed image's `configDigest` and `promptRevision` in
+   `expected_config_digest` and `expected_prompt_revision`, so a later push to
+   the same tag fails the Episode instead of scoring under different content;
+4. provide runtime authentication that can pull the referee image;
+5. publish and load the exact environment package; and
+6. validate that execution path independently.
 
 Until these steps pass, local source and dry-run evidence does not establish
 hosted support.
+
+Do not treat a Hub mean as a model ranking. The eight seat returns in one
+Episode partition one zero-sum series ledger, so their mean is zero whatever
+the field played. The environment writes the same seat return onto every
+decision trace for that seat, so a trace-weighted mean drifts off zero only
+because seats that play more games, usually playoff seats, contribute more
+traces. Compare seats or assigned models, and reweight a trace-level export by
+`circuit_seat_decisions_v1`. Same-model self-play validates machinery; its
+expected seat return is zero by construction, so it cannot rank anything.
+
+One provider, runtime, or protocol failure fails the whole eight-seat Episode
+before scoring. The default `draft-league-v1` task provisions nine runtimes and
+plays a full 31-series league. Use `victory-road-top8-v1` for a shorter
+seven-series smoke after the referee image exists. The native dry run does not
+provision runtimes or play either scenario.
+
+## License and attribution
+
+The code uses the MIT License. Pokémon and all respective names are trademarks
+of Nintendo, Creatures Inc., and GAME FREAK inc. The Victory Road scenario uses
+reconstructed stat spreads, not unpublished human spreads from the source event.

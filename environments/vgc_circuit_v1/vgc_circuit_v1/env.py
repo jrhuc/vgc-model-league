@@ -58,6 +58,7 @@ from .taskset import VgcCircuitTask
 
 _NULL_HARNESS = vf.HarnessConfig(id="null")
 _NO_RETRIES = vf.RetryConfig(max_retries=0)
+# Mutable tag. Hosted runs must override with a reviewed digest.
 _PLAYER_RUNTIME_IMAGE = "python:3.11-slim"
 
 
@@ -92,6 +93,8 @@ class VgcCircuitEnvConfig(vf.EnvConfig):
     referee_stderr_tail_bytes: int = Field(DEFAULT_STDERR_TAIL_BYTES, ge=0)
     referee_shutdown_timeout: float = Field(5.0, gt=0)
     referee_request_timeout: float = Field(DEFAULT_REQUEST_TIMEOUT, gt=0)
+    expected_config_digest: str | None = Field(None, pattern=r"^[0-9a-f]{64}$")
+    expected_prompt_revision: str | None = Field(None, min_length=1)
     debug_allow_subprocess: bool = False
 
     @model_validator(mode="after")
@@ -148,6 +151,7 @@ class VgcCircuitEnv(vf.Env[VgcCircuitEnvConfig]):
             _start_result(started)
             if client.binding is None:
                 raise ProtocolError("referee start did not establish a binding")
+            _require_referee_pins(self.config, client.binding.to_wire())
             seats = {
                 seat_id: _Seat(
                     seat_id,
@@ -313,6 +317,7 @@ class VgcCircuitEnv(vf.Env[VgcCircuitEnvConfig]):
                     "trace runtime does not match its isolated circuit seat"
                 )
             binding = _binding(evidence.get("binding"), task)
+            _require_referee_pins(self.config, binding)
             if evidence.get("scenario") != task.data.scenario_id:
                 raise ValueError("trace scenario does not match its task")
             transport = evidence.get("transport")
@@ -376,7 +381,9 @@ class VgcCircuitEnv(vf.Env[VgcCircuitEnvConfig]):
             scores[seat["seatId"]] = (
                 seat["rewardName"],
                 seat["rewardValue"],
-                _terminal_metrics(task.data.scenario_id, seat),
+                _terminal_metrics(
+                    task.data.scenario_id, seat, len(by_seat[seat["seatId"]])
+                ),
             )
         for seat_id, traces in by_seat.items():
             reward_name, reward, metrics = scores[seat_id]
@@ -392,13 +399,11 @@ def _rate(wdl: dict[str, int]) -> float:
 
 
 def _terminal_metrics(
-    scenario_id: str, seat: dict[str, Any]
+    scenario_id: str, seat: dict[str, Any], decisions: int
 ) -> dict[str, float]:
     splits = seat["splits"]
-    pre = splits["roundRobinPreWindow"]
-    post = splits["roundRobinPostWindow"]
-    playoffs = splits["playoffs"] if scenario_id == "draft-league-v1" else splits["topCut"]
     metrics = {
+        "circuit_seat_decisions_v1": decisions,
         "circuit_games_v1": seat["gamesPlayed"],
         "circuit_game_wins_v1": seat["gameWins"],
         "circuit_game_losses_v1": seat["gameLosses"],
@@ -422,6 +427,9 @@ def _terminal_metrics(
     for kind, count in seat["defaults"].items():
         metrics[f"circuit_{kind}_defaults_v1"] = count
     if scenario_id == "draft-league-v1":
+        pre = splits["roundRobinPreWindow"]
+        post = splits["roundRobinPostWindow"]
+        playoffs = splits["playoffs"]
         metrics.update(
             {
                 "draft_league_final_rr_rank_v1": seat["rank"],
@@ -438,6 +446,18 @@ def _terminal_metrics(
             }
         )
     return metrics
+
+
+def _require_referee_pins(
+    config: VgcCircuitEnvConfig, binding: dict[str, Any]
+) -> None:
+    expected = {
+        "configDigest": config.expected_config_digest,
+        "promptRevision": config.expected_prompt_revision,
+    }
+    for key, pin in expected.items():
+        if pin is not None and binding[key] != pin:
+            raise ProtocolError(f"referee {key} does not match the configured pin")
 
 
 def _validate_config(config: VgcCircuitEnvConfig) -> None:
@@ -624,6 +644,13 @@ def _projected_terminal(
     expected_count = 31 if scenario_id == "draft-league-v1" else 7
     if series_count != expected_count:
         raise ProtocolError("projected terminal series count is inconsistent")
+    if not math.isclose(
+        math.fsum(seat["rewardValue"] for seat in parsed),
+        0.0,
+        rel_tol=0.0,
+        abs_tol=1e-12,
+    ):
+        raise ProtocolError("projected terminal returns are not a zero-sum partition")
     component_names = (
         "roundRobinPreWindow", "roundRobinPostWindow", "playoffs", "topCut"
     )

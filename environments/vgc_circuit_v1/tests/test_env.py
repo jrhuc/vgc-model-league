@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import hashlib
+import math
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from typing import Any
@@ -532,11 +533,13 @@ async def _run(
     failed_role: str | None = None,
     duplicate_runtime: bool = False,
     scenario_id: str = "draft-league-v1",
+    **pins: str,
 ) -> tuple[VgcCircuitEnv, VgcCircuitTask, SimpleNamespace, ScriptedCircuitReferee, vf.Episode, Concurrency]:
     config = VgcCircuitEnvConfig(
         taskset=VgcCircuitTasksetConfig(
             id="vgc-circuit-v1", scenario=scenario_id
-        )
+        ),
+        **pins,
     )
     env = VgcCircuitEnv(config)
     task = next(iter(env.taskset))
@@ -608,6 +611,11 @@ async def test_full_eight_seat_31_series_join_rewards_and_diagnostics(monkeypatc
         assert reward == pytest.approx(expected)
     assert all(item.trace.metrics["circuit_free_agency_defaults_v1"] == 1 for item in agents.seat2.interactions)
     assert all(item.trace.metrics["circuit_champion_v1"] == 1 for item in agents.seat1.interactions)
+    assert all(trace.metrics["circuit_seat_decisions_v1"] == 2 for trace in episode.traces)
+    assert math.fsum(
+        trace.rewards["draft_league_series_return_v1"].score / trace.metrics["circuit_seat_decisions_v1"]
+        for trace in episode.traces
+    ) == pytest.approx(0.0, abs=1e-12)
 
 
 @pytest.mark.asyncio
@@ -631,6 +639,11 @@ async def test_victory_road_rewards_every_joined_trace(monkeypatch: pytest.Monke
     assert reward == pytest.approx((top_cut["wins"] - top_cut["losses"]) / 3)
     assert champion.metrics["circuit_series_v1"] == 3
     assert champion.metrics["circuit_champion_v1"] == 1
+    assert champion.metrics["circuit_seat_decisions_v1"] == 1
+    assert math.fsum(
+        trace.rewards["tournament_series_return_v1"].score
+        for trace in episode.traces
+    ) == pytest.approx(0.0, abs=1e-12)
     assert all(
         "draft_league_final_rr_rank_v1" not in trace.metrics
         for trace in episode.traces
@@ -684,6 +697,47 @@ async def test_terminal_tampering_scores_nothing(monkeypatch: pytest.MonkeyPatch
 
 
 @pytest.mark.asyncio
+async def test_self_consistent_seat_inflation_breaks_the_zero_sum_partition(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    env, task, _agents, _referee, episode, _concurrency = await _run(monkeypatch)
+    inflated = copy.deepcopy(episode)
+    seats = [trace.info["circuit_v1"]["terminal"]["seat"] for trace in inflated.traces]
+    target = next(
+        seat["seatId"]
+        for seat in seats
+        if seat["splits"]["playoffs"]["series"]["losses"]
+    )
+    for seat in seats:
+        if seat["seatId"] != target:
+            continue
+        for name in ("playoffs", "total"):
+            seat["splits"][name]["series"]["wins"] += 1
+            seat["splits"][name]["series"]["losses"] -= 1
+        seat["seriesWins"] += 1
+        seat["seriesLosses"] -= 1
+        seat["rewardValue"] += 2 / 9
+    with pytest.raises(ProtocolError, match="zero-sum"):
+        await env.finalize(task, inflated)
+    assert all(not trace.rewards and not trace.metrics for trace in inflated.traces)
+
+
+@pytest.mark.asyncio
+async def test_referee_content_pins_gate_the_episode(monkeypatch: pytest.MonkeyPatch) -> None:
+    env, task, _agents, _referee, episode, _concurrency = await _run(
+        monkeypatch,
+        expected_config_digest="c" * 64,
+        expected_prompt_revision="prompt-v2",
+    )
+    await env.finalize(task, episode)
+    assert all(trace.rewards for trace in episode.traces)
+    with pytest.raises(ProtocolError, match="configDigest"):
+        await _run(monkeypatch, expected_config_digest="d" * 64)
+    with pytest.raises(ProtocolError, match="promptRevision"):
+        await _run(monkeypatch, expected_prompt_revision="prompt-v1")
+
+
+@pytest.mark.asyncio
 async def test_provider_failure_and_runtime_alias_fail_without_reward(monkeypatch: pytest.MonkeyPatch) -> None:
     with pytest.raises(ProtocolError, match="one model turn"):
         await _run(monkeypatch, failed_role="seat8")
@@ -697,6 +751,12 @@ def test_config_nine_roles_defaults_and_concurrency_floor() -> None:
     assert config.referee.runtime.image == DEFAULT_REFEREE_IMAGE
     assert config.referee_executable == DEFAULT_REFEREE_EXECUTABLE
     assert all(getattr(config, role).runtime.type == "docker" for role in _ROLES)
+    assert config.expected_config_digest is None
+    assert config.expected_prompt_revision is None
+    with pytest.raises(ValidationError):
+        VgcCircuitEnvConfig(expected_config_digest="not-a-digest")
+    with pytest.raises(ValidationError):
+        VgcCircuitEnvConfig(expected_prompt_revision="")
     with pytest.raises(ValidationError):
         VgcCircuitEnvConfig(max_concurrent_agents=7)
     with pytest.raises(ValidationError):

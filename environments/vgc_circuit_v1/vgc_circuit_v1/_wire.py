@@ -11,6 +11,7 @@ from verifiers import v1 as vf
 from ._model import _PendingTurn, _PHASES, _SEATS, _SHA256, _TURN_KINDS
 from .protocol import (
     BATTLE_PROTOCOL_VERSION,
+    CIRCUIT_FORMAT_ID,
     CIRCUIT_PROTOCOL_VERSION,
     MATCHDAY_PROTOCOL_VERSION,
     PROMPT_PROTOCOL_VERSION,
@@ -301,7 +302,7 @@ def _terminal(
         "battleProtocolVersion": BATTLE_PROTOCOL_VERSION,
         "showdownRevision": SHOWDOWN_REVISION,
         "scenarioId": scenario_id,
-        "format": "gen9championsvgc2026regmbbo3",
+        "format": CIRCUIT_FORMAT_ID,
         "configDigest": binding.config_digest,
         "promptRevision": binding.prompt_revision,
     }
