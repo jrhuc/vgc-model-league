@@ -54,6 +54,7 @@ export const FRONTIER_STRATEGIC_PILOT_PROTOCOL = {
   sampling: 'temperature-zero-no-provider-seed-balanced-arm-order-v1',
   history: 'bounded-full-authorized-continuation-pov-v1',
   taskIdentity: 'opportunity-and-authorized-state-digest-v1',
+  outcomeActionIdentity: 'canonical-command-digest-v1',
   report: 'content-addressed-private-run-report-v1',
 } as const;
 
@@ -667,7 +668,13 @@ export class FrontierPilotActionController implements FrozenMatchdayContinuation
     };
     this.callTraces.push(traced(base));
     this.modelDecisions += 1;
-    return { command: selected.canonicalAction, actionId: parsed.actionId };
+    return {
+      command: selected.canonicalAction,
+      actionId: canonicalJsonDigest([
+        FRONTIER_STRATEGIC_PILOT_PROTOCOL.outcomeActionIdentity,
+        selected.canonicalAction,
+      ]),
+    };
   }
 
   decideNotebook(context: FrozenMatchdayNotebookContext) {

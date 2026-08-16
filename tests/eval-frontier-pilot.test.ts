@@ -5,6 +5,7 @@ import {
   buildFrontierPilotMatchday,
   buildFrontierPilotSourceArtifact,
   completeFrontierPilotSource,
+  FRONTIER_STRATEGIC_PILOT_PROTOCOL,
   FrontierPilotActionController,
   type FrontierPilotPublicContext,
   generateFrontierAuthenticNotebook,
@@ -131,6 +132,11 @@ test('frontier action controller uses strict opaque tasks and joins the selected
   assert.equal(traces.length, 2);
   assert.equal(traces[0]!.status, 'valid');
   assert.equal(traces[0]!.canonicalAction, decision.command);
+  assert.notEqual(traces[0]!.selectedActionId, decision.actionId);
+  assert.equal(
+    decision.actionId,
+    canonicalJsonDigest([FRONTIER_STRATEGIC_PILOT_PROTOCOL.outcomeActionIdentity, decision.command]),
+  );
   assert.match(traces[0]!.callDigest, /^[0-9a-f]{64}$/u);
   assert.match(traces[1]!.prompt, /\|turn\|3/u);
   assert.match(traces[1]!.prompt, /\|move\|p1a: Alpha\|Protect/u);
