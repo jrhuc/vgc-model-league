@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 
 
@@ -123,18 +124,13 @@ replace(
 )
 matchday = Path("src/eval/frozen-matchday-adapter.ts")
 matchday_text = matchday.read_text()
-needle = """        checkpoint: input.checkpoint,
-        referee,
-"""
-found = matchday_text.count(needle)
+pattern = re.compile(r"^(?P<indent>\s*)referee,\n(?P=indent)armId: input\.armId,", re.MULTILINE)
+found = len(pattern.findall(matchday_text))
 if found < 8:
     raise RuntimeError(f"frozen matchday adapter: expected at least 8 failure outcomes, found {found}")
-matchday_text = matchday_text.replace(
-    needle,
-    """        checkpoint: input.checkpoint,
-        referee,
-        executionDigest,
-""",
+matchday_text = pattern.sub(
+    lambda match: f"{match.group('indent')}referee,\n{match.group('indent')}executionDigest,\n{match.group('indent')}armId: input.armId,",
+    matchday_text,
 )
 success = """    treatmentKind: input.treatment.kind,
     actionId: firstFocalActionId,
