@@ -169,6 +169,9 @@ test('frontier notebook generation binds exact model-written bytes', async () =>
   assert.equal(generated.treatment?.kind, 'authentic');
   assert.equal(generated.treatment?.notebook, 'Use the alternate preview and preserve speed control.');
   assert.equal(generated.treatment?.sourceDigest, generated.trace.callDigest);
+  const sourceLine = checkpoint.sourcePovLines.p1.find((line) => line.startsWith('|'));
+  assert.ok(sourceLine);
+  assert.ok(provider.prompts[0]?.includes(sourceLine));
 });
 
 test('frontier pilot runs balanced authentic and withheld forks with private call evidence', async () => {

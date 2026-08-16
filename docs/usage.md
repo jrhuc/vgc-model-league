@@ -149,8 +149,11 @@ The v1 pilot is deliberately narrow. It constructs one deterministic source
 matchday from two committed pool teams, finishes that source with the first
 Showdown-accepted action policy, and verifies a checkpoint after Game 1. The
 frontier model writes private between-game notebook bytes from only its
-seat-authorized Game 1 history and the open team sheets. The same model then
-plays the remaining matched continuations under two arms:
+seat-authorized Game 1 history and the open team sheets. The checkpoint binds
+that exact authorized source POV and drains it before Game 2, so the
+continuation receives source-game information only through the declared
+treatment bytes. The same model then plays the remaining matched continuations
+under two arms:
 
 - **authentic:** inject the model-written notebook;
 - **withheld:** inject empty notebook bytes.

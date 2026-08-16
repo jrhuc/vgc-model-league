@@ -129,9 +129,9 @@ function nodeFor(checkpoint: ReturnType<typeof buildFrozenMatchdayBetweenGameChe
     actor: 'p1',
     parentNodeId: null,
     sourceEpisodeDigest: checkpoint.sourceTerminalDigest,
-    publicStateDigest: canonicalJsonDigest(checkpoint.completedGames),
+    publicStateDigest: canonicalJsonDigest(checkpoint.sourcePovLines.p1),
     privateStateDigest: canonicalJsonDigest(checkpoint.privateEvidence.p1),
-    promptDigest: canonicalJsonDigest(['between-game-notebook-v1', checkpoint.afterGame]),
+    promptDigest: canonicalJsonDigest(['between-game-notebook-v2', checkpoint.afterGame]),
     legalActionDigest: canonicalJsonDigest(['full-replacement-or-withheld-v1']),
   };
 }
@@ -159,6 +159,10 @@ test('completed matchdays produce exact restorable between-game checkpoints', ()
     stateHash: checkpoint.stateHash,
   });
   assert.deepEqual(restored.seatPrivateEvidence('p1'), checkpoint.privateEvidence.p1);
+  assert.ok(checkpoint.sourcePovLines.p1.length > 0);
+  assert.ok(checkpoint.sourcePovLines.p2.length > 0);
+  assert.deepEqual(restored.observe('p1').povLines, []);
+  assert.deepEqual(restored.observe('p2').povLines, []);
 
   const tampered = structuredClone(checkpoint);
   tampered.completedGames[0]!.turns += 1;

@@ -657,6 +657,7 @@ function notebookPrompt(input: {
   const referee = restoreFrozenMatchdayBetweenGameCheckpoint(input.checkpoint);
   const observation = referee.observe(input.focalPid);
   const privateEvidence = referee.seatPrivateEvidence(input.focalPid);
+  const sourcePovLines = input.checkpoint.sourcePovLines[input.focalPid];
   return [
     'Write the private notebook that this seat will receive before the next game.',
     'The notebook may be detailed, but it must fit the 20,000-character frozen matchday limit.',
@@ -671,8 +672,8 @@ function notebookPrompt(input: {
         score: observation.score,
         currentPrivateNotebook: privateEvidence.currentNotebook,
         openTeamSheets: input.publicContext.seats,
-        gameSummary: summarizeBattleEvents(observation.povLines, input.focalPid),
-        rawPovLines: observation.povLines.slice(-600),
+        gameSummary: summarizeBattleEvents(sourcePovLines, input.focalPid),
+        rawPovLines: sourcePovLines.slice(-600),
       },
       null,
       2,
@@ -865,9 +866,9 @@ function decisionNode(checkpoint: FrozenMatchdayBetweenGameCheckpoint, focalPid:
     actor: focalPid,
     parentNodeId: null,
     sourceEpisodeDigest: checkpoint.sourceTerminalDigest,
-    publicStateDigest: canonicalJsonDigest(checkpoint.completedGames),
+    publicStateDigest: canonicalJsonDigest(checkpoint.sourcePovLines[focalPid]),
     privateStateDigest: canonicalJsonDigest(checkpoint.privateEvidence[focalPid]),
-    promptDigest: canonicalJsonDigest(['frontier-pilot-between-game-notebook-v1', checkpoint.afterGame]),
+    promptDigest: canonicalJsonDigest(['frontier-pilot-between-game-notebook-v2', checkpoint.afterGame]),
     legalActionDigest: canonicalJsonDigest(['full-notebook-replacement-or-withheld-v1']),
   };
 }

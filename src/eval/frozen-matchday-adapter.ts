@@ -15,9 +15,10 @@ import { canonicalJsonDigest } from './serialization.js';
 import type { OpponentModeProbability } from './strategic-task.js';
 
 export const FROZEN_MATCHDAY_ADAPTER_PROTOCOL = {
-  version: 1,
-  checkpoint: 'verified-completed-source-between-games-v1',
-  replay: 'accepted-actions-and-private-notebook-intervals-v1',
+  version: 2,
+  checkpoint: 'verified-completed-source-between-games-with-authorized-pov-v2',
+  replay: 'accepted-actions-private-notebook-intervals-and-authorized-pov-v2',
+  sourceObservation: 'bind-then-drain-authorized-prefix-pov-v1',
   futureSeeds: 'first-common-battle-seed-then-continuation-derived-v1',
   continuation: 'strict-no-fallback-controller-loop-v1',
   nonFocalNotebook: 'retain-checkpoint-bytes-v1',
@@ -45,6 +46,7 @@ export interface FrozenMatchdayBetweenGameCheckpoint {
   sourceTerminalDigest: string;
   options: FrozenMatchdayRefereeOptions;
   completedGames: MatchdayGameEvidence[];
+  sourcePovLines: Record<Pid, string[]>;
   privateEvidence: Record<Pid, FrozenMatchdayPrivateEvidence>;
   revision: number;
   stateHash: string;
@@ -200,6 +202,16 @@ function validateCheckpoint(checkpoint: FrozenMatchdayBetweenGameCheckpoint): vo
   if (checkpoint.afterGame !== checkpoint.completedGames.length || checkpoint.afterGame < 1) {
     throw new Error('frozen matchday checkpoint game count is inconsistent');
   }
+  if (
+    !checkpoint.sourcePovLines ||
+    (['p1', 'p2'] as const).some(
+      (pid) =>
+        !Array.isArray(checkpoint.sourcePovLines[pid]) ||
+        checkpoint.sourcePovLines[pid].some((line) => typeof line !== 'string'),
+    )
+  ) {
+    throw new Error('frozen matchday checkpoint has invalid authorized source POV lines');
+  }
   if (canonicalJsonDigest(checkpointBase(checkpoint)) !== checkpoint.checkpointDigest) {
     throw new Error('frozen matchday checkpoint digest does not match its contents');
   }
@@ -259,6 +271,10 @@ export function buildFrozenMatchdayBetweenGameCheckpoint(
     expectTerminal: false,
   });
   for (const pid of ['p1', 'p2'] as const) priorPrivateEvidence[pid] = replayed.seatPrivateEvidence(pid);
+  const sourcePovLines = exactPidRecord({
+    p1: replayed.observe('p1').povLines,
+    p2: replayed.observe('p2').povLines,
+  });
   const state = replayed.currentState();
   const base = {
     protocolVersion: FROZEN_MATCHDAY_ADAPTER_PROTOCOL.version,
@@ -270,6 +286,7 @@ export function buildFrozenMatchdayBetweenGameCheckpoint(
     sourceTerminalDigest: canonicalJsonDigest(source.terminalEvidence),
     options: structuredClone(source.options),
     completedGames,
+    sourcePovLines,
     privateEvidence: exactPidRecord(priorPrivateEvidence),
     revision: state.revision,
     stateHash: state.stateHash,
@@ -288,7 +305,7 @@ function optionsForDraw(
   draw: CommonForkDraw,
 ): FrozenMatchdayRefereeOptions {
   if (checkpoint.afterGame >= 3) {
-    throw new Error('v1 matchday draw overrides support regulation between-game checkpoints only');
+    throw new Error('matchday draw overrides support regulation between-game checkpoints only');
   }
   const options = structuredClone(checkpoint.options);
   const gameSeeds = options.gameSeeds.map((seed) => [...seed]) as [
@@ -319,6 +336,13 @@ export function restoreFrozenMatchdayBetweenGameCheckpoint(
     privateEvidence: checkpoint.privateEvidence,
     expectTerminal: false,
   });
+  const sourcePovLines = exactPidRecord({
+    p1: referee.observe('p1').povLines,
+    p2: referee.observe('p2').povLines,
+  });
+  if (canonicalJsonDigest(sourcePovLines) !== canonicalJsonDigest(checkpoint.sourcePovLines)) {
+    throw new Error('restored matchday authorized source POV does not match the checkpoint prefix');
+  }
   const privateEvidence = exactPidRecord({
     p1: referee.seatPrivateEvidence('p1'),
     p2: referee.seatPrivateEvidence('p2'),
@@ -363,6 +387,7 @@ function forkExecutionDigest(input: {
     focalPid: input.focalPid,
     treatmentDigest: input.treatment.treatmentDigest,
     controllerSetDigest: input.controllers.controllerSetDigest,
+    sourceObservation: FROZEN_MATCHDAY_ADAPTER_PROTOCOL.sourceObservation,
     nonFocalNotebook: FROZEN_MATCHDAY_ADAPTER_PROTOCOL.nonFocalNotebook,
   });
 }
