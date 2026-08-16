@@ -219,12 +219,26 @@ test('frontier pilot runs balanced authentic and withheld forks with private cal
   assert.equal(aggregate.models[0]!.readiness, 'insufficient-source-clusters');
   assert.equal(aggregate.models[0]!.meanSourceDifference, report.analysis.authenticVsWithheld?.meanDifference ?? null);
 
+  const duplicate = structuredClone(report);
+  duplicate.generatedAt = '2026-08-16T00:00:02.000Z';
+  const { reportDigest: duplicatePriorDigest, ...duplicateBase } = duplicate;
+  assert.ok(duplicatePriorDigest);
+  const duplicateReport = { ...duplicateBase, reportDigest: canonicalJsonDigest(duplicateBase) };
+  assert.throws(
+    () => aggregateFrontierPilotReports([report, duplicateReport], '2026-08-16T00:00:03.000Z'),
+    /run evidence .* is repeated/u,
+  );
+
   const changed = structuredClone(report);
-  changed.generatedAt = '2026-08-16T00:00:02.000Z';
+  changed.generatedAt = '2026-08-16T00:00:04.000Z';
+  const changedCall = { ...changed.calls[0]!, latencyMs: changed.calls[0]!.latencyMs + 1 };
+  const { callDigest: priorCallDigest, ...changedCallBase } = changedCall;
+  assert.ok(priorCallDigest);
+  changed.calls[0] = { ...changedCallBase, callDigest: canonicalJsonDigest(changedCallBase) };
   const { reportDigest: priorDigest, ...changedBase } = changed;
   assert.ok(priorDigest);
   const replication = { ...changedBase, reportDigest: canonicalJsonDigest(changedBase) };
-  const repeated = aggregateFrontierPilotReports([report, replication], '2026-08-16T00:00:03.000Z');
+  const repeated = aggregateFrontierPilotReports([report, replication], '2026-08-16T00:00:05.000Z');
   assert.equal(repeated.models[0]!.runs, 2);
   assert.equal(repeated.models[0]!.sourceClusters, 1);
   assert.equal(repeated.models[0]!.sources[0]!.runs, 2);

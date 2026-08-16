@@ -9,8 +9,9 @@ import { FROZEN_MATCHDAY_ADAPTER_PROTOCOL } from './frozen-matchday-adapter.js';
 import { canonicalJsonDigest } from './serialization.js';
 
 export const FRONTIER_PILOT_AGGREGATION_PROTOCOL = {
-  version: 1,
-  reportValidation: 'canonical-report-plan-call-treatment-and-execution-digests-v1',
+  version: 2,
+  reportValidation: 'canonical-report-plan-call-treatment-and-execution-digests-v2',
+  replicationIdentity: 'reject-duplicate-source-plan-treatment-outcome-and-call-evidence-v1',
   sourceUnit: 'mean-within-source-replication-v1',
   uncertainty: 'standard-error-across-source-cluster-means-v1',
   ranking: 'forbidden-pilot-diagnostic-only-v1',
@@ -53,6 +54,7 @@ export interface FrontierPilotAggregateReport {
   protocolVersion: typeof FRONTIER_PILOT_AGGREGATION_PROTOCOL.version;
   generatedAt: string;
   inputReportDigests: string[];
+  inputRunEvidenceDigests: string[];
   models: FrontierPilotModelAggregate[];
   interpretation: {
     unit: typeof FRONTIER_PILOT_AGGREGATION_PROTOCOL.sourceUnit;
@@ -208,6 +210,19 @@ export function validateFrontierStrategicPilotReport(report: FrontierStrategicPi
   }
 }
 
+function runEvidenceDigest(report: FrontierStrategicPilotReport): string {
+  return canonicalJsonDigest({
+    sourceArtifactDigest: report.sourceArtifactDigest,
+    checkpointDigest: report.checkpointDigest,
+    model: report.model,
+    plan: report.plan,
+    treatments: report.treatments,
+    executionOrder: report.executionOrder,
+    outcomes: report.outcomes,
+    calls: report.calls,
+  });
+}
+
 function sourceAggregate(sourceArtifactDigest: string, reports: readonly FrontierStrategicPilotReport[]) {
   const differences = reports
     .map((report) => report.analysis.authenticVsWithheld?.meanDifference ?? null)
@@ -229,11 +244,17 @@ export function aggregateFrontierPilotReports(
 ): FrontierPilotAggregateReport {
   if (!reports.length) throw new Error('frontier pilot aggregation needs at least one report');
   const digests = new Set<string>();
+  const evidenceDigests = new Set<string>();
   const byModel = new Map<string, FrontierStrategicPilotReport[]>();
   for (const report of reports) {
     validateFrontierStrategicPilotReport(report);
     if (digests.has(report.reportDigest)) throw new Error(`frontier pilot report ${report.reportDigest} is repeated`);
     digests.add(report.reportDigest);
+    const evidenceDigest = runEvidenceDigest(report);
+    if (evidenceDigests.has(evidenceDigest)) {
+      throw new Error(`frontier pilot run evidence ${evidenceDigest} is repeated`);
+    }
+    evidenceDigests.add(evidenceDigest);
     byModel.set(report.model.configDigest, [...(byModel.get(report.model.configDigest) ?? []), report]);
   }
   const models = [...byModel.entries()]
@@ -297,6 +318,7 @@ export function aggregateFrontierPilotReports(
     protocolVersion: FRONTIER_PILOT_AGGREGATION_PROTOCOL.version,
     generatedAt,
     inputReportDigests: [...digests].sort(),
+    inputRunEvidenceDigests: [...evidenceDigests].sort(),
     models,
     interpretation: {
       unit: FRONTIER_PILOT_AGGREGATION_PROTOCOL.sourceUnit,
