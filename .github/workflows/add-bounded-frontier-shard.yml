@@ -7,6 +7,7 @@ on:
     paths:
       - .github/workflows/add-bounded-frontier-shard.yml
       - tools/add-bounded-frontier-shard.py
+      - tools/add-bounded-frontier-shard-v2.py
 
 permissions:
   contents: write
@@ -34,7 +35,7 @@ jobs:
           cache-dependency-path: pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
       - run: pnpm run setup:showdown
-      - run: python tools/add-bounded-frontier-shard.py
+      - run: python tools/add-bounded-frontier-shard-v2.py
       - name: Format and validate
         shell: bash
         run: |
@@ -65,7 +66,8 @@ jobs:
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git rm \
             .github/workflows/add-bounded-frontier-shard.yml \
-            tools/add-bounded-frontier-shard.py
+            tools/add-bounded-frontier-shard.py \
+            tools/add-bounded-frontier-shard-v2.py
           git add src/eval/frontier-pilot.ts tools/run-strategic-pilot.ts tests/eval-frontier-pilot.test.ts docs
           git commit -m "feat(evaluation): add bounded frontier decision shard"
           git push origin HEAD:agent/strategic-evals-refactor
