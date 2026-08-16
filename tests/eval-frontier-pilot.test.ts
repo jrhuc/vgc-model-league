@@ -1,0 +1,177 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+
+import {
+  buildFrontierPilotMatchday,
+  buildFrontierPilotSourceArtifact,
+  completeFrontierPilotSource,
+  FrontierPilotActionController,
+  generateFrontierAuthenticNotebook,
+  runFrontierStrategicPilot,
+  type FrontierPilotPublicContext,
+} from '../src/eval/frontier-pilot.js';
+import type { CommonForkDraw } from '../src/eval/fork-plan.js';
+import type { FrozenMatchdayActionContext } from '../src/eval/frozen-matchday-adapter.js';
+import { buildFrozenMatchdayBetweenGameCheckpoint } from '../src/eval/frozen-matchday-adapter.js';
+import { canonicalJsonDigest } from '../src/eval/serialization.js';
+import type { Completion, Provider, ProviderMessage } from '../src/types.js';
+import { MATCHDAY_FORMAT, MATCHDAY_TEAM_A, MATCHDAY_TEAM_B } from './fixtures/frozen-matchday.js';
+
+class PilotProvider implements Provider {
+  readonly prompts: string[] = [];
+
+  async complete(_system: string, messages: ProviderMessage[]): Promise<Completion> {
+    const prompt = messages.at(-1)?.content ?? '';
+    this.prompts.push(prompt);
+    if (prompt.includes('Write the private notebook that this seat will receive')) {
+      return {
+        text: JSON.stringify({ notebook: 'Use the alternate preview and preserve speed control.' }),
+        usage: { input_tokens: 100, output_tokens: 20, reasoning_tokens: 10, cost: 0.01 },
+        toolCalls: [],
+      };
+    }
+    const ids = [...prompt.matchAll(/^- (a_[0-9a-f]+):/gmu)].map((match) => match[1]!);
+    assert.ok(ids.length >= 2);
+    const selected = prompt.includes('alternate preview') ? ids.at(-1)! : ids[0]!;
+    return {
+      text: JSON.stringify({ action_id: selected }),
+      usage: { input_tokens: 120, output_tokens: 8, cost: 0.005 },
+      toolCalls: [],
+    };
+  }
+}
+
+function context(): FrontierPilotPublicContext {
+  const seats = {
+    p1: { pid: 'p1' as const, name: 'frontier', teamId: 'a', openSheet: [] },
+    p2: { pid: 'p2' as const, name: 'fixed', teamId: 'b', openSheet: [] },
+  };
+  return { format: MATCHDAY_FORMAT, seats, contextDigest: canonicalJsonDigest({ format: MATCHDAY_FORMAT, seats }) };
+}
+
+function actionContext(): FrozenMatchdayActionContext {
+  const draw: CommonForkDraw = {
+    id: 'draw',
+    hiddenStateSeed: 'hidden',
+    opponentPolicySeed: 'opponent',
+    battleSeed: [1, 2, 3, 4],
+    continuationSeed: 'continuation',
+    scheduleSeed: 'schedule',
+  };
+  return {
+    pid: 'p1',
+    observation: {
+      protocolVersion: 1,
+      battleProtocolVersion: 1,
+      pid: 'p1',
+      phase: 'playing',
+      gameNumber: 2,
+      score: { p1: 0, p2: 1, ties: 0 },
+      revision: 4,
+      stateHash: canonicalJsonDigest('state'),
+      povLines: ['|turn|3'],
+      battle: {
+        protocolVersion: 1,
+        pid: 'p1',
+        seat: { pid: 'p1', name: 'frontier' },
+        revision: 2,
+        stateHash: canonicalJsonDigest('battle'),
+        request: { active: [{ moves: [] }, { moves: [] }] },
+        povLines: [],
+        terminal: false,
+      },
+      terminal: false,
+    },
+    legalActions: [
+      { number: 0, choices: [0], command: 'move 1 1', label: 'Use move one' },
+      { number: 1, choices: [1], command: 'move 2 1', label: 'Use move two' },
+    ],
+    currentNotebook: 'Use the alternate preview.',
+    decisionIndex: 0,
+    draw,
+  };
+}
+
+let cachedSource: ReturnType<typeof buildFrontierPilotSourceArtifact> | null = null;
+
+function sourceArtifact() {
+  if (cachedSource) return structuredClone(cachedSource);
+  const matchday = buildFrontierPilotMatchday({
+    format: MATCHDAY_FORMAT,
+    focal: { id: 'team-a', packed: MATCHDAY_TEAM_A },
+    opponent: { id: 'team-b', packed: MATCHDAY_TEAM_B },
+    seed: 'frontier-pilot-test',
+  });
+  cachedSource = buildFrontierPilotSourceArtifact({
+    publicContext: matchday.publicContext,
+    source: completeFrontierPilotSource({ caseId: 'frontier-pilot-test', options: matchday.options }),
+  });
+  return structuredClone(cachedSource);
+}
+
+test('frontier action controller uses strict opaque tasks and joins the selected command', async () => {
+  const provider = new PilotProvider();
+  const controller = new FrontierPilotActionController({
+    modelSpec: 'openrouter:test/frontier',
+    provider,
+    publicContext: context(),
+  });
+  const decision = await controller.decideAction(actionContext());
+  assert.equal(decision.command, 'move 2 1');
+  const traces = controller.traces();
+  assert.equal(traces.length, 1);
+  assert.equal(traces[0]!.status, 'valid');
+  assert.equal(traces[0]!.canonicalAction, decision.command);
+  assert.match(traces[0]!.callDigest, /^[0-9a-f]{64}$/u);
+});
+
+test('frontier notebook generation binds exact model-written bytes', async () => {
+  const source = sourceArtifact();
+  const checkpoint = buildFrozenMatchdayBetweenGameCheckpoint(source.source, 1);
+  const provider = new PilotProvider();
+  const generated = await generateFrontierAuthenticNotebook({
+    checkpoint,
+    focalPid: 'p1',
+    publicContext: source.publicContext,
+    modelSpec: 'openrouter:test/frontier',
+    provider,
+  });
+  assert.equal(generated.status, 'valid');
+  assert.equal(generated.treatment?.kind, 'authentic');
+  assert.equal(generated.treatment?.notebook, 'Use the alternate preview and preserve speed control.');
+  assert.equal(generated.treatment?.sourceDigest, generated.trace.callDigest);
+});
+
+test('frontier pilot runs balanced authentic and withheld forks with private call evidence', async () => {
+  const source = sourceArtifact();
+  const checkpoint = buildFrozenMatchdayBetweenGameCheckpoint(source.source, 1);
+  const provider = new PilotProvider();
+  const generated = await generateFrontierAuthenticNotebook({
+    checkpoint,
+    focalPid: 'p1',
+    publicContext: source.publicContext,
+    modelSpec: 'openrouter:test/frontier',
+    provider,
+  });
+  assert.equal(generated.status, 'valid');
+  assert.ok(generated.treatment);
+  const report = await runFrontierStrategicPilot({
+    sourceArtifact: source,
+    modelSpec: 'openrouter:test/frontier',
+    provider,
+    authenticTreatment: generated.treatment,
+    notebookTrace: generated.trace,
+    drawCount: 1,
+    drawSeed: 'frontier-pilot-test-draw',
+    maxDecisions: 250,
+    generatedAt: '2026-08-16T00:00:00.000Z',
+  });
+  assert.equal(report.outcomes.length, 2);
+  assert.equal(report.analysis.authenticVsWithheld?.matchedPairs, 1);
+  assert.equal(report.analysis.authenticVsWithheld?.validPairs, 1);
+  assert.ok(report.calls.length > 1);
+  assert.equal(report.summary.protocolValidOutcomes, 2);
+  assert.equal(report.summary.legalOutcomes, 2);
+  assert.notEqual(report.executionOrder[0]!.outcomeExecutionDigest, report.executionOrder[1]!.outcomeExecutionDigest);
+  assert.match(report.reportDigest, /^[0-9a-f]{64}$/u);
+});
