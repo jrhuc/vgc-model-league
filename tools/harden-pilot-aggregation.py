@@ -124,17 +124,3 @@ replace(
     """  const repeated = aggregateFrontierPilotReports([report, replication], '2026-08-16T00:00:05.000Z');
 """,
 )
-
-replace(
-    "docs/usage.md",
-    """The summarizer scans model report JSON recursively, rejects broken plan, call,
-treatment, execution, analysis, or report joins, averages repeated provider-call
-runs inside each source first, and computes uncertainty across source means.
-""",
-    """The summarizer scans model report JSON recursively, rejects broken plan, call,
-treatment, execution, analysis, or report joins, and rejects copied run
-evidence even if its outer timestamp is changed. Distinct replications must
-carry distinct provider-call evidence. It averages repeated provider-call runs
-inside each source first and computes uncertainty across source means.
-""",
-)
