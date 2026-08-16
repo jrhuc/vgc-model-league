@@ -1,0 +1,67 @@
+name: Finalize frontier pilot aggregation
+
+on:
+  push:
+    branches:
+      - agent/strategic-evals-refactor
+    paths:
+      - .github/workflows/finalize-pilot-aggregation.yml
+      - tools/finalize-pilot-aggregation.py
+
+permissions:
+  contents: write
+
+concurrency:
+  group: finalize-pilot-aggregation-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  finalize:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: agent/strategic-evals-refactor
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1
+        with:
+          version: 11.11.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 24.18.1
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run setup:showdown
+      - run: python tools/finalize-pilot-aggregation.py
+      - name: Format and validate
+        shell: bash
+        run: |
+          set -euo pipefail
+          pnpm exec biome check --write \
+            src/eval/frontier-pilot-analysis.ts \
+            tools/summarize-strategic-pilots.ts \
+            tools/run-strategic-pilot.ts \
+            tests/eval-frontier-pilot.test.ts \
+            package.json \
+            docs/usage.md \
+            docs/evaluation-plan.md \
+            docs/strategic-evals.md
+          pnpm run check
+          pnpm run build
+          node dist/tools/run-strategic-pilot.js --help >/dev/null
+          node dist/tools/summarize-strategic-pilots.js --help >/dev/null
+          node --test --test-timeout=300000 dist/tests/eval-frontier-pilot.test.js
+      - name: Commit aggregation and remove one-shot machinery
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git rm \
+            .github/workflows/finalize-pilot-aggregation.yml \
+            tools/finalize-pilot-aggregation.py
+          git add src/eval/frontier-pilot-analysis.ts tools tests/eval-frontier-pilot.test.ts package.json docs
+          git commit -m "feat(evaluation): aggregate frontier pilot source clusters"
+          git push origin HEAD:agent/strategic-evals-refactor
