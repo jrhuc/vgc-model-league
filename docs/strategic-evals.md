@@ -143,10 +143,13 @@ the native Showdown acceptance filter and rectangular common-draw matrices.
 authoritative circuit referee, creates verified pre-decision checkpoints,
 projects authorized decision-node digests, replaces one response, and marks the
 source suffix invalid. Strict continuations stop on the first unaccepted or
-defaulted response. The native whole-circuit adapter now records seat returns
-as non-training arena metrics by default; repeated trace rewards require an
-explicit legacy switch. Next, bind matched downstream controller populations
-and common future seed plans to complete draft and transaction forks.
+defaulted response. The circuit state identity binds the actual draft
+allocation, budgets, notebooks, construction artifacts, league contexts,
+transaction state, and pending prompt bytes rather than only elapsed decision
+counts. The native whole-circuit adapter now records seat returns as non-training
+arena metrics by default; repeated trace rewards require an explicit legacy
+switch. Next, bind matched downstream controller populations and common future
+seed plans to complete draft and transaction forks.
 
 ### Strategic shard environment
 
