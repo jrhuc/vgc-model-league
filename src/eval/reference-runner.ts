@@ -45,13 +45,16 @@ export async function runReferenceSuite(input: {
   if (!input.arms.length) throw new Error('reference runner needs at least one arm');
   const actionIds = new Set<string>();
   for (const action of input.actions) {
-    if (!action.actionId || !action.canonicalAction) throw new Error('reference runner actions need id and canonical command');
-    if (actionIds.has(action.actionId)) throw new Error(`reference runner repeats action ${JSON.stringify(action.actionId)}`);
+    if (!action.actionId || !action.canonicalAction)
+      throw new Error('reference runner actions need id and canonical command');
+    if (actionIds.has(action.actionId))
+      throw new Error(`reference runner repeats action ${JSON.stringify(action.actionId)}`);
     actionIds.add(action.actionId);
   }
   const samples: ReferenceUtilitySample[] = [];
   for (const arm of input.arms) {
-    if (!arm.draws.length) throw new Error(`reference arm ${JSON.stringify(arm.reference.id)} has no information-set draws`);
+    if (!arm.draws.length)
+      throw new Error(`reference arm ${JSON.stringify(arm.reference.id)} has no information-set draws`);
     if (new Set(arm.draws.map((draw) => draw.id)).size !== arm.draws.length) {
       throw new Error(`reference arm ${JSON.stringify(arm.reference.id)} repeats an information-set draw`);
     }

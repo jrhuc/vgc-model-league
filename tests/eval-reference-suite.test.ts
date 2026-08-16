@@ -3,9 +3,9 @@ import test from 'node:test';
 
 import {
   evaluateReferenceSuite,
-  scoreReferenceAction,
   type ReferenceArm,
   type ReferenceUtilitySample,
+  scoreReferenceAction,
 } from '../src/eval/reference-suite.js';
 
 const arms: ReferenceArm[] = [

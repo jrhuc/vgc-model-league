@@ -53,7 +53,8 @@ export function buildInformationSetPrior(input: {
     if (!completion.id || !completion.provenance) {
       throw new Error('hidden-state completion needs non-empty id and provenance');
     }
-    if (ids.has(completion.id)) throw new Error(`information-set prior repeats completion ${JSON.stringify(completion.id)}`);
+    if (ids.has(completion.id))
+      throw new Error(`information-set prior repeats completion ${JSON.stringify(completion.id)}`);
     ids.add(completion.id);
     assertDigest(completion.hiddenStateDigest, `${completion.id} hiddenStateDigest`);
     if (!Number.isFinite(completion.weight) || completion.weight <= 0) {
@@ -92,7 +93,8 @@ export function informationSetDrawPlan(
   count: number,
   seed: string | number,
 ): InformationSetDraw[] {
-  if (!Number.isSafeInteger(count) || count < 1) throw new Error('information-set draw count must be a positive integer');
+  if (!Number.isSafeInteger(count) || count < 1)
+    throw new Error('information-set draw count must be a positive integer');
   if (
     canonicalJsonDigest({
       protocolVersion: prior.protocolVersion,

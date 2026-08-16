@@ -2,10 +2,10 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
-  pairedArmContrast,
-  ReplayableExperiment,
   type DecisionNode,
   type MatchedForkOutcome,
+  pairedArmContrast,
+  ReplayableExperiment,
 } from '../src/eval/experiment-kernel.js';
 
 interface State {
@@ -62,12 +62,7 @@ test('event kernel rejects broken parent chains and duplicate nodes', () => {
   assert.throws(() => experiment.append(node('n1', 'n1'), { id: 'again', delta: 1 }), /already exists/u);
 });
 
-function outcome(
-  armId: string,
-  drawId: string,
-  clusterId: string,
-  utility: number | null,
-): MatchedForkOutcome {
+function outcome(armId: string, drawId: string, clusterId: string, utility: number | null): MatchedForkOutcome {
   return {
     caseId: 'case',
     decisionNodeId: 'node',

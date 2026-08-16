@@ -1,5 +1,5 @@
 import { seededRng, shuffle } from '../random.js';
-import { scoreReferenceAction, type ReferenceActionScore, type ReferenceSuiteResult } from './reference-suite.js';
+import { type ReferenceActionScore, type ReferenceSuiteResult, scoreReferenceAction } from './reference-suite.js';
 import { canonicalJsonDigest } from './serialization.js';
 
 export const STRATEGIC_CHOICE_TASK_PROTOCOL = {
@@ -176,7 +176,8 @@ function parsedObject(response: string): Record<string, unknown> | string {
   if (!match) return 'the reply contained no JSON object';
   try {
     const parsed = JSON.parse(match[0]) as unknown;
-    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return 'the reply must be one JSON object';
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed))
+      return 'the reply must be one JSON object';
     return parsed as Record<string, unknown>;
   } catch {
     return 'the JSON object did not parse';
@@ -212,10 +213,7 @@ function parseOpponentModes(value: unknown): OpponentModeProbability[] | string 
   return result;
 }
 
-export function parseStrategicChoice(
-  response: string,
-  task: StrategicChoiceTaskPublic,
-): StrategicChoiceParseResult {
+export function parseStrategicChoice(response: string, task: StrategicChoiceTaskPublic): StrategicChoiceParseResult {
   const parsed = parsedObject(response);
   if (typeof parsed === 'string') return { status: 'invalid', reason: parsed };
   const allowed = allowedKeys(task.forecastMode);

@@ -71,7 +71,8 @@ function mean(values: readonly number[]): number {
 
 function estimate(samples: readonly ReferenceUtilitySample[]): Estimate {
   const clusters = new Map<string, number[]>();
-  for (const sample of samples) clusters.set(sample.clusterId, [...(clusters.get(sample.clusterId) ?? []), sample.utility]);
+  for (const sample of samples)
+    clusters.set(sample.clusterId, [...(clusters.get(sample.clusterId) ?? []), sample.utility]);
   const clusterMeans = [...clusters.values()].map(mean);
   const value = mean(clusterMeans);
   if (clusterMeans.length < 2) return { value, standardError: null };
@@ -98,7 +99,8 @@ function assertArm(arm: ReferenceArm): void {
     if (name === 'weight') continue;
     if (typeof value !== 'string' || !value) throw new Error(`reference arm ${name} must be a non-empty string`);
   }
-  if (!Number.isFinite(arm.weight) || arm.weight <= 0) throw new Error('reference arm weight must be positive and finite');
+  if (!Number.isFinite(arm.weight) || arm.weight <= 0)
+    throw new Error('reference arm weight must be positive and finite');
 }
 
 function sampleKey(sample: ReferenceUtilitySample): string {
@@ -115,10 +117,15 @@ function exactDrawRectangle(
     let expected: string[] | null = null;
     for (const actionId of actions) {
       const entries = samples.filter((sample) => sample.armId === arm.id && sample.actionId === actionId);
-      if (!entries.length) throw new Error(`reference arm ${JSON.stringify(arm.id)} has no samples for action ${JSON.stringify(actionId)}`);
+      if (!entries.length)
+        throw new Error(
+          `reference arm ${JSON.stringify(arm.id)} has no samples for action ${JSON.stringify(actionId)}`,
+        );
       const keys = entries.map(sampleKey).sort();
       if (new Set(keys).size !== keys.length) {
-        throw new Error(`reference arm ${JSON.stringify(arm.id)} repeats a draw for action ${JSON.stringify(actionId)}`);
+        throw new Error(
+          `reference arm ${JSON.stringify(arm.id)} repeats a draw for action ${JSON.stringify(actionId)}`,
+        );
       }
       if (expected === null) expected = keys;
       else if (expected.length !== keys.length || expected.some((key, index) => key !== keys[index])) {

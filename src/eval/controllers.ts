@@ -6,14 +6,7 @@ export const CONTROLLER_IDENTITY_PROTOCOL = {
   parity: 'exact-bytes-except-declared-stages-v1',
 } as const;
 
-export const STRATEGIC_CONTROLLER_STAGES = [
-  'draft',
-  'construction',
-  'trade',
-  'preview',
-  'battle',
-  'notebook',
-] as const;
+export const STRATEGIC_CONTROLLER_STAGES = ['draft', 'construction', 'trade', 'preview', 'battle', 'notebook'] as const;
 
 export type StrategicControllerStage = (typeof STRATEGIC_CONTROLLER_STAGES)[number];
 export type StrategicControllerKind = 'model' | 'heuristic' | 'search' | 'recorded' | 'population';
@@ -29,7 +22,8 @@ export interface StrategicControllerIdentity {
 export type StrategicControllerSet = Record<StrategicControllerStage, StrategicControllerIdentity>;
 
 function assertController(controller: StrategicControllerIdentity, stage: StrategicControllerStage): void {
-  if (controller.stage !== stage) throw new Error(`controller ${JSON.stringify(controller.id)} is bound to ${controller.stage}, not ${stage}`);
+  if (controller.stage !== stage)
+    throw new Error(`controller ${JSON.stringify(controller.id)} is bound to ${controller.stage}, not ${stage}`);
   if (!controller.id || !controller.revision) throw new Error(`${stage} controller needs non-empty id and revision`);
   if (!/^[0-9a-f]{64}$/u.test(controller.configDigest)) {
     throw new Error(`${stage} controller configDigest must be a SHA-256 digest`);

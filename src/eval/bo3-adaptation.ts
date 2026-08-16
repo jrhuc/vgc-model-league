@@ -1,13 +1,6 @@
-import {
-  type MatchedForkOutcome,
-  type PairedArmContrast,
-  pairedArmContrast,
-} from './experiment-kernel.js';
+import { type MatchedForkOutcome, type PairedArmContrast, pairedArmContrast } from './experiment-kernel.js';
 import { canonicalJsonDigest } from './serialization.js';
-import {
-  multiclassBrierScore,
-  type OpponentModeProbability,
-} from './strategic-task.js';
+import { multiclassBrierScore, type OpponentModeProbability } from './strategic-task.js';
 
 export const BO3_ADAPTATION_PROTOCOL = {
   version: 1,
@@ -76,10 +69,18 @@ export function buildNotebookTreatment(input: {
     notebook: input.notebook,
     sourceDigest,
   };
-  return { id: input.id, kind: input.kind, notebook: input.notebook, sourceDigest, treatmentDigest: canonicalJsonDigest(base) };
+  return {
+    id: input.id,
+    kind: input.kind,
+    notebook: input.notebook,
+    sourceDigest,
+    treatmentDigest: canonicalJsonDigest(base),
+  };
 }
 
-function uniqueArmByTreatment(outcomes: readonly AdaptationForkOutcome[]): Partial<Record<NotebookTreatmentKind, string>> {
+function uniqueArmByTreatment(
+  outcomes: readonly AdaptationForkOutcome[],
+): Partial<Record<NotebookTreatmentKind, string>> {
   const armByTreatment: Partial<Record<NotebookTreatmentKind, string>> = {};
   for (const outcome of outcomes) {
     const current = armByTreatment[outcome.treatmentKind];

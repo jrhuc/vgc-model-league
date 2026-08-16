@@ -8,14 +8,7 @@ export const EXPERIMENT_KERNEL_PROTOCOL = {
   contrast: 'matched-draw-cluster-mean-v1',
 } as const;
 
-export type StrategicStage =
-  | 'draft'
-  | 'construction'
-  | 'trade'
-  | 'preview'
-  | 'battle'
-  | 'notebook'
-  | 'terminal-review';
+export type StrategicStage = 'draft' | 'construction' | 'trade' | 'preview' | 'battle' | 'notebook' | 'terminal-review';
 
 export interface DecisionNode {
   id: string;
@@ -172,7 +165,8 @@ export class ReplayableExperiment<State, Action> {
         preStateDigest: event.preStateDigest,
         postStateDigest: event.postStateDigest,
       };
-      if (eventId(base) !== event.id) throw new Error(`event ${JSON.stringify(event.id)} identity does not match its bytes`);
+      if (eventId(base) !== event.id)
+        throw new Error(`event ${JSON.stringify(event.id)} identity does not match its bytes`);
       nodes.add(event.node.id);
       parentNodeId = event.node.id;
       state = next;

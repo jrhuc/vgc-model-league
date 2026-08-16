@@ -2,9 +2,9 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  type AdaptationForkOutcome,
   analyzeBo3Adaptation,
   buildNotebookTreatment,
-  type AdaptationForkOutcome,
   type NotebookTreatmentKind,
 } from '../src/eval/bo3-adaptation.js';
 
@@ -38,7 +38,11 @@ function arm(kind: NotebookTreatmentKind, offsets: [number, number]): Adaptation
 }
 
 test('notebook treatments bind exact bytes and reject malformed controls', () => {
-  const treatment = buildNotebookTreatment({ id: 'auth', kind: 'authentic', notebook: 'Observed protect on turn one.' });
+  const treatment = buildNotebookTreatment({
+    id: 'auth',
+    kind: 'authentic',
+    notebook: 'Observed protect on turn one.',
+  });
   assert.equal(treatment.kind, 'authentic');
   assert.ok(/^[0-9a-f]{64}$/u.test(treatment.treatmentDigest));
   assert.throws(
