@@ -60,9 +60,7 @@ function assertPanel(panel: ExhaustivePanel): void {
   }
   if (
     panel.matrix.length !== panel.draws.length ||
-    panel.matrix.some(
-      (row) => row.length !== panel.actions.length || row.some((utility) => !Number.isFinite(utility)),
-    )
+    panel.matrix.some((row) => row.length !== panel.actions.length || row.some((utility) => !Number.isFinite(utility)))
   ) {
     throw new Error('legacy material panel matrix is not a complete finite rectangle');
   }
@@ -111,10 +109,7 @@ function actionMap(
 }
 
 function referenceArm(table: ExhaustiveActionTable, panel: ExhaustivePanel): ReferenceArm {
-  if (
-    table.horizon !== Number.POSITIVE_INFINITY &&
-    (!Number.isSafeInteger(table.horizon) || table.horizon < 0)
-  ) {
+  if (table.horizon !== Number.POSITIVE_INFINITY && (!Number.isSafeInteger(table.horizon) || table.horizon < 0)) {
     throw new Error('legacy material table horizon must be non-negative or battle-end');
   }
   return {
@@ -135,12 +130,7 @@ function samples(
 ): ReferenceUtilitySample[] {
   return panel.draws.flatMap((draw, rowIndex) => {
     const opponentSlot = Math.floor(rowIndex / panel.luckReplications);
-    const drawId = canonicalJsonDigest([
-      'legacy-material-draw-v1',
-      panel.id,
-      panel.seedNamespace,
-      draw,
-    ]);
+    const drawId = canonicalJsonDigest(['legacy-material-draw-v1', panel.id, panel.seedNamespace, draw]);
     const clusterId = canonicalJsonDigest([
       'legacy-material-opponent-slot-v1',
       panel.id,
