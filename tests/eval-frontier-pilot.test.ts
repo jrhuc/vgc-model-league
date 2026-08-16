@@ -115,13 +115,43 @@ test('frontier action controller uses strict opaque tasks and joins the selected
     provider,
     publicContext: context(),
   });
-  const decision = await controller.decideAction(actionContext());
+  const first = actionContext();
+  const decision = await controller.decideAction(first);
   assert.equal(decision.command, 'move 2 1');
+  const second = actionContext();
+  second.decisionIndex = 1;
+  second.observation.povLines = ['|move|p1a: Alpha|Protect|p1a: Alpha'];
+  await controller.decideAction(second);
   const traces = controller.traces();
-  assert.equal(traces.length, 1);
+  assert.equal(traces.length, 2);
   assert.equal(traces[0]!.status, 'valid');
   assert.equal(traces[0]!.canonicalAction, decision.command);
   assert.match(traces[0]!.callDigest, /^[0-9a-f]{64}$/u);
+  assert.match(traces[1]!.prompt, /\|turn\|3/u);
+  assert.match(traces[1]!.prompt, /\|move\|p1a: Alpha\|Protect/u);
+});
+
+test('frontier task identity changes when authorized notebook state changes', async () => {
+  const controlProvider = new PilotProvider();
+  const treatmentProvider = new PilotProvider();
+  const control = new FrontierPilotActionController({
+    modelSpec: 'openrouter:test/frontier',
+    provider: controlProvider,
+    publicContext: context(),
+  });
+  const treatment = new FrontierPilotActionController({
+    modelSpec: 'openrouter:test/frontier',
+    provider: treatmentProvider,
+    publicContext: context(),
+  });
+  const controlContext = actionContext();
+  controlContext.currentNotebook = '';
+  const treatmentContext = actionContext();
+  treatmentContext.currentNotebook = 'Use the alternate preview.';
+  await control.decideAction(controlContext);
+  await treatment.decideAction(treatmentContext);
+  assert.notEqual(control.traces()[0]!.id, treatment.traces()[0]!.id);
+  assert.notEqual(control.traces()[0]!.promptDigest, treatment.traces()[0]!.promptDigest);
 });
 
 test('frontier notebook generation binds exact model-written bytes', async () => {

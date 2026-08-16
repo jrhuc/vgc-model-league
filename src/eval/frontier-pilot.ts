@@ -38,6 +38,7 @@ import {
   type FrozenMatchdayContinuationController,
   type FrozenMatchdayContinuationControllers,
   type FrozenMatchdayForkOutcome,
+  type FrozenMatchdayNotebookContext,
   notebookTreatmentActionDigest,
   restoreFrozenMatchdayBetweenGameCheckpoint,
   runFrozenMatchdayNotebookFork,
@@ -51,12 +52,15 @@ export const FRONTIER_STRATEGIC_PILOT_PROTOCOL = {
   treatment: 'model-written-game-one-private-notebook-v1',
   policy: 'frontier-model-focal-first-legal-opponent-v1',
   sampling: 'temperature-zero-no-provider-seed-balanced-arm-order-v1',
+  history: 'bounded-full-authorized-continuation-pov-v1',
+  taskIdentity: 'opportunity-and-authorized-state-digest-v1',
   report: 'content-addressed-private-run-report-v1',
 } as const;
 
 const ACTION_SYSTEM = [
   'You are the focal decision policy in a controlled Pokémon VGC strategic intervention.',
   'Use only the authorized state, private notebook, open team sheets, and legal actions in the prompt.',
+  'No interactive mechanics tools are available in this pilot.',
   'Optimize the probability of winning the complete series, not merely the current turn.',
   'Reason as deeply as needed, then return only the exact JSON object requested by the task.',
 ].join('\n');
@@ -484,7 +488,11 @@ export function frontierPilotModelConfig(input: {
   return { ...base, configDigest: canonicalJsonDigest(base) };
 }
 
-function actionState(context: FrozenMatchdayActionContext, publicContextValue: FrontierPilotPublicContext): string {
+function actionState(
+  context: FrozenMatchdayActionContext,
+  publicContextValue: FrontierPilotPublicContext,
+  povHistory: readonly string[],
+): string {
   const battle = context.observation.battle;
   const state = {
     objective: 'maximize complete-series win probability',
@@ -494,8 +502,8 @@ function actionState(context: FrozenMatchdayActionContext, publicContextValue: F
     score: context.observation.score,
     privateNotebook: context.currentNotebook,
     openTeamSheets: publicContextValue.seats,
-    recentBattleSummary: summarizeBattleEvents(context.observation.povLines, context.pid),
-    recentRawPovLines: context.observation.povLines.slice(-400),
+    continuationBattleSummary: summarizeBattleEvents([...povHistory], context.pid),
+    continuationRawPovLines: povHistory.slice(-800),
     currentRequest: battle?.request ?? null,
     stateHash: context.observation.stateHash,
   };
@@ -506,6 +514,7 @@ export class FrontierPilotActionController implements FrozenMatchdayContinuation
   private readonly model: FrontierPilotModelConfig;
   private readonly actionIdentitySalt: string;
   private readonly callTraces: FrontierPilotCallTrace[] = [];
+  private readonly povHistory: string[] = [];
 
   constructor(private readonly options: FrontierPilotControllerOptions) {
     this.model = frontierPilotModelConfig(options);
@@ -517,7 +526,13 @@ export class FrontierPilotActionController implements FrozenMatchdayContinuation
     return structuredClone(this.callTraces);
   }
 
+  private remember(lines: readonly string[]): void {
+    this.povHistory.push(...lines);
+    if (this.povHistory.length > 2_000) this.povHistory.splice(0, this.povHistory.length - 2_000);
+  }
+
   async decideAction(context: FrozenMatchdayActionContext) {
+    this.remember(context.observation.povLines);
     if (context.legalActions.length === 1) {
       const selected = context.legalActions[0]!;
       return {
@@ -525,20 +540,26 @@ export class FrontierPilotActionController implements FrozenMatchdayContinuation
         actionId: canonicalJsonDigest(['frontier-pilot-forced-action-v1', selected.command]),
       };
     }
-    const taskId = canonicalJsonDigest([
-      'frontier-pilot-task-v1',
+    const opportunityId = canonicalJsonDigest([
+      'frontier-pilot-opportunity-v1',
       context.draw.id,
       context.pid,
       context.decisionIndex,
       context.observation.gameNumber,
     ]);
+    const state = actionState(context, this.options.publicContext, this.povHistory);
+    const taskId = canonicalJsonDigest([
+      FRONTIER_STRATEGIC_PILOT_PROTOCOL.taskIdentity,
+      opportunityId,
+      canonicalJsonDigest(state),
+    ]);
     const task = buildStrategicChoiceTask({
       id: taskId,
       format: this.options.publicContext.format,
       phase: context.observation.battle?.request?.teamPreview ? 'team-preview' : 'battle-action',
-      state: actionState(context, this.options.publicContext),
+      state,
       actions: context.legalActions.map((action) => ({ canonicalAction: action.command, label: action.label })),
-      presentationSeed: taskId,
+      presentationSeed: opportunityId,
       actionIdentitySalt: this.actionIdentitySalt,
       forecastMode: 'action-only',
     });
@@ -622,7 +643,8 @@ export class FrontierPilotActionController implements FrozenMatchdayContinuation
     return { command: selected.canonicalAction, actionId: parsed.actionId };
   }
 
-  decideNotebook() {
+  decideNotebook(context: FrozenMatchdayNotebookContext) {
+    this.remember(context.observation.povLines);
     return {};
   }
 }
@@ -807,6 +829,7 @@ export function frontierPilotControllerIdentities(input: {
 }): StrategicControllerSet {
   const otherPid: Pid = input.focalPid === 'p1' ? 'p2' : 'p1';
   const battleConfig = {
+    protocol: FRONTIER_STRATEGIC_PILOT_PROTOCOL,
     policy: FRONTIER_STRATEGIC_PILOT_PROTOCOL.policy,
     seats: {
       [input.focalPid]: { kind: 'model', configDigest: input.model.configDigest },
