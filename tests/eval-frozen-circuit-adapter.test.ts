@@ -6,16 +6,16 @@ import {
   buildFrozenCircuitReceiptTranscript,
   circuitResponseActionDigest,
   continueFrozenCircuitStrict,
+  type FrozenCircuitContinuationControllers,
+  type FrozenCircuitReplayReceipt,
   forkFrozenCircuitCheckpoint,
   recordFrozenCircuitSubmission,
   replayFrozenCircuitTranscript,
   restoreFrozenCircuitCheckpoint,
-  type FrozenCircuitContinuationControllers,
-  type FrozenCircuitReplayReceipt,
 } from '../src/eval/frozen-circuit-adapter.js';
 import { canonicalJsonDigest } from '../src/eval/serialization.js';
-import { FrozenCircuitReferee } from '../src/frozen-circuit-referee.js';
 import { FROZEN_CIRCUIT_SEAT_IDS, type FrozenCircuitPendingTurn } from '../src/frozen-circuit-model.js';
+import { FrozenCircuitReferee } from '../src/frozen-circuit-referee.js';
 
 function draftIds(turn: FrozenCircuitPendingTurn): string[] {
   return [...turn.prompt.matchAll(/^- ([a-z0-9][a-z0-9-]*) \|/gmu)].map((match) => match[1]!);
@@ -112,7 +112,9 @@ test('strict circuit continuation stops before a retry or deterministic fallback
   const controller = { respond: () => 'not-json' };
   const controllers: FrozenCircuitContinuationControllers = {
     controllerSetDigest: canonicalJsonDigest({ policy: 'always-invalid' }),
-    seats: Object.fromEntries(FROZEN_CIRCUIT_SEAT_IDS.map((seatId) => [seatId, controller])) as FrozenCircuitContinuationControllers['seats'],
+    seats: Object.fromEntries(
+      FROZEN_CIRCUIT_SEAT_IDS.map((seatId) => [seatId, controller]),
+    ) as FrozenCircuitContinuationControllers['seats'],
   };
   const result = await continueFrozenCircuitStrict({ referee, controllers, maxSubmissions: 10 });
   assert.equal(result.protocolValid, true);

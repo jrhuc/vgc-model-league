@@ -1,4 +1,3 @@
-import { FrozenCircuitReferee } from '../frozen-circuit-referee.js';
 import {
   FROZEN_CIRCUIT_SEAT_IDS,
   type FrozenCircuitPendingTurn,
@@ -9,8 +8,9 @@ import {
   type FrozenCircuitTerminalEvidence,
   type TurnReceipt,
 } from '../frozen-circuit-model.js';
+import { FrozenCircuitReferee } from '../frozen-circuit-referee.js';
 import { sha256 } from '../frozen-circuit-setup.js';
-import { type DecisionNode, type StrategicStage } from './experiment-kernel.js';
+import type { DecisionNode, StrategicStage } from './experiment-kernel.js';
 import { canonicalJsonDigest } from './serialization.js';
 
 export const FROZEN_CIRCUIT_ADAPTER_PROTOCOL = {
@@ -142,7 +142,13 @@ function assertReceipt(receipt: FrozenCircuitReplayReceipt): void {
   if (!receipt.response || sha256(receipt.response) !== receipt.responseSha256) {
     throw new Error(`circuit receipt ${JSON.stringify(receipt.turnId)} response digest does not match`);
   }
-  if (!receipt.turnId || !receipt.seatId || !receipt.kind || !Number.isSafeInteger(receipt.attempt) || receipt.attempt < 1) {
+  if (
+    !receipt.turnId ||
+    !receipt.seatId ||
+    !receipt.kind ||
+    !Number.isSafeInteger(receipt.attempt) ||
+    receipt.attempt < 1
+  ) {
     throw new Error('circuit replay receipt has invalid turn metadata');
   }
 }
@@ -158,10 +164,7 @@ function assertTurnJoin(turn: FrozenCircuitPendingTurn, receipt: FrozenCircuitRe
   }
 }
 
-function assertSubmissionJoin(
-  result: FrozenCircuitSubmissionResult,
-  receipt: FrozenCircuitReplayReceipt,
-): void {
+function assertSubmissionJoin(result: FrozenCircuitSubmissionResult, receipt: FrozenCircuitReplayReceipt): void {
   if (
     result.accepted !== receipt.accepted ||
     result.advanced !== receipt.advanced ||
@@ -188,10 +191,7 @@ function replaySequence(input: {
   receipts: readonly FrozenCircuitReplayReceipt[];
 }): FrozenCircuitReferee {
   const referee = newReferee(input.scenarioId, input.seed);
-  if (
-    referee.configDigest !== input.sourceConfigDigest ||
-    referee.promptRevision !== input.sourcePromptRevision
-  ) {
+  if (referee.configDigest !== input.sourceConfigDigest || referee.promptRevision !== input.sourcePromptRevision) {
     throw new Error('circuit replay source identity does not match the current authoritative referee');
   }
   for (const receipt of input.receipts) {
@@ -299,9 +299,7 @@ export function buildFrozenCircuitTerminalTranscript(
   });
 }
 
-export function replayFrozenCircuitTranscript(
-  transcript: FrozenCircuitReplayTranscript,
-): FrozenCircuitReferee {
+export function replayFrozenCircuitTranscript(transcript: FrozenCircuitReplayTranscript): FrozenCircuitReferee {
   if (
     transcript.protocolVersion !== FROZEN_CIRCUIT_ADAPTER_PROTOCOL.version ||
     canonicalJsonDigest(transcriptBase(transcript)) !== transcript.transcriptDigest
