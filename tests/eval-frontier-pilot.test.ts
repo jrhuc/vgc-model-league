@@ -118,6 +118,7 @@ test('frontier action controller uses strict opaque tasks and joins the selected
     modelSpec: 'openrouter:test/frontier',
     provider,
     publicContext: context(),
+    modelDecisionLimit: 'all',
   });
   const first = actionContext();
   const decision = await controller.decideAction(first);
@@ -133,6 +134,23 @@ test('frontier action controller uses strict opaque tasks and joins the selected
   assert.match(traces[0]!.callDigest, /^[0-9a-f]{64}$/u);
   assert.match(traces[1]!.prompt, /\|turn\|3/u);
   assert.match(traces[1]!.prompt, /\|move\|p1a: Alpha\|Protect/u);
+});
+
+test('frontier action controller bounds provider decisions before declared continuation', async () => {
+  const provider = new PilotProvider();
+  const controller = new FrontierPilotActionController({
+    modelSpec: 'openrouter:test/frontier',
+    provider,
+    publicContext: context(),
+    modelDecisionLimit: 1,
+  });
+  const first = await controller.decideAction(actionContext());
+  assert.equal(first.command, 'move 2 1');
+  const secondContext = actionContext();
+  secondContext.decisionIndex = 1;
+  const second = await controller.decideAction(secondContext);
+  assert.equal(second.command, 'move 1 1');
+  assert.equal(controller.traces().length, 1);
 });
 
 test('frontier task identity changes when authorized notebook state changes', async () => {

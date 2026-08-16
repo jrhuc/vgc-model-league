@@ -9,6 +9,7 @@ import {
   buildFrontierPilotMatchday,
   buildFrontierPilotSourceArtifact,
   completeFrontierPilotSource,
+  type FrontierPilotModelDecisionLimit,
   type FrontierPilotSourceArtifact,
   frontierPilotProvider,
   generateFrontierAuthenticNotebook,
@@ -21,19 +22,21 @@ import { canonicalJson, canonicalJsonDigest } from '../src/eval/serialization.js
 import { isReasoningLevel, nitroSpec, type ReasoningLevel } from '../src/providers.js';
 import { loadPool } from '../src/teams.js';
 
-const HELP = `Usage: pnpm run strategic-pilot -- --models <spec> [--models <spec> ...]
+const HELP = `Usage: pnpm run strategic-pilot -- [--models <spec> ...]
 
 Run a matched authentic-vs-withheld between-game memory pilot through the
 frozen Showdown authorities and the repository's OpenRouter or Prime provider.
 
 Options:
   --models <spec>            repeat for every frontier model to test
+  --prepare-source-only      freeze source.json before any provider call
   --pool <name>              existing team pool (default: test)
   --focal-team <id>          pool team used by the frontier model (default: first team)
   --opponent-team <id>       distinct fixed-opponent team (default: second team)
   --seed <value>             deterministic source and common-draw namespace
   --draws <n>                common future draws per treatment (default: 4)
   --reasoning <level>        minimal, low, medium, high, or xhigh
+  --model-decisions <n|all>  focal model non-forced choices per arm (default: 1)
   --nitro                    add OpenRouter's :nitro routing variant
   --max-tokens <n>           output-token cap for each model call (default: 8192)
   --timeout <seconds>        provider timeout for each model call (default: 600)
@@ -46,7 +49,9 @@ Options:
 Model specs are openrouter:<model-id> or prime:<model-id>. The command reads
 OPENROUTER_API_KEY or PRIME_API_KEY. It writes private prompts, responses,
 usage, costs, exact source evidence, treatment bytes, fork outcomes, and joined
-digests. One team pair is one source cluster and is never a ranking.`;
+digests. The default is one attributable focal choice followed by a
+declared first-legal continuation; use --model-decisions all for the ecological
+full-policy follow-up. One team pair is one source cluster and is never a ranking.`;
 
 interface BatchModelSuccess {
   modelSpec: string;
@@ -69,6 +74,11 @@ function integer(value: string, label: string): number {
   const parsed = Number(value);
   if (!Number.isSafeInteger(parsed) || parsed < 1) throw new Error(`--${label} must be a positive integer`);
   return parsed;
+}
+
+function parsedModelDecisionLimit(value: string): FrontierPilotModelDecisionLimit {
+  if (value === 'all') return value;
+  return integer(value, 'model-decisions');
 }
 
 function reasoning(value: string | undefined): ReasoningLevel | undefined {
@@ -170,12 +180,14 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
     options: {
       help: { type: 'boolean', default: false },
       models: { type: 'string', multiple: true },
+      'prepare-source-only': { type: 'boolean', default: false },
       pool: { type: 'string', default: 'test' },
       'focal-team': { type: 'string' },
       'opponent-team': { type: 'string' },
       seed: { type: 'string', default: '20260816' },
       draws: { type: 'string', default: '4' },
       reasoning: { type: 'string' },
+      'model-decisions': { type: 'string', default: '1' },
       nitro: { type: 'boolean', default: false },
       'max-tokens': { type: 'string', default: '8192' },
       timeout: { type: 'string', default: '600' },
@@ -191,10 +203,19 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
     return 0;
   }
   const rawModels = values.models ?? [];
-  if (!rawModels.length) throw new Error('at least one --models spec is required');
+  if (values['prepare-source-only'] && rawModels.length) {
+    throw new Error('--prepare-source-only cannot be combined with --models');
+  }
+  if (values['prepare-source-only'] && values.source) {
+    throw new Error('--prepare-source-only creates a new source and cannot be combined with --source');
+  }
+  if (!values['prepare-source-only'] && !rawModels.length) {
+    throw new Error('at least one --models spec is required unless --prepare-source-only is used');
+  }
   const models = values.nitro ? rawModels.map(nitroSpec) : rawModels;
   if (new Set(models).size !== models.length) throw new Error('frontier pilot repeats a model spec');
   const reasoningLevel = reasoning(values.reasoning);
+  const modelDecisionLimit = parsedModelDecisionLimit(values['model-decisions']);
   const drawCount = integer(values.draws, 'draws');
   const maxTokens = integer(values['max-tokens'], 'max-tokens');
   const timeoutSeconds = integer(values.timeout, 'timeout');
@@ -218,6 +239,22 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
         seed: values.seed,
       });
   writeCanonical(path.join(outputDirectory, 'source.json'), sourceArtifact);
+  if (values['prepare-source-only']) {
+    const preparedBase = {
+      protocolVersion: 1,
+      generatedAt: new Date().toISOString(),
+      sourceArtifactDigest: sourceArtifact.sourceArtifactDigest,
+      sourceFile: 'source.json',
+      models: [],
+      interpretation: 'source-frozen-before-provider-calls',
+    };
+    writeCanonical(path.join(outputDirectory, 'summary.json'), {
+      ...preparedBase,
+      batchDigest: canonicalJsonDigest(preparedBase),
+    });
+    console.log(`prepared frontier pilot source: ${path.join(outputDirectory, 'source.json')}`);
+    return 0;
+  }
   const checkpoint = buildFrozenMatchdayBetweenGameCheckpoint(sourceArtifact.source, 1);
   const additionalTreatments = suppliedTreatments(values.treatment);
   const results: BatchModelResult[] = [];
@@ -240,6 +277,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
         modelSpec,
         provider,
         ...(reasoningLevel === undefined ? {} : { reasoning: reasoningLevel }),
+        modelDecisionLimit,
         maxTokens,
         timeoutSeconds,
       });
@@ -266,6 +304,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
         additionalTreatments,
         focalPid: 'p1',
         ...(reasoningLevel === undefined ? {} : { reasoning: reasoningLevel }),
+        modelDecisionLimit,
         drawCount,
         drawSeed: values.seed,
         maxTokens,
@@ -303,6 +342,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
     sourceArtifactDigest: sourceArtifact.sourceArtifactDigest,
     sourceFile: 'source.json',
     drawCount,
+    modelDecisionLimit,
     models: results,
     interpretation: 'pilot-only-one-source-cluster-no-ranking',
   };

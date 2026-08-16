@@ -136,8 +136,22 @@ OPENROUTER_API_KEY=<key> pnpm run strategic-pilot -- \
   --models openrouter:<model-id> \
   --pool test \
   --draws 4 \
+  --model-decisions 1 \
   --reasoning high \
   --out runs/strategic-pilot-smoke
+```
+
+
+Freeze each source before any provider call:
+
+```sh
+pnpm run strategic-pilot -- \
+  --prepare-source-only \
+  --pool test \
+  --focal-team <team-id> \
+  --opponent-team <team-id> \
+  --seed source-1 \
+  --out runs/source-1
 ```
 
 Repeat `--models` to run the same source and common draws for multiple models.
@@ -145,15 +159,18 @@ Use `prime:<model-id>` with `PRIME_API_KEY` for Prime Inference. The command
 rejects `random`: this pilot is specifically the real-provider seam. Run
 `pnpm run strategic-pilot -- --help` for every option.
 
-The v1 pilot is deliberately narrow. It constructs one deterministic source
+The v2 pilot is deliberately narrow. It constructs one deterministic source
 matchday from two committed pool teams, finishes that source with the first
 Showdown-accepted action policy, and verifies a checkpoint after Game 1. The
 frontier model writes private between-game notebook bytes from only its
 seat-authorized Game 1 history and the open team sheets. The checkpoint binds
 that exact authorized source POV and drains it before Game 2, so the
 continuation receives source-game information only through the declared
-treatment bytes. The same model then plays the remaining matched continuations
-under two arms:
+treatment bytes. By default the same model makes the first non-forced Game 2
+choice, usually team preview, and a declared first-legal policy completes the
+series. This is the cheapest attributable shard. Increase `--model-decisions`
+for a short intervention chain or use `all` for the ecological full-policy
+follow-up. The matched arms are:
 
 - **authentic:** inject the model-written notebook;
 - **withheld:** inject empty notebook bytes.

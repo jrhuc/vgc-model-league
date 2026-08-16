@@ -47,10 +47,10 @@ import { canonicalJson, canonicalJsonDigest } from './serialization.js';
 import { buildStrategicChoiceTask, parseStrategicChoice, type StrategicChoiceTaskPackage } from './strategic-task.js';
 
 export const FRONTIER_STRATEGIC_PILOT_PROTOCOL = {
-  version: 1,
+  version: 2,
   source: 'deterministic-first-legal-completed-matchday-v1',
   treatment: 'model-written-game-one-private-notebook-v1',
-  policy: 'frontier-model-focal-first-legal-opponent-v1',
+  policy: 'bounded-frontier-decisions-then-first-legal-continuation-v2',
   sampling: 'temperature-zero-no-provider-seed-balanced-arm-order-v1',
   history: 'bounded-full-authorized-continuation-pov-v1',
   taskIdentity: 'opportunity-and-authorized-state-digest-v1',
@@ -133,9 +133,13 @@ export interface FrontierNotebookGenerationResult {
   trace: FrontierPilotCallTrace;
 }
 
+export type FrontierPilotModelDecisionLimit = number | 'all';
+
 export interface FrontierPilotModelConfig {
   modelSpec: string;
   reasoning: ReasoningLevel | null;
+  modelDecisionLimit: FrontierPilotModelDecisionLimit;
+  downstreamPolicy: 'first-showdown-accepted-action-v1';
   maxTokens: number;
   timeoutSeconds: number;
   temperature: 0;
@@ -193,6 +197,7 @@ export interface FrontierPilotControllerOptions {
   modelSpec: string;
   provider: Provider;
   reasoning?: ReasoningLevel;
+  modelDecisionLimit?: FrontierPilotModelDecisionLimit;
   maxTokens?: number;
   timeoutSeconds?: number;
   publicContext: FrontierPilotPublicContext;
@@ -216,6 +221,12 @@ function safeId(value: string): string {
 function positiveInteger(value: number, label: string): number {
   if (!Number.isSafeInteger(value) || value < 1) throw new Error(`${label} must be a positive integer`);
   return value;
+}
+
+function modelDecisionLimit(value: FrontierPilotModelDecisionLimit | undefined): FrontierPilotModelDecisionLimit {
+  if (value === undefined) return 1;
+  if (value === 'all') return value;
+  return positiveInteger(value, 'modelDecisionLimit');
 }
 
 function completionFields(completion: Completion | null) {
@@ -472,6 +483,7 @@ export function frontierPilotProvider(modelSpec: string, reasoning?: ReasoningLe
 export function frontierPilotModelConfig(input: {
   modelSpec: string;
   reasoning?: ReasoningLevel;
+  modelDecisionLimit?: FrontierPilotModelDecisionLimit;
   maxTokens?: number;
   timeoutSeconds?: number;
 }): FrontierPilotModelConfig {
@@ -480,6 +492,8 @@ export function frontierPilotModelConfig(input: {
   const base = {
     modelSpec: input.modelSpec,
     reasoning: input.reasoning ?? null,
+    modelDecisionLimit: modelDecisionLimit(input.modelDecisionLimit),
+    downstreamPolicy: 'first-showdown-accepted-action-v1' as const,
     maxTokens,
     timeoutSeconds,
     temperature: 0 as const,
@@ -515,6 +529,7 @@ export class FrontierPilotActionController implements FrozenMatchdayContinuation
   private readonly actionIdentitySalt: string;
   private readonly callTraces: FrontierPilotCallTrace[] = [];
   private readonly povHistory: string[] = [];
+  private modelDecisions = 0;
 
   constructor(private readonly options: FrontierPilotControllerOptions) {
     this.model = frontierPilotModelConfig(options);
@@ -538,6 +553,17 @@ export class FrontierPilotActionController implements FrozenMatchdayContinuation
       return {
         command: selected.command,
         actionId: canonicalJsonDigest(['frontier-pilot-forced-action-v1', selected.command]),
+      };
+    }
+    if (this.model.modelDecisionLimit !== 'all' && this.modelDecisions >= this.model.modelDecisionLimit) {
+      const selected = context.legalActions[0]!;
+      return {
+        command: selected.command,
+        actionId: canonicalJsonDigest([
+          'frontier-pilot-declared-downstream-action-v1',
+          this.model.downstreamPolicy,
+          selected.command,
+        ]),
       };
     }
     const opportunityId = canonicalJsonDigest([
@@ -640,6 +666,7 @@ export class FrontierPilotActionController implements FrozenMatchdayContinuation
       canonicalAction: selected.canonicalAction,
     };
     this.callTraces.push(traced(base));
+    this.modelDecisions += 1;
     return { command: selected.canonicalAction, actionId: parsed.actionId };
   }
 
@@ -704,6 +731,7 @@ export async function generateFrontierAuthenticNotebook(input: {
   modelSpec: string;
   provider: Provider;
   reasoning?: ReasoningLevel;
+  modelDecisionLimit?: FrontierPilotModelDecisionLimit;
   maxTokens?: number;
   timeoutSeconds?: number;
 }): Promise<FrontierNotebookGenerationResult> {
@@ -946,6 +974,7 @@ export async function runFrontierStrategicPilot(input: {
   additionalTreatments?: readonly NotebookTreatment[];
   focalPid?: Pid;
   reasoning?: ReasoningLevel;
+  modelDecisionLimit?: FrontierPilotModelDecisionLimit;
   drawCount?: number;
   drawSeed?: string | number;
   maxTokens?: number;
@@ -1008,6 +1037,7 @@ export async function runFrontierStrategicPilot(input: {
         modelSpec: input.modelSpec,
         provider: input.provider,
         ...(input.reasoning === undefined ? {} : { reasoning: input.reasoning }),
+        modelDecisionLimit: model.modelDecisionLimit,
         ...(input.maxTokens === undefined ? {} : { maxTokens: input.maxTokens }),
         ...(input.timeoutSeconds === undefined ? {} : { timeoutSeconds: input.timeoutSeconds }),
         publicContext: input.sourceArtifact.publicContext,

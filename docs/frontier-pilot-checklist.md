@@ -15,6 +15,18 @@ selection rule outside the private result directories. A convenient first
 matrix is four distinct team-pair or source-seed cases from an existing pool.
 Do not select cases because authentic memory happened to help.
 
+Freeze every case before provider calls:
+
+```sh
+pnpm run strategic-pilot -- \
+  --prepare-source-only \
+  --pool test \
+  --focal-team <team-id> \
+  --opponent-team <team-id> \
+  --seed source-1 \
+  --out runs/source-1
+```
+
 ## 2. Build and run one plumbing smoke
 
 ```sh
@@ -27,6 +39,7 @@ OPENROUTER_API_KEY=<key> pnpm run strategic-pilot -- \
   --pool test \
   --seed smoke-1 \
   --draws 1 \
+  --model-decisions 1 \
   --reasoning high \
   --max-tokens 4096 \
   --out runs/strategic-pilot-smoke-1
@@ -58,9 +71,15 @@ OPENROUTER_API_KEY=<key> pnpm run strategic-pilot -- \
   --models openrouter:<model-b> \
   --source runs/source-1/source.json \
   --draws 8 \
+  --model-decisions 1 \
   --reasoning high \
   --out runs/source-1/frontier-batch-1
 ```
+
+The default one-model-decision condition isolates the first non-forced Game 2
+choice and then uses the declared deterministic continuation. Run a separately
+identified short chain or `--model-decisions all` only after this inexpensive
+shard works.
 
 Provider APIs do not expose a portable sampling seed. The pilot uses
 temperature zero, disables OpenRouter fallback, records the returned upstream,
