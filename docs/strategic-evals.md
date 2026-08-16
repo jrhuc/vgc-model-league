@@ -102,7 +102,11 @@ its accepted battle actions and private notebook intervals. It creates a
 content-addressed between-game checkpoint, replaces exact notebook bytes,
 changes only preregistered future seeds, and continues through strict declared
 controllers with no fallback. Source, checkpoint, fork configuration, and
-terminal evidence digests remain joined in every outcome.
+terminal evidence digests remain joined in every outcome. The execution digest
+also binds the matched plan, arm, common draw, focal seat, treatment, and
+controller set. The non-focal seat retains its checkpoint notebook in v1;
+changing it requires an explicitly crossed treatment rather than an unbound
+runtime argument.
 
 ## Required experiment shape
 
