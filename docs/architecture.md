@@ -218,9 +218,10 @@ exact referee evidence schema.
 Each pending player decision starts a fresh, one-turn verifiers interaction in
 that player's runtime. The TypeScript referee supplies the complete authorized
 prompt for that turn, accepts the raw response, applies its retry or default
-policy, and returns a receipt. Python transports these messages, checks the
-binding and terminal joins, and attaches the TypeScript-defined terminal return
-after full validation. It does not parse a parallel draft, construction,
+policy, and returns a receipt. Python transports these messages and checks the
+binding and terminal joins. By default it records the TypeScript-defined
+terminal return as an arena metric on non-trainable traces rather than copying
+it into local rewards. It does not parse a parallel draft, construction,
 transaction, or battle command language.
 
 `src/frozen-circuit-referee.ts` coordinates the circuit state machine. The

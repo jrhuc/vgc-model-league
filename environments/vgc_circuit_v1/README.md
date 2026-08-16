@@ -142,15 +142,22 @@ TypeScript pending turns + authorized observations
 TypeScript terminal evidence
   -> exact Python binding/schema/coverage validation
   -> terminal receipt Counter == Trace join Counter
-  -> per-seat terminal reward + diagnostic metrics on joined Traces
+  -> per-seat terminal arena metric + diagnostic metrics on joined Traces
 ```
 
 ## Terminal rewards and diagnostics
 
 The referee emits one scenario-specific terminal return for each seat. Python
-recomputes and validates the return from the terminal series evidence. Only
-after the complete Episode and all receipt joins validate does it record the
-same seat return on that seat's decision traces.
+recomputes and validates the return from the terminal series evidence. By
+default, `trace_reward_projection="arena-metrics-only"` records that value as
+`circuit_terminal_series_return_v1`, keeps player traces non-trainable, and
+records no per-turn reward. A delayed season outcome is not local credit.
+
+The compatibility setting
+`trace_reward_projection="legacy-repeated-trace-return"` restores the old
+behavior of copying one seat return onto every decision trace. It is explicit,
+diagnosed by `circuit_repeated_trace_reward_enabled_v1`, and is not the default
+evaluation or training contract.
 
 For `draft-league-v1`:
 
@@ -186,9 +193,9 @@ diagnostics only. They do not provide game, semantic, transaction, adaptation,
 standing, champion, invalid-output, or default shaping.
 
 `circuit_seat_decisions_v1` records how many decision traces a seat produced.
-It exists so a consumer can undo the trace weighting described under
-publication blockers: weighting each trace by the reciprocal of this metric
-recovers a per-seat mean from a trace-level export.
+Arena exports may use its reciprocal to recover one observation per seat from
+trace-level metric tables. It does not convert a terminal return into causal
+credit for any draft pick, build, trade, preview, or battle action.
 
 ## Evaluation and training targets
 
@@ -201,8 +208,11 @@ as separate evaluations because their lifecycles, starting resources, rewards,
 and estimands are not interchangeable.
 
 Configuring the same model for all eight roles is a supported symmetric
-self-play target. The trainable roles also make multi-agent `prime-rl` a target.
-These paths are not hosted-validated, and same-model self-play is not a frontier
+self-play arena target. Player traces are non-trainable in the default
+`arena-metrics-only` projection. Multi-agent training must use attributable
+strategic shards rather than the delayed whole-circuit return. The explicit
+legacy projection exists only for compatibility and is not a training recipe.
+Neither path is hosted-validated, and same-model self-play is not a frontier
 comparison or evidence of model strength.
 
 ## Build and test
@@ -257,12 +267,12 @@ hosted support.
 
 Do not treat a Hub mean as a model ranking. The eight seat returns in one
 Episode partition one zero-sum series ledger, so their mean is zero whatever
-the field played. The environment writes the same seat return onto every
-decision trace for that seat, so a trace-weighted mean drifts off zero only
-because seats that play more games, usually playoff seats, contribute more
-traces. Compare seats or assigned models, and reweight a trace-level export by
-`circuit_seat_decisions_v1`. Same-model self-play validates machinery; its
-expected seat return is zero by construction, so it cannot rank anything.
+the field played. The default environment exposes those returns as arena
+metrics and records no trace rewards. Compare seats or assigned focal models
+under counterbalanced circuit blocks, and use `circuit_seat_decisions_v1` only
+to undo duplicated metric rows in trace-level exports. Same-model self-play
+validates machinery; its expected seat return is zero by construction, so it
+cannot rank anything.
 
 One provider, runtime, or protocol failure fails the whole eight-seat Episode
 before scoring. The default `draft-league-v1` task provisions nine runtimes and

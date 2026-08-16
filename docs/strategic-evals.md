@@ -135,11 +135,14 @@ the native Showdown acceptance filter and rectangular common-draw matrices.
 
 ### Circuit event adapter
 
-Project draft, construction, transaction, preview, battle, and notebook
-receipts into canonical decision events. Add `replayTo`, verified checkpoints,
-and `fork` over the circuit state machine. The full circuit environment should
-record one seat-level episode result, not repeat one delayed reward on every
-one-turn decision trace.
+`frozen-circuit-adapter.ts` now replays private receipt bytes through the
+authoritative circuit referee, creates verified pre-decision checkpoints,
+projects authorized decision-node digests, replaces one response, and marks the
+source suffix invalid. Strict continuations stop on the first unaccepted or
+defaulted response. The native whole-circuit adapter now records seat returns
+as non-training arena metrics by default; repeated trace rewards require an
+explicit legacy switch. Next, bind matched downstream controller populations
+and common future seed plans to complete draft and transaction forks.
 
 ### Strategic shard environment
 

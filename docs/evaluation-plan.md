@@ -203,8 +203,10 @@ deterministic extra-game seeds until it has a winner, with a nine-game limit.
 ### Terminal returns
 
 The TypeScript referee emits one frozen return for each seat. Python validates
-that value against complete terminal evidence before adding it to any trace.
-There is no intermediate reward.
+that value against complete terminal evidence. The default circuit adapter
+records it as a non-training arena metric and adds no per-turn reward. The
+legacy repeated-trace projection is opt-in only. There is no intermediate
+reward or local credit assignment.
 
 For `draft-league-v1`, the return is:
 
@@ -230,11 +232,10 @@ not reach contributes zero to the numerator.
 
 Both returns partition one series ledger, so the eight seat returns of a
 complete Episode sum to exactly zero. Python enforces that conservation before
-scoring. A mean taken across all eight seats is therefore zero whatever the
-field played, and a trace-level mean is not even zero because a seat's return
-repeats on each of its decision traces and playoff seats produce more of them.
-Report seat or model means and reweight trace exports by
-`circuit_seat_decisions_v1`.
+recording arena metrics. A mean taken across all eight seats is therefore zero
+whatever the field played. Report counterbalanced focal-seat or assigned-model
+contrasts, not one field mean. Reweight trace-level metric exports by
+`circuit_seat_decisions_v1` only to remove duplicate rows.
 
 Game records, pre-window and post-window splits, game-one-loss conversion as an
 adaptation diagnostic, standings, playoff qualification, champion status, transactions, invalid turns,
