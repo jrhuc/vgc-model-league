@@ -133,7 +133,7 @@ function assertProjection(actual: FrozenCircuitStateProjection, expected: Frozen
 }
 
 function assertReceipt(receipt: FrozenCircuitReplayReceipt): void {
-  if (!receipt.response || sha256(receipt.response) !== receipt.responseSha256) {
+  if (typeof receipt.response !== 'string' || sha256(receipt.response) !== receipt.responseSha256) {
     throw new Error(`circuit receipt ${JSON.stringify(receipt.turnId)} response digest does not match`);
   }
   if (
@@ -352,7 +352,7 @@ function decisionNode(input: {
     stage: stageFor(input.target),
     actor: input.target.seatId,
     parentNodeId: input.prefixReceipts.at(-1)?.turnId ?? null,
-    sourceEpisodeDigest: input.transcript.sourceConfigDigest,
+    sourceEpisodeDigest: input.transcript.transcriptDigest,
     publicStateDigest: canonicalJsonDigest(publicState),
     privateStateDigest: canonicalJsonDigest(privateState),
     promptDigest: canonicalJsonDigest(input.target.prompt),
@@ -510,11 +510,11 @@ export async function continueFrozenCircuitStrict(input: {
           terminalEvidence: null,
         };
       }
-      if (typeof response !== 'string' || !response) {
+      if (typeof response !== 'string') {
         return {
           protocolValid: false,
           accepted: false,
-          diagnostic: `${turn.seatId} controller returned no response`,
+          diagnostic: `${turn.seatId} controller returned a non-string response`,
           receipts,
           end: stateProjection(input.referee),
           terminalEvidence: null,

@@ -172,10 +172,10 @@ export function buildStrategicChoiceTask(input: {
 }
 
 function parsedObject(response: string): Record<string, unknown> | string {
-  const match = /\{[\s\S]*\}/u.exec(response);
-  if (!match) return 'the reply contained no JSON object';
+  const trimmed = response.trim();
+  if (!trimmed) return 'the reply contained no JSON object';
   try {
-    const parsed = JSON.parse(match[0]) as unknown;
+    const parsed = JSON.parse(trimmed) as unknown;
     if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed))
       return 'the reply must be one JSON object';
     return parsed as Record<string, unknown>;

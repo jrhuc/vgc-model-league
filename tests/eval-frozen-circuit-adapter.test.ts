@@ -69,6 +69,7 @@ test('circuit receipt transcripts replay and checkpoint before one exact decisio
   assert.equal(checkpoint.decisionNode.stage, 'draft');
   assert.equal(checkpoint.decisionNode.id, receipts[1]!.turnId);
   assert.equal(checkpoint.decisionNode.parentNodeId, receipts[0]!.turnId);
+  assert.equal(checkpoint.decisionNode.sourceEpisodeDigest, transcript.transcriptDigest);
 
   const tampered = structuredClone(transcript);
   tampered.receipts[0]!.response = 'tampered';
@@ -123,4 +124,37 @@ test('strict circuit continuation stops before a retry or deterministic fallback
   assert.equal(result.receipts[0]!.defaulted, false);
   assert.equal(result.receipts[0]!.attempt, 1);
   assert.equal(result.terminalEvidence, null);
+});
+
+test('strict circuit continuation records empty model output as domain-invalid evidence', async () => {
+  const receipts = sourceReceipts(2);
+  const transcript = buildFrozenCircuitReceiptTranscript({
+    scenarioId: 'draft-league-v1',
+    seed: 11,
+    receipts,
+  });
+  const checkpoint = buildFrozenCircuitCheckpoint(transcript, 1);
+  const referee = restoreFrozenCircuitCheckpoint(checkpoint);
+  const controller = { respond: () => '' };
+  const controllers: FrozenCircuitContinuationControllers = {
+    controllerSetDigest: canonicalJsonDigest({ policy: 'empty-response' }),
+    seats: Object.fromEntries(
+      FROZEN_CIRCUIT_SEAT_IDS.map((seatId) => [seatId, controller]),
+    ) as unknown as FrozenCircuitContinuationControllers['seats'],
+  };
+  const result = await continueFrozenCircuitStrict({ referee, controllers, maxSubmissions: 10 });
+  assert.equal(result.protocolValid, true);
+  assert.equal(result.accepted, false);
+  assert.equal(result.receipts.length, 1);
+  assert.equal(result.receipts[0]!.response, '');
+  assert.equal(result.receipts[0]!.accepted, false);
+  assert.equal(result.receipts[0]!.defaulted, false);
+
+  const replayable = buildFrozenCircuitReceiptTranscript({
+    scenarioId: checkpoint.scenarioId,
+    seed: checkpoint.seed,
+    receipts: [...checkpoint.prefixReceipts, ...result.receipts],
+  });
+  assert.equal(replayable.receipts.at(-1)?.response, '');
+  replayFrozenCircuitTranscript(replayable);
 });

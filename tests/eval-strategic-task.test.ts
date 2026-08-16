@@ -54,6 +54,11 @@ test('strategic parser keeps invalid output separate from legal action utility',
     task,
   );
   assert.equal(invalid.status, 'invalid');
+  const wrapped = parseStrategicChoice(
+    `Decision: ${JSON.stringify({ action_id: actionId, p_game_win: 0.55, p_series_win: 0.62, confidence: 0.7 })}`,
+    task,
+  );
+  assert.equal(wrapped.status, 'invalid');
 });
 
 test('strategic choice joins opaque action ids to an absolute reference score', () => {
