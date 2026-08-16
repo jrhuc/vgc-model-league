@@ -111,12 +111,6 @@ function checkpointBase(checkpoint: FrozenCircuitCheckpoint) {
   const { checkpointDigest: _checkpointDigest, ...base } = checkpoint;
   return base;
 }
-
-function forkBase(artifact: FrozenCircuitForkArtifact) {
-  const { forkDigest: _forkDigest, ...base } = artifact;
-  return base;
-}
-
 function phase(referee: FrozenCircuitReferee): FrozenCircuitPhase {
   return referee.observe(FROZEN_CIRCUIT_SEAT_IDS[0]).phase;
 }

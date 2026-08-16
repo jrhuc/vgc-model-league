@@ -9,6 +9,7 @@ import type { DraftBoard, DraftBoardMon } from './draft.js';
 import { draftBoardTable } from './draft.js';
 import { canonicalJson } from './eval/serialization.js';
 import type { DraftTableRow } from './gui/api.js';
+import { type MechanicsToolAvailability, mechanicsToolNotice } from './prompt-capabilities.js';
 import { FORMAT_AUTHORITY_NOTICE } from './prompts.js';
 import type { ModelReasoningConfig, ReasoningLevel } from './providers.js';
 import { classifyProviderFailure, makeProvider, parseSpec, reasoningForModel } from './providers.js';
@@ -26,6 +27,11 @@ import { clip } from './value.js';
 export const DEFAULT_TRADE_WINDOW = { afterWeek: 3, tradesAllowed: 1 } as const;
 export const MAX_TRADE_OFFERS = 3;
 export const MAX_TRADE_SWAPS = 6;
+
+const FREE_AGENCY_AVAILABLE_MECHANICS_TOOLS =
+  'You have the same Showdown dex tools as during the draft. Use them only where the supplied evidence and board do not answer the question.';
+const TRADE_OFFER_AVAILABLE_MECHANICS_TOOLS =
+  'You have the same Showdown dex tools as during the draft. Use them only where the supplied evidence and rosters do not answer the question.';
 
 const TRADE_WINDOW_PROMPT_POLICY = {
   systemTemplate: [
@@ -594,11 +600,19 @@ export function applyFreeAgency(
   return next;
 }
 
-function systemPrompt(state: TradeWindowState, entrant: number): string {
-  return renderTemplate(TRADE_WINDOW_PROMPT_POLICY.systemTemplate, {
+function systemPrompt(
+  state: TradeWindowState,
+  entrant: number,
+  mechanicsTools: MechanicsToolAvailability = 'available',
+): string {
+  const rendered = renderTemplate(TRADE_WINDOW_PROMPT_POLICY.systemTemplate, {
     ...promptValues(state, entrant),
     maxSwaps: String(MAX_TRADE_SWAPS),
   });
+  return rendered.replace(
+    FREE_AGENCY_AVAILABLE_MECHANICS_TOOLS,
+    mechanicsToolNotice(mechanicsTools, FREE_AGENCY_AVAILABLE_MECHANICS_TOOLS),
+  );
 }
 
 function rosterLine(roster: readonly DraftBoardMon[]): string {
@@ -631,12 +645,27 @@ function renderTemplate(lines: readonly string[], values: Readonly<Record<string
     .join('\n');
 }
 
-function offerSystemPrompt(state: TradeWindowState, entrant: number): string {
-  return renderTemplate(TRADE_OFFER_PROMPT_POLICY.systemTemplate, promptValues(state, entrant));
+function offerSystemPrompt(
+  state: TradeWindowState,
+  entrant: number,
+  mechanicsTools: MechanicsToolAvailability = 'available',
+): string {
+  const rendered = renderTemplate(TRADE_OFFER_PROMPT_POLICY.systemTemplate, promptValues(state, entrant));
+  return rendered.replace(
+    TRADE_OFFER_AVAILABLE_MECHANICS_TOOLS,
+    mechanicsToolNotice(mechanicsTools, TRADE_OFFER_AVAILABLE_MECHANICS_TOOLS),
+  );
 }
 
-function responseSystemPrompt(state: TradeWindowState, entrant: number): string {
-  return renderTemplate(TRADE_OFFER_PROMPT_POLICY.responseSystemTemplate, promptValues(state, entrant));
+function responseSystemPrompt(
+  state: TradeWindowState,
+  entrant: number,
+  mechanicsTools: MechanicsToolAvailability = 'available',
+): string {
+  const rendered = renderTemplate(TRADE_OFFER_PROMPT_POLICY.responseSystemTemplate, promptValues(state, entrant));
+  return mechanicsTools === 'available'
+    ? rendered
+    : `${rendered}\n\n${mechanicsToolNotice(mechanicsTools, TRADE_OFFER_AVAILABLE_MECHANICS_TOOLS)}`;
 }
 
 /** Every seat prompt in the window shares this dossier so that offering, answering an offer, and
@@ -713,16 +742,29 @@ function responseUserPrompt(
   ].join('\n');
 }
 
-export function connectedTradeWindowPromptRevision(): string {
+export function connectedTradeWindowPromptRevision(mechanicsTools: MechanicsToolAvailability = 'available'): string {
   return createHash('sha256')
-    .update(JSON.stringify([tradeWindowScaffoldRevision(), 'system-blank-line-user-v1']))
+    .update(JSON.stringify([tradeWindowScaffoldRevision(), 'system-blank-line-user-v1', mechanicsTools]))
     .digest('hex')
     .slice(0, 12);
 }
 
-export function renderTradeOfferPrompt(state: TradeWindowState, entrant: number, psDir: string): string {
+export interface TradePromptRenderOptions {
+  mechanicsTools?: MechanicsToolAvailability;
+}
+
+export function renderTradeOfferPrompt(
+  state: TradeWindowState,
+  entrant: number,
+  psDir: string,
+  options: TradePromptRenderOptions = {},
+): string {
   validateLeagueRosterState(state);
-  return [offerSystemPrompt(state, entrant), '', offerUserPrompt(state, entrant, psDir)].join('\n');
+  return [
+    offerSystemPrompt(state, entrant, options.mechanicsTools ?? 'available'),
+    '',
+    offerUserPrompt(state, entrant, psDir),
+  ].join('\n');
 }
 
 export function renderTradeResponsePrompt(
@@ -730,16 +772,30 @@ export function renderTradeResponsePrompt(
   offer: { to: number; give: string; get: string; message: string },
   from: number,
   psDir: string,
+  options: TradePromptRenderOptions = {},
 ): string {
   validateLeagueRosterState(state);
   const error = validateOfferTerms(state, from, offer);
   if (error) throw new Error(`invalid trade offer: ${error}`);
-  return [responseSystemPrompt(state, offer.to), '', responseUserPrompt(state, offer, from, psDir)].join('\n');
+  return [
+    responseSystemPrompt(state, offer.to, options.mechanicsTools ?? 'available'),
+    '',
+    responseUserPrompt(state, offer, from, psDir),
+  ].join('\n');
 }
 
-export function renderFreeAgencyPrompt(state: TradeWindowState, entrant: number, psDir: string): string {
+export function renderFreeAgencyPrompt(
+  state: TradeWindowState,
+  entrant: number,
+  psDir: string,
+  options: TradePromptRenderOptions = {},
+): string {
   validateLeagueRosterState(state);
-  return [systemPrompt(state, entrant), '', userPrompt(state, entrant, psDir)].join('\n');
+  return [
+    systemPrompt(state, entrant, options.mechanicsTools ?? 'available'),
+    '',
+    userPrompt(state, entrant, psDir),
+  ].join('\n');
 }
 
 function rosterArtifact(state: TradeWindowState): TradeWindowRoster[] {

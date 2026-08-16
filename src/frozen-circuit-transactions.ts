@@ -7,6 +7,7 @@ import {
   type FrozenCircuitSeatId,
   type TransactionSummary,
 } from './frozen-circuit-model.js';
+import { FROZEN_CIRCUIT_PROMPT_POLICY } from './frozen-circuit-setup.js';
 import { REPO_ROOT } from './paths.js';
 import {
   applyFreeAgency,
@@ -92,7 +93,9 @@ export class FrozenCircuitTransactions {
         attempt,
         problems,
         prompt: withRetry(
-          renderTradeResponsePrompt(this.state, current.value, current.from, path.join(REPO_ROOT, 'pokemon-showdown')),
+          renderTradeResponsePrompt(this.state, current.value, current.from, path.join(REPO_ROOT, 'pokemon-showdown'), {
+            mechanicsTools: FROZEN_CIRCUIT_PROMPT_POLICY.mechanicsTools,
+          }),
           attempt,
           maximumAttempts,
           problems,
@@ -115,8 +118,12 @@ export class FrozenCircuitTransactions {
     const problems = retryProblems.get(key) ?? [];
     const prompt =
       kind === 'trade_offer'
-        ? renderTradeOfferPrompt(this.state, entrant, path.join(REPO_ROOT, 'pokemon-showdown'))
-        : renderFreeAgencyPrompt(this.state, entrant, path.join(REPO_ROOT, 'pokemon-showdown'));
+        ? renderTradeOfferPrompt(this.state, entrant, path.join(REPO_ROOT, 'pokemon-showdown'), {
+            mechanicsTools: FROZEN_CIRCUIT_PROMPT_POLICY.mechanicsTools,
+          })
+        : renderFreeAgencyPrompt(this.state, entrant, path.join(REPO_ROOT, 'pokemon-showdown'), {
+            mechanicsTools: FROZEN_CIRCUIT_PROMPT_POLICY.mechanicsTools,
+          });
     return {
       seatId: this.seats[entrant]!.seatId,
       kind,
@@ -146,6 +153,18 @@ export class FrozenCircuitTransactions {
     validateLeagueRosterState(this.state);
     this.phase = null;
     return this.state;
+  }
+
+  stateDigest(): string {
+    return canonicalJsonDigest({
+      state: this.state,
+      order: this.order,
+      phase: this.phase,
+      cursor: this.cursor,
+      offer: this.offer,
+      offers: this.offers,
+      decisions: this.decisions,
+    });
   }
 
   summary(): TransactionSummary {

@@ -84,7 +84,11 @@ Invalid output is returned as a separate endpoint; no implicit fallback utility
 or `-1` strategic score is assigned.
 
 Forecast fields are mechanically scored with proper scoring rules and cannot
-increase action utility.
+increase action utility. Connected draft, construction, and transaction prompts
+also bind the actual mechanics-tool capability. The local harness keeps its
+interactive Showdown tools; the frozen null-harness circuit explicitly states
+that no interactive tools are available, and the capability changes the prompt
+revision.
 
 ### Best-of-three memory interventions
 

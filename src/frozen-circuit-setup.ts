@@ -52,6 +52,7 @@ export const ROUND_ROBIN_SERIES = 28;
 export const PLAYOFF_SERIES = 3;
 
 export const FROZEN_CIRCUIT_PROMPT_POLICY = {
+  mechanicsTools: 'unavailable' as const,
   draftRosterPolicy:
     '- The league plays seven round-robin weeks. A coach-trade and free-agency window opens after week 3; the top four then qualify for playoffs.',
   action: {
@@ -414,9 +415,13 @@ export function frozenCircuitPromptRevision(): string {
   return sha256(
     JSON.stringify({
       protocolVersion: FROZEN_CIRCUIT_PROMPT_PROTOCOL_VERSION,
-      draft: connectedDraftPromptRevision(),
-      construction: connectedTeamBuildPromptRevision({ kind: 'general' }, 'open'),
-      transaction: connectedTradeWindowPromptRevision(),
+      draft: connectedDraftPromptRevision(FROZEN_CIRCUIT_PROMPT_POLICY.mechanicsTools),
+      construction: connectedTeamBuildPromptRevision(
+        { kind: 'general' },
+        'open',
+        FROZEN_CIRCUIT_PROMPT_POLICY.mechanicsTools,
+      ),
+      transaction: connectedTradeWindowPromptRevision(FROZEN_CIRCUIT_PROMPT_POLICY.mechanicsTools),
       circuit: FROZEN_CIRCUIT_PROMPT_POLICY,
     }),
   ).slice(0, 16);

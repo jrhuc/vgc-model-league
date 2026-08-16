@@ -114,7 +114,7 @@ test('strict circuit continuation stops before a retry or deterministic fallback
     controllerSetDigest: canonicalJsonDigest({ policy: 'always-invalid' }),
     seats: Object.fromEntries(
       FROZEN_CIRCUIT_SEAT_IDS.map((seatId) => [seatId, controller]),
-    ) as FrozenCircuitContinuationControllers['seats'],
+    ) as unknown as FrozenCircuitContinuationControllers['seats'],
   };
   const result = await continueFrozenCircuitStrict({ referee, controllers, maxSubmissions: 10 });
   assert.equal(result.protocolValid, true);

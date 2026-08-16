@@ -2,17 +2,14 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { connectedDraftPromptRevision } from '../src/draft.js';
-import { FrozenCircuitReferee } from '../src/frozen-circuit-referee.js';
 import { type CircuitSeat, FROZEN_CIRCUIT_SEAT_IDS } from '../src/frozen-circuit-model.js';
+import { FrozenCircuitReferee } from '../src/frozen-circuit-referee.js';
 import { FROZEN_CIRCUIT_PROMPT_POLICY } from '../src/frozen-circuit-setup.js';
 import { FrozenCircuitTransactions } from '../src/frozen-circuit-transactions.js';
 import { FROZEN_MATCHDAY_FORMAT } from '../src/frozen-matchday-referee.js';
 import { NO_INTERACTIVE_MECHANICS_TOOLS_NOTICE } from '../src/prompt-capabilities.js';
 import { loadShowdown } from '../src/showdown.js';
-import {
-  connectedTeamBuildPromptRevision,
-  renderStrictTeamBuildPrompt,
-} from '../src/teambuild.js';
+import { connectedTeamBuildPromptRevision, renderStrictTeamBuildPrompt } from '../src/teambuild.js';
 import {
   connectedTradeWindowPromptRevision,
   renderFreeAgencyPrompt,
@@ -87,7 +84,9 @@ test('connected draft, construction, and transaction revisions bind tool availab
 });
 
 test('strict construction prompts preserve the local tool arm and expose the frozen no-tool arm', () => {
-  const construction = frozenMatchdayOptions().seats[0].construction;
+  const seat = frozenMatchdayOptions().seats[0];
+  assert.ok(seat);
+  const construction = seat.construction;
   assert.equal(construction.status, 'accepted');
   if (construction.status !== 'accepted') throw new Error('fixture construction must be accepted');
   const available = renderStrictTeamBuildPrompt(construction.artifact.task);
@@ -121,6 +120,6 @@ test('transaction renderers and the frozen transaction coordinator use the decla
   assert.doesNotMatch(pending.prompt, /You have the same Showdown dex tools as during the draft/u);
 });
 
- test('the shared no-tool notice is explicit rather than an invisible capability flag', () => {
+test('the shared no-tool notice is explicit rather than an invisible capability flag', () => {
   assert.match(NO_INTERACTIVE_MECHANICS_TOOLS_NOTICE, /Do not attempt tool calls/u);
 });

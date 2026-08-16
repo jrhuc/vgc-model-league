@@ -254,7 +254,10 @@ export class FrozenCircuitReferee {
       this.seats.map((entry) => entry.name),
       pickNumber,
       this.notebooks.get(seat.seatId)!,
-      { rosterPolicy: FROZEN_CIRCUIT_PROMPT_POLICY.draftRosterPolicy },
+      {
+        rosterPolicy: FROZEN_CIRCUIT_PROMPT_POLICY.draftRosterPolicy,
+        mechanicsTools: FROZEN_CIRCUIT_PROMPT_POLICY.mechanicsTools,
+      },
     );
     this.ledger.addPending({
       seatId: seat.seatId,
@@ -286,7 +289,9 @@ export class FrozenCircuitReferee {
           seriesIndex,
           taskKey,
           prompt: this.ledger.withRetry(
-            renderStrictTeamBuildPrompt(task),
+            renderStrictTeamBuildPrompt(task, {
+              mechanicsTools: FROZEN_CIRCUIT_PROMPT_POLICY.mechanicsTools,
+            }),
             attempt,
             FROZEN_CIRCUIT_MAX_CONSTRUCTION_ATTEMPTS,
             problems,
@@ -962,17 +967,36 @@ export class FrozenCircuitReferee {
       configDigest: this.configDigest,
       phase: this.phase,
       revision: this.ledger.revision,
-      draftPicks: this.draftState?.taken.size ?? null,
-      constructions: [...this.constructions.keys()].sort(),
-      bracket: this.bracket,
-      table: this.table,
-      transaction: this.transactions
+      draft: this.draftState
         ? {
-            phase: this.transactions.phase,
-            cursor: this.transactions.cursor,
-            rosterDigests: this.transactions.state.rosters.map((roster) => canonicalJsonDigest(roster)),
+            taken: [...this.draftState.taken.entries()].sort(([left], [right]) => left.localeCompare(right)),
+            rosters: this.draftState.rosters.map((roster) => roster.map((mon) => mon.id)),
+            budgets: [...this.draftState.budgets],
           }
         : null,
+      notebooks: FROZEN_CIRCUIT_SEAT_IDS.map((seatId) => ({
+        seatId,
+        notebookSha256: sha256(this.notebooks.get(seatId)!),
+      })),
+      constructions: [...this.constructions.entries()]
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, construction]) => ({ key, constructionDigest: canonicalJsonDigest(construction) })),
+      bracket: this.bracket,
+      table: this.table,
+      leagueResults: this.leagueResults,
+      coachingContext: [...this.coachingContext.entries()]
+        .sort(([left], [right]) => left - right)
+        .map(([entrant, entries]) => ({
+          entrant,
+          entries: [...entries.entries()].sort(([left], [right]) => left - right),
+        })),
+      leagueReflections: [...this.leagueReflections.entries()]
+        .sort(([left], [right]) => left - right)
+        .map(([entrant, entries]) => ({
+          entrant,
+          entries: [...entries.entries()].sort(([left], [right]) => left - right),
+        })),
+      transactionStateDigest: this.transactions?.stateDigest() ?? null,
       archivedSeries: this.series.map((entry) => ({
         seriesIndex: entry.seriesIndex,
         winnerSeatId: entry.winnerSeatId,
@@ -986,6 +1010,7 @@ export class FrozenCircuitReferee {
         seatId: turn.seatId,
         kind: turn.kind,
         attempt: turn.attempt,
+        promptSha256: sha256(turn.prompt),
       })),
     });
   }

@@ -7,6 +7,7 @@ import { completeWithDexTools } from './dex-lookups.js';
 import type { BoardInfo, DraftBoardMonView, DraftPickView } from './gui/api.js';
 import { appendJsonlObject, readJsonlObjects } from './jsonl.js';
 import { BOARDS_DIR, defaultPsDir } from './paths.js';
+import { type MechanicsToolAvailability, mechanicsToolNotice } from './prompt-capabilities.js';
 import { FORMAT_AUTHORITY_NOTICE } from './prompts.js';
 import type { ModelReasoningConfig, ReasoningLevel } from './providers.js';
 import { classifyProviderFailure, makeProvider, parseSpec, reasoningForModel } from './providers.js';
@@ -19,6 +20,14 @@ import type { JsonObject, Provider, ProviderFailure, ProviderMessage } from './t
 import { clip, text } from './value.js';
 
 const BOARD_SLUG = /^[a-z0-9][a-z0-9-]{0,63}$/;
+
+const DRAFT_AVAILABLE_MECHANICS_TOOLS = [
+  'You have the Showdown dex tools. Use them to check anything the board summary does not answer: what a Mega',
+  'becomes, how a type matchup reads, what a spread outruns, or roughly how hard an attack hits. They compute',
+  'from the simulator this league runs on. Trust the mechanics and factors each result explicitly says it applied;',
+  'a hypothetical damage result does not imply omitted abilities or field effects. search_board filters and re-sorts the',
+  'board itself by type, price, ability, base stat total, or which entries legally learn a given move.',
+].join('\n');
 
 const DRAFT_PROMPT_POLICY = {
   systemTemplate: [
@@ -468,6 +477,7 @@ function draftSystemPrompt(
   drafter: number,
   psDir: string,
   rosterPolicy: string,
+  mechanicsTools: MechanicsToolAvailability = 'available',
 ): string {
   const values: Record<string, string> = {
     model: models[drafter]!,
@@ -478,14 +488,18 @@ function draftSystemPrompt(
     board: draftBoardTable(board, psDir),
     rosterPolicy,
   };
-  return DRAFT_PROMPT_POLICY.systemTemplate
+  const rendered = DRAFT_PROMPT_POLICY.systemTemplate
     .map((line) =>
       Object.entries(values).reduce(
-        (rendered, [name, value]) => rendered.replaceAll(`{{${name}}}`, value),
+        (current, [name, value]) => current.replaceAll(`{{${name}}}`, value),
         line as string,
       ),
     )
     .join('\n');
+  return rendered.replace(
+    DRAFT_AVAILABLE_MECHANICS_TOOLS,
+    mechanicsToolNotice(mechanicsTools, DRAFT_AVAILABLE_MECHANICS_TOOLS),
+  );
 }
 
 export function draftUserPrompt(
@@ -535,9 +549,9 @@ const CONNECTED_DRAFT_PROMPT_POLICY = {
   boardProjection: 'current-legal-picks-only-v1',
 } as const;
 
-export function connectedDraftPromptRevision(): string {
+export function connectedDraftPromptRevision(mechanicsTools: MechanicsToolAvailability = 'available'): string {
   return createHash('sha256')
-    .update(JSON.stringify([draftScaffoldRevision(), CONNECTED_DRAFT_PROMPT_POLICY]))
+    .update(JSON.stringify([draftScaffoldRevision(), CONNECTED_DRAFT_PROMPT_POLICY, mechanicsTools]))
     .digest('hex')
     .slice(0, 12);
 }
@@ -548,13 +562,18 @@ export function renderDraftPickPrompt(
   models: string[],
   pickNumber: number,
   notebook: string,
-  options: { psDir?: string; rosterPolicy: string },
+  options: {
+    psDir?: string;
+    rosterPolicy: string;
+    mechanicsTools?: MechanicsToolAvailability;
+  },
 ): string {
   const psDir = options.psDir ?? defaultPsDir();
   const rosterPolicy = options.rosterPolicy;
+  const mechanicsTools = options.mechanicsTools ?? 'available';
   const legalBoard: DraftBoard = { ...state.board, mons: legalPicks(state, drafter) };
   return [
-    draftSystemPrompt(legalBoard, models, drafter, psDir, rosterPolicy),
+    draftSystemPrompt(legalBoard, models, drafter, psDir, rosterPolicy, mechanicsTools),
     '',
     draftUserPrompt(state, drafter, models, pickNumber, notebook),
   ].join('\n');
