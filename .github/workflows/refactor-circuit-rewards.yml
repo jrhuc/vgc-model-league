@@ -1,0 +1,425 @@
+name: Refactor circuit reward projection
+
+on:
+  push:
+    branches:
+      - agent/strategic-evals-refactor
+    paths:
+      - .github/workflows/refactor-circuit-rewards.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: refactor-circuit-rewards-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  refactor:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: agent/strategic-evals-refactor
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: '3.13.15'
+      - name: Apply arena-only default reward projection
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path: str, old: str, new: str) -> None:
+              file = Path(path)
+              text = file.read_text()
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{path}: expected one replacement, found {count}: {old[:80]!r}")
+              file.write_text(text.replace(old, new))
+
+          env = "environments/vgc_circuit_v1/vgc_circuit_v1/env.py"
+          replace_once(env, "from typing import Any\n", "from typing import Any, Literal\n")
+          replace_once(
+              env,
+              '    expected_prompt_revision: str | None = Field(None, min_length=1)\n    debug_allow_subprocess: bool = False\n',
+              '    expected_prompt_revision: str | None = Field(None, min_length=1)\n'
+              '    trace_reward_projection: Literal[\n'
+              '        "arena-metrics-only", "legacy-repeated-trace-return"\n'
+              '    ] = "arena-metrics-only"\n'
+              '    debug_allow_subprocess: bool = False\n',
+          )
+          replace_once(
+              env,
+              '    async def setup(self, agents: vf.Agents) -> None:\n'
+              '        for seat_id in _PLAYERS:\n'
+              '            getattr(agents, seat_id).trainable = True\n'
+              '        agents.referee.trainable = False\n',
+              '    async def setup(self, agents: vf.Agents) -> None:\n'
+              '        repeated_trace_reward = (\n'
+              '            self.config.trace_reward_projection\n'
+              '            == "legacy-repeated-trace-return"\n'
+              '        )\n'
+              '        for seat_id in _PLAYERS:\n'
+              '            getattr(agents, seat_id).trainable = repeated_trace_reward\n'
+              '        agents.referee.trainable = False\n',
+          )
+          replace_once(
+              env,
+              "        _validate_agents(agents)\n",
+              "        _validate_agents(agents, self.config.trace_reward_projection)\n",
+          )
+          replace_once(
+              env,
+              '        if not episode.traces:\n'
+              '            raise ValueError("circuit episode has no player decision traces")\n\n'
+              '        by_seat: dict[str, list[Any]] = {seat_id: [] for seat_id in _SEATS}\n',
+              '        if not episode.traces:\n'
+              '            raise ValueError("circuit episode has no player decision traces")\n'
+              '        repeated_trace_reward = (\n'
+              '            self.config.trace_reward_projection\n'
+              '            == "legacy-repeated-trace-return"\n'
+              '        )\n\n'
+              '        by_seat: dict[str, list[Any]] = {seat_id: [] for seat_id in _SEATS}\n',
+          )
+          replace_once(
+              env,
+              '            if not trace.ok or trace.num_turns != 1 or not trace.agent.trainable:\n'
+              '                raise ValueError(\n'
+              '                    "circuit trace is not one successful trainable decision"\n'
+              '                )\n',
+              '            if (\n'
+              '                not trace.ok\n'
+              '                or trace.num_turns != 1\n'
+              '                or trace.agent.trainable is not repeated_trace_reward\n'
+              '            ):\n'
+              '                raise ValueError(\n'
+              '                    "circuit trace trainability does not match its reward projection"\n'
+              '                )\n',
+          )
+          replace_once(
+              env,
+              '                _terminal_metrics(\n'
+              '                    task.data.scenario_id, seat, len(by_seat[seat["seatId"]])\n'
+              '                ),\n',
+              '                _terminal_metrics(\n'
+              '                    task.data.scenario_id,\n'
+              '                    seat,\n'
+              '                    len(by_seat[seat["seatId"]]),\n'
+              '                    repeated_trace_reward,\n'
+              '                ),\n',
+          )
+          replace_once(
+              env,
+              '        for seat_id, traces in by_seat.items():\n'
+              '            reward_name, reward, metrics = scores[seat_id]\n'
+              '            for trace in traces:\n'
+              '                trace.record_reward(reward_name, reward)\n'
+              '                trace.record_metrics(metrics)\n',
+              '        for seat_id, traces in by_seat.items():\n'
+              '            reward_name, reward, metrics = scores[seat_id]\n'
+              '            for trace in traces:\n'
+              '                if repeated_trace_reward:\n'
+              '                    trace.record_reward(reward_name, reward)\n'
+              '                trace.record_metrics(metrics)\n',
+          )
+          replace_once(
+              env,
+              'def _terminal_metrics(\n'
+              '    scenario_id: str, seat: dict[str, Any], decisions: int\n'
+              ') -> dict[str, float]:\n',
+              'def _terminal_metrics(\n'
+              '    scenario_id: str,\n'
+              '    seat: dict[str, Any],\n'
+              '    decisions: int,\n'
+              '    repeated_trace_reward: bool,\n'
+              ') -> dict[str, float]:\n',
+          )
+          replace_once(
+              env,
+              '        "circuit_seat_decisions_v1": decisions,\n',
+              '        "circuit_seat_decisions_v1": decisions,\n'
+              '        "circuit_terminal_series_return_v1": float(seat["rewardValue"]),\n'
+              '        "circuit_repeated_trace_reward_enabled_v1": float(\n'
+              '            repeated_trace_reward\n'
+              '        ),\n',
+          )
+          replace_once(
+              env,
+              'def _validate_agents(agents: vf.Agents) -> None:\n'
+              '    for role in _PLAYERS:\n'
+              '        if not getattr(agents, role).trainable:\n'
+              '            raise ValueError(f"{role} must remain trainable from setup")\n'
+              '    if agents.referee.trainable:\n'
+              '        raise ValueError("referee must be nontrainable")\n',
+              'def _validate_agents(\n'
+              '    agents: vf.Agents,\n'
+              '    trace_reward_projection: str,\n'
+              ') -> None:\n'
+              '    expected_trainable = (\n'
+              '        trace_reward_projection == "legacy-repeated-trace-return"\n'
+              '    )\n'
+              '    for role in _PLAYERS:\n'
+              '        if getattr(agents, role).trainable is not expected_trainable:\n'
+              '            raise ValueError(\n'
+              '                f"{role} trainability does not match trace_reward_projection"\n'
+              '            )\n'
+              '    if agents.referee.trainable:\n'
+              '        raise ValueError("referee must be nontrainable")\n',
+          )
+
+          tests = "environments/vgc_circuit_v1/tests/test_env.py"
+          replace_once(
+              tests,
+              "async def test_full_eight_seat_31_series_join_rewards_and_diagnostics(monkeypatch: pytest.MonkeyPatch) -> None:\n",
+              "async def test_full_eight_seat_31_series_join_arena_metrics(monkeypatch: pytest.MonkeyPatch) -> None:\n",
+          )
+          replace_once(
+              tests,
+              '    assert all(trace.agent.trainable for trace in episode.traces)\n'
+              '    assert all(set(trace.rewards) == {"draft_league_series_return_v1"} for trace in episode.traces)\n'
+              '    for trace in episode.traces:\n'
+              '        reward = trace.rewards["draft_league_series_return_v1"].score\n'
+              '        assert -1 <= reward <= 1\n',
+              '    assert all(not trace.agent.trainable for trace in episode.traces)\n'
+              '    assert all(not trace.rewards for trace in episode.traces)\n'
+              '    for trace in episode.traces:\n'
+              '        assert trace.metrics["circuit_repeated_trace_reward_enabled_v1"] == 0\n'
+              '        assert -1 <= trace.metrics["circuit_terminal_series_return_v1"] <= 1\n',
+          )
+          replace_once(
+              tests,
+              '        assert reward == pytest.approx(expected)\n',
+              '        assert trace.metrics["circuit_terminal_series_return_v1"] == pytest.approx(expected)\n',
+          )
+          replace_once(
+              tests,
+              '        trace.rewards["draft_league_series_return_v1"].score / trace.metrics["circuit_seat_decisions_v1"]\n',
+              '        trace.metrics["circuit_terminal_series_return_v1"] / trace.metrics["circuit_seat_decisions_v1"]\n',
+          )
+          replace_once(
+              tests,
+              "async def test_victory_road_rewards_every_joined_trace(monkeypatch: pytest.MonkeyPatch) -> None:\n",
+              "async def test_victory_road_reports_arena_metrics_without_trace_rewards(monkeypatch: pytest.MonkeyPatch) -> None:\n",
+          )
+          replace_once(
+              tests,
+              '    assert all(\n'
+              '        set(trace.rewards) == {"tournament_series_return_v1"}\n'
+              '        for trace in episode.traces\n'
+              '    )\n'
+              '    champion = agents.seat1.interactions[0].trace\n'
+              '    reward = champion.rewards["tournament_series_return_v1"].score\n'
+              '    assert reward == 1\n'
+              '    top_cut = champion.info["circuit_v1"]["terminal"]["seat"]["splits"]["topCut"]["series"]\n'
+              '    assert reward == pytest.approx((top_cut["wins"] - top_cut["losses"]) / 3)\n',
+              '    assert all(not trace.agent.trainable for trace in episode.traces)\n'
+              '    assert all(not trace.rewards for trace in episode.traces)\n'
+              '    champion = agents.seat1.interactions[0].trace\n'
+              '    terminal_return = champion.metrics["circuit_terminal_series_return_v1"]\n'
+              '    assert terminal_return == 1\n'
+              '    top_cut = champion.info["circuit_v1"]["terminal"]["seat"]["splits"]["topCut"]["series"]\n'
+              '    assert terminal_return == pytest.approx((top_cut["wins"] - top_cut["losses"]) / 3)\n'
+              '    assert champion.metrics["circuit_repeated_trace_reward_enabled_v1"] == 0\n',
+          )
+          replace_once(
+              tests,
+              '        trace.rewards["tournament_series_return_v1"].score\n'
+              '        for trace in episode.traces\n',
+              '        trace.metrics["circuit_terminal_series_return_v1"]\n'
+              '        for trace in episode.traces\n',
+          )
+          marker = "\n\n@pytest.mark.asyncio\nasync def test_impossible_post_clinch_series_is_rejected_at_the_environment_boundary(\n"
+          legacy_test = '''\n\n@pytest.mark.asyncio\nasync def test_legacy_repeated_trace_reward_requires_explicit_opt_in(\n    monkeypatch: pytest.MonkeyPatch,\n) -> None:\n    env, task, _agents, _referee, episode, _concurrency = await _run(\n        monkeypatch,\n        trace_reward_projection="legacy-repeated-trace-return",\n    )\n    await env.finalize(task, episode)\n    assert all(trace.agent.trainable for trace in episode.traces)\n    assert all(\n        set(trace.rewards) == {"draft_league_series_return_v1"}\n        for trace in episode.traces\n    )\n    assert all(\n        trace.metrics["circuit_repeated_trace_reward_enabled_v1"] == 1\n        for trace in episode.traces\n    )\n\n\n@pytest.mark.asyncio\nasync def test_impossible_post_clinch_series_is_rejected_at_the_environment_boundary(\n'''
+          replace_once(tests, marker, legacy_test)
+          replace_once(
+              tests,
+              "    assert all(trace.rewards for trace in episode.traces)\n",
+              "    assert all(trace.metrics and not trace.rewards for trace in episode.traces)\n",
+          )
+          replace_once(
+              tests,
+              '    assert config.expected_prompt_revision is None\n',
+              '    assert config.expected_prompt_revision is None\n'
+              '    assert config.trace_reward_projection == "arena-metrics-only"\n',
+          )
+          replace_once(
+              tests,
+              '    with pytest.raises(ValidationError):\n'
+              '        VgcCircuitEnvConfig(expected_prompt_revision="")\n',
+              '    with pytest.raises(ValidationError):\n'
+              '        VgcCircuitEnvConfig(expected_prompt_revision="")\n'
+              '    with pytest.raises(ValidationError):\n'
+              '        VgcCircuitEnvConfig(trace_reward_projection="unknown")\n',
+          )
+
+          package_readme = "environments/vgc_circuit_v1/README.md"
+          replace_once(
+              package_readme,
+              "  -> per-seat terminal reward + diagnostic metrics on joined Traces\n",
+              "  -> per-seat terminal arena metric + diagnostic metrics on joined Traces\n",
+          )
+          replace_once(
+              package_readme,
+              'The referee emits one scenario-specific terminal return for each seat. Python\n'
+              'recomputes and validates the return from the terminal series evidence. Only\n'
+              'after the complete Episode and all receipt joins validate does it record the\n'
+              'same seat return on that seat\'s decision traces.\n',
+              'The referee emits one scenario-specific terminal return for each seat. Python\n'
+              'recomputes and validates the return from the terminal series evidence. By\n'
+              'default, `trace_reward_projection="arena-metrics-only"` records that value as\n'
+              '`circuit_terminal_series_return_v1`, keeps player traces non-trainable, and\n'
+              'records no per-turn reward. A delayed season outcome is not local credit.\n\n'
+              'The compatibility setting\n'
+              '`trace_reward_projection="legacy-repeated-trace-return"` restores the old\n'
+              'behavior of copying one seat return onto every decision trace. It is explicit,\n'
+              'diagnosed by `circuit_repeated_trace_reward_enabled_v1`, and is not the default\n'
+              'evaluation or training contract.\n',
+          )
+          replace_once(
+              package_readme,
+              '`circuit_seat_decisions_v1` records how many decision traces a seat produced.\n'
+              'It exists so a consumer can undo the trace weighting described under\n'
+              'publication blockers: weighting each trace by the reciprocal of this metric\n'
+              'recovers a per-seat mean from a trace-level export.\n',
+              '`circuit_seat_decisions_v1` records how many decision traces a seat produced.\n'
+              'Arena exports may use its reciprocal to recover one observation per seat from\n'
+              'trace-level metric tables. It does not convert a terminal return into causal\n'
+              'credit for any draft pick, build, trade, preview, or battle action.\n',
+          )
+          replace_once(
+              package_readme,
+              'Configuring the same model for all eight roles is a supported symmetric\n'
+              'self-play target. The trainable roles also make multi-agent `prime-rl` a target.\n'
+              'These paths are not hosted-validated, and same-model self-play is not a frontier\n'
+              'comparison or evidence of model strength.\n',
+              'Configuring the same model for all eight roles is a supported symmetric\n'
+              'self-play arena target. Player traces are non-trainable in the default\n'
+              '`arena-metrics-only` projection. Multi-agent training must use attributable\n'
+              'strategic shards rather than the delayed whole-circuit return. The explicit\n'
+              'legacy projection exists only for compatibility and is not a training recipe.\n'
+              'Neither path is hosted-validated, and same-model self-play is not a frontier\n'
+              'comparison or evidence of model strength.\n',
+          )
+          replace_once(
+              package_readme,
+              'Do not treat a Hub mean as a model ranking. The eight seat returns in one\n'
+              'Episode partition one zero-sum series ledger, so their mean is zero whatever\n'
+              'the field played. The environment writes the same seat return onto every\n'
+              'decision trace for that seat, so a trace-weighted mean drifts off zero only\n'
+              'because seats that play more games, usually playoff seats, contribute more\n'
+              'traces. Compare seats or assigned models, and reweight a trace-level export by\n'
+              '`circuit_seat_decisions_v1`. Same-model self-play validates machinery; its\n'
+              'expected seat return is zero by construction, so it cannot rank anything.\n',
+              'Do not treat a Hub mean as a model ranking. The eight seat returns in one\n'
+              'Episode partition one zero-sum series ledger, so their mean is zero whatever\n'
+              'the field played. The default environment exposes those returns as arena\n'
+              'metrics and records no trace rewards. Compare seats or assigned focal models\n'
+              'under counterbalanced circuit blocks, and use `circuit_seat_decisions_v1` only\n'
+              'to undo duplicated metric rows in trace-level exports. Same-model self-play\n'
+              'validates machinery; its expected seat return is zero by construction, so it\n'
+              'cannot rank anything.\n',
+          )
+
+          replace_once(
+              "docs/evaluation-plan.md",
+              'The TypeScript referee emits one frozen return for each seat. Python validates\n'
+              'that value against complete terminal evidence before adding it to any trace.\n'
+              'There is no intermediate reward.\n',
+              'The TypeScript referee emits one frozen return for each seat. Python validates\n'
+              'that value against complete terminal evidence. The default circuit adapter\n'
+              'records it as a non-training arena metric and adds no per-turn reward. The\n'
+              'legacy repeated-trace projection is opt-in only. There is no intermediate\n'
+              'reward or local credit assignment.\n',
+          )
+          replace_once(
+              "docs/evaluation-plan.md",
+              'Both returns partition one series ledger, so the eight seat returns of a\n'
+              'complete Episode sum to exactly zero. Python enforces that conservation before\n'
+              'scoring. A mean taken across all eight seats is therefore zero whatever the\n'
+              'field played, and a trace-level mean is not even zero because a seat\'s return\n'
+              'repeats on each of its decision traces and playoff seats produce more of them.\n'
+              'Report seat or model means and reweight trace exports by\n'
+              '`circuit_seat_decisions_v1`.\n',
+              'Both returns partition one series ledger, so the eight seat returns of a\n'
+              'complete Episode sum to exactly zero. Python enforces that conservation before\n'
+              'recording arena metrics. A mean taken across all eight seats is therefore zero\n'
+              'whatever the field played. Report counterbalanced focal-seat or assigned-model\n'
+              'contrasts, not one field mean. Reweight trace-level metric exports by\n'
+              '`circuit_seat_decisions_v1` only to remove duplicate rows.\n',
+          )
+          replace_once(
+              "docs/measurement.md",
+              'The circuit metric is the scenario-specific terminal series return defined in\n'
+              'the [Evaluation plan](evaluation-plan.md#terminal-returns). Game outcomes,\n'
+              'pre-window and post-window splits, adaptation, standings, champion status,\n'
+              'transactions, and defaults remain diagnostics. They do not shape the return.\n'
+              'Use heterogeneous, counterbalanced frontier fields as the primary comparison.\n'
+              'Same-model symmetric self-play can validate machinery and is not a strength\n'
+              'comparison.\n',
+              'The circuit arena metric is the scenario-specific terminal series return\n'
+              'defined in the [Evaluation plan](evaluation-plan.md#terminal-returns). It is a\n'
+              'seat-level terminal outcome, not reward for any local trace. The default native\n'
+              'adapter keeps player traces non-trainable and records the return only as\n'
+              '`circuit_terminal_series_return_v1`. Game outcomes, pre-window and post-window\n'
+              'splits, adaptation, standings, champion status, transactions, and defaults\n'
+              'remain diagnostics. Use heterogeneous, counterbalanced frontier fields as an\n'
+              'ecological comparison. Same-model symmetric self-play validates machinery and\n'
+              'is not a strength comparison.\n',
+          )
+          replace_once(
+              "docs/architecture.md",
+              'Each pending player decision starts a fresh, one-turn verifiers interaction in\n'
+              'that player\'s runtime. The TypeScript referee supplies the complete authorized\n'
+              'prompt for that turn, accepts the raw response, applies its retry or default\n'
+              'policy, and returns a receipt. Python transports these messages, checks the\n'
+              'binding and terminal joins, and attaches the TypeScript-defined terminal return\n'
+              'after full validation. It does not parse a parallel draft, construction,\n'
+              'transaction, or battle command language.\n',
+              'Each pending player decision starts a fresh, one-turn verifiers interaction in\n'
+              'that player\'s runtime. The TypeScript referee supplies the complete authorized\n'
+              'prompt for that turn, accepts the raw response, applies its retry or default\n'
+              'policy, and returns a receipt. Python transports these messages and checks the\n'
+              'binding and terminal joins. By default it records the TypeScript-defined\n'
+              'terminal return as an arena metric on non-trainable traces rather than copying\n'
+              'it into local rewards. It does not parse a parallel draft, construction,\n'
+              'transaction, or battle command language.\n',
+          )
+          replace_once(
+              "docs/strategic-evals.md",
+              '### Circuit event adapter\n\n'
+              'Project draft, construction, transaction, preview, battle, and notebook\n'
+              'receipts into canonical decision events. Add `replayTo`, verified checkpoints,\n'
+              'and `fork` over the circuit state machine. The full circuit environment should\n'
+              'record one seat-level episode result, not repeat one delayed reward on every\n'
+              'one-turn decision trace.\n',
+              '### Circuit event adapter\n\n'
+              '`frozen-circuit-adapter.ts` now replays private receipt bytes through the\n'
+              'authoritative circuit referee, creates verified pre-decision checkpoints,\n'
+              'projects authorized decision-node digests, replaces one response, and marks the\n'
+              'source suffix invalid. Strict continuations stop on the first unaccepted or\n'
+              'defaulted response. The native whole-circuit adapter now records seat returns\n'
+              'as non-training arena metrics by default; repeated trace rewards require an\n'
+              'explicit legacy switch. Next, bind matched downstream controller populations\n'
+              'and common future seed plans to complete draft and transaction forks.\n',
+          )
+          PY
+      - name: Run standalone package tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check uv==0.12.3
+          uv sync --directory environments/vgc_circuit_v1 --locked --group test
+          uv run --directory environments/vgc_circuit_v1 --locked --group test pytest
+      - name: Commit refactor
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add environments/vgc_circuit_v1/vgc_circuit_v1/env.py environments/vgc_circuit_v1/tests/test_env.py environments/vgc_circuit_v1/README.md docs/evaluation-plan.md docs/measurement.md docs/architecture.md docs/strategic-evals.md
+          git commit -m "refactor(environment): make circuit scoring arena-only by default"
+          git push origin HEAD:agent/strategic-evals-refactor
