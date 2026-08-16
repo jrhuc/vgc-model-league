@@ -7,6 +7,7 @@ on:
     paths:
       - .github/workflows/refactor-prompt-capabilities.yml
       - tools/apply-prompt-capability-refactor.py
+      - tools/fix-prompt-capability-refactor.py
 
 permissions:
   contents: write
@@ -35,6 +36,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm run setup:showdown
       - run: python tools/apply-prompt-capability-refactor.py
+      - run: python tools/fix-prompt-capability-refactor.py
       - name: Format and validate
         shell: bash
         run: |
@@ -47,18 +49,25 @@ jobs:
             src/frozen-circuit-setup.ts \
             src/frozen-circuit-referee.ts \
             src/frozen-circuit-transactions.ts \
+            src/eval/frozen-circuit-adapter.ts \
+            tests/eval-frozen-circuit-adapter.test.ts \
             tests/frozen-circuit-prompt-capabilities.test.ts \
             docs/strategic-evals.md
           pnpm run build
           pnpm run build:frozen-circuit
-          node --test --test-timeout=300000 dist/tests/frozen-circuit-prompt-capabilities.test.js
+          node --test --test-timeout=300000 \
+            dist/tests/frozen-circuit-prompt-capabilities.test.js \
+            dist/tests/eval-frozen-circuit-adapter.test.js
       - name: Commit refactor and remove one-shot machinery
         shell: bash
         run: |
           set -euo pipefail
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git rm .github/workflows/refactor-prompt-capabilities.yml tools/apply-prompt-capability-refactor.py
-          git add src tests/frozen-circuit-prompt-capabilities.test.ts docs/strategic-evals.md
+          git rm \
+            .github/workflows/refactor-prompt-capabilities.yml \
+            tools/apply-prompt-capability-refactor.py \
+            tools/fix-prompt-capability-refactor.py
+          git add src tests docs/strategic-evals.md
           git commit -m "refactor(scaffold): bind prompts to mechanics-tool capability"
           git push origin HEAD:agent/strategic-evals-refactor
