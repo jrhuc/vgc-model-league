@@ -38,7 +38,8 @@
     "fetch-sprites": "node dist/tools/fetch-sprites.js",
     "capture-requests": "node dist/tools/capture-requests.js",
     "grade-positions": "node dist/tools/grade-positions.js",
-    "export-position-panels": "node dist/tools/export-position-panels.js"
+    "export-position-panels": "node dist/tools/export-position-panels.js",
+    "strategic-pilot": "node --env-file-if-exists=.env dist/tools/run-strategic-pilot.js"
   },
   "engines": {
     "node": ">=24.18.1 <25"
