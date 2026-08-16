@@ -9,11 +9,11 @@ import {
   buildFrontierPilotMatchday,
   buildFrontierPilotSourceArtifact,
   completeFrontierPilotSource,
+  type FrontierPilotSourceArtifact,
   frontierPilotProvider,
   generateFrontierAuthenticNotebook,
   runFrontierStrategicPilot,
   suppliedFrontierTreatment,
-  type FrontierPilotSourceArtifact,
   validateFrontierPilotSourceArtifact,
 } from '../src/eval/frontier-pilot.js';
 import { buildFrozenMatchdayBetweenGameCheckpoint } from '../src/eval/frozen-matchday-adapter.js';
@@ -78,7 +78,10 @@ function reasoning(value: string | undefined): ReasoningLevel | undefined {
 }
 
 function filename(value: string): string {
-  const safe = value.toLowerCase().replace(/[^a-z0-9._-]+/gu, '-').replace(/^-+|-+$/gu, '');
+  const safe = value
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/gu, '-')
+    .replace(/^-+|-+$/gu, '');
   return safe || 'model';
 }
 
@@ -133,7 +136,10 @@ function buildSource(input: {
   });
 }
 
-function treatmentSpec(value: string): { kind: Exclude<NotebookTreatmentKind, 'authentic' | 'withheld'>; file: string } {
+function treatmentSpec(value: string): {
+  kind: Exclude<NotebookTreatmentKind, 'authentic' | 'withheld'>;
+  file: string;
+} {
   const split = value.indexOf('=');
   if (split <= 0 || split === value.length - 1) throw new Error('--treatment must be kind=path');
   const kind = value.slice(0, split);

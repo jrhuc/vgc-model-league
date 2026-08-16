@@ -2,8 +2,8 @@ import { summarizeBattleEvents } from '../battle-transcript.js';
 import {
   FROZEN_MATCHDAY_NOTEBOOK_LIMIT,
   type FrozenMatchdayPhase,
-  type FrozenMatchdayRefereeOptions,
   FrozenMatchdayReferee,
+  type FrozenMatchdayRefereeOptions,
   type FrozenMatchdaySubmissionResult,
 } from '../frozen-matchday-referee.js';
 import { classifyProviderFailure, makeProvider, parseSpec, type ReasoningLevel } from '../providers.js';
@@ -202,7 +202,10 @@ function traced(base: TraceBase): FrontierPilotCallTrace {
 }
 
 function safeId(value: string): string {
-  const normalized = value.toLowerCase().replace(/[^a-z0-9]+/gu, '-').replace(/^-+|-+$/gu, '');
+  const normalized = value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/gu, '-')
+    .replace(/^-+|-+$/gu, '');
   return normalized || 'seat';
 }
 
@@ -352,7 +355,11 @@ export function buildFrontierPilotMatchday(input: {
         {
           pid: 'p2',
           name: opponent.name,
-          construction: acceptedFrontierPilotConstruction({ packed: opponent.packed, seatId: 'p2', format: input.format }),
+          construction: acceptedFrontierPilotConstruction({
+            packed: opponent.packed,
+            seatId: 'p2',
+            format: input.format,
+          }),
         },
       ],
     },
@@ -477,10 +484,7 @@ export function frontierPilotModelConfig(input: {
   return { ...base, configDigest: canonicalJsonDigest(base) };
 }
 
-function actionState(
-  context: FrozenMatchdayActionContext,
-  publicContextValue: FrontierPilotPublicContext,
-): string {
+function actionState(context: FrozenMatchdayActionContext, publicContextValue: FrontierPilotPublicContext): string {
   const battle = context.observation.battle;
   const state = {
     objective: 'maximize complete-series win probability',
@@ -682,20 +686,21 @@ export async function generateFrontierAuthenticNotebook(input: {
 }): Promise<FrontierNotebookGenerationResult> {
   const model = frontierPilotModelConfig(input);
   const prompt = notebookPrompt(input);
-  const id = canonicalJsonDigest(['frontier-pilot-notebook-v1', input.checkpoint.checkpointDigest, input.focalPid, model]);
+  const id = canonicalJsonDigest([
+    'frontier-pilot-notebook-v1',
+    input.checkpoint.checkpointDigest,
+    input.focalPid,
+    model,
+  ]);
   const started = Date.now();
   let completion: Completion;
   try {
-    completion = await input.provider.complete(
-      NOTEBOOK_SYSTEM,
-      [{ role: 'user', content: prompt }],
-      {
-        maxTokens: model.maxTokens,
-        timeout: model.timeoutSeconds,
-        temperature: model.temperature,
-        toolChoice: 'none',
-      },
-    );
+    completion = await input.provider.complete(NOTEBOOK_SYSTEM, [{ role: 'user', content: prompt }], {
+      maxTokens: model.maxTokens,
+      timeout: model.timeoutSeconds,
+      temperature: model.temperature,
+      toolChoice: 'none',
+    });
   } catch (cause) {
     const failure = classifyProviderFailure(cause, model.modelSpec);
     const trace = traced({

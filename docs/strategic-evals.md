@@ -124,6 +124,30 @@ Every causal shard must bind:
 Changing a prompt, renderer, tool protocol, memory policy, controller, hidden
 state prior, reference policy, or utility creates a new condition identity.
 
+## Runnable frontier-model pilot
+
+`tools/run-strategic-pilot.ts` is the first real-provider seam for this kernel.
+It reuses the repository's OpenRouter and Prime adapters rather than creating a
+new model runtime. A deterministic first-legal source policy completes one
+matchday, the adapter verifies the source and checkpoints after Game 1, and the
+frontier model writes exact private notebook bytes. Authentic and withheld arms
+then continue under the same focal model, fixed opponent policy, controller
+identity, and common future battle seeds.
+
+The command records whole-response strict JSON parsing, legal-action joins,
+provider reasoning text when returned, token usage, reported cost, upstream
+provider, treatment bytes, fork execution identities, and terminal evidence.
+No rejected response receives a random or deterministic fallback utility. A
+single run is one source cluster and cannot be interpreted as a ranking.
+
+The pilot is a falsification milestone. Expand the evaluation only if authentic
+memory beats withholding on independently selected source clusters, false
+memory is worse than placebo, oracle memory supplies a sensible upper bound,
+and the signal survives a changed downstream policy and a fresh provider-call
+batch. Otherwise retain the Pokémon harness and redirect the simulator forks to
+coaching/scouting, search/model hybrid, draft-plan adherence, or expert
+failure-mode studies.
+
 ## Migration sequence
 
 ### Matchday adapter

@@ -62,6 +62,93 @@ Do not publish a ranking until the strategic release gates in
 known-intervention validity and demonstrated held-out value beyond the
 unmodified Pokémon harness.
 
+## Frontier-model validation milestone
+
+The branch now includes a private, real-provider pilot command:
+
+```sh
+pnpm run build
+OPENROUTER_API_KEY=<key> pnpm run strategic-pilot -- \
+  --models openrouter:<model-id> --pool test --draws 4 --reasoning high
+```
+
+This is the shortest path from the framework contracts to evidence that can
+invalidate the research direction. It is not a benchmark package. One run
+binds one deterministic Game 1 source, a verified between-game checkpoint, a
+model-written authentic notebook, a withheld control, fixed downstream policy
+identities, common future draws, and private provider-call evidence. The focal
+frontier model plays the continuation; the opponent is a fixed first-legal
+Showdown policy. The output reports protocol validity, legality, series return,
+matched contrasts, prompts, responses, usage, cost, and all joining digests.
+
+### Pilot matrix
+
+Run the following stages in order and retain failed runs rather than silently
+repairing them:
+
+1. one-model/one-source/one-draw plumbing smoke;
+2. two or three current frontier models across at least four independently
+   selected source team pairs, with at least eight common draws per treatment;
+3. authentic, withheld, stale, false, placebo, and oracle memory arms on the
+   same sources;
+4. a second fixed downstream opponent policy or policy population;
+5. a fresh provider-call replication batch with unchanged source and fork
+   identities.
+
+Use source-team selection and intervention construction rules fixed before
+reading treatment outcomes. Cluster uncertainty at the source case, never at
+the individual future seed. Provider temperature is zero and OpenRouter
+fallback is disabled, but provider calls do not expose a portable random seed;
+record this residual randomness and balance arm execution order.
+
+### Go/no-go criteria
+
+Continue toward a public strategic-shard package only when all of these are
+true on held-out source clusters:
+
+- at least 95% of outcomes are protocol-valid and legal without fallback;
+- authentic memory has a repeatable positive effect over withholding in cases
+  selected without treatment outcomes;
+- false memory harms more than placebo and oracle information gives a sensible
+  positive upper bound;
+- the effect survives at least one changed downstream opponent policy and a
+  fresh provider-call batch;
+- the measured difference is not explained only by invalid-output rate, model
+  identity, or ordinary no-memory battle win rate; and
+- the cost of enough independent source clusters and replications is practical.
+
+Stop the benchmark work if these checks fail. Retain the already working
+Pokémon harness and redirect effort to one of four directly useful overlays:
+
+1. **Scouting and coaching:** measure whether model-written opponent reports or
+   post-series reviews help a later, separate player model, including adversarial
+   stale and false reports.
+2. **Search/model hybrids:** let deterministic search or rollouts propose a
+   small legal set, then measure whether a frontier model adds value in selecting
+   or explaining the proposal without making search the hidden answer key.
+3. **Draft-plan adherence:** fork draft picks, transactions, and matchup builds
+   while measuring whether the model follows or productively revises its own
+   earlier plan.
+4. **Failure-mode corpus:** curate exact replayable positions where frontier
+   models, heuristics, search, and blinded experts disagree, then study the
+   mechanics, information, and planning error rather than publishing one score.
+
+### Work after a positive pilot
+
+A positive pilot authorizes implementation, not publication. The next code
+milestones are:
+
+- source-corpus selection independent of treatment outcomes;
+- model/runtime controller support beyond the local provider adapter;
+- fixed opponent and continuation policy populations rather than one first-legal
+  policy;
+- crossed team, source-policy, model-family, and scaffold holdouts;
+- partial-draft option-value and stage-decomposition producers;
+- a native private shard package only after the local evidence contract is
+  stable; and
+- known-intervention, expert, invariance, sensitivity, and incremental-value
+  release gates from `strategic-evals.md`.
+
 ## Legacy diagnostic: `vgc-positions-v1`
 
 ### Public task and private grader data
