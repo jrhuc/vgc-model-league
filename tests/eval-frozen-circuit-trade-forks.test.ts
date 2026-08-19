@@ -14,7 +14,7 @@ import {
   selectFrozenCircuitTradeReceipts,
 } from '../src/eval/frozen-circuit-trade-forks.js';
 import { canonicalJsonDigest } from '../src/eval/serialization.js';
-import { parseTradeOffer, tradeWindowOrder, type TradeWindowState } from '../src/trade-window.js';
+import { parseTradeOffer, type TradeWindowState, tradeWindowOrder } from '../src/trade-window.js';
 
 function validOfferTerms(state: TradeWindowState): { from: number; to: number; give: string; get: string } {
   const order = tradeWindowOrder(state.standings);

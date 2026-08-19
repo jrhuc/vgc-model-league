@@ -5,9 +5,9 @@ import type {
   FrozenMatchdayObservation,
   FrozenMatchdayTerminalEvidence,
 } from './frozen-matchday-referee.js';
+import type { EvidenceSupplied } from './stage-evidence.js';
 import type { TeamBuildSubmissionValidation } from './teambuild.js';
 import type { BracketMatch } from './tournament.js';
-import type { EvidenceSupplied } from './stage-evidence.js';
 import type { TradeSwap, TradeWindowState } from './trade-window.js';
 import type { Pid } from './types.js';
 

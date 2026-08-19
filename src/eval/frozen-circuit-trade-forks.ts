@@ -6,19 +6,19 @@ import {
   type FrozenCircuitTurnKind,
 } from '../frozen-circuit-model.js';
 import { type FrozenCircuitPendingTurn, FrozenCircuitReferee } from '../frozen-circuit-referee.js';
+import type { DecisionNode } from './experiment-kernel.js';
 import {
   buildFrozenCircuitCheckpoint,
   continueFrozenCircuitStrict,
   type FrozenCircuitCheckpoint,
   type FrozenCircuitContinuationController,
   type FrozenCircuitContinuationControllers,
+  type FrozenCircuitReplayReceipt,
   type FrozenCircuitReplayTranscript,
   type FrozenCircuitStateProjection,
   forkFrozenCircuitCheckpoint,
   recordFrozenCircuitSubmission,
-  type FrozenCircuitReplayReceipt,
 } from './frozen-circuit-adapter.js';
-import type { DecisionNode } from './experiment-kernel.js';
 import { canonicalJsonDigest } from './serialization.js';
 
 export const FROZEN_CIRCUIT_TRADE_FORK_PROTOCOL = {
