@@ -68,7 +68,7 @@ The branch now includes a private, real-provider pilot command:
 
 ```sh
 pnpm run build
-OPENROUTER_API_KEY=<key> pnpm run strategic-pilot -- \
+OPENROUTER_API_KEY=<key> pnpm run strategic-pilot \
   --models openrouter:<model-id> --pool test --draws 4 --reasoning high
 ```
 
@@ -102,7 +102,7 @@ fallback is disabled, but provider calls do not expose a portable random seed;
 record this residual randomness and balance arm execution order.
 
 Aggregate completed private reports with `pnpm run
-summarize-strategic-pilots -- <report-or-directory>...`. The validator
+summarize-strategic-pilots <report-or-directory>...`. The validator
 recomputes report, model, fork-plan, call, treatment, execution, analysis, and
 summary identities. Repeated provider-call runs are averaged within their
 source before uncertainty is computed across source-cluster means. Fewer than

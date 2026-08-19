@@ -132,7 +132,7 @@ provider layer used by the working Pokémon harness:
 ```sh
 pnpm run build
 
-OPENROUTER_API_KEY=<key> pnpm run strategic-pilot -- \
+OPENROUTER_API_KEY=<key> pnpm run strategic-pilot \
   --models openrouter:<model-id> \
   --pool test \
   --draws 4 \
@@ -145,7 +145,7 @@ OPENROUTER_API_KEY=<key> pnpm run strategic-pilot -- \
 Freeze each source before any provider call:
 
 ```sh
-pnpm run strategic-pilot -- \
+pnpm run strategic-pilot \
   --prepare-source-only \
   --pool test \
   --focal-team <team-id> \
@@ -157,7 +157,7 @@ pnpm run strategic-pilot -- \
 Repeat `--models` to run the same source and common draws for multiple models.
 Use `prime:<model-id>` with `PRIME_API_KEY` for Prime Inference. The command
 rejects `random`: this pilot is specifically the real-provider seam. Run
-`pnpm run strategic-pilot -- --help` for every option.
+`pnpm run strategic-pilot --help` for every option.
 
 The v2 pilot is deliberately narrow. It constructs one deterministic source
 matchday from two committed pool teams, finishes that source with the first
@@ -188,7 +188,7 @@ instead of claiming exact model-call reproducibility. Reuse the exact source in
 another run with:
 
 ```sh
-pnpm run strategic-pilot -- \
+pnpm run strategic-pilot \
   --models openrouter:<model-id> \
   --source runs/strategic-pilot-smoke/source.json \
   --draws 8 \
@@ -199,7 +199,7 @@ After collecting independent source directories, validate every digest and
 aggregate at the source-cluster level:
 
 ```sh
-pnpm run summarize-strategic-pilots -- \
+pnpm run summarize-strategic-pilots \
   --out runs/strategic-pilot-aggregate.json \
   runs/source-1 runs/source-2 runs/source-3 runs/source-4
 ```
@@ -213,7 +213,7 @@ ranking.
 Add preregistered negative and upper-bound controls with exact notebook files:
 
 ```sh
-pnpm run strategic-pilot -- \
+pnpm run strategic-pilot \
   --models openrouter:<model-id> \
   --source <source.json> \
   --treatment stale=<stale.txt> \

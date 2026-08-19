@@ -18,7 +18,7 @@ Do not select cases because authentic memory happened to help.
 Freeze every case before provider calls:
 
 ```sh
-pnpm run strategic-pilot -- \
+pnpm run strategic-pilot \
   --prepare-source-only \
   --pool test \
   --focal-team <team-id> \
@@ -34,7 +34,7 @@ pnpm install --frozen-lockfile
 pnpm run setup:showdown
 pnpm run build
 
-OPENROUTER_API_KEY=<key> pnpm run strategic-pilot -- \
+OPENROUTER_API_KEY=<key> pnpm run strategic-pilot \
   --models openrouter:<model-id> \
   --pool test \
   --seed smoke-1 \
@@ -66,7 +66,7 @@ models or provider-call replications so every model starts from the exact same
 Game 1 evidence.
 
 ```sh
-OPENROUTER_API_KEY=<key> pnpm run strategic-pilot -- \
+OPENROUTER_API_KEY=<key> pnpm run strategic-pilot \
   --models openrouter:<model-a> \
   --models openrouter:<model-b> \
   --source runs/source-1/source.json \
@@ -89,7 +89,7 @@ not as simulator randomness.
 ## 4. Aggregate at the source unit
 
 ```sh
-pnpm run summarize-strategic-pilots -- \
+pnpm run summarize-strategic-pilots \
   --out runs/frontier-pilot-aggregate-1.json \
   runs/source-1/frontier-batch-1 \
   runs/source-2/frontier-batch-1 \
@@ -113,7 +113,7 @@ Construct control files without reading their outcomes:
   bound.
 
 ```sh
-OPENROUTER_API_KEY=<key> pnpm run strategic-pilot -- \
+OPENROUTER_API_KEY=<key> pnpm run strategic-pilot \
   --models openrouter:<model-id> \
   --source runs/source-1/source.json \
   --draws 8 \

@@ -49,7 +49,7 @@ side counterbalancing: <rule for reversed focal/opponent assignments>
 Prepare every case before provider calls:
 
 ```sh
-pnpm run strategic-pilot -- \
+pnpm run strategic-pilot \
   --prepare-source-only \
   --pool <pool> \
   --focal-team <focal-team> \
@@ -104,7 +104,7 @@ may reflect an endogenous policy cascade or provider-call accumulation.
 Aggregate with:
 
 ```sh
-pnpm run summarize-strategic-pilots -- \
+pnpm run summarize-strategic-pilots \
   --out runs/frontier-pilot-aggregate.json \
   runs/source-1/<batch> \
   runs/source-2/<batch> \
