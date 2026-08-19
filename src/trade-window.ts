@@ -7,7 +7,6 @@ import { createBoardSearch } from './board-search.js';
 import { completeWithDexTools } from './dex-lookups.js';
 import type { DraftBoard, DraftBoardMon } from './draft.js';
 import { draftBoardTable } from './draft.js';
-import { canonicalJson } from './eval/serialization.js';
 import type { DraftTableRow } from './gui/api.js';
 import { type MechanicsToolAvailability, mechanicsToolNotice } from './prompt-capabilities.js';
 import { FORMAT_AUTHORITY_NOTICE } from './prompts.js';
@@ -15,6 +14,7 @@ import type { ModelReasoningConfig, ReasoningLevel } from './providers.js';
 import { classifyProviderFailure, makeProvider, parseSpec, reasoningForModel } from './providers.js';
 import type { RecoveryGate } from './recovery.js';
 import { ShowdownReference } from './reference.js';
+import { canonicalJson } from './serialization.js';
 import {
   type EvidenceSupplied,
   normalizeStageEvidence,

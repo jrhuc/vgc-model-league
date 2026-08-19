@@ -19,7 +19,7 @@ import {
 } from '../src/eval/frontier-pilot-analysis.js';
 import type { FrozenMatchdayActionContext } from '../src/eval/frozen-matchday-adapter.js';
 import { buildFrozenMatchdayBetweenGameCheckpoint } from '../src/eval/frozen-matchday-adapter.js';
-import { canonicalJsonDigest } from '../src/eval/serialization.js';
+import { canonicalJsonDigest } from '../src/serialization.js';
 import type { Completion, Provider, ProviderMessage } from '../src/types.js';
 import { MATCHDAY_FORMAT, MATCHDAY_TEAM_A, MATCHDAY_TEAM_B } from './fixtures/frozen-matchday.js';
 

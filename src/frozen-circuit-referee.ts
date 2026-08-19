@@ -1,6 +1,5 @@
 import { applyDraftPick, type DraftState, legalPicks, parsePick, renderDraftPickPrompt } from './draft.js';
 import { buildDraftPlayoffBracket, type DraftLeagueSeriesPlan, rankedTable } from './draftleague.js';
-import { canonicalJsonDigest } from './eval/serialization.js';
 import { buildFrozenCircuitTerminalEvidence } from './frozen-circuit-evidence.js';
 import { FrozenCircuitLedger } from './frozen-circuit-ledger.js';
 import {
@@ -52,6 +51,7 @@ import {
   type FrozenMatchdayTerminalEvidence,
 } from './frozen-matchday-referee.js';
 import type { DraftTableRow } from './gui/api.js';
+import { canonicalJsonDigest } from './serialization.js';
 import { showdownCommit } from './showdown.js';
 import {
   deterministicTeamBuildFallback,

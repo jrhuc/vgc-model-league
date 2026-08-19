@@ -1,3 +1,4 @@
+import { canonicalJsonDigest } from '../serialization.js';
 import { analyzeBo3Adaptation, BO3_ADAPTATION_PROTOCOL } from './bo3-adaptation.js';
 import {
   FRONTIER_STRATEGIC_PILOT_PROTOCOL,
@@ -6,7 +7,6 @@ import {
   type FrontierStrategicPilotReport,
 } from './frontier-pilot.js';
 import { FROZEN_MATCHDAY_ADAPTER_PROTOCOL } from './frozen-matchday-adapter.js';
-import { canonicalJsonDigest } from './serialization.js';
 
 export const FRONTIER_PILOT_AGGREGATION_PROTOCOL = {
   version: 3,

@@ -1,16 +1,15 @@
 import type { Battle } from 'pokemon-showdown';
-
-import { defaultPsDir } from '../paths.js';
-import { ShowdownReference } from '../reference.js';
-import { BattleState } from '../state.js';
-import type { BattleRequest, Pid } from '../types.js';
 import {
   ACTION_PROTOCOL,
   acceptedBattleActionEntries,
   type LegalActionEntry,
   requestActionCandidateEntries,
   requestPhase,
-} from './fork.js';
+} from '../fork.js';
+import { defaultPsDir } from '../paths.js';
+import { ShowdownReference } from '../reference.js';
+import { BattleState } from '../state.js';
+import type { BattleRequest, Pid } from '../types.js';
 
 export const POSITION_TASK_PROTOCOL = {
   version: 2,

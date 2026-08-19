@@ -13,9 +13,9 @@ import {
   replayFrozenCircuitTranscript,
   restoreFrozenCircuitCheckpoint,
 } from '../src/eval/frozen-circuit-adapter.js';
-import { canonicalJsonDigest } from '../src/eval/serialization.js';
 import { FROZEN_CIRCUIT_SEAT_IDS, type FrozenCircuitPendingTurn } from '../src/frozen-circuit-model.js';
 import { FrozenCircuitReferee } from '../src/frozen-circuit-referee.js';
+import { canonicalJsonDigest } from '../src/serialization.js';
 
 function draftIds(turn: FrozenCircuitPendingTurn): string[] {
   return [...turn.prompt.matchAll(/^- ([a-z0-9][a-z0-9-]*) \|/gmu)].map((match) => match[1]!);

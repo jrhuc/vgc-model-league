@@ -9,7 +9,7 @@ import {
 } from '../src/eval/controllers.js';
 import type { DecisionNode } from '../src/eval/experiment-kernel.js';
 import { buildMatchedForkPlan } from '../src/eval/fork-plan.js';
-import { canonicalJsonDigest } from '../src/eval/serialization.js';
+import { canonicalJsonDigest } from '../src/serialization.js';
 
 function controller(stage: StrategicControllerStage, suffix = 'base'): StrategicControllerIdentity {
   return {

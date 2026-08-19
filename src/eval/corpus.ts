@@ -1,19 +1,18 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-
+import type { GameSource, Replay } from '../fork.js';
+import { replayGame } from '../fork.js';
 import { readJsonlObjects } from '../jsonl.js';
 import { SAFE_SEGMENT } from '../path-safety.js';
 import { defaultPsDir, REPO_ROOT, RESULTS_PATH, RUNS_DIR } from '../paths.js';
 import { type ParsedSeriesRecord, parseSeriesRecord } from '../records.js';
+import { canonicalJson } from '../serialization.js';
 import { resolveAttemptLineage } from '../series.js';
 import { showdownCommit } from '../showdown.js';
 import type { JsonObject, Pid } from '../types.js';
 import { isRecord } from '../value.js';
-import type { GameSource, Replay } from './fork.js';
-import { replayGame } from './fork.js';
 import { type RunScaffold, readRunScaffold } from './scaffold.js';
-import { canonicalJson } from './serialization.js';
 
 export interface GameRecord {
   runId: string;

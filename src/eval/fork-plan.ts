@@ -1,3 +1,4 @@
+import { canonicalJsonDigest } from '../serialization.js';
 import {
   assertControllerParity,
   controllerSetDigest,
@@ -6,7 +7,6 @@ import {
 } from './controllers.js';
 import type { DecisionNode } from './experiment-kernel.js';
 import type { StrategicUtilityUnit } from './reference-suite.js';
-import { canonicalJsonDigest } from './serialization.js';
 
 export const MATCHED_FORK_PLAN_PROTOCOL = {
   version: 1,

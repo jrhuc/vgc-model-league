@@ -8,10 +8,10 @@ import {
   type FrozenMatchdayTerminalEvidence,
 } from '../frozen-matchday-referee.js';
 import { seededRng } from '../random.js';
+import { canonicalJsonDigest } from '../serialization.js';
 import type { Pid } from '../types.js';
 import type { AdaptationForkOutcome, NotebookTreatment } from './bo3-adaptation.js';
 import type { CommonForkDraw, MatchedForkPlan } from './fork-plan.js';
-import { canonicalJsonDigest } from './serialization.js';
 import type { OpponentModeProbability } from './strategic-task.js';
 
 export const FROZEN_MATCHDAY_ADAPTER_PROTOCOL = {

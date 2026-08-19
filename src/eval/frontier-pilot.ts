@@ -8,6 +8,7 @@ import {
 } from '../frozen-matchday-referee.js';
 import { classifyProviderFailure, makeProvider, parseSpec, type ReasoningLevel } from '../providers.js';
 import { seededRng } from '../random.js';
+import { canonicalJson, canonicalJsonDigest } from '../serialization.js';
 import { loadShowdown } from '../showdown.js';
 import {
   replayTeamBuildArtifact,
@@ -43,7 +44,6 @@ import {
   restoreFrozenMatchdayBetweenGameCheckpoint,
   runFrozenMatchdayNotebookFork,
 } from './frozen-matchday-adapter.js';
-import { canonicalJson, canonicalJsonDigest } from './serialization.js';
 import {
   buildStrategicChoiceTask,
   extractFinalJsonObject,

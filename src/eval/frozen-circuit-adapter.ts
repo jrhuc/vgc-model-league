@@ -10,8 +10,8 @@ import {
 } from '../frozen-circuit-model.js';
 import { FrozenCircuitReferee } from '../frozen-circuit-referee.js';
 import { sha256 } from '../frozen-circuit-setup.js';
+import { canonicalJsonDigest } from '../serialization.js';
 import type { DecisionNode, StrategicStage } from './experiment-kernel.js';
-import { canonicalJsonDigest } from './serialization.js';
 
 export const FROZEN_CIRCUIT_ADAPTER_PROTOCOL = {
   version: 1,

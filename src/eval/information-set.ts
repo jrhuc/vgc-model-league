@@ -1,5 +1,5 @@
 import { seededRng } from '../random.js';
-import { canonicalJsonDigest } from './serialization.js';
+import { canonicalJsonDigest } from '../serialization.js';
 
 export const INFORMATION_SET_PROTOCOL = {
   version: 1,

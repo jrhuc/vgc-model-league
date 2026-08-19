@@ -4,7 +4,7 @@ import test from 'node:test';
 import { buildInformationSetPrior, informationSetDrawPlan } from '../src/eval/information-set.js';
 import { runReferenceSuite } from '../src/eval/reference-runner.js';
 import type { ReferenceArm } from '../src/eval/reference-suite.js';
-import { canonicalJsonDigest } from '../src/eval/serialization.js';
+import { canonicalJsonDigest } from '../src/serialization.js';
 
 const reference: ReferenceArm = {
   id: 'arm',

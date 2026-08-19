@@ -3,14 +3,14 @@ import test from 'node:test';
 
 import { counterfactualProtocol, EXHAUSTIVE_PANEL_PROTOCOL } from '../src/eval/counterfactual.js';
 import { POSITION_ELIGIBILITY_METRICS_VERSION } from '../src/eval/eligibility.js';
-import { ACTION_PROTOCOL } from '../src/eval/fork.js';
 import {
   CANDIDATE_POSITION_MANIFEST_SCHEMA_VERSION,
   CANDIDATE_POSITION_SELECTION_RULES,
   validateCandidateManifest,
 } from '../src/eval/position-artifact-manifest.js';
-import { CANONICAL_JSON_PROTOCOL } from '../src/eval/serialization.js';
 import { POSITION_TASK_PROTOCOL } from '../src/eval/task.js';
+import { ACTION_PROTOCOL } from '../src/fork.js';
+import { CANONICAL_JSON_PROTOCOL } from '../src/serialization.js';
 
 const DIGEST = 'a'.repeat(64);
 

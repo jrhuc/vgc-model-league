@@ -1,6 +1,4 @@
 import path from 'node:path';
-
-import { canonicalJsonDigest } from './eval/serialization.js';
 import {
   type CircuitSeat,
   FrozenCircuitRefereeError,
@@ -9,6 +7,7 @@ import {
 } from './frozen-circuit-model.js';
 import { FROZEN_CIRCUIT_PROMPT_POLICY } from './frozen-circuit-setup.js';
 import { REPO_ROOT } from './paths.js';
+import { canonicalJsonDigest } from './serialization.js';
 import {
   applyFreeAgency,
   applyTradeOffer,

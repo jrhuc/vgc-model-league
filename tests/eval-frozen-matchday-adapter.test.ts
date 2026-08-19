@@ -16,12 +16,12 @@ import {
   restoreFrozenMatchdayBetweenGameCheckpoint,
   runFrozenMatchdayNotebookFork,
 } from '../src/eval/frozen-matchday-adapter.js';
-import { canonicalJsonDigest } from '../src/eval/serialization.js';
 import {
   type FrozenMatchdayPhase,
   FrozenMatchdayReferee,
   type FrozenMatchdaySubmissionResult,
 } from '../src/frozen-matchday-referee.js';
+import { canonicalJsonDigest } from '../src/serialization.js';
 import type { Pid } from '../src/types.js';
 import { frozenMatchdayOptions } from './fixtures/frozen-matchday.js';
 

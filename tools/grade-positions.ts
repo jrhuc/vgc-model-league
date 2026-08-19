@@ -13,9 +13,9 @@ import {
   validateCounterfactualOptions,
 } from '../src/eval/counterfactual.js';
 import { positionEligibilityMetrics } from '../src/eval/eligibility.js';
-import { ACTION_PROTOCOL, positionDigest, requestPhase } from '../src/eval/fork.js';
 import { POSITION_GRADE_SCHEMA_VERSION } from '../src/eval/positions.js';
 import { boundShowdownRoot, captureRuntimeProducerAuthority } from '../src/eval/producer.js';
+import { ACTION_PROTOCOL, positionDigest, requestPhase } from '../src/fork.js';
 import { DATA_DIR, defaultPsDir } from '../src/paths.js';
 import { showdownCommit } from '../src/showdown.js';
 import type { JsonObject } from '../src/types.js';

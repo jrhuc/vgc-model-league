@@ -12,7 +12,7 @@ import {
   loadGameRecordCorpus,
   verifyGame,
 } from '../src/eval/corpus.js';
-import { type GameSource, newBattle, pendingSides } from '../src/eval/fork.js';
+import { type GameSource, newBattle, pendingSides } from '../src/fork.js';
 import { defaultPsDir } from '../src/paths.js';
 import { showdownCommit } from '../src/showdown.js';
 import { loadPool } from '../src/teams.js';

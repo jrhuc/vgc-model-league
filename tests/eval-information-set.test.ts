@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { buildInformationSetPrior, informationSetDrawPlan } from '../src/eval/information-set.js';
-import { canonicalJsonDigest } from '../src/eval/serialization.js';
+import { canonicalJsonDigest } from '../src/serialization.js';
 
 function prior() {
   return buildInformationSetPrior({
