@@ -493,7 +493,7 @@ class SdkProvider implements Provider {
         ...(tools && options.toolChoice ? { toolChoice: options.toolChoice } : {}),
         maxOutputTokens: options.maxTokens ?? 1200,
         temperature: options.temperature ?? 0.2,
-        ...(this.reasoning ? { reasoning: this.reasoning } : {}),
+        ...(this.reasoning && !options.reasoningMaxTokens ? { reasoning: this.reasoning } : {}),
         ...(options.reasoningMaxTokens
           ? {
               providerOptions: {

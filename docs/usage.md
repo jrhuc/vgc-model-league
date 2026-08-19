@@ -239,6 +239,28 @@ static-site exporter. One team pair is one uncertainty cluster, so one command
 can establish plumbing and discover gross effects but cannot support a model
 ranking.
 
+## Trade message forks
+
+Fork one trade-offer node of a deterministic synthetic circuit into matched
+offers that differ only in the public message, and measure the counterparty's
+decision at fixed pre-offer state ([design](trade-forks.md)):
+
+```sh
+pnpm run trade-message-pilot \
+  --message honest=controls/honest.txt \
+  --message deceptive=controls/deceptive.txt \
+  --models openrouter:<model-id> \
+  --reasoning high \
+  --horizon terminal \
+  --out runs/trade-message-1
+```
+
+Every arm binds identical terms, rationale, and notebook bytes; only the
+message varies. `--scripted accept|reject` replaces the model responder for
+provider-free plumbing checks, and `--horizon terminal` continues each arm to
+terminal league utility under the declared default-tolerant controllers. One
+node is one cluster and is never a ranking.
+
 Use this sequence before expanding the benchmark:
 
 1. **Smoke:** one frontier model, one source, one draw. Require a complete run,

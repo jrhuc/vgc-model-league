@@ -5,6 +5,7 @@ import type {
   FrozenMatchdayObservation,
   FrozenMatchdayTerminalEvidence,
 } from './frozen-matchday-referee.js';
+import type { EvidenceSupplied } from './stage-evidence.js';
 import type { TeamBuildSubmissionValidation } from './teambuild.js';
 import type { BracketMatch } from './tournament.js';
 import type { TradeSwap, TradeWindowState } from './trade-window.js';
@@ -185,9 +186,12 @@ export interface TransactionSummary {
     to: FrozenCircuitSeatId | null;
     give: string | null;
     get: string | null;
+    message: string | null;
     accepted: boolean | null;
     proposerDefaulted: boolean;
     responderDefaulted: boolean | null;
+    offerEvidenceSupplied: EvidenceSupplied | null;
+    responseEvidenceSupplied: EvidenceSupplied | null;
   }>;
   freeAgency: Array<{
     seatId: FrozenCircuitSeatId;

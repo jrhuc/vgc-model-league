@@ -60,6 +60,8 @@ export class FrozenCircuitTransactions {
     from: number;
     value: NonNullable<ParsedTradeOffer['offer']>;
     proposerDefaulted: boolean;
+    reasoning: string;
+    evidenceSupplied: ParsedTradeOffer['evidence']['supplied'];
   } | null = null;
   private readonly offers: TradeOffer[] = [];
   private readonly decisions: TradeWindowDecision[] = [];
@@ -178,9 +180,12 @@ export class FrozenCircuitTransactions {
         to: offer.to === null ? null : this.seats[offer.to]!.seatId,
         give: offer.give,
         get: offer.get,
+        message: offer.message,
         accepted: offer.accepted,
         proposerDefaulted: offer.proposerFallback,
         responderDefaulted: offer.responderFallback,
+        offerEvidenceSupplied: offer.offerEvidenceSupplied ?? null,
+        responseEvidenceSupplied: offer.responseEvidenceSupplied ?? null,
       })),
       freeAgency: this.decisions.map((decision) => ({
         seatId: this.seats[decision.entrant]!.seatId,
@@ -244,10 +249,17 @@ export class FrozenCircuitTransactions {
         responderFallback: null,
         offerReasoning: parsed.reasoning,
         responseReasoning: '',
+        offerEvidenceSupplied: parsed.evidence.supplied,
       });
       this.cursor += 1;
     } else {
-      this.offer = { from: entrant, value: parsed.offer, proposerDefaulted: defaulted };
+      this.offer = {
+        from: entrant,
+        value: parsed.offer,
+        proposerDefaulted: defaulted,
+        reasoning: parsed.reasoning,
+        evidenceSupplied: parsed.evidence.supplied,
+      };
       this.phase = 'response';
     }
     validateLeagueRosterState(this.state);
@@ -320,8 +332,10 @@ export class FrozenCircuitTransactions {
       accepted: parsed.accept,
       proposerFallback: current.proposerDefaulted,
       responderFallback: defaulted,
-      offerReasoning: '',
+      offerReasoning: current.reasoning,
       responseReasoning: parsed.reasoning,
+      offerEvidenceSupplied: current.evidenceSupplied,
+      responseEvidenceSupplied: parsed.evidence.supplied,
     });
     this.offer = null;
     this.phase = 'offers';
