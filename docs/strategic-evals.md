@@ -1,9 +1,8 @@
 # Strategic evaluation kernel
 
-This document defines the replacement evaluation direction. The Pokémon harness
-and pinned Showdown simulator remain the domain authority. Whole leagues remain
-an ecological arena and source of cases; they are not the primary unit of
-measurement.
+This document defines the strategic evaluation kernel. The Pokémon harness and
+pinned Showdown simulator are the domain authority. Whole leagues are an
+ecological arena and source of cases, not the primary unit of measurement.
 
 ## Research target
 
@@ -38,9 +37,8 @@ the experiment identity or scoring contract.
 `experiment-kernel.ts` records accepted decisions as canonical events with
 pre-state and post-state digests. It replays the complete event chain before a
 checkpoint is accepted. A fork replays the prefix, replaces one action, and
-intentionally drops the endogenous suffix. Later code must regenerate that
-suffix with declared controllers rather than pretending old downstream actions
-remain valid.
+drops the endogenous suffix; continuations regenerate that suffix with
+declared controllers.
 
 ### Controller identity
 
@@ -127,15 +125,16 @@ state prior, reference policy, or utility creates a new condition identity.
 
 ## Runnable frontier-model pilot
 
-`tools/run-strategic-pilot.ts` is the first real-provider seam for this kernel.
-It reuses the repository's OpenRouter and Prime adapters rather than creating a
-new model runtime. A deterministic first-legal source policy completes one
+`tools/run-strategic-pilot.ts` is the real-provider seam for this kernel. It
+uses the repository's OpenRouter and Prime adapters. A deterministic
+first-legal source policy completes one
 matchday, the adapter verifies the source and checkpoints after Game 1, and the
 frontier model writes exact private notebook bytes. Authentic and withheld arms
 then continue under the same focal model, fixed opponent policy, controller
 identity, and common future battle seeds.
 
-The command records whole-response strict JSON parsing, legal-action joins,
+The command records the declared final-JSON-object parse contract and parse
+mode, legal-action joins,
 provider reasoning text when returned, token usage, reported cost, upstream
 provider, treatment bytes, fork execution identities, and terminal evidence.
 No rejected response receives a random or deterministic fallback utility. A
@@ -154,55 +153,25 @@ batch. Otherwise retain the Pokémon harness and redirect the simulator forks to
 coaching/scouting, search/model hybrid, draft-plan adherence, or expert
 failure-mode studies.
 
-## Migration sequence
+## Circuit event adapter
 
-### Matchday adapter
-
-The strict replay and notebook-fork adapter is implemented. The next matchday
-work is a model/runtime adapter that produces the same controller interface and
-a corpus builder that selects nonterminal between-game checkpoints without
-using treatment outcomes.
-
-### Information-set battle scorer
-
-The existing exhaustive panels now enter the generic reference suite only as a
-named raw-material diagnostic. Next, move panel generation behind the
-reference-runner interface and add versioned compatible-hidden-state,
-opponent-policy, continuation-policy, horizon, and series-utility arms. Preserve
-the native Showdown acceptance filter and rectangular common-draw matrices.
-
-### Circuit event adapter
-
-`frozen-circuit-adapter.ts` now replays private receipt bytes through the
+`frozen-circuit-adapter.ts` replays private receipt bytes through the
 authoritative circuit referee, creates verified pre-decision checkpoints,
 projects authorized decision-node digests, replaces one response, and marks the
 source suffix invalid. Strict continuations stop on the first unaccepted or
-defaulted response. The circuit state identity binds the actual draft
-allocation, budgets, notebooks, construction artifacts, league contexts,
-transaction state, and pending prompt bytes rather than only elapsed decision
-counts. The native whole-circuit adapter now records seat returns as non-training
-arena metrics by default; repeated trace rewards require an explicit legacy
-switch. Trade turns are now forkable decision nodes with canonical parsed
-action identity and a matched message-only intervention contract
+defaulted response; the declared default-tolerant mode advances through domain
+defaults. The circuit state identity binds the draft allocation, budgets,
+notebooks, construction artifacts, league contexts, transaction state, and
+pending prompt bytes. The whole-circuit adapter records seat returns as
+non-training arena metrics by default; repeated trace rewards require an
+explicit legacy switch. Trade turns are forkable decision nodes with canonical
+parsed action identity and a matched message-only intervention contract
 ([trade-forks.md](trade-forks.md)); the transaction summary carries the public
-message, proposer rationale, and evidence flags so forked negotiations join
-their source at the evidence level. Next, bind matched downstream controller
-populations beyond the declared default-tolerant driver and common future seed
-plans to complete draft and transaction forks.
+message, proposer rationale, and evidence flags, so forked negotiations join
+their source at the evidence level.
 
-### Strategic shard environment
-
-Create a separate native environment for attributable decision nodes and short
-intervention chains. Training should target these shards. The existing circuit
-environment remains evaluation-only until the outer framework can represent
-episode results without assigning the same return to every local action.
-
-### Draft and stage-decomposition shards
-
-Start from partial drafts and fixed downstream controller populations. Cross
-schedule visibility, schedule perturbation, builder substitution, battle-policy
-substitution, and retained-plan conditions before returning to complete
-31-series leagues.
+Planned kernel work is tracked in the
+[Evaluation plan](evaluation-plan.md#program-status).
 
 ## Release gates
 

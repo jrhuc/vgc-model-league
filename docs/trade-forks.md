@@ -74,9 +74,8 @@ combination this machinery targets (survey recorded 2026-08-19).
 
 ## Evidence fidelity notes
 
-The circuit transaction layer now carries the proposer's parsed rationale,
-public message, and evidence-supplied flags into `TransactionSummary`, so a
-forked negotiation is comparable to its source at the evidence level, not only
-at the byte level. Circuit trade windows remain single-offer per seat;
-multi-offer sequences are representable only in the live path and are not
-forkable there.
+The circuit transaction layer carries the proposer's parsed rationale, public
+message, and evidence-supplied flags into `TransactionSummary`, so a forked
+negotiation is comparable to its source at the evidence level as well as the
+byte level. Circuit trade windows are single-offer per seat; multi-offer
+sequences exist only in the live path and are not forkable there.
