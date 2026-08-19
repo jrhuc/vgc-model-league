@@ -4,7 +4,7 @@
   "description": "Research harness for language-model decisions across VGC drafts and battles",
   "private": true,
   "type": "module",
-  "packageManager": "pnpm@11.11.0",
+  "packageManager": "pnpm@11.22.0+sha512.1ff870c4c6133dfd88fb2afc46dd13d47f09c9794b438c6fdb47ca98caf3bc16381ee0be93a091b8e3824cf01f889f46d7d9e20910fb0be1ab0fb5baa80dd621",
   "bin": {
     "vgcleague": "dist/src/cli.js"
   },
@@ -47,18 +47,18 @@
     "node": ">=24.18.1 <25"
   },
   "devDependencies": {
-    "@babel/parser": "7.29.7",
-    "@biomejs/biome": "2.5.3",
-    "@preact/preset-vite": "2.10.5",
+    "@babel/parser": "8.0.4",
+    "@biomejs/biome": "2.5.8",
+    "@preact/preset-vite": "2.10.6",
     "@types/node": "24.13.3",
-    "happy-dom": "20.10.6",
-    "preact": "10.29.7",
+    "happy-dom": "20.11.2",
+    "preact": "10.29.8",
     "typescript": "7.0.2",
-    "vite": "8.1.5"
+    "vite": "8.2.1"
   },
   "dependencies": {
-    "@ai-sdk/openai-compatible": "3.0.11",
-    "ai": "7.0.28",
+    "@ai-sdk/openai-compatible": "3.0.30",
+    "ai": "7.0.62",
     "zod": "4.4.3"
   }
 }
