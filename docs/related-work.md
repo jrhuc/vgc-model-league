@@ -35,10 +35,10 @@ equivalent state access.
 Prior work also covers stages before battle:
 
 - At the pinned revision, Pokémon Showdown
-  [formats](https://github.com/smogon/pokemon-showdown/blob/6a1836dd71c0718e923206f3d089e61074410868/config/formats.ts)
+  [formats](https://github.com/smogon/pokemon-showdown/blob/84d7ceb4f009928221fce7a00e711bab263c5f4e/config/formats.ts)
   include Champions Draft legality formats and VGC team preview and best-of-three
   play.
-  [BestOfGame](https://github.com/smogon/pokemon-showdown/blob/6a1836dd71c0718e923206f3d089e61074410868/server/room-battle-bestof.ts)
+  [BestOfGame](https://github.com/smogon/pokemon-showdown/blob/84d7ceb4f009928221fce7a00e711bab263c5f4e/server/room-battle-bestof.ts)
   manages games in a set and the between-game readiness interval. These formats
   do not provide persistent exclusive budget roster allocation, trades, or
   roster-bound construction.
