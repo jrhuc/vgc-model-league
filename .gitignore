@@ -1,6 +1,5 @@
 node_modules/
 dist/
-dist-circuit/
 *.tsbuildinfo
 gui.log
 
@@ -14,13 +13,6 @@ boards/sources/
 .env
 .env.*
 .claude/settings.local.json
-
-.venv/
-__pycache__/
-*.py[cod]
-environments/vgc_circuit_v1/.pytest_cache/
-environments/vgc_circuit_v1/build/
-environments/vgc_circuit_v1/dist/
 
 .DS_Store
 .idea/

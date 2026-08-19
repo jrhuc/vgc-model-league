@@ -82,7 +82,7 @@ instead fails the Episode because v0.3 retains the failed Trace. Report
 diagnosed retention and failed Episodes separately.
 
 The circuit arena metric is the scenario-specific terminal series return
-defined in the [Evaluation plan](evaluation-plan.md#terminal-returns). It is a
+defined in the [Evaluation plan](https://github.com/jrhuc/vgc-evals/blob/main/docs/evaluation-plan.md#terminal-returns). It is a
 seat-level terminal outcome, not reward for any local trace. The default native
 adapter keeps player traces non-trainable and records the return only as
 `circuit_terminal_series_return_v1`. Game outcomes, pre-window and post-window
@@ -181,7 +181,7 @@ reversal.
 A normalized value requires a reliable opportunity span. Calibrate
 qualification thresholds and corpus-balance requirements outside the candidate
 corpus. Do not let the exporter choose them. The [evaluation
-plan](evaluation-plan.md) lists the remaining validation gates.
+plan](https://github.com/jrhuc/vgc-evals/blob/main/docs/evaluation-plan.md) lists the remaining validation gates.
 
 ## Controlled position sets and artifacts
 

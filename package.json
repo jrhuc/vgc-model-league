@@ -15,9 +15,6 @@
     "prebuild": "node tools/setup-showdown.mjs --check && pnpm run clean",
     "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
     "build": "tsc -p tsconfig.json && tsc -p tsconfig.client.json && vite build --logLevel warn",
-    "build:frozen-circuit": "node tools/setup-showdown.mjs --check && node -e \"require('node:fs').rmSync('dist-circuit', { recursive: true, force: true })\" && tsc -p tsconfig.frozen-circuit.json",
-    "test:circuit-package": "cd environments/vgc_circuit_v1 && uv sync --locked --group test && uv run --locked --group test pytest",
-    "build:circuit-package": "cd environments/vgc_circuit_v1 && uv build --wheel --clear",
     "check": "biome check . && pnpm run check:comments",
     "check:fix": "biome check --write .",
     "check:comments": "node tools/check-comments.mjs",
@@ -28,7 +25,7 @@
     "export-site": "node dist/src/cli.js export-site",
     "publish:site": "pnpm run build && pnpm run export-site && node tools/publish-site.mjs",
     "test:unit": "node -e 'for (const d of [\"runs\", \"records\"]) require(\"node:fs\").mkdirSync(d, { recursive: true })' && node --test --test-concurrency=4 --test-timeout=300000 dist/tests/*.test.js",
-    "test": "pnpm run check && pnpm run check:artifacts && pnpm run build && pnpm run build:frozen-circuit && pnpm run test:unit",
+    "test": "pnpm run check && pnpm run check:artifacts && pnpm run build && pnpm run test:unit",
     "archive-run": "node tools/archive-run.mjs",
     "start": "node dist/src/cli.js gui",
     "vgcleague": "node --env-file-if-exists=.env dist/src/cli.js",
@@ -36,12 +33,7 @@
     "build-event-pool": "node dist/tools/build-event-pool.js",
     "build-board": "node dist/tools/build-draft-board.js",
     "fetch-sprites": "node dist/tools/fetch-sprites.js",
-    "capture-requests": "node dist/tools/capture-requests.js",
-    "grade-positions": "node dist/tools/grade-positions.js",
-    "export-position-panels": "node dist/tools/export-position-panels.js",
-    "strategic-pilot": "node --env-file-if-exists=.env dist/tools/run-strategic-pilot.js",
-    "summarize-strategic-pilots": "node dist/tools/summarize-strategic-pilots.js",
-    "trade-message-pilot": "node --env-file-if-exists=.env dist/tools/run-trade-message-pilot.js"
+    "capture-requests": "node dist/tools/capture-requests.js"
   },
   "engines": {
     "node": ">=24.18.1 <25"

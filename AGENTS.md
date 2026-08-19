@@ -44,6 +44,6 @@ narration.
 Use the canonical docs instead of repeating policy in code or new prose:
 
 - [Measurement](docs/measurement.md): what evidence may mean and what models may see.
-- [Evaluation plan](docs/evaluation-plan.md): artifact status, release gates, and next work.
+- Evaluation status and release gates: the [vgc-evals](https://github.com/jrhuc/vgc-evals) repository.
 - [Architecture](docs/architecture.md): authority and component boundaries.
 - [Usage](docs/usage.md): current commands and operator workflows.
