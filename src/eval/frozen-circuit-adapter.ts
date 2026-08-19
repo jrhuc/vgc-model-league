@@ -19,6 +19,7 @@ export const FROZEN_CIRCUIT_ADAPTER_PROTOCOL = {
   checkpoint: 'before-one-receipt-with-authorized-observation-v1',
   fork: 'replace-target-response-drop-source-suffix-v1',
   continuation: 'strict-stop-on-first-unaccepted-or-defaulted-turn-v1',
+  tolerantContinuation: 'advance-on-domain-defaults-v1',
 } as const;
 
 export type FrozenCircuitReplayReceipt = TurnReceipt & { response: string };
@@ -335,6 +336,9 @@ function legalActionDigest(turn: FrozenCircuitPendingTurn): string {
     }
     return canonicalJsonDigest(commands);
   }
+  if (turn.kind === 'trade_response') {
+    return canonicalJsonDigest(['trade-response-action-space-v1', 'accept-boolean-with-optional-private-evidence']);
+  }
   return canonicalJsonDigest(['prompt-defined-action-space-v1', turn.kind, turn.prompt]);
 }
 
@@ -458,6 +462,8 @@ export async function continueFrozenCircuitStrict(input: {
   referee: FrozenCircuitReferee;
   controllers: FrozenCircuitContinuationControllers;
   maxSubmissions?: number;
+  /** Declared tolerant mode: domain defaults advance the circuit instead of aborting the arm. */
+  tolerateDefaults?: boolean;
 }): Promise<FrozenCircuitContinuationResult> {
   if (!/^[0-9a-f]{64}$/u.test(input.controllers.controllerSetDigest)) {
     throw new Error('circuit continuation controllerSetDigest must be a SHA-256 digest');
@@ -524,7 +530,7 @@ export async function continueFrozenCircuitStrict(input: {
       receipts.push(receipt);
       decisions.set(turn.seatId, (decisions.get(turn.seatId) ?? 0) + 1);
       count += 1;
-      if (!result.accepted || result.defaulted) {
+      if (!input.tolerateDefaults && (!result.accepted || result.defaulted)) {
         return {
           protocolValid: true,
           accepted: false,
@@ -535,6 +541,7 @@ export async function continueFrozenCircuitStrict(input: {
         };
       }
       if (result.terminal) break;
+      if (!result.advanced) break;
       if (count >= maxSubmissions) break;
     }
   }
