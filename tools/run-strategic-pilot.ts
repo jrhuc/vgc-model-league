@@ -22,7 +22,7 @@ import { canonicalJson, canonicalJsonDigest } from '../src/eval/serialization.js
 import { isReasoningLevel, nitroSpec, type ReasoningLevel } from '../src/providers.js';
 import { loadPool } from '../src/teams.js';
 
-const HELP = `Usage: pnpm run strategic-pilot -- [--models <spec> ...]
+const HELP = `Usage: pnpm run strategic-pilot [--models <spec> ...]
 
 Run a matched authentic-vs-withheld between-game memory pilot through the
 frozen Showdown authorities and the repository's OpenRouter or Prime provider.

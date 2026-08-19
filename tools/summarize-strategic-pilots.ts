@@ -10,7 +10,7 @@ import {
 } from '../src/eval/frontier-pilot-analysis.js';
 import { canonicalJson } from '../src/eval/serialization.js';
 
-const HELP = `Usage: pnpm run summarize-strategic-pilots -- [options] <report-or-directory>...
+const HELP = `Usage: pnpm run summarize-strategic-pilots [options] <report-or-directory>...
 
 Validate private frontier strategic pilot reports and aggregate authentic-minus-
 withheld effects at the source-cluster level. Directories are scanned
