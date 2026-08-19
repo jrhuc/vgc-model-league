@@ -124,6 +124,147 @@ specs without adding another routing variant. Fallback is always disabled. Set
 routing metadata. Without this variable, OpenRouter selects an upstream. The
 application records the returned provider with cost data.
 
+### Run the frontier strategic pilot
+
+Build once, then call an actual OpenRouter or Prime model through the same
+provider layer used by the working Pokémon harness:
+
+```sh
+pnpm run build
+
+OPENROUTER_API_KEY=<key> pnpm run strategic-pilot \
+  --models openrouter:<model-id> \
+  --pool test \
+  --draws 4 \
+  --model-decisions 1 \
+  --reasoning high \
+  --out runs/strategic-pilot-smoke
+```
+
+
+Freeze each source before any provider call:
+
+```sh
+pnpm run strategic-pilot \
+  --prepare-source-only \
+  --pool test \
+  --focal-team <team-id> \
+  --opponent-team <team-id> \
+  --seed source-1 \
+  --out runs/source-1
+```
+
+Add `--sensitivity-screen` to a provider-free invocation to fill the complete
+scripted action-by-draw rectangle under the declared first-legal continuation.
+The screen is outcome-blind, so it may inform source selection before
+preregistration; a `flat` verdict means no focal choice can move the terminal
+series result and the source cannot test an information effect in this unit.
+
+Repeat `--models` to run the same source and common draws for multiple models.
+Use `prime:<model-id>` with `PRIME_API_KEY` for Prime Inference. The command
+rejects `random`: this pilot is specifically the real-provider seam. Reasoning
+models that can spend the whole `--max-tokens` budget thinking should also set
+`--reasoning-max-tokens` to guarantee visible-text headroom. Run
+`pnpm run strategic-pilot --help` for every option.
+
+The v2 pilot is deliberately narrow. It constructs one deterministic source
+matchday from two committed pool teams, finishes that source with the first
+Showdown-accepted action policy, and verifies a checkpoint after Game 1. The
+frontier model writes private between-game notebook bytes from only its
+seat-authorized Game 1 history and the open team sheets. The checkpoint binds
+that exact authorized source POV and drains it before Game 2, so the
+continuation receives source-game information only through the declared
+treatment bytes. By default the same model makes the first non-forced Game 2
+choice, usually team preview, and a declared first-legal policy completes the
+series. This is the cheapest attributable shard. Increase `--model-decisions`
+for a short intervention chain or use `all` for the ecological full-policy
+follow-up. The matched arms are:
+
+- **authentic:** inject the model-written notebook;
+- **withheld:** inject empty notebook bytes.
+
+The opposing seat uses a fixed first-legal policy. Future battle seeds are
+common across arms, downstream controller identity is held fixed, arm order is
+rotated by draw, invalid model output receives no fallback utility, and every
+prompt, response, reasoning trace, usage value, reported cost, treatment,
+checkpoint, plan, execution, and terminal artifact is content-addressed.
+
+Provider APIs do not expose a portable sampling seed. The command therefore
+uses temperature zero, disables OpenRouter fallback, records the returned
+upstream provider, balances arm order, and labels residual provider randomness
+instead of claiming exact model-call reproducibility. Reuse the exact source in
+another run with:
+
+```sh
+pnpm run strategic-pilot \
+  --models openrouter:<model-id> \
+  --source runs/strategic-pilot-smoke/source.json \
+  --draws 8 \
+  --out runs/strategic-pilot-confirmation
+```
+
+After collecting independent source directories, validate every digest and
+aggregate at the source-cluster level:
+
+```sh
+pnpm run summarize-strategic-pilots \
+  --out runs/strategic-pilot-aggregate.json \
+  runs/source-1 runs/source-2 runs/source-3 runs/source-4
+```
+
+The summarizer scans model report JSON recursively, rejects broken plan, call,
+treatment, execution, analysis, or report joins, averages repeated provider-call
+runs inside each source first, and computes uncertainty across source means. It
+marks fewer than four valid source clusters as insufficient and never emits a
+ranking.
+
+Add preregistered negative and upper-bound controls with exact notebook files:
+
+```sh
+pnpm run strategic-pilot \
+  --models openrouter:<model-id> \
+  --source <source.json> \
+  --treatment stale=<stale.txt> \
+  --treatment false=<false.txt> \
+  --treatment placebo=<placebo.txt> \
+  --treatment oracle=<oracle.txt>
+```
+
+The output directory is private evidence and must be new or empty. Every
+artifact is written create-only; reruns require a new directory rather than
+silently replacing evidence. `source.json` contains exact private source
+evidence; each model JSON contains prompts and raw provider responses;
+`summary.json` is only a batch index. Do not publish these files through the
+static-site exporter. One team pair is one uncertainty cluster, so one command
+can establish plumbing and discover gross effects but cannot support a model
+ranking.
+
+Use this sequence before expanding the benchmark:
+
+1. **Smoke:** one frontier model, one source, one draw. Require a complete run,
+   strict JSON, accepted legal commands, and joined terminal evidence.
+2. **Signal check:** two or three materially different frontier models, at
+   least four independently chosen team-pair/source clusters, and at least
+   eight common draws per arm. Keep prompts and controller policies frozen.
+3. **Falsification:** add stale, false, placebo, and oracle notebooks. Authentic
+   memory should beat withholding in the intended cases; false memory should
+   harm more than placebo; oracle information should provide a visible upper
+   bound.
+4. **Replication:** rerun the preregistered sources under a new provider-call
+   batch and require the direction of the source-cluster effect to survive.
+5. **Only then scale:** build unbiased source selection, stronger fixed policy
+   populations, and a native shard package.
+
+Stop investing in this evaluation layer if protocol-valid and legal completion
+is below 95%, authentic versus withheld has no stable source-cluster signal,
+false information is not detectably worse than irrelevant information, effects
+collapse under a second downstream policy, or provider cost makes the required
+replication impractical. In that case the existing Pokémon harness remains the
+product, and the most useful additions are likely model coaching/scouting
+experiments, search-versus-model action proposals, draft-plan adherence forks,
+or a curated expert disagreement and failure-mode corpus rather than another
+headline benchmark.
+
 ### Resume a tournament
 
 A seeded event pool keeps its actual bracket positions while models are shuffled

@@ -81,13 +81,15 @@ by the referee. A provider or runtime failure during the notebook interaction
 instead fails the Episode because v0.3 retains the failed Trace. Report
 diagnosed retention and failed Episodes separately.
 
-The circuit metric is the scenario-specific terminal series return defined in
-the [Evaluation plan](evaluation-plan.md#terminal-returns). Game outcomes,
-pre-window and post-window splits, adaptation, standings, champion status,
-transactions, and defaults remain diagnostics. They do not shape the return.
-Use heterogeneous, counterbalanced frontier fields as the primary comparison.
-Same-model symmetric self-play can validate machinery and is not a strength
-comparison.
+The circuit arena metric is the scenario-specific terminal series return
+defined in the [Evaluation plan](evaluation-plan.md#terminal-returns). It is a
+seat-level terminal outcome, not reward for any local trace. The default native
+adapter keeps player traces non-trainable and records the return only as
+`circuit_terminal_series_return_v1`. Game outcomes, pre-window and post-window
+splits, adaptation, standings, champion status, transactions, and defaults
+remain diagnostics. Use heterogeneous, counterbalanced frontier fields as an
+ecological comparison. Same-model symmetric self-play validates machinery and
+is not a strength comparison.
 
 The notebook is optional generated evidence, not a hidden belief. Replacing it
 does not directly affect the referee, legality, Showdown state, RNG, score, or

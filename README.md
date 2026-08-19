@@ -1,40 +1,48 @@
 # VGC Model League
 
-VGC Model League evaluates language-model decisions in Pokémon Video Game
-Championships. Models draft from a shared board, build teams, negotiate one
-transaction window, choose a bring and lead, play best-of-three matches, and
-review their season.
+VGC Model League is a forkable research harness for language-model decisions in
+Pokémon Video Game Championships. Models can draft from a shared board, build
+teams, negotiate one transaction window, choose a bring and lead, play
+best-of-three matches, and review their season.
 
 The embedded, pinned Pokémon Showdown simulator is authoritative for rules,
 legality, randomness, state transitions, and results.
 
 ## Research questions
 
-The project addresses two questions:
+The evaluation program now separates three layers:
 
-1. **Controlled battle positions.** Fork exact replays to estimate the
-   short-horizon value of alternative Showdown-accepted actions under a declared
-   candidate protocol and reference. The current reference uses material value,
-   uniform accepted candidate opponent actions, uniform-random continuations,
-   and a fixed Monte Carlo budget. These experimental values are
-   reference-relative realized-state diagnostics, not optimal-play labels.
-2. **Draft-to-battle trajectories.** Require a model to carry a plan through a
-   scarce shared draft, legal construction, bring and lead, battle, and review.
-   Logs support deterministic links such as drafted-to-built and
-   built-to-brought. Semantic plan-fidelity claims require a published rubric,
-   agreement checks, and human audit. Generated explanations do not provide
-   direct evidence of private beliefs.
+1. **Information-set battle choices.** Evaluate every accepted action over a
+   declared distribution of compatible hidden states, opponent policies,
+   continuations, and common random draws. Report utility and regret in game or
+   series units rather than treating one realized short-horizon reference as an
+   optimal-play label.
+2. **Causal strategic interventions.** Fork exact decision histories to test
+   whether authentic memory, draft commitments, transactions, construction, or
+   schedule information improve later utility while downstream controllers and
+   random draws remain fixed.
+3. **Ecological circuits.** Run complete leagues and tournaments to validate
+   integration, discover failure modes, and test whether controlled findings
+   survive long trajectories. Natural standings and championships are not model
+   rankings.
+
+The framework-agnostic contracts for replayable decision events, matched forks,
+controller identity, information-set priors, reference suites, randomized
+model-facing tasks, and best-of-three memory interventions are defined in
+[Strategic evaluation kernel](docs/strategic-evals.md).
 
 Implementation and release status can change independently from the measurement
-contract. The [Evaluation plan](docs/evaluation-plan.md#program-status) is the
-only status inventory. Do not infer status from other documentation or the GUI.
+contract. The [Evaluation plan](docs/evaluation-plan.md#program-status) remains
+the status inventory until the strategic tracks replace the legacy release
+plan. Do not infer release status from the GUI.
 
 ## Contribution scope
 
 Prior work covers Pokémon agents, doubles play, simulator search, drafting,
 negotiation, and evaluation infrastructure. This project contributes a combined
-**draft-to-battle protocol**, linked evidence across its stages, and a forkable
-battle diagnostic.
+**draft-to-battle protocol**, exact stage-linked evidence, and matched simulator
+forks that can estimate the causal downstream value of strategic information
+and commitments.
 
 The project treats
 [poke-env](https://github.com/hsahovic/poke-env),
@@ -44,9 +52,9 @@ external baselines instead of copying generic clients or policies. See
 
 Controlled evaluation packages use
 [Prime Intellect verifiers](https://github.com/PrimeIntellect-ai/verifiers) for
-model calls, runtimes, traces, and episode control. TypeScript and Showdown
-remain the domain authorities. [Architecture](docs/architecture.md) defines this
-boundary.
+model calls, runtimes, traces, and episode control when that adapter fits the
+measurement unit. TypeScript and Showdown remain the domain authorities.
+[Architecture](docs/architecture.md) defines this boundary.
 
 ## Run locally
 
@@ -68,11 +76,12 @@ pnpm test
 pnpm run vgcleague --help
 ```
 
-Report custom pools, model sets, and one-off tournaments as exploratory
-conditions. See [Usage](docs/usage.md) for commands.
+Report custom pools, model sets, scaffolds, and one-off tournaments as
+exploratory conditions. See [Usage](docs/usage.md) for commands.
 
 ## Documentation
 
+- [Strategic evaluation kernel](docs/strategic-evals.md)
 - [Measurement](docs/measurement.md)
 - [Evaluation plan](docs/evaluation-plan.md)
 - [Architecture](docs/architecture.md)

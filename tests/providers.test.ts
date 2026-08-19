@@ -332,3 +332,18 @@ test('nitro routing changes only OpenRouter specs', () => {
   assert.equal(nitroSpec('prime:model'), 'prime:model');
   assert.equal(nitroSpec('random'), 'random');
 });
+
+test('OpenRouter forwards an explicit reasoning token budget with text headroom', async () => {
+  let body: Record<string, unknown> = {};
+  const fetch = (async (_input, init) => {
+    body = JSON.parse(String(init?.body));
+    return chatStream('ok', { usage: { prompt_tokens: 4, completion_tokens: 2, total_tokens: 6 } });
+  }) as typeof globalThis.fetch;
+  await makeProvider(parseSpec('openrouter:test/model'), { apiKey: 'k', reasoning: 'high', fetch }).complete(
+    'system',
+    [{ role: 'user', content: 'hello' }],
+    { maxTokens: 16384, reasoningMaxTokens: 12288 },
+  );
+  assert.equal(body.max_tokens, 16384);
+  assert.deepEqual(body.reasoning, { max_tokens: 12288 });
+});

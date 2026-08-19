@@ -8,33 +8,155 @@ order.
 
 | Track | Unit | Status |
 | --- | --- | --- |
-| `vgc-positions-v1` | one battle choice | TypeScript replay/fork/export prototype exists; Python package and model runner do not |
-| `vgc-circuit-v1` | one eight-seat league or tournament episode | Implemented internally as a TypeScript referee and native-v1 Python `Taskset` plus `Env`; package, referee image, and Environment Hub entry are unpublished; hosted execution is not validated |
-| local league | exploratory full runs | Working |
+| `vgc-strategic-interventions-v1` | one attributable decision or short intervention chain | Framework-agnostic kernel, information-set/reference/task contracts, and strict matchday and circuit replay/fork adapters are implemented; a native model/runtime shard package and calibrated corpora are not |
+| `vgc-positions-v1` | one battle choice | Retained as a legacy realized-state random-continuation material diagnostic; the TypeScript replay/fork/export prototype exists, but it is not the primary ranking or release track |
+| `vgc-circuit-v1` | one eight-seat league or tournament episode | Implemented as an ecological arena and case source; the native-v1 adapter defaults to metrics-only terminal reporting, while package publication and hosted execution remain unvalidated |
+| local league | exploratory full runs | Working ecological arena |
 
-The public program separates the lower-cost controlled choice task from the
-long-horizon circuit track. Positions remain the first release track. The
-league and tournament are distinct circuit evaluations; a draft-only task with
-an artificial roster reward is neither one.
+The public program now treats controlled strategic interventions as the primary
+evaluation track. The static positions package remains a named legacy
+diagnostic, and complete circuits remain ecological validation and case
+sources. Neither supporting artifact substitutes for matched causal shards.
 
 The current branch can:
 
-- replay a game from its format, Showdown revision, seed, teams, and actions;
-- reject mismatched logs;
-- reopen snapshots;
-- enumerate legal joint actions;
-- grade each eligible decision with one complete exhaustive action table; and
-- select seeded, stratified positions from versioned grade-time qualification
-  metrics.
+- replay exact games, matchdays, and circuit receipt histories under the pinned
+  Showdown and referee authorities;
+- create verified pre-decision checkpoints and invalidate endogenous source
+  suffixes after a replacement;
+- bind downstream controller identities and common hidden-state, opponent,
+  battle, continuation, and schedule draws;
+- evaluate complete action-by-reference rectangles in absolute utility with
+  clustered uncertainty and reference-sensitivity diagnostics;
+- render opaque, independently shuffled strategic actions and report invalid
+  output separately from legal-action utility;
+- fork exact between-game notebook bytes under strict no-fallback continuation;
+- fork draft, construction, trade, notebook, and battle responses through the
+  authoritative circuit referee; and
+- project the existing position matrices into the new reference-suite contract
+  only as a named raw-material legacy arm.
 
-The internal circuit track also implements both whole-circuit scenarios, their
-terminal returns, and the native-v1 adapter described below.
+The repository does not provide a public strategic-shard package, a supported
+real-provider intervention run, calibrated intervention corpora, or a validated
+benchmark. Treat every current strategic, position, and circuit result as
+exploratory.
 
-The repository does not provide a public verifiers package, a supported
-real-provider frozen evaluation, a calibrated public reward, or a validated
-benchmark. Treat all `grade-positions` output as exploratory.
+## `vgc-strategic-interventions-v1`
 
-## `vgc-positions-v1`
+The intended unit is one decision node or short intervention chain whose source
+state, replacement, downstream controllers, common draws, and utility unit are
+all content-addressed. The current implementation supplies the framework-neutral
+TypeScript contracts and strict Showdown/referee adapters. It does not yet
+supply a public native environment, model/runtime controller, hidden-state prior
+corpus, external policy population, or calibrated release set.
+
+A treatment must change only its declared information or action. The complete
+execution identity binds the checkpoint, matched fork plan, arm, draw, focal
+seat, treatment bytes, and controller set. In the v1 notebook adapter, the
+non-focal seat always retains its checkpoint notebook; changing that seat
+requires a future explicitly crossed treatment rather than an unbound runtime
+argument.
+
+Do not publish a ranking until the strategic release gates in
+[Strategic evaluation kernel](strategic-evals.md#release-gates) pass, including
+known-intervention validity and demonstrated held-out value beyond the
+unmodified Pokémon harness.
+
+## Frontier-model validation milestone
+
+The branch now includes a private, real-provider pilot command:
+
+```sh
+pnpm run build
+OPENROUTER_API_KEY=<key> pnpm run strategic-pilot \
+  --models openrouter:<model-id> --pool test --draws 4 --reasoning high
+```
+
+This is the shortest path from the framework contracts to evidence that can
+invalidate the research direction. It is not a benchmark package. One run
+binds one deterministic Game 1 source, a verified between-game checkpoint, a
+model-written authentic notebook, a withheld control, fixed downstream policy
+identities, common future draws, and private provider-call evidence. The focal
+frontier model plays the continuation; the opponent is a fixed first-legal
+Showdown policy. The output reports protocol validity, legality, series return,
+matched contrasts, prompts, responses, usage, cost, and all joining digests.
+
+### Pilot matrix
+
+Run the following stages in order and retain failed runs rather than silently
+repairing them:
+
+1. one-model/one-source/one-draw plumbing smoke;
+2. two or three current frontier models across at least four independently
+   selected source team pairs, with at least eight common draws per treatment;
+3. authentic, withheld, stale, false, placebo, and oracle memory arms on the
+   same sources;
+4. a second fixed downstream opponent policy or policy population;
+5. a fresh provider-call replication batch with unchanged source and fork
+   identities.
+
+Use source-team selection and intervention construction rules fixed before
+reading treatment outcomes. Cluster uncertainty at the source case, never at
+the individual future seed. Provider temperature is zero and OpenRouter
+fallback is disabled, but provider calls do not expose a portable random seed;
+record this residual randomness and balance arm execution order.
+
+Aggregate completed private reports with `pnpm run
+summarize-strategic-pilots <report-or-directory>...`. The validator
+recomputes report, model, fork-plan, call, treatment, execution, analysis, and
+summary identities. Repeated provider-call runs are averaged within their
+source before uncertainty is computed across source-cluster means. Fewer than
+four valid source clusters remains explicitly insufficient evidence.
+
+### Go/no-go criteria
+
+Continue toward a public strategic-shard package only when all of these are
+true on held-out source clusters:
+
+- at least 95% of outcomes are protocol-valid and legal without fallback;
+- authentic memory has a repeatable positive effect over withholding in cases
+  selected without treatment outcomes;
+- false memory harms more than placebo and oracle information gives a sensible
+  positive upper bound;
+- the effect survives at least one changed downstream opponent policy and a
+  fresh provider-call batch;
+- the measured difference is not explained only by invalid-output rate, model
+  identity, or ordinary no-memory battle win rate; and
+- the cost of enough independent source clusters and replications is practical.
+
+Stop the benchmark work if these checks fail. Retain the already working
+Pokémon harness and redirect effort to one of four directly useful overlays:
+
+1. **Scouting and coaching:** measure whether model-written opponent reports or
+   post-series reviews help a later, separate player model, including adversarial
+   stale and false reports.
+2. **Search/model hybrids:** let deterministic search or rollouts propose a
+   small legal set, then measure whether a frontier model adds value in selecting
+   or explaining the proposal without making search the hidden answer key.
+3. **Draft-plan adherence:** fork draft picks, transactions, and matchup builds
+   while measuring whether the model follows or productively revises its own
+   earlier plan.
+4. **Failure-mode corpus:** curate exact replayable positions where frontier
+   models, heuristics, search, and blinded experts disagree, then study the
+   mechanics, information, and planning error rather than publishing one score.
+
+### Work after a positive pilot
+
+A positive pilot authorizes implementation, not publication. The next code
+milestones are:
+
+- source-corpus selection independent of treatment outcomes;
+- model/runtime controller support beyond the local provider adapter;
+- fixed opponent and continuation policy populations rather than one first-legal
+  policy;
+- crossed team, source-policy, model-family, and scaffold holdouts;
+- partial-draft option-value and stage-decomposition producers;
+- a native private shard package only after the local evidence contract is
+  stable; and
+- known-intervention, expert, invariance, sensitivity, and incremental-value
+  release gates from `strategic-evals.md`.
+
+## Legacy diagnostic: `vgc-positions-v1`
 
 ### Public task and private grader data
 
@@ -203,8 +325,10 @@ deterministic extra-game seeds until it has a winner, with a nine-game limit.
 ### Terminal returns
 
 The TypeScript referee emits one frozen return for each seat. Python validates
-that value against complete terminal evidence before adding it to any trace.
-There is no intermediate reward.
+that value against complete terminal evidence. The default circuit adapter
+records it as a non-training arena metric and adds no per-turn reward. The
+legacy repeated-trace projection is opt-in only. There is no intermediate
+reward or local credit assignment.
 
 For `draft-league-v1`, the return is:
 
@@ -230,11 +354,10 @@ not reach contributes zero to the numerator.
 
 Both returns partition one series ledger, so the eight seat returns of a
 complete Episode sum to exactly zero. Python enforces that conservation before
-scoring. A mean taken across all eight seats is therefore zero whatever the
-field played, and a trace-level mean is not even zero because a seat's return
-repeats on each of its decision traces and playoff seats produce more of them.
-Report seat or model means and reweight trace exports by
-`circuit_seat_decisions_v1`.
+recording arena metrics. A mean taken across all eight seats is therefore zero
+whatever the field played. Report counterbalanced focal-seat or assigned-model
+contrasts, not one field mean. Reweight trace-level metric exports by
+`circuit_seat_decisions_v1` only to remove duplicate rows.
 
 Game records, pre-window and post-window splits, game-one-loss conversion as an
 adaptation diagnostic, standings, playoff qualification, champion status, transactions, invalid turns,

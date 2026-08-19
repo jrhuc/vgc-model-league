@@ -7,6 +7,7 @@ import { z } from 'zod';
 import { completeWithDexTools } from './dex-lookups.js';
 import type { TeambuildSetView, TeambuildView } from './gui/api.js';
 import { defaultPsDir } from './paths.js';
+import { type MechanicsToolAvailability, mechanicsToolNotice } from './prompt-capabilities.js';
 import { FORMAT_AUTHORITY_NOTICE } from './prompts.js';
 import type { ModelReasoningConfig, ReasoningLevel } from './providers.js';
 import { classifyProviderFailure, makeProvider, parseSpec, reasoningForModel } from './providers.js';
@@ -19,6 +20,18 @@ import { loadShowdown, showdownCommit } from './showdown.js';
 import { normalizeStageEvidence, noStageEvidence, type StageEvidence } from './stage-evidence.js';
 import { normalizePackedTeam, validateTeam } from './teams.js';
 import type { JsonObject, Provider, ProviderFailure, ProviderMessage } from './types.js';
+
+const MATCHUP_AVAILABLE_MECHANICS_TOOLS = [
+  'You have the Showdown dex tools. Use them while you build: check what an item or ability actually does here,',
+  'what a spread outruns, and how hard an attack lands. They compute from the',
+  'simulator this league runs on. Trust the mechanics and factors each result explicitly says it applied;',
+  'a hypothetical damage result does not imply omitted abilities or field effects.',
+].join('\n');
+
+const GENERAL_AVAILABLE_MECHANICS_TOOLS = [
+  'You have the Showdown dex tools. Use them while you build: check legal moves, items, abilities, speed benchmarks,',
+  'and damage against representative threats. The tools compute from the simulator this task validates against.',
+].join('\n');
 
 const TEAMBUILD_PROMPT_POLICY = {
   systemTemplate: [
@@ -632,7 +645,13 @@ function teamSheetRule(policy: TeamBuildSheetPolicy): string {
   return TEAMBUILD_RENDERER_PROTOCOL.sheetRules[policy];
 }
 
-function systemPrompt(task: TeamBuildTask, dex: DexLike, evLimit: number, evMax: number): string {
+function systemPrompt(
+  task: TeamBuildTask,
+  dex: DexLike,
+  evLimit: number,
+  evMax: number,
+  mechanicsTools: MechanicsToolAvailability = 'available',
+): string {
   const values: Record<string, string> = {
     model: task.model,
     format: task.format,
@@ -643,12 +662,15 @@ function systemPrompt(task: TeamBuildTask, dex: DexLike, evLimit: number, evMax:
     items: `  ${legalItems(dex).join(', ')}`,
     teamSheetRule: teamSheetRule(task.sheetPolicy),
   };
-  return renderPromptTemplate(
+  const rendered = renderPromptTemplate(
     task.objective.kind === 'matchup'
       ? TEAMBUILD_PROMPT_POLICY.systemTemplate
       : GENERAL_TEAMBUILD_PROMPT_POLICY.systemTemplate,
     values,
   );
+  const availableNotice =
+    task.objective.kind === 'matchup' ? MATCHUP_AVAILABLE_MECHANICS_TOOLS : GENERAL_AVAILABLE_MECHANICS_TOOLS;
+  return rendered.replace(availableNotice, mechanicsToolNotice(mechanicsTools, availableNotice));
 }
 
 function userPrompt(task: TeamBuildTask, dex: DexLike): string {
@@ -677,16 +699,25 @@ function userPrompt(task: TeamBuildTask, dex: DexLike): string {
 export function connectedTeamBuildPromptRevision(
   objective: TeamBuildObjective,
   sheetPolicy: TeamBuildSheetPolicy,
+  mechanicsTools: MechanicsToolAvailability = 'available',
 ): string {
   return createHash('sha256')
-    .update(JSON.stringify([teamBuildScaffoldRevision(objective, sheetPolicy, 'strict'), 'system-blank-line-user-v1']))
+    .update(
+      JSON.stringify([
+        teamBuildScaffoldRevision(objective, sheetPolicy, 'strict'),
+        'system-blank-line-user-v1',
+        mechanicsTools,
+      ]),
+    )
     .digest('hex')
     .slice(0, 12);
 }
 
 export function renderStrictTeamBuildPrompt(
   task: TeamBuildTask,
-  options: Pick<TeamBuildRefereeOptions, 'psDir'> = {},
+  options: Pick<TeamBuildRefereeOptions, 'psDir'> & {
+    mechanicsTools?: MechanicsToolAvailability;
+  } = {},
 ): string {
   const canonical = strictTask(task);
   validateTeamBuildTask(canonical);
@@ -695,7 +726,11 @@ export function renderStrictTeamBuildPrompt(
   const format = Dex.formats.get(canonical.format);
   const dex = Dex.mod(format.mod || 'base') as unknown as DexLike;
   const rules = Dex.formats.getRuleTable(format);
-  return [systemPrompt(canonical, dex, rules.evLimit ?? 508, 32), '', userPrompt(canonical, dex)].join('\n');
+  return [
+    systemPrompt(canonical, dex, rules.evLimit ?? 508, 32, options.mechanicsTools ?? 'available'),
+    '',
+    userPrompt(canonical, dex),
+  ].join('\n');
 }
 
 interface ParsedTeamBuild {

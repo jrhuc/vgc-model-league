@@ -571,7 +571,7 @@ async def _run(
 
 
 @pytest.mark.asyncio
-async def test_full_eight_seat_31_series_join_rewards_and_diagnostics(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_full_eight_seat_31_series_join_arena_metrics(monkeypatch: pytest.MonkeyPatch) -> None:
     env, task, agents, referee, episode, concurrency = await _run(monkeypatch)
     assert referee.closed == 1
     assert concurrency.maximum == 8
@@ -587,11 +587,11 @@ async def test_full_eight_seat_31_series_join_rewards_and_diagnostics(monkeypatc
     assert invalid["responseSha256"] == hashlib.sha256(b"not-json").hexdigest()
 
     await env.finalize(task, episode)
-    assert all(trace.agent.trainable for trace in episode.traces)
-    assert all(set(trace.rewards) == {"draft_league_series_return_v1"} for trace in episode.traces)
+    assert all(not trace.agent.trainable for trace in episode.traces)
+    assert all(not trace.rewards for trace in episode.traces)
     for trace in episode.traces:
-        reward = trace.rewards["draft_league_series_return_v1"].score
-        assert -1 <= reward <= 1
+        assert trace.metrics["circuit_repeated_trace_reward_enabled_v1"] == 0
+        assert -1 <= trace.metrics["circuit_terminal_series_return_v1"] <= 1
         assert trace.metrics["circuit_series_v1"] >= 7
         assert "circuit_game_return_v1" in trace.metrics
         assert "draft_league_final_rr_rank_v1" in trace.metrics
@@ -608,18 +608,18 @@ async def test_full_eight_seat_31_series_join_rewards_and_diagnostics(monkeypatc
             splits[name]["series"]["wins"] - splits[name]["series"]["losses"]
             for name in ("roundRobinPreWindow", "roundRobinPostWindow", "playoffs")
         ) / 9
-        assert reward == pytest.approx(expected)
+        assert trace.metrics["circuit_terminal_series_return_v1"] == pytest.approx(expected)
     assert all(item.trace.metrics["circuit_free_agency_defaults_v1"] == 1 for item in agents.seat2.interactions)
     assert all(item.trace.metrics["circuit_champion_v1"] == 1 for item in agents.seat1.interactions)
     assert all(trace.metrics["circuit_seat_decisions_v1"] == 2 for trace in episode.traces)
     assert math.fsum(
-        trace.rewards["draft_league_series_return_v1"].score / trace.metrics["circuit_seat_decisions_v1"]
+        trace.metrics["circuit_terminal_series_return_v1"] / trace.metrics["circuit_seat_decisions_v1"]
         for trace in episode.traces
     ) == pytest.approx(0.0, abs=1e-12)
 
 
 @pytest.mark.asyncio
-async def test_victory_road_rewards_every_joined_trace(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_victory_road_reports_arena_metrics_without_trace_rewards(monkeypatch: pytest.MonkeyPatch) -> None:
     env, task, agents, referee, episode, concurrency = await _run(
         monkeypatch, scenario_id="victory-road-top8-v1"
     )
@@ -628,20 +628,19 @@ async def test_victory_road_rewards_every_joined_trace(monkeypatch: pytest.Monke
     assert agents.referee.interactions == []
     assert all(len(getattr(agents, role).interactions) == 1 for role in _ROLES)
     await env.finalize(task, episode)
-    assert all(
-        set(trace.rewards) == {"tournament_series_return_v1"}
-        for trace in episode.traces
-    )
+    assert all(not trace.agent.trainable for trace in episode.traces)
+    assert all(not trace.rewards for trace in episode.traces)
     champion = agents.seat1.interactions[0].trace
-    reward = champion.rewards["tournament_series_return_v1"].score
-    assert reward == 1
+    terminal_return = champion.metrics["circuit_terminal_series_return_v1"]
+    assert terminal_return == 1
     top_cut = champion.info["circuit_v1"]["terminal"]["seat"]["splits"]["topCut"]["series"]
-    assert reward == pytest.approx((top_cut["wins"] - top_cut["losses"]) / 3)
+    assert terminal_return == pytest.approx((top_cut["wins"] - top_cut["losses"]) / 3)
+    assert champion.metrics["circuit_repeated_trace_reward_enabled_v1"] == 0
     assert champion.metrics["circuit_series_v1"] == 3
     assert champion.metrics["circuit_champion_v1"] == 1
     assert champion.metrics["circuit_seat_decisions_v1"] == 1
     assert math.fsum(
-        trace.rewards["tournament_series_return_v1"].score
+        trace.metrics["circuit_terminal_series_return_v1"]
         for trace in episode.traces
     ) == pytest.approx(0.0, abs=1e-12)
     assert all(
@@ -649,6 +648,26 @@ async def test_victory_road_rewards_every_joined_trace(monkeypatch: pytest.Monke
         for trace in episode.traces
     )
     assert referee.closed == 1
+
+
+@pytest.mark.asyncio
+async def test_legacy_repeated_trace_reward_requires_explicit_opt_in(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    env, task, _agents, _referee, episode, _concurrency = await _run(
+        monkeypatch,
+        trace_reward_projection="legacy-repeated-trace-return",
+    )
+    await env.finalize(task, episode)
+    assert all(trace.agent.trainable for trace in episode.traces)
+    assert all(
+        set(trace.rewards) == {"draft_league_series_return_v1"}
+        for trace in episode.traces
+    )
+    assert all(
+        trace.metrics["circuit_repeated_trace_reward_enabled_v1"] == 1
+        for trace in episode.traces
+    )
 
 
 @pytest.mark.asyncio
@@ -730,7 +749,7 @@ async def test_referee_content_pins_gate_the_episode(monkeypatch: pytest.MonkeyP
         expected_prompt_revision="prompt-v2",
     )
     await env.finalize(task, episode)
-    assert all(trace.rewards for trace in episode.traces)
+    assert all(trace.metrics and not trace.rewards for trace in episode.traces)
     with pytest.raises(ProtocolError, match="configDigest"):
         await _run(monkeypatch, expected_config_digest="d" * 64)
     with pytest.raises(ProtocolError, match="promptRevision"):
@@ -753,10 +772,13 @@ def test_config_nine_roles_defaults_and_concurrency_floor() -> None:
     assert all(getattr(config, role).runtime.type == "docker" for role in _ROLES)
     assert config.expected_config_digest is None
     assert config.expected_prompt_revision is None
+    assert config.trace_reward_projection == "arena-metrics-only"
     with pytest.raises(ValidationError):
         VgcCircuitEnvConfig(expected_config_digest="not-a-digest")
     with pytest.raises(ValidationError):
         VgcCircuitEnvConfig(expected_prompt_revision="")
+    with pytest.raises(ValidationError):
+        VgcCircuitEnvConfig(trace_reward_projection="unknown")
     with pytest.raises(ValidationError):
         VgcCircuitEnvConfig(max_concurrent_agents=7)
     with pytest.raises(ValidationError):

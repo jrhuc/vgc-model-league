@@ -7,7 +7,7 @@ import uuid
 from collections import Counter
 from contextlib import AsyncExitStack
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import Field, model_validator
 from verifiers import v1 as vf
@@ -95,6 +95,9 @@ class VgcCircuitEnvConfig(vf.EnvConfig):
     referee_request_timeout: float = Field(DEFAULT_REQUEST_TIMEOUT, gt=0)
     expected_config_digest: str | None = Field(None, pattern=r"^[0-9a-f]{64}$")
     expected_prompt_revision: str | None = Field(None, min_length=1)
+    trace_reward_projection: Literal[
+        "arena-metrics-only", "legacy-repeated-trace-return"
+    ] = "arena-metrics-only"
     debug_allow_subprocess: bool = False
 
     @model_validator(mode="after")
@@ -114,15 +117,19 @@ class _Seat:
 
 class VgcCircuitEnv(vf.Env[VgcCircuitEnvConfig]):
     async def setup(self, agents: vf.Agents) -> None:
+        repeated_trace_reward = (
+            self.config.trace_reward_projection
+            == "legacy-repeated-trace-return"
+        )
         for seat_id in _PLAYERS:
-            getattr(agents, seat_id).trainable = True
+            getattr(agents, seat_id).trainable = repeated_trace_reward
         agents.referee.trainable = False
 
     async def run(self, task: vf.Task, agents: vf.Agents) -> None:
         if not isinstance(task, VgcCircuitTask):
             raise TypeError("VgcCircuitEnv requires VgcCircuitTask")
         _validate_config(self.config)
-        _validate_agents(agents)
+        _validate_agents(agents, self.config.trace_reward_projection)
 
         async with AsyncExitStack() as stack:
             runtimes = {
@@ -274,6 +281,10 @@ class VgcCircuitEnv(vf.Env[VgcCircuitEnvConfig]):
             raise TypeError("VgcCircuitEnv requires VgcCircuitTask")
         if not episode.traces:
             raise ValueError("circuit episode has no player decision traces")
+        repeated_trace_reward = (
+            self.config.trace_reward_projection
+            == "legacy-repeated-trace-return"
+        )
 
         by_seat: dict[str, list[Any]] = {seat_id: [] for seat_id in _SEATS}
         terminal_by_seat: dict[str, dict[str, Any]] = {}
@@ -300,9 +311,13 @@ class VgcCircuitEnv(vf.Env[VgcCircuitEnvConfig]):
             seat_id = evidence.get("seat")
             if seat_id not in by_seat or trace.agent.name != _SEAT_TO_ROLE[seat_id]:
                 raise ValueError("trace role and circuit seat disagree")
-            if not trace.ok or trace.num_turns != 1 or not trace.agent.trainable:
+            if (
+                not trace.ok
+                or trace.num_turns != 1
+                or trace.agent.trainable is not repeated_trace_reward
+            ):
                 raise ValueError(
-                    "circuit trace is not one successful trainable decision"
+                    "circuit trace trainability does not match its reward projection"
                 )
             if trace.rewards or trace.metrics:
                 raise ValueError("circuit trace was scored before episode validation")
@@ -382,13 +397,17 @@ class VgcCircuitEnv(vf.Env[VgcCircuitEnvConfig]):
                 seat["rewardName"],
                 seat["rewardValue"],
                 _terminal_metrics(
-                    task.data.scenario_id, seat, len(by_seat[seat["seatId"]])
+                    task.data.scenario_id,
+                    seat,
+                    len(by_seat[seat["seatId"]]),
+                    repeated_trace_reward,
                 ),
             )
         for seat_id, traces in by_seat.items():
             reward_name, reward, metrics = scores[seat_id]
             for trace in traces:
-                trace.record_reward(reward_name, reward)
+                if repeated_trace_reward:
+                    trace.record_reward(reward_name, reward)
                 trace.record_metrics(metrics)
 
 
@@ -399,11 +418,18 @@ def _rate(wdl: dict[str, int]) -> float:
 
 
 def _terminal_metrics(
-    scenario_id: str, seat: dict[str, Any], decisions: int
+    scenario_id: str,
+    seat: dict[str, Any],
+    decisions: int,
+    repeated_trace_reward: bool,
 ) -> dict[str, float]:
     splits = seat["splits"]
     metrics = {
         "circuit_seat_decisions_v1": decisions,
+        "circuit_terminal_series_return_v1": float(seat["rewardValue"]),
+        "circuit_repeated_trace_reward_enabled_v1": float(
+            repeated_trace_reward
+        ),
         "circuit_games_v1": seat["gamesPlayed"],
         "circuit_game_wins_v1": seat["gameWins"],
         "circuit_game_losses_v1": seat["gameLosses"],
@@ -475,10 +501,18 @@ def _validate_config(config: VgcCircuitEnvConfig) -> None:
             raise ValueError("subprocess runtimes require debug_allow_subprocess")
 
 
-def _validate_agents(agents: vf.Agents) -> None:
+def _validate_agents(
+    agents: vf.Agents,
+    trace_reward_projection: str,
+) -> None:
+    expected_trainable = (
+        trace_reward_projection == "legacy-repeated-trace-return"
+    )
     for role in _PLAYERS:
-        if not getattr(agents, role).trainable:
-            raise ValueError(f"{role} must remain trainable from setup")
+        if getattr(agents, role).trainable is not expected_trainable:
+            raise ValueError(
+                f"{role} trainability does not match trace_reward_projection"
+            )
     if agents.referee.trainable:
         raise ValueError("referee must be nontrainable")
 
