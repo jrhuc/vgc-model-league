@@ -4,7 +4,7 @@ import test from 'node:test';
 import { discoverModels } from '../src/model-catalog.js';
 import { PROVIDER_OPTIONS, providerOption } from '../src/provider-registry.js';
 
-test('provider registry is exactly OpenRouter, Prime Inference, and random', () => {
+test('provider registry is exactly OpenRouter, Prime Inference, the Vercel AI Gateway, and random', () => {
   assert.deepEqual(
     PROVIDER_OPTIONS.map(({ id, baseUrl, envKey, discovery, requiresKey }) => ({
       id,
@@ -25,6 +25,13 @@ test('provider registry is exactly OpenRouter, Prime Inference, and random', () 
         id: 'prime',
         baseUrl: 'https://api.pinference.ai/api/v1',
         envKey: 'PRIME_API_KEY',
+        discovery: 'manual',
+        requiresKey: true,
+      },
+      {
+        id: 'gateway',
+        baseUrl: 'https://ai-gateway.vercel.sh/v1',
+        envKey: 'AI_GATEWAY_API_KEY',
         discovery: 'manual',
         requiresKey: true,
       },

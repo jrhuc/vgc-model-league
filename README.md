@@ -28,9 +28,10 @@ one of these exact forms:
 
 - `openrouter:<model-id>`
 - `prime:<model-id>`
+- `gateway:<model-id>` (Vercel AI Gateway)
 - `random`
 
-Set `OPENROUTER_API_KEY` or `PRIME_API_KEY` for CLI runs that use the
+Set `OPENROUTER_API_KEY`, `PRIME_API_KEY`, or `AI_GATEWAY_API_KEY` for CLI runs that use the
 corresponding provider. For GUI runs, enter the same credentials as run-only
 browser input.
 
