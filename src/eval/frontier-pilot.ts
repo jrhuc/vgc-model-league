@@ -736,9 +736,7 @@ function notebookPrompt(input: {
   ].join('\n');
 }
 
-function parsedNotebook(
-  response: string,
-): { notebook: string; parseMode: FrontierPilotCallTrace['parseMode'] } | null {
+function parsedNotebook(response: string): { notebook: string; parseMode: FrontierPilotCallTrace['parseMode'] } | null {
   const extracted = extractFinalJsonObject(response);
   if (typeof extracted === 'string') return null;
   const record = extracted.object;
@@ -814,7 +812,8 @@ export async function generateFrontierAuthenticNotebook(input: {
       ...completionFields(completion),
       latencyMs: Date.now() - started,
       status: 'invalid',
-      diagnostic: 'notebook response must end with one JSON object holding one non-empty notebook string within the limit',
+      diagnostic:
+        'notebook response must end with one JSON object holding one non-empty notebook string within the limit',
       parseMode: null,
       selectedActionId: null,
       canonicalAction: null,
@@ -1126,4 +1125,269 @@ export async function runFrontierStrategicPilot(input: {
     },
   };
   return { ...base, reportDigest: canonicalJsonDigest(base) };
+}
+
+export const FRONTIER_PILOT_SENSITIVITY_POLICY = 'scripted-first-nonforced-action-then-first-legal-v1' as const;
+
+export interface FrontierPilotSensitivitySample {
+  armId: string;
+  canonicalAction: string;
+  drawId: string;
+  utility: number;
+}
+
+export interface FrontierPilotSensitivityDraw {
+  drawId: string;
+  distinctUtilities: number;
+  minUtility: number;
+  maxUtility: number;
+  bestActionShare: number;
+}
+
+export interface FrontierPilotSensitivityScreen {
+  protocolVersion: typeof FRONTIER_STRATEGIC_PILOT_PROTOCOL.version;
+  screenPolicy: typeof FRONTIER_PILOT_SENSITIVITY_POLICY;
+  sourceArtifactDigest: string;
+  checkpointDigest: string;
+  planDigest: string | null;
+  focalPid: Pid;
+  drawSeed: string;
+  actionSelection: 'all-legal' | 'operator-subset';
+  candidateActionCount: number;
+  evaluatedActionCount: number;
+  drawCount: number;
+  samples: FrontierPilotSensitivitySample[];
+  draws: FrontierPilotSensitivityDraw[];
+  sensitiveDrawCount: number;
+  flat: boolean;
+  screenDigest: string;
+}
+
+function scriptedControllerIdentities(input: { command: string; focalPid: Pid }): StrategicControllerSet {
+  const otherPid: Pid = input.focalPid === 'p1' ? 'p2' : 'p1';
+  const battleConfig = {
+    protocol: FRONTIER_STRATEGIC_PILOT_PROTOCOL,
+    policy: FRONTIER_PILOT_SENSITIVITY_POLICY,
+    seats: {
+      [input.focalPid]: { kind: 'scripted', command: input.command },
+      [otherPid]: { kind: 'heuristic', revision: 'first-showdown-accepted-action-v1' },
+    },
+  };
+  const identities = Object.fromEntries(
+    STRATEGIC_CONTROLLER_STAGES.map((stage) => {
+      if (stage === 'battle' || stage === 'preview') {
+        return [stage, controllerIdentity(stage, 'scripted-action-vs-first-legal', 'heuristic', battleConfig)];
+      }
+      if (stage === 'notebook') {
+        return [
+          stage,
+          controllerIdentity(stage, 'retain-current-notebook', 'heuristic', {
+            focal: 'treatment-bytes-then-retain',
+            other: 'checkpoint-bytes-then-retain',
+          }),
+        ];
+      }
+      return [stage, controllerIdentity(stage, `source-${stage}`, 'recorded', { source: 'completed-source-prefix' })];
+    }),
+  ) as unknown as StrategicControllerSet;
+  controllerSetDigest(identities);
+  return identities;
+}
+
+function scriptedFirstChoiceController(command: string): FrozenMatchdayContinuationController {
+  let consumed = false;
+  return {
+    decideAction({ legalActions }) {
+      if (!consumed && legalActions.length > 1) {
+        consumed = true;
+        const selected = legalActions.find((entry) => entry.command === command);
+        if (!selected) throw new Error('sensitivity screen action left the accepted action set');
+        return { command: selected.command, actionId: selected.command };
+      }
+      const first = legalActions[0];
+      if (!first) throw new Error('sensitivity continuation found no accepted action');
+      return { command: first.command, actionId: first.command };
+    },
+    decideNotebook() {
+      return {};
+    },
+  };
+}
+
+function firstNonForcedFocalActions(input: {
+  checkpoint: FrozenMatchdayBetweenGameCheckpoint;
+  draw: CommonForkDraw;
+  focalPid: Pid;
+  maxDecisions: number;
+}): string[] {
+  const referee = restoreFrozenMatchdayBetweenGameCheckpoint(input.checkpoint, input.draw);
+  for (const pid of ['p1', 'p2'] as const) {
+    const state = referee.currentState();
+    referee.readyNextGame(pid, {}, state.revision, state.stateHash);
+  }
+  for (let steps = 0; steps < input.maxDecisions; steps += 1) {
+    const observations = { p1: referee.observe('p1'), p2: referee.observe('p2') };
+    for (const pid of ['p1', 'p2'] as const) {
+      const observation = observations[pid];
+      if (!observation.battle?.request || observation.battle.request.wait) continue;
+      const legal = referee.legalActions(pid).actions;
+      if (pid === input.focalPid && legal.length > 1) return legal.map((entry) => entry.command);
+      const first = legal[0];
+      if (!first) return [];
+      const result = referee.submit(pid, first.command, observation.revision, observation.stateHash);
+      if (result.terminal) return [];
+    }
+  }
+  return [];
+}
+
+export function listFrontierPilotCandidateActions(input: {
+  sourceArtifact: FrontierPilotSourceArtifact;
+  focalPid?: Pid;
+  drawSeed?: string | number;
+  maxDecisions?: number;
+}): string[] {
+  validateFrontierPilotSourceArtifact(input.sourceArtifact);
+  const checkpoint = buildFrozenMatchdayBetweenGameCheckpoint(input.sourceArtifact.source, 1);
+  const draws = frontierPilotDraws({ checkpoint, count: 1, seed: input.drawSeed ?? 'frontier-pilot' });
+  return firstNonForcedFocalActions({
+    checkpoint,
+    draw: draws[0] as CommonForkDraw,
+    focalPid: input.focalPid ?? 'p1',
+    maxDecisions: input.maxDecisions ?? 500,
+  });
+}
+
+/** Outcome-blind and provider-free: usable at source-freeze time without touching treatment results. */
+export async function screenFrontierPilotSourceSensitivity(input: {
+  sourceArtifact: FrontierPilotSourceArtifact;
+  focalPid?: Pid;
+  drawCount?: number;
+  drawSeed?: string | number;
+  maxDecisions?: number;
+  candidateActions?: readonly string[];
+}): Promise<FrontierPilotSensitivityScreen> {
+  validateFrontierPilotSourceArtifact(input.sourceArtifact);
+  const focalPid = input.focalPid ?? 'p1';
+  const maxDecisions = input.maxDecisions ?? 500;
+  const checkpoint = buildFrozenMatchdayBetweenGameCheckpoint(input.sourceArtifact.source, 1);
+  const draws = frontierPilotDraws({
+    checkpoint,
+    count: input.drawCount ?? 4,
+    seed: input.drawSeed ?? 'frontier-pilot',
+  });
+  const firstDraw = draws[0];
+  if (!firstDraw) throw new Error('sensitivity screen requires at least one draw');
+  const legal = firstNonForcedFocalActions({ checkpoint, draw: firstDraw, focalPid, maxDecisions });
+  let candidates = legal;
+  if (input.candidateActions !== undefined) {
+    const accepted = new Set(legal);
+    for (const command of input.candidateActions) {
+      if (!accepted.has(command)) {
+        throw new Error(`sensitivity screen subset action ${JSON.stringify(command)} is not in the accepted set`);
+      }
+    }
+    if (new Set(input.candidateActions).size !== input.candidateActions.length) {
+      throw new Error('sensitivity screen subset repeats an action');
+    }
+    candidates = [...input.candidateActions];
+  }
+  const base = {
+    protocolVersion: FRONTIER_STRATEGIC_PILOT_PROTOCOL.version,
+    screenPolicy: FRONTIER_PILOT_SENSITIVITY_POLICY,
+    sourceArtifactDigest: input.sourceArtifact.sourceArtifactDigest,
+    checkpointDigest: checkpoint.checkpointDigest,
+    focalPid,
+    drawSeed: String(input.drawSeed ?? 'frontier-pilot'),
+    actionSelection: (input.candidateActions === undefined ? 'all-legal' : 'operator-subset') as
+      | 'all-legal'
+      | 'operator-subset',
+    candidateActionCount: legal.length,
+    evaluatedActionCount: candidates.length,
+    drawCount: draws.length,
+  };
+  if (candidates.length < 2) {
+    const degenerate = {
+      ...base,
+      planDigest: null,
+      samples: [] as FrontierPilotSensitivitySample[],
+      draws: [] as FrontierPilotSensitivityDraw[],
+      sensitiveDrawCount: 0,
+      flat: true,
+    };
+    return { ...degenerate, screenDigest: canonicalJsonDigest(degenerate) };
+  }
+  const treatment = buildNotebookTreatment({ id: 'withheld', kind: 'withheld', notebook: '' });
+  const arms = candidates.map((command) => ({
+    id: `action-${canonicalJsonDigest(['frontier-pilot-sensitivity-action-v1', command]).slice(0, 16)}`,
+    label: command,
+    replacementActionDigest: notebookTreatmentActionDigest(treatment),
+    treatmentDigest: treatment.treatmentDigest,
+    controllers: scriptedControllerIdentities({ command, focalPid }),
+  }));
+  const plan = buildMatchedForkPlan({
+    id: canonicalJsonDigest([
+      'frontier-pilot-sensitivity-plan-v1',
+      checkpoint.checkpointDigest,
+      treatment.treatmentDigest,
+      candidates,
+      draws,
+    ]),
+    decisionNode: decisionNode(checkpoint, focalPid),
+    utilityUnit: 'series-return',
+    arms,
+    draws,
+    allowedControllerDifferences: ['battle', 'preview'],
+  });
+  const otherPid: Pid = focalPid === 'p1' ? 'p2' : 'p1';
+  const samples: FrontierPilotSensitivitySample[] = [];
+  for (const draw of draws) {
+    for (const [index, arm] of arms.entries()) {
+      const command = candidates[index] as string;
+      const outcome = await runFrozenMatchdayNotebookFork({
+        checkpoint,
+        plan,
+        armId: arm.id,
+        drawId: draw.id,
+        clusterId: input.sourceArtifact.source.caseId,
+        focalPid,
+        treatment,
+        controllers: {
+          controllerSetDigest: controllerSetDigest(arm.controllers),
+          seats: {
+            [focalPid]: scriptedFirstChoiceController(command),
+            [otherPid]: firstLegalController(),
+          } as FrozenMatchdayContinuationControllers['seats'],
+        },
+        maxDecisions,
+      });
+      if (!outcome.protocolValid || !outcome.actionLegal || outcome.utility === null) {
+        throw new Error(
+          `sensitivity screen cell failed for action ${JSON.stringify(command)}, draw ${draw.id}: ${outcome.diagnostic ?? 'no utility'}`,
+        );
+      }
+      samples.push({ armId: arm.id, canonicalAction: command, drawId: draw.id, utility: outcome.utility });
+    }
+  }
+  const drawSummaries: FrontierPilotSensitivityDraw[] = draws.map((draw) => {
+    const utilities = samples.filter((sample) => sample.drawId === draw.id).map((sample) => sample.utility);
+    const max = Math.max(...utilities);
+    return {
+      drawId: draw.id,
+      distinctUtilities: new Set(utilities).size,
+      minUtility: Math.min(...utilities),
+      maxUtility: max,
+      bestActionShare: utilities.filter((utility) => utility === max).length / utilities.length,
+    };
+  });
+  const sensitiveDrawCount = drawSummaries.filter((entry) => entry.distinctUtilities > 1).length;
+  const complete = {
+    ...base,
+    planDigest: plan.planDigest,
+    samples,
+    draws: drawSummaries,
+    sensitiveDrawCount,
+    flat: sensitiveDrawCount === 0,
+  };
+  return { ...complete, screenDigest: canonicalJsonDigest(complete) };
 }

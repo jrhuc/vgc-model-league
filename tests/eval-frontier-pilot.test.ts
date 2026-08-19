@@ -9,7 +9,9 @@ import {
   FrontierPilotActionController,
   type FrontierPilotPublicContext,
   generateFrontierAuthenticNotebook,
+  listFrontierPilotCandidateActions,
   runFrontierStrategicPilot,
+  screenFrontierPilotSourceSensitivity,
 } from '../src/eval/frontier-pilot.js';
 import {
   aggregateFrontierPilotReports,
@@ -271,4 +273,39 @@ test('frontier pilot runs balanced authentic and withheld forks with private cal
   const tampered = structuredClone(report);
   tampered.calls[0]!.prompt += 'tampered';
   assert.throws(() => validateFrontierStrategicPilotReport(tampered), /report digest does not match/u);
+});
+
+test('sensitivity screen fills a declared action-by-draw rectangle without providers', async () => {
+  const artifact = sourceArtifact();
+  const legal = listFrontierPilotCandidateActions({ sourceArtifact: artifact, drawSeed: 'screen-test' });
+  assert.ok(legal.length >= 2);
+  assert.ok(legal.every((command) => command.startsWith('team ')));
+  const subset = [legal[0]!, legal[1]!, legal.at(-1)!];
+  const screen = await screenFrontierPilotSourceSensitivity({
+    sourceArtifact: artifact,
+    drawCount: 2,
+    drawSeed: 'screen-test',
+    candidateActions: subset,
+  });
+  assert.equal(screen.actionSelection, 'operator-subset');
+  assert.equal(screen.candidateActionCount, legal.length);
+  assert.equal(screen.evaluatedActionCount, subset.length);
+  assert.equal(screen.samples.length, subset.length * 2);
+  assert.equal(screen.draws.length, 2);
+  for (const draw of screen.draws) {
+    assert.ok(draw.distinctUtilities >= 1);
+    assert.ok(draw.bestActionShare > 0 && draw.bestActionShare <= 1);
+  }
+  assert.equal(screen.flat, screen.sensitiveDrawCount === 0);
+  const { screenDigest, ...rest } = screen;
+  assert.equal(canonicalJsonDigest(rest), screenDigest);
+  await assert.rejects(
+    screenFrontierPilotSourceSensitivity({
+      sourceArtifact: artifact,
+      drawCount: 1,
+      drawSeed: 'screen-test',
+      candidateActions: ['team 9999'],
+    }),
+    /not in the accepted set/,
+  );
 });

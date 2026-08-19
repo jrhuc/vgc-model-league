@@ -14,6 +14,7 @@ import {
   frontierPilotProvider,
   generateFrontierAuthenticNotebook,
   runFrontierStrategicPilot,
+  screenFrontierPilotSourceSensitivity,
   suppliedFrontierTreatment,
   validateFrontierPilotSourceArtifact,
 } from '../src/eval/frontier-pilot.js';
@@ -30,6 +31,7 @@ frozen Showdown authorities and the repository's OpenRouter or Prime provider.
 Options:
   --models <spec>            repeat for every frontier model to test
   --prepare-source-only      freeze source.json before any provider call
+  --sensitivity-screen       provider-free action-sensitivity rectangle for the frozen source
   --pool <name>              existing team pool (default: test)
   --focal-team <id>          pool team used by the frontier model (default: first team)
   --opponent-team <id>       distinct fixed-opponent team (default: second team)
@@ -182,6 +184,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
       help: { type: 'boolean', default: false },
       models: { type: 'string', multiple: true },
       'prepare-source-only': { type: 'boolean', default: false },
+      'sensitivity-screen': { type: 'boolean', default: false },
       pool: { type: 'string', default: 'test' },
       'focal-team': { type: 'string' },
       'opponent-team': { type: 'string' },
@@ -205,14 +208,15 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
     return 0;
   }
   const rawModels = values.models ?? [];
-  if (values['prepare-source-only'] && rawModels.length) {
-    throw new Error('--prepare-source-only cannot be combined with --models');
+  const providerFree = values['prepare-source-only'] || values['sensitivity-screen'];
+  if (providerFree && rawModels.length) {
+    throw new Error('--prepare-source-only and --sensitivity-screen cannot be combined with --models');
   }
   if (values['prepare-source-only'] && values.source) {
     throw new Error('--prepare-source-only creates a new source and cannot be combined with --source');
   }
-  if (!values['prepare-source-only'] && !rawModels.length) {
-    throw new Error('at least one --models spec is required unless --prepare-source-only is used');
+  if (!providerFree && !rawModels.length) {
+    throw new Error('at least one --models spec is required unless a provider-free mode is used');
   }
   const models = values.nitro ? rawModels.map(nitroSpec) : rawModels;
   if (new Set(models).size !== models.length) throw new Error('frontier pilot repeats a model spec');
@@ -245,13 +249,35 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
         seed: values.seed,
       });
   writeCanonical(path.join(outputDirectory, 'source.json'), sourceArtifact);
-  if (values['prepare-source-only']) {
+  if (providerFree) {
+    let sensitivity = null;
+    if (values['sensitivity-screen']) {
+      const screen = await screenFrontierPilotSourceSensitivity({
+        sourceArtifact,
+        drawCount: drawCount,
+        drawSeed: values.seed,
+        maxDecisions,
+      });
+      writeCanonical(path.join(outputDirectory, 'sensitivity.json'), screen);
+      sensitivity = {
+        screenDigest: screen.screenDigest,
+        candidateActionCount: screen.candidateActionCount,
+        drawCount: screen.drawCount,
+        sensitiveDrawCount: screen.sensitiveDrawCount,
+        flat: screen.flat,
+      };
+      console.log(
+        `sensitivity screen: actions=${screen.candidateActionCount} draws=${screen.drawCount} ` +
+          `sensitive-draws=${screen.sensitiveDrawCount} verdict=${screen.flat ? 'flat' : 'sensitive'}`,
+      );
+    }
     const preparedBase = {
       protocolVersion: 1,
       generatedAt: new Date().toISOString(),
       sourceArtifactDigest: sourceArtifact.sourceArtifactDigest,
       sourceFile: 'source.json',
       models: [],
+      ...(sensitivity === null ? {} : { sensitivity }),
       interpretation: 'source-frozen-before-provider-calls',
     };
     writeCanonical(path.join(outputDirectory, 'summary.json'), {

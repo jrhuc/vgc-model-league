@@ -20,12 +20,20 @@ Freeze every case before provider calls:
 ```sh
 pnpm run strategic-pilot \
   --prepare-source-only \
+  --sensitivity-screen \
   --pool test \
   --focal-team <team-id> \
   --opponent-team <team-id> \
   --seed source-1 \
   --out runs/source-1
 ```
+
+The sensitivity screen runs every legal focal choice through the declared
+continuation on the common draws without any provider call, so it is
+outcome-blind and admissible during source selection. Exclude or replace a
+source whose screen verdict is `flat`: no focal decision can move its terminal
+result, so it cannot test an information effect in this utility unit. The
+2026-08-19 batch-1 null was produced by exactly such saturated sources.
 
 ## 2. Build and run one plumbing smoke
 

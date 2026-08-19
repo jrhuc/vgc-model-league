@@ -154,9 +154,17 @@ pnpm run strategic-pilot \
   --out runs/source-1
 ```
 
+Add `--sensitivity-screen` to a provider-free invocation to fill the complete
+scripted action-by-draw rectangle under the declared first-legal continuation.
+The screen is outcome-blind, so it may inform source selection before
+preregistration; a `flat` verdict means no focal choice can move the terminal
+series result and the source cannot test an information effect in this unit.
+
 Repeat `--models` to run the same source and common draws for multiple models.
 Use `prime:<model-id>` with `PRIME_API_KEY` for Prime Inference. The command
-rejects `random`: this pilot is specifically the real-provider seam. Run
+rejects `random`: this pilot is specifically the real-provider seam. Reasoning
+models that can spend the whole `--max-tokens` budget thinking should also set
+`--reasoning-max-tokens` to guarantee visible-text headroom. Run
 `pnpm run strategic-pilot --help` for every option.
 
 The v2 pilot is deliberately narrow. It constructs one deterministic source
