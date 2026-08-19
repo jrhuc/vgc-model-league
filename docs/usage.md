@@ -25,55 +25,10 @@ pnpm run update:showdown
 The update command builds and tests the candidate. If either step fails, the
 command restores the previous revision.
 
-A pin update also moves three reviewed values that the test suite checks
-against the lock: the runtime digest map in `src/eval/producer.ts` (the new
-digest appears in the mismatch error after the candidate builds), the
-`SHOWDOWN_REVISION` substrate pin in
-`environments/vgc_circuit_v1/vgc_circuit_v1/protocol.py`, and the pinned
-permalinks in `docs/related-work.md`. Record them before the update's test
-phase, or it rolls the build back. Review the upstream diff against the
-format rules in [CLAUDE.md](../CLAUDE.md) before accepting any candidate.
-
-## Validate the internal VGC Circuit package
-
-Build and test the TypeScript circuit bundle and root integration first. Then
-run the standalone Python package tests and build its wheel:
-
-```sh
-pnpm test
-pnpm run test:circuit-package
-pnpm run build:circuit-package
-```
-
-The root CI uses the same circuit build and copies
-`environments/vgc_circuit_v1/` to a standalone upload boundary before it
-runs the Python suite. To reproduce the package-local steps directly, run:
-
-```sh
-cd environments/vgc_circuit_v1
-uv sync --locked --group test
-uv run --locked --group test pytest
-uv run --locked --group test eval vgc-circuit-v1 \
-  --env.taskset.scenario draft-league-v1 \
-  -n 1 -r 1 --dry-run --no-push --rich false \
-  -o /tmp/vgc-circuit-dry-run
-uv build --wheel --clear
-```
-
-Select `victory-road-top8-v1` instead to configure the tournament. One taskset
-never combines the two scenarios. The dry run checks native-v1 discovery and
-configuration. It does not execute a
-circuit or validate a provider, player runtime, referee image, or hosted path.
-The [evaluation support table](evaluation-plan.md#verifiers-boundary-and-support)
-tracks current evidence. The
-[package README](../environments/vgc_circuit_v1/README.md) defines the
-runtime and scenario contract.
-
-The package, referee image, and Environment Hub entry are unpublished. A remote
-run also requires authenticated access to a published referee image and a
-reviewed immutable referee and player runtime image digests. The current
-repository does not satisfy those runtime prerequisites.
-
+A pin update is reviewed against the format rules in [CLAUDE.md](../CLAUDE.md)
+before any candidate is accepted. Downstream consumers pin this repository by
+commit; [vgc-evals](https://github.com/jrhuc/vgc-evals) reviews its own
+Showdown-derived values when it adopts a revision.
 ## Run an experiment
 
 Use one of these exact executable model spec formats:
@@ -132,169 +87,6 @@ specs without adding another routing variant. Fallback is always disabled. Set
 `VGC_OPENROUTER_PIN=<provider>` to supply the only upstream order entry as
 routing metadata. Without this variable, OpenRouter selects an upstream. The
 application records the returned provider with cost data.
-
-### Run the frontier strategic pilot
-
-Build once, then call an actual OpenRouter or Prime model through the same
-provider layer used by the working Pokémon harness:
-
-```sh
-pnpm run build
-
-OPENROUTER_API_KEY=<key> pnpm run strategic-pilot \
-  --models openrouter:<model-id> \
-  --pool test \
-  --draws 4 \
-  --model-decisions 1 \
-  --reasoning high \
-  --out runs/strategic-pilot-smoke
-```
-
-
-Freeze each source before any provider call:
-
-```sh
-pnpm run strategic-pilot \
-  --prepare-source-only \
-  --pool test \
-  --focal-team <team-id> \
-  --opponent-team <team-id> \
-  --seed source-1 \
-  --out runs/source-1
-```
-
-Add `--sensitivity-screen` to a provider-free invocation to fill the complete
-scripted action-by-draw rectangle under the declared first-legal continuation.
-The screen is outcome-blind, so it may inform source selection before
-preregistration; a `flat` verdict means no focal choice can move the terminal
-series result and the source cannot test an information effect in this unit.
-
-Repeat `--models` to run the same source and common draws for multiple models.
-Use `prime:<model-id>` with `PRIME_API_KEY` for Prime Inference. The command
-rejects `random`: this pilot is specifically the real-provider seam. Reasoning
-models that can spend the whole `--max-tokens` budget thinking should also set
-`--reasoning-max-tokens` to guarantee visible-text headroom. Run
-`pnpm run strategic-pilot --help` for every option.
-
-The v2 pilot is deliberately narrow. It constructs one deterministic source
-matchday from two committed pool teams, finishes that source with the first
-Showdown-accepted action policy, and verifies a checkpoint after Game 1. The
-frontier model writes private between-game notebook bytes from only its
-seat-authorized Game 1 history and the open team sheets. The checkpoint binds
-that exact authorized source POV and drains it before Game 2, so the
-continuation receives source-game information only through the declared
-treatment bytes. By default the same model makes the first non-forced Game 2
-choice, usually team preview, and a declared first-legal policy completes the
-series. This is the cheapest attributable shard. Increase `--model-decisions`
-for a short intervention chain or use `all` for the ecological full-policy
-follow-up. The matched arms are:
-
-- **authentic:** inject the model-written notebook;
-- **withheld:** inject empty notebook bytes.
-
-The opposing seat uses a fixed first-legal policy. Future battle seeds are
-common across arms, downstream controller identity is held fixed, arm order is
-rotated by draw, invalid model output receives no fallback utility, and every
-prompt, response, reasoning trace, usage value, reported cost, treatment,
-checkpoint, plan, execution, and terminal artifact is content-addressed.
-
-Provider APIs do not expose a portable sampling seed. The command therefore
-uses temperature zero, disables OpenRouter fallback, records the returned
-upstream provider, balances arm order, and labels residual provider randomness
-instead of claiming exact model-call reproducibility. Reuse the exact source in
-another run with:
-
-```sh
-pnpm run strategic-pilot \
-  --models openrouter:<model-id> \
-  --source runs/strategic-pilot-smoke/source.json \
-  --draws 8 \
-  --out runs/strategic-pilot-confirmation
-```
-
-After collecting independent source directories, validate every digest and
-aggregate at the source-cluster level:
-
-```sh
-pnpm run summarize-strategic-pilots \
-  --out runs/strategic-pilot-aggregate.json \
-  runs/source-1 runs/source-2 runs/source-3 runs/source-4
-```
-
-The summarizer scans model report JSON recursively, rejects broken plan, call,
-treatment, execution, analysis, or report joins, averages repeated provider-call
-runs inside each source first, and computes uncertainty across source means. It
-marks fewer than four valid source clusters as insufficient and never emits a
-ranking.
-
-Add preregistered negative and upper-bound controls with exact notebook files:
-
-```sh
-pnpm run strategic-pilot \
-  --models openrouter:<model-id> \
-  --source <source.json> \
-  --treatment stale=<stale.txt> \
-  --treatment false=<false.txt> \
-  --treatment placebo=<placebo.txt> \
-  --treatment oracle=<oracle.txt>
-```
-
-The output directory is private evidence and must be new or empty. Every
-artifact is written create-only; reruns require a new directory rather than
-silently replacing evidence. `source.json` contains exact private source
-evidence; each model JSON contains prompts and raw provider responses;
-`summary.json` is only a batch index. Do not publish these files through the
-static-site exporter. One team pair is one uncertainty cluster, so one command
-can establish plumbing and discover gross effects but cannot support a model
-ranking.
-
-## Trade message forks
-
-Fork one trade-offer node of a deterministic synthetic circuit into matched
-offers that differ only in the public message, and measure the counterparty's
-decision at fixed pre-offer state ([design](trade-forks.md)):
-
-```sh
-pnpm run trade-message-pilot \
-  --message honest=controls/honest.txt \
-  --message deceptive=controls/deceptive.txt \
-  --models openrouter:<model-id> \
-  --reasoning high \
-  --horizon terminal \
-  --out runs/trade-message-1
-```
-
-Every arm binds identical terms, rationale, and notebook bytes; only the
-message varies. `--scripted accept|reject` replaces the model responder for
-provider-free plumbing checks, and `--horizon terminal` continues each arm to
-terminal league utility under the declared default-tolerant controllers. One
-node is one cluster and is never a ranking.
-
-Use this sequence before expanding the benchmark:
-
-1. **Smoke:** one frontier model, one source, one draw. Require a complete run,
-   strict JSON, accepted legal commands, and joined terminal evidence.
-2. **Signal check:** two or three materially different frontier models, at
-   least four independently chosen team-pair/source clusters, and at least
-   eight common draws per arm. Keep prompts and controller policies frozen.
-3. **Falsification:** add stale, false, placebo, and oracle notebooks. Authentic
-   memory should beat withholding in the intended cases; false memory should
-   harm more than placebo; oracle information should provide a visible upper
-   bound.
-4. **Replication:** rerun the preregistered sources under a new provider-call
-   batch and require the direction of the source-cluster effect to survive.
-5. **Only then scale:** build unbiased source selection, stronger fixed policy
-   populations, and a native shard package.
-
-Stop investing in this evaluation layer if protocol-valid and legal completion
-is below 95%, authentic versus withheld has no stable source-cluster signal,
-false information is not detectably worse than irrelevant information, effects
-collapse under a second downstream policy, or provider cost makes the required
-replication impractical. In that case the existing Pokémon harness remains the
-product, and the most useful additions are likely model coaching/scouting
-experiments, search-versus-model action proposals, draft-plan adherence forks,
-or a curated expert disagreement and failure-mode corpus rather than another
-headline benchmark.
 
 ### Resume a tournament
 
@@ -396,10 +188,9 @@ The local dynamic GUI uses these canonical routes: **Home**, **Method**,
 **Docs**, **Draft leagues**, **Live**, **Tournaments**, and **New run**. Home and
 Method render the committed, hash-checked selected artifact. The static GitHub
 Pages build is archive-only: it retains the research and archive routes and
-omits **Live** and **New run**. Only the
-[Evaluation plan](evaluation-plan.md#program-status) defines release status.
+omits **Live** and **New run**.
 
-Showdown and the versioned offline evaluator remain authoritative. The
+Showdown remains authoritative. The
 [Architecture](architecture.md#state-evidence-and-trust) defines browser and
 anonymous evidence boundaries.
 
@@ -407,33 +198,6 @@ Decision and context logs record authorized observations and submitted model
 evidence. These logs do not prove that Showdown accepted a transition. Join them
 with game and referee logs to establish legality, substitutions, timer defaults,
 and outcomes.
-
-## Export experimental position evidence
-
-The supported offline commands are experimental and do not run a comparison
-model:
-
-```sh
-pnpm run grade-positions --workers 4 --restart
-pnpm run export-position-panels --horizon 2 --luck 8 --opponents 4 --seed panels-1
-```
-
-`grade-positions` replays eligible games exactly and evaluates every legal
-action once with the canonical three-panel exhaustive estimator. Its schema-v3
-cache stores source joins with private, exact, pid-keyed generating-model
-provenance; the recorded action; state value; canonical protocol and seed; and
-versioned qualification metrics. It does not store action-value matrices. Use
-`--restart` if an older grading cache exists.
-
-`export-position-panels` requires the same `--horizon`, `--luck`, and
-`--opponents` budgets as the grading manifest. It selects positions only from
-the manifest's grade-time qualification metrics and generates fresh panels in
-the exporter seed namespace. It writes one public candidate root and one
-private root that contains score and sealed-panel files.
-
-Neither command releases a position package. Only the
-[Evaluation plan](evaluation-plan.md#program-status) defines status, and its
-`vgc-positions-v1` section defines the remaining gates.
 
 ## Archive and publish
 

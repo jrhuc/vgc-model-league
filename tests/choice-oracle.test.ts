@@ -9,7 +9,7 @@ import { acceptedBattleActionEntries } from '../src/fork.js';
 import { REPO_ROOT } from '../src/paths.js';
 import { loadShowdown } from '../src/showdown.js';
 import type { BattleRequest, Pid } from '../src/types.js';
-import { requestActionCandidates } from './fixtures/eval.js';
+import { requestActionCandidates } from './fixtures/fork.js';
 
 const Showdown = loadShowdown();
 const SEED = '31,41,59,26' as const;
