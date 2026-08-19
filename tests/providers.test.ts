@@ -346,4 +346,5 @@ test('OpenRouter forwards an explicit reasoning token budget with text headroom'
   );
   assert.equal(body.max_tokens, 16384);
   assert.deepEqual(body.reasoning, { max_tokens: 12288 });
+  assert.equal(body.reasoning_effort, undefined);
 });
