@@ -2,11 +2,11 @@
 
 ## Install
 
-Install Node.js 24.18.1 and pnpm 11.11.0. Then install dependencies, set up
+Install Node.js 24.18.1 and pnpm 11.22.0. Then install dependencies, set up
 Showdown, build the project, and run the tests:
 
 ```sh
-npm install --global pnpm@11.11.0 --ignore-scripts --no-audit --no-fund
+npm install --global pnpm@11.22.0 --ignore-scripts --no-audit --no-fund
 pnpm install --frozen-lockfile
 pnpm run setup:showdown
 pnpm run build

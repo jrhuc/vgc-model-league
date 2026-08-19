@@ -23,7 +23,7 @@ continuation.
 
 ## Run locally
 
-Install Node.js 24.18.1 and pnpm 11.11.0. Executable model specifications use
+Install Node.js 24.18.1 and pnpm 11.22.0. Executable model specifications use
 one of these exact forms:
 
 - `openrouter:<model-id>`
