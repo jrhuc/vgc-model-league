@@ -36,6 +36,7 @@ Options:
   --seed <value>             deterministic source and common-draw namespace
   --draws <n>                common future draws per treatment (default: 4)
   --reasoning <level>        minimal, low, medium, high, or xhigh
+  --reasoning-max-tokens <n> explicit reasoning budget below --max-tokens (OpenRouter)
   --model-decisions <n|all>  focal model non-forced choices per arm (default: 1)
   --nitro                    add OpenRouter's :nitro routing variant
   --max-tokens <n>           output-token cap for each model call (default: 8192)
@@ -187,6 +188,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
       seed: { type: 'string', default: '20260816' },
       draws: { type: 'string', default: '4' },
       reasoning: { type: 'string' },
+      'reasoning-max-tokens': { type: 'string' },
       'model-decisions': { type: 'string', default: '1' },
       nitro: { type: 'boolean', default: false },
       'max-tokens': { type: 'string', default: '8192' },
@@ -215,6 +217,10 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
   const models = values.nitro ? rawModels.map(nitroSpec) : rawModels;
   if (new Set(models).size !== models.length) throw new Error('frontier pilot repeats a model spec');
   const reasoningLevel = reasoning(values.reasoning);
+  const reasoningMaxTokens =
+    values['reasoning-max-tokens'] === undefined
+      ? undefined
+      : integer(values['reasoning-max-tokens'], 'reasoning-max-tokens');
   const modelDecisionLimit = parsedModelDecisionLimit(values['model-decisions']);
   const drawCount = integer(values.draws, 'draws');
   const maxTokens = integer(values['max-tokens'], 'max-tokens');
@@ -277,6 +283,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
         modelSpec,
         provider,
         ...(reasoningLevel === undefined ? {} : { reasoning: reasoningLevel }),
+        ...(reasoningMaxTokens === undefined ? {} : { reasoningMaxTokens }),
         modelDecisionLimit,
         maxTokens,
         timeoutSeconds,
@@ -304,6 +311,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
         additionalTreatments,
         focalPid: 'p1',
         ...(reasoningLevel === undefined ? {} : { reasoning: reasoningLevel }),
+        ...(reasoningMaxTokens === undefined ? {} : { reasoningMaxTokens }),
         modelDecisionLimit,
         drawCount,
         drawSeed: values.seed,

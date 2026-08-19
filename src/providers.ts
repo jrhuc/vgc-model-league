@@ -494,6 +494,13 @@ class SdkProvider implements Provider {
         maxOutputTokens: options.maxTokens ?? 1200,
         temperature: options.temperature ?? 0.2,
         ...(this.reasoning ? { reasoning: this.reasoning } : {}),
+        ...(options.reasoningMaxTokens
+          ? {
+              providerOptions: {
+                [this.spec.provider]: { reasoning: { max_tokens: options.reasoningMaxTokens } },
+              },
+            }
+          : {}),
         maxRetries: 0,
         abortSignal,
         onError: ({ error }) => {

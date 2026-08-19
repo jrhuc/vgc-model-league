@@ -112,6 +112,8 @@ export interface ProviderMessage extends JsonObject {
 
 export interface CompleteOptions {
   maxTokens?: number;
+  /** Explicit reasoning-token budget below maxTokens, guaranteeing visible-text headroom. */
+  reasoningMaxTokens?: number;
   temperature?: number;
   timeout?: number;
   tools?: ToolDefinition[];

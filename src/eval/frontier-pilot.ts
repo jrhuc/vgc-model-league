@@ -146,6 +146,7 @@ export type FrontierPilotModelDecisionLimit = number | 'all';
 export interface FrontierPilotModelConfig {
   modelSpec: string;
   reasoning: ReasoningLevel | null;
+  reasoningMaxTokens: number | null;
   modelDecisionLimit: FrontierPilotModelDecisionLimit;
   downstreamPolicy: 'first-showdown-accepted-action-v1';
   maxTokens: number;
@@ -205,6 +206,7 @@ export interface FrontierPilotControllerOptions {
   modelSpec: string;
   provider: Provider;
   reasoning?: ReasoningLevel;
+  reasoningMaxTokens?: number;
   modelDecisionLimit?: FrontierPilotModelDecisionLimit;
   maxTokens?: number;
   timeoutSeconds?: number;
@@ -491,15 +493,22 @@ export function frontierPilotProvider(modelSpec: string, reasoning?: ReasoningLe
 export function frontierPilotModelConfig(input: {
   modelSpec: string;
   reasoning?: ReasoningLevel;
+  reasoningMaxTokens?: number;
   modelDecisionLimit?: FrontierPilotModelDecisionLimit;
   maxTokens?: number;
   timeoutSeconds?: number;
 }): FrontierPilotModelConfig {
   const maxTokens = positiveInteger(input.maxTokens ?? 8_192, 'maxTokens');
+  const reasoningMaxTokens =
+    input.reasoningMaxTokens === undefined ? null : positiveInteger(input.reasoningMaxTokens, 'reasoningMaxTokens');
+  if (reasoningMaxTokens !== null && reasoningMaxTokens >= maxTokens) {
+    throw new Error('reasoningMaxTokens must leave visible-text headroom below maxTokens');
+  }
   const timeoutSeconds = positiveInteger(input.timeoutSeconds ?? 600, 'timeoutSeconds');
   const base = {
     modelSpec: input.modelSpec,
     reasoning: input.reasoning ?? null,
+    reasoningMaxTokens,
     modelDecisionLimit: modelDecisionLimit(input.modelDecisionLimit),
     downstreamPolicy: 'first-showdown-accepted-action-v1' as const,
     maxTokens,
@@ -605,6 +614,7 @@ export class FrontierPilotActionController implements FrozenMatchdayContinuation
         [{ role: 'user', content: task.public.prompt }],
         {
           maxTokens: this.model.maxTokens,
+          ...(this.model.reasoningMaxTokens === null ? {} : { reasoningMaxTokens: this.model.reasoningMaxTokens }),
           timeout: this.model.timeoutSeconds,
           temperature: this.model.temperature,
           toolChoice: 'none',
@@ -744,6 +754,7 @@ export async function generateFrontierAuthenticNotebook(input: {
   modelSpec: string;
   provider: Provider;
   reasoning?: ReasoningLevel;
+  reasoningMaxTokens?: number;
   modelDecisionLimit?: FrontierPilotModelDecisionLimit;
   maxTokens?: number;
   timeoutSeconds?: number;
@@ -761,6 +772,7 @@ export async function generateFrontierAuthenticNotebook(input: {
   try {
     completion = await input.provider.complete(NOTEBOOK_SYSTEM, [{ role: 'user', content: prompt }], {
       maxTokens: model.maxTokens,
+      ...(model.reasoningMaxTokens === null ? {} : { reasoningMaxTokens: model.reasoningMaxTokens }),
       timeout: model.timeoutSeconds,
       temperature: model.temperature,
       toolChoice: 'none',
@@ -990,6 +1002,7 @@ export async function runFrontierStrategicPilot(input: {
   additionalTreatments?: readonly NotebookTreatment[];
   focalPid?: Pid;
   reasoning?: ReasoningLevel;
+  reasoningMaxTokens?: number;
   modelDecisionLimit?: FrontierPilotModelDecisionLimit;
   drawCount?: number;
   drawSeed?: string | number;
@@ -1053,6 +1066,7 @@ export async function runFrontierStrategicPilot(input: {
         modelSpec: input.modelSpec,
         provider: input.provider,
         ...(input.reasoning === undefined ? {} : { reasoning: input.reasoning }),
+        ...(input.reasoningMaxTokens === undefined ? {} : { reasoningMaxTokens: input.reasoningMaxTokens }),
         modelDecisionLimit: model.modelDecisionLimit,
         ...(input.maxTokens === undefined ? {} : { maxTokens: input.maxTokens }),
         ...(input.timeoutSeconds === undefined ? {} : { timeoutSeconds: input.timeoutSeconds }),
