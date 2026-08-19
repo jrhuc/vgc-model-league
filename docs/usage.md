@@ -25,6 +25,15 @@ pnpm run update:showdown
 The update command builds and tests the candidate. If either step fails, the
 command restores the previous revision.
 
+A pin update also moves three reviewed values that the test suite checks
+against the lock: the runtime digest map in `src/eval/producer.ts` (the new
+digest appears in the mismatch error after the candidate builds), the
+`SHOWDOWN_REVISION` substrate pin in
+`environments/vgc_circuit_v1/vgc_circuit_v1/protocol.py`, and the pinned
+permalinks in `docs/related-work.md`. Record them before the update's test
+phase, or it rolls the build back. Review the upstream diff against the
+format rules in [CLAUDE.md](../CLAUDE.md) before accepting any candidate.
+
 ## Validate the internal VGC Circuit package
 
 Build and test the TypeScript circuit bundle and root integration first. Then
