@@ -182,8 +182,13 @@ allocation, budgets, notebooks, construction artifacts, league contexts,
 transaction state, and pending prompt bytes rather than only elapsed decision
 counts. The native whole-circuit adapter now records seat returns as non-training
 arena metrics by default; repeated trace rewards require an explicit legacy
-switch. Next, bind matched downstream controller populations and common future
-seed plans to complete draft and transaction forks.
+switch. Trade turns are now forkable decision nodes with canonical parsed
+action identity and a matched message-only intervention contract
+([trade-forks.md](trade-forks.md)); the transaction summary carries the public
+message, proposer rationale, and evidence flags so forked negotiations join
+their source at the evidence level. Next, bind matched downstream controller
+populations beyond the declared default-tolerant driver and common future seed
+plans to complete draft and transaction forks.
 
 ### Strategic shard environment
 
