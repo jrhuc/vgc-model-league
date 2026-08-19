@@ -2,7 +2,7 @@
 FROM node:24.18.1-bookworm@sha256:19cd848a0e073d34bd8cd5545a1b6b4d28489b3e3b607366621ced442bd5f6b4 AS build
 
 WORKDIR /build
-RUN corepack enable && corepack prepare pnpm@11.11.0 --activate
+RUN corepack enable && corepack prepare pnpm@11.22.0 --activate
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
 RUN pnpm install --frozen-lockfile
 COPY showdown.lock.json ./
@@ -16,7 +16,7 @@ RUN pnpm exec tsc -p tsconfig.frozen-circuit.json
 FROM node:24.18.1-bookworm@sha256:19cd848a0e073d34bd8cd5545a1b6b4d28489b3e3b607366621ced442bd5f6b4 AS production-dependencies
 
 WORKDIR /deps
-RUN corepack enable && corepack prepare pnpm@11.11.0 --activate
+RUN corepack enable && corepack prepare pnpm@11.22.0 --activate
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
 RUN pnpm install --prod --frozen-lockfile
 
