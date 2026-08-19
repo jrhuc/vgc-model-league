@@ -3,10 +3,10 @@ import { type ReferenceActionScore, type ReferenceSuiteResult, scoreReferenceAct
 import { canonicalJsonDigest } from './serialization.js';
 
 export const STRATEGIC_CHOICE_TASK_PROTOCOL = {
-  version: 1,
+  version: 2,
   actionIdentity: 'opaque-task-salt-canonical-action-digest-v1',
   presentation: 'seeded-shuffle-v1',
-  response: 'strict-json-action-and-declared-forecasts-v1',
+  response: 'final-json-object-action-and-declared-forecasts-v2',
   invalidOutput: 'separate-endpoint-no-implicit-utility-v1',
 } as const;
 
@@ -28,6 +28,7 @@ export interface StrategicPrivateAction extends StrategicPublicAction {
 
 export interface StrategicChoiceTaskPublic {
   protocolVersion: typeof STRATEGIC_CHOICE_TASK_PROTOCOL.version;
+  responseContract: typeof STRATEGIC_CHOICE_TASK_PROTOCOL.response;
   id: string;
   format: string;
   phase: string;
@@ -55,6 +56,7 @@ export interface OpponentModeProbability {
 
 export interface ParsedStrategicChoice {
   status: 'valid';
+  parseMode: 'whole-response' | 'final-object';
   actionId: string;
   pGameWin: number | null;
   pSeriesWin: number | null;
@@ -92,19 +94,24 @@ function actionId(taskId: string, identitySalt: string, canonicalAction: string)
 }
 
 function responseInstruction(mode: StrategicForecastMode): string {
-  if (mode === 'action-only') return 'Return exactly one JSON object {"action_id":"a_..."} and no other keys.';
+  const finality = 'You may reason in text first, but end your reply with that JSON object as its final content.';
+  if (mode === 'action-only') {
+    return ['Return one JSON object {"action_id":"a_..."} and no other keys.', finality].join('\n');
+  }
   if (mode === 'binary-forecast') {
     return [
-      'Return exactly one JSON object with these keys:',
+      'Return one JSON object with these keys:',
       '{"action_id":"a_...","p_game_win":0.0,"p_series_win":0.0,"confidence":0.0}',
-      'Every probability is a number from 0 through 1. Include no prose.',
+      'Every probability is a number from 0 through 1.',
+      finality,
     ].join('\n');
   }
   return [
-    'Return exactly one JSON object with these keys:',
+    'Return one JSON object with these keys:',
     '{"action_id":"a_...","p_game_win":0.0,"p_series_win":0.0,"confidence":0.0,',
     ' "opponent_modes":[{"id":"mode-id","p":0.0}]}',
-    'Opponent-mode probabilities must be unique and sum to 1. Include no prose.',
+    'Opponent-mode probabilities must be unique and sum to 1.',
+    finality,
   ].join('\n');
 }
 
@@ -155,6 +162,7 @@ export function buildStrategicChoiceTask(input: {
   return {
     public: {
       protocolVersion: STRATEGIC_CHOICE_TASK_PROTOCOL.version,
+      responseContract: STRATEGIC_CHOICE_TASK_PROTOCOL.response,
       id: input.id,
       format: input.format,
       phase: input.phase,
@@ -171,17 +179,33 @@ export function buildStrategicChoiceTask(input: {
   };
 }
 
-function parsedObject(response: string): Record<string, unknown> | string {
-  const trimmed = response.trim();
-  if (!trimmed) return 'the reply contained no JSON object';
+function jsonObject(candidate: string): Record<string, unknown> | null {
   try {
-    const parsed = JSON.parse(trimmed) as unknown;
-    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed))
-      return 'the reply must be one JSON object';
+    const parsed = JSON.parse(candidate) as unknown;
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return null;
     return parsed as Record<string, unknown>;
   } catch {
-    return 'the JSON object did not parse';
+    return null;
   }
+}
+
+export interface ExtractedFinalJsonObject {
+  object: Record<string, unknown>;
+  parseMode: 'whole-response' | 'final-object';
+}
+
+/** The final-content contract: prose before the object is tolerated, bytes after it are not. */
+export function extractFinalJsonObject(response: string): ExtractedFinalJsonObject | string {
+  const trimmed = response.replace(/\s*```\s*$/u, '').trim();
+  if (!trimmed) return 'the reply contained no JSON object';
+  const whole = jsonObject(trimmed);
+  if (whole) return { object: whole, parseMode: 'whole-response' };
+  if (!trimmed.endsWith('}')) return 'the reply did not end with a JSON object';
+  for (let start = trimmed.lastIndexOf('{'); start >= 0; start = trimmed.lastIndexOf('{', start - 1)) {
+    const trailing = jsonObject(trimmed.slice(start));
+    if (trailing) return { object: trailing, parseMode: 'final-object' };
+  }
+  return 'the reply did not end with a JSON object';
 }
 
 function allowedKeys(mode: StrategicForecastMode): Set<string> {
@@ -214,8 +238,9 @@ function parseOpponentModes(value: unknown): OpponentModeProbability[] | string 
 }
 
 export function parseStrategicChoice(response: string, task: StrategicChoiceTaskPublic): StrategicChoiceParseResult {
-  const parsed = parsedObject(response);
-  if (typeof parsed === 'string') return { status: 'invalid', reason: parsed };
+  const extracted = extractFinalJsonObject(response);
+  if (typeof extracted === 'string') return { status: 'invalid', reason: extracted };
+  const { object: parsed, parseMode } = extracted;
   const allowed = allowedKeys(task.forecastMode);
   const keys = Object.keys(parsed);
   if (keys.some((key) => !allowed.has(key)) || keys.length !== allowed.size) {
@@ -227,6 +252,7 @@ export function parseStrategicChoice(response: string, task: StrategicChoiceTask
   if (task.forecastMode === 'action-only') {
     return {
       status: 'valid',
+      parseMode,
       actionId: parsed.action_id,
       pGameWin: null,
       pSeriesWin: null,
@@ -247,6 +273,7 @@ export function parseStrategicChoice(response: string, task: StrategicChoiceTask
   }
   return {
     status: 'valid',
+    parseMode,
     actionId: parsed.action_id,
     pGameWin: pGameWin as number,
     pSeriesWin: pSeriesWin as number,

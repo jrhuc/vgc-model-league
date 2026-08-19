@@ -49,16 +49,21 @@ test('strategic parser keeps invalid output separate from legal action utility',
     task,
   );
   assert.equal(valid.status, 'valid');
+  assert.equal(valid.status === 'valid' && valid.parseMode, 'whole-response');
   const invalid = parseStrategicChoice(
     JSON.stringify({ action_id: actionId, p_game_win: 0.55, p_series_win: 0.62, confidence: 0.7, rationale: 'extra' }),
     task,
   );
   assert.equal(invalid.status, 'invalid');
-  const wrapped = parseStrategicChoice(
-    `Decision: ${JSON.stringify({ action_id: actionId, p_game_win: 0.55, p_series_win: 0.62, confidence: 0.7 })}`,
-    task,
-  );
-  assert.equal(wrapped.status, 'invalid');
+  const object = JSON.stringify({ action_id: actionId, p_game_win: 0.55, p_series_win: 0.62, confidence: 0.7 });
+  const wrapped = parseStrategicChoice(`I weighed the speed tiers first.\n\nDecision: ${object}`, task);
+  assert.equal(wrapped.status === 'valid' && wrapped.parseMode, 'final-object');
+  const fenced = parseStrategicChoice(`Analysis first.\n\`\`\`json\n${object}\n\`\`\``, task);
+  assert.equal(fenced.status === 'valid' && fenced.parseMode, 'final-object');
+  const trailingProse = parseStrategicChoice(`${object}\nSo that is my choice.`, task);
+  assert.equal(trailingProse.status, 'invalid');
+  const extraKeysAtEnd = parseStrategicChoice(`Decision: ${object.slice(0, -1)},"rationale":"extra"}`, task);
+  assert.equal(extraKeysAtEnd.status, 'invalid');
 });
 
 test('strategic choice joins opaque action ids to an absolute reference score', () => {

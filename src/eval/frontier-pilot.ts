@@ -44,13 +44,19 @@ import {
   runFrozenMatchdayNotebookFork,
 } from './frozen-matchday-adapter.js';
 import { canonicalJson, canonicalJsonDigest } from './serialization.js';
-import { buildStrategicChoiceTask, parseStrategicChoice, type StrategicChoiceTaskPackage } from './strategic-task.js';
+import {
+  buildStrategicChoiceTask,
+  extractFinalJsonObject,
+  parseStrategicChoice,
+  type StrategicChoiceTaskPackage,
+} from './strategic-task.js';
 
 export const FRONTIER_STRATEGIC_PILOT_PROTOCOL = {
-  version: 2,
+  version: 3,
   source: 'deterministic-first-legal-completed-matchday-v1',
   treatment: 'model-written-game-one-private-notebook-v1',
   policy: 'bounded-frontier-decisions-then-first-legal-continuation-v2',
+  response: 'final-json-object-tolerates-preceding-prose-v1',
   sampling: 'temperature-zero-no-provider-seed-balanced-arm-order-v1',
   history: 'bounded-full-authorized-continuation-pov-v1',
   taskIdentity: 'opportunity-and-authorized-state-digest-v1',
@@ -63,14 +69,14 @@ const ACTION_SYSTEM = [
   'Use only the authorized state, private notebook, open team sheets, and legal actions in the prompt.',
   'No interactive mechanics tools are available in this pilot.',
   'Optimize the probability of winning the complete series, not merely the current turn.',
-  'Reason as deeply as needed, then return only the exact JSON object requested by the task.',
+  'Reason as deeply as needed, then end your reply with the exact JSON object requested by the task.',
 ].join('\n');
 
 const NOTEBOOK_SYSTEM = [
   'You are writing private between-game memory for a controlled Pokémon VGC strategic intervention.',
   'Use only the authorized game-one evidence and open team sheets in the prompt.',
   'Record concrete opponent tendencies, revealed information, failed assumptions, and an actionable next-game plan.',
-  'Return only one JSON object with exactly the key notebook.',
+  'End your reply with one JSON object with exactly the key notebook as its final content.',
 ].join('\n');
 
 export interface FrontierPilotOpenSet {
@@ -123,6 +129,7 @@ export interface FrontierPilotCallTrace {
   latencyMs: number;
   status: FrontierPilotCallStatus;
   diagnostic: string | null;
+  parseMode: 'whole-response' | 'final-object' | null;
   selectedActionId: string | null;
   canonicalAction: string | null;
   callDigest: string;
@@ -619,6 +626,7 @@ export class FrontierPilotActionController implements FrozenMatchdayContinuation
         latencyMs: Date.now() - started,
         status: 'provider-error',
         diagnostic: failure.summary,
+        parseMode: null,
         selectedActionId: null,
         canonicalAction: null,
       };
@@ -641,6 +649,7 @@ export class FrontierPilotActionController implements FrozenMatchdayContinuation
         latencyMs: Date.now() - started,
         status: 'invalid',
         diagnostic: parsed.reason,
+        parseMode: null,
         selectedActionId: null,
         canonicalAction: null,
       };
@@ -663,6 +672,7 @@ export class FrontierPilotActionController implements FrozenMatchdayContinuation
       latencyMs: Date.now() - started,
       status: 'valid',
       diagnostic: null,
+      parseMode: parsed.parseMode,
       selectedActionId: parsed.actionId,
       canonicalAction: selected.canonicalAction,
     };
@@ -695,7 +705,8 @@ function notebookPrompt(input: {
   return [
     'Write the private notebook that this seat will receive before the next game.',
     'The notebook may be detailed, but it must fit the 20,000-character frozen matchday limit.',
-    'Return exactly {"notebook":"..."} with no other keys and no prose outside the JSON object.',
+    'Return {"notebook":"..."} with no other keys.',
+    'You may reason in text first, but end your reply with that JSON object as its final content.',
     '',
     JSON.stringify(
       {
@@ -715,20 +726,15 @@ function notebookPrompt(input: {
   ].join('\n');
 }
 
-function parsedNotebook(response: string): string | null {
-  const trimmed = response.trim();
-  if (!trimmed) return null;
-  let value: unknown;
-  try {
-    value = JSON.parse(trimmed);
-  } catch {
-    return null;
-  }
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
-  const record = value as Record<string, unknown>;
+function parsedNotebook(
+  response: string,
+): { notebook: string; parseMode: FrontierPilotCallTrace['parseMode'] } | null {
+  const extracted = extractFinalJsonObject(response);
+  if (typeof extracted === 'string') return null;
+  const record = extracted.object;
   if (Object.keys(record).length !== 1 || typeof record.notebook !== 'string') return null;
   if (!record.notebook.trim() || record.notebook.length > FROZEN_MATCHDAY_NOTEBOOK_LIMIT) return null;
-  return record.notebook;
+  return { notebook: record.notebook, parseMode: extracted.parseMode };
 }
 
 export async function generateFrontierAuthenticNotebook(input: {
@@ -775,13 +781,14 @@ export async function generateFrontierAuthenticNotebook(input: {
       latencyMs: Date.now() - started,
       status: 'provider-error',
       diagnostic: failure.summary,
+      parseMode: null,
       selectedActionId: null,
       canonicalAction: null,
     });
     return { status: 'invalid', treatment: null, trace };
   }
-  const notebook = parsedNotebook(completion.text);
-  if (notebook === null) {
+  const parsedNotebookResult = parsedNotebook(completion.text);
+  if (parsedNotebookResult === null) {
     const trace = traced({
       protocolVersion: FRONTIER_STRATEGIC_PILOT_PROTOCOL.version,
       id,
@@ -795,7 +802,8 @@ export async function generateFrontierAuthenticNotebook(input: {
       ...completionFields(completion),
       latencyMs: Date.now() - started,
       status: 'invalid',
-      diagnostic: 'notebook response must be exact JSON with one non-empty notebook string within the limit',
+      diagnostic: 'notebook response must end with one JSON object holding one non-empty notebook string within the limit',
+      parseMode: null,
       selectedActionId: null,
       canonicalAction: null,
     });
@@ -815,6 +823,7 @@ export async function generateFrontierAuthenticNotebook(input: {
     latencyMs: Date.now() - started,
     status: 'valid',
     diagnostic: null,
+    parseMode: parsedNotebookResult.parseMode,
     selectedActionId: null,
     canonicalAction: null,
   });
@@ -823,7 +832,7 @@ export async function generateFrontierAuthenticNotebook(input: {
     treatment: buildNotebookTreatment({
       id: `authentic-${trace.callDigest.slice(0, 16)}`,
       kind: 'authentic',
-      notebook,
+      notebook: parsedNotebookResult.notebook,
       sourceDigest: trace.callDigest,
     }),
     trace,
@@ -903,7 +912,7 @@ function decisionNode(checkpoint: FrozenMatchdayBetweenGameCheckpoint, focalPid:
     sourceEpisodeDigest: checkpoint.sourceTerminalDigest,
     publicStateDigest: canonicalJsonDigest(checkpoint.sourcePovLines[focalPid]),
     privateStateDigest: canonicalJsonDigest(checkpoint.privateEvidence[focalPid]),
-    promptDigest: canonicalJsonDigest(['frontier-pilot-between-game-notebook-v2', checkpoint.afterGame]),
+    promptDigest: canonicalJsonDigest(['frontier-pilot-between-game-notebook-v3', checkpoint.afterGame]),
     legalActionDigest: canonicalJsonDigest(['full-notebook-replacement-or-withheld-v1']),
   };
 }

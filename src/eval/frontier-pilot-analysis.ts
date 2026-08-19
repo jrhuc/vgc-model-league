@@ -9,7 +9,7 @@ import { FROZEN_MATCHDAY_ADAPTER_PROTOCOL } from './frozen-matchday-adapter.js';
 import { canonicalJsonDigest } from './serialization.js';
 
 export const FRONTIER_PILOT_AGGREGATION_PROTOCOL = {
-  version: 2,
+  version: 3,
   reportValidation: 'canonical-report-plan-call-treatment-and-execution-digests-v2',
   replicationIdentity: 'reject-duplicate-source-plan-treatment-outcome-and-call-evidence-v1',
   sourceUnit: 'mean-within-source-replication-v1',
