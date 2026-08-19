@@ -67,13 +67,13 @@ Commands:
   exhibition --opponent <spec>        host one bo3 where a terminal agent plays a seat over a local bridge
       [--seat p1|p2] [--name <label>] [--pool <name>] [--seed <n>] [--port <n>] [--reasoning <level>]
       [--agent-dir <path>]
-      opponent specs: openrouter:<model-id>, prime:<model-id>, or random
+      opponent specs: openrouter:<model-id>, prime:<model-id>, gateway:<model-id>, or random
   outcomes [--pool <name>]            print contextual per-series outcomes without an aggregate ranking
   report [--out <path>] [--pool <name>]  write an HTML report
   export-site [--out <dir>] [--run <id>]... [--pool <name>] [--include-test]
       write the public archive as static JSON for the GitHub Pages site
 
-Model specs are exactly openrouter:<model-id>, prime:<model-id>, or random.
+Model specs are exactly openrouter:<model-id>, prime:<model-id>, gateway:<model-id>, or random.
 CLI calls read OPENROUTER_API_KEY or PRIME_API_KEY for the selected provider.
 Prime model IDs are entered manually; OpenRouter model discovery is available in the GUI.
 

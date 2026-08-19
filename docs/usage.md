@@ -35,13 +35,16 @@ Use one of these exact executable model spec formats:
 
 - `openrouter:<model-id>`
 - `prime:<model-id>`
+- `gateway:<model-id>`
 - `random`, the legal-action baseline
 
 OpenRouter uses `OPENROUTER_API_KEY` and the fixed
 `https://openrouter.ai/api/v1` endpoint. Its GUI catalog lists current model
 IDs. Prime Inference uses `PRIME_API_KEY` and the fixed
-`https://api.pinference.ai/api/v1` endpoint; enter its model ID manually. Model
-specs do not accept a base URL. GUI credentials entered in the browser remain
+`https://api.pinference.ai/api/v1` endpoint; enter its model ID manually. The
+Vercel AI Gateway uses `AI_GATEWAY_API_KEY` and the fixed
+`https://ai-gateway.vercel.sh/v1` endpoint; enter its `creator/model` ID
+manually. Model specs do not accept a base URL. GUI credentials entered in the browser remain
 in server memory only for that run.
 
 Run the GUI, a self-check, or an experiment:

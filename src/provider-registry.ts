@@ -1,11 +1,14 @@
-type ProviderId = 'openrouter' | 'prime' | 'random';
+type ProviderId = 'openrouter' | 'prime' | 'gateway' | 'random';
 
 export interface ProviderOption {
   readonly id: ProviderId;
   readonly label: string;
   readonly description: string;
-  readonly envKey?: 'OPENROUTER_API_KEY' | 'PRIME_API_KEY';
-  readonly baseUrl?: 'https://openrouter.ai/api/v1' | 'https://api.pinference.ai/api/v1';
+  readonly envKey?: 'OPENROUTER_API_KEY' | 'PRIME_API_KEY' | 'AI_GATEWAY_API_KEY';
+  readonly baseUrl?:
+    | 'https://openrouter.ai/api/v1'
+    | 'https://api.pinference.ai/api/v1'
+    | 'https://ai-gateway.vercel.sh/v1';
   readonly discovery: 'list' | 'manual' | 'none';
   readonly requiresKey: boolean;
 }
@@ -32,6 +35,15 @@ export const PROVIDER_OPTIONS: readonly ProviderOption[] = [
     description: 'Enter a Prime Inference model ID',
     envKey: 'PRIME_API_KEY',
     baseUrl: 'https://api.pinference.ai/api/v1',
+    discovery: 'manual',
+    requiresKey: true,
+  },
+  {
+    id: 'gateway',
+    label: 'Vercel AI Gateway',
+    description: 'Enter a Vercel AI Gateway model ID',
+    envKey: 'AI_GATEWAY_API_KEY',
+    baseUrl: 'https://ai-gateway.vercel.sh/v1',
     discovery: 'manual',
     requiresKey: true,
   },

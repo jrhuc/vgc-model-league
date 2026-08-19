@@ -30,7 +30,7 @@ function chatStream(text: string, final: Record<string, unknown> = {}): Response
   ]);
 }
 
-test('provider specs are exactly OpenRouter, Prime Inference, and random', () => {
+test('provider specs are exactly OpenRouter, Prime Inference, the Vercel AI Gateway, and random', () => {
   assert.deepEqual(parseSpec('openrouter:anthropic/claude-sonnet-4:nitro'), {
     provider: 'openrouter',
     model: 'anthropic/claude-sonnet-4:nitro',
@@ -39,8 +39,13 @@ test('provider specs are exactly OpenRouter, Prime Inference, and random', () =>
     provider: 'prime',
     model: 'Qwen/Qwen3-32B',
   });
+  assert.deepEqual(parseSpec('gateway:anthropic/claude-sonnet-4.5'), {
+    provider: 'gateway',
+    model: 'anthropic/claude-sonnet-4.5',
+  });
   assert.deepEqual(parseSpec('random'), { provider: 'random', model: 'random' });
   assert.throws(() => validateReasoning(parseSpec('prime:model'), 'high'), /no advertised configurable reasoning/);
+  assert.throws(() => validateReasoning(parseSpec('gateway:model'), 'high'), /no advertised configurable reasoning/);
   assert.doesNotThrow(() => validateReasoning(parseSpec('openrouter:model'), 'high'));
   assert.throws(() => validateReasoning(parseSpec('openrouter:model'), 'off' as never), /invalid reasoning level/);
 
@@ -48,6 +53,8 @@ test('provider specs are exactly OpenRouter, Prime Inference, and random', () =>
     'openrouter:',
     'prime:',
     'prime:-model',
+    'gateway:',
+    'gateway:-model',
     'openrouter:model name',
     'unknown:model',
     'random:anything',
@@ -162,6 +169,32 @@ test('Prime uses only its fixed OpenAI-compatible chat endpoint and plain respon
   assert.equal(completion.provider, undefined);
   assert.deepEqual(completion.usage, { input_tokens: 7, output_tokens: 3 });
   assert.equal(completion.text, 'prime reply');
+});
+
+test('the Vercel AI Gateway uses only its fixed OpenAI-compatible chat endpoint', async () => {
+  let url = '';
+  let authorization = '';
+  let body: Record<string, unknown> = {};
+  const fetch = (async (input, init) => {
+    url = String(input);
+    authorization = new Headers(init?.headers).get('authorization') ?? '';
+    body = JSON.parse(String(init?.body));
+    return chatStream('gateway reply', {
+      usage: { prompt_tokens: 5, completion_tokens: 2, total_tokens: 7 },
+    });
+  }) as typeof globalThis.fetch;
+
+  const completion = await makeProvider(parseSpec('gateway:anthropic/claude-sonnet-4.5'), {
+    apiKey: 'gateway-key',
+    fetch,
+  }).complete('system', [{ role: 'user', content: 'hello' }], { maxTokens: 1111 });
+
+  assert.equal(url, 'https://ai-gateway.vercel.sh/v1/chat/completions');
+  assert.equal(authorization, 'Bearer gateway-key');
+  assert.equal(body.model, 'anthropic/claude-sonnet-4.5');
+  assert.equal(body.max_tokens, 1111);
+  assert.equal(completion.text, 'gateway reply');
+  assert.deepEqual(completion.usage, { input_tokens: 5, output_tokens: 2 });
 });
 
 test('the common compatible stream preserves tools, structured finish reason, and replay messages', async () => {
