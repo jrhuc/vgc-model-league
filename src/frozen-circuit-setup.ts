@@ -4,7 +4,6 @@ import path from 'node:path';
 
 import { connectedDraftPromptRevision, type DraftBoardMon, type DraftState, loadBoard, snakeOrder } from './draft.js';
 import { buildDraftLeagueSchedule, draftLeaguePlayoffReview } from './draftleague.js';
-import { canonicalJsonDigest } from './eval/serialization.js';
 import { FROZEN_BATTLE_REFEREE_PROTOCOL_VERSION } from './frozen-battle-referee.js';
 import {
   type AcceptedConstruction,
@@ -34,6 +33,7 @@ import {
 import type { TeambuildView } from './gui/api.js';
 import { BOARDS_DIR, REPO_ROOT } from './paths.js';
 import { seededRng, seriesEntropy, shuffle } from './random.js';
+import { canonicalJsonDigest } from './serialization.js';
 import { seriesSeedSchedule } from './series.js';
 import { loadShowdown } from './showdown.js';
 import {

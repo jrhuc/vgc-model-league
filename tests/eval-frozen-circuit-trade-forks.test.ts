@@ -13,7 +13,7 @@ import {
   runMatchedTradeOfferForks,
   selectFrozenCircuitTradeReceipts,
 } from '../src/eval/frozen-circuit-trade-forks.js';
-import { canonicalJsonDigest } from '../src/eval/serialization.js';
+import { canonicalJsonDigest } from '../src/serialization.js';
 import { parseTradeOffer, type TradeWindowState, tradeWindowOrder } from '../src/trade-window.js';
 
 function validOfferTerms(state: TradeWindowState): { from: number; to: number; give: string; get: string } {

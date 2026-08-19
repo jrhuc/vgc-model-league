@@ -1,9 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { Battle } from 'pokemon-showdown';
-
-import { requestActionCandidateEntries } from '../src/eval/fork.js';
 import { POSITION_TASK_PROTOCOL, renderPositionTask, validateTaskScoreJoin } from '../src/eval/task.js';
+import { requestActionCandidateEntries } from '../src/fork.js';
 import { loadPool } from '../src/teams.js';
 import type { BattleRequest } from '../src/types.js';
 

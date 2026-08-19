@@ -8,7 +8,7 @@ import {
   aggregateFrontierPilotReports,
   type FrontierPilotAggregateReport,
 } from '../src/eval/frontier-pilot-analysis.js';
-import { canonicalJson } from '../src/eval/serialization.js';
+import { canonicalJson } from '../src/serialization.js';
 
 const HELP = `Usage: pnpm run summarize-strategic-pilots [options] <report-or-directory>...
 

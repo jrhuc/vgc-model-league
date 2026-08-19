@@ -23,7 +23,6 @@ import {
 import type { DraftLeagueEvent } from '../src/draftleague.js';
 import { DRAFT_PROTOCOL_VERSION, runDraftLeague } from '../src/draftleague.js';
 import { draftLeagueTopology, roundRobinWeeks } from '../src/draftleague-topology.js';
-import { canonicalJson } from '../src/eval/serialization.js';
 import { readJsonlObjects } from '../src/jsonl.js';
 import { defaultPsDir } from '../src/paths.js';
 import { FORMAT_AUTHORITY_NOTICE } from '../src/prompts.js';
@@ -32,6 +31,7 @@ import { seededRng, seriesEntropy } from '../src/random.js';
 import { loadSeriesRecords } from '../src/records.js';
 import { RecoveryGate } from '../src/recovery.js';
 import { parseSeasonReview, runSeasonReview, type SeasonReviewState } from '../src/season-review.js';
+import { canonicalJson } from '../src/serialization.js';
 import { foldSeriesGames } from '../src/series.js';
 import { loadShowdown } from '../src/showdown.js';
 import { runTeambuild, teambuildScaffoldRevision } from '../src/teambuild.js';

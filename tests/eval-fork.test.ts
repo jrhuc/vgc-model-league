@@ -11,7 +11,7 @@ import {
   playJoint,
   replayGame,
   requestActionCandidateEntries,
-} from '../src/eval/fork.js';
+} from '../src/fork.js';
 import { loadPool } from '../src/teams.js';
 import type { BattleRequest, Pid } from '../src/types.js';
 import { omniscientLog, requestActionCandidates } from './fixtures/eval.js';

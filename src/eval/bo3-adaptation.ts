@@ -1,5 +1,5 @@
+import { canonicalJsonDigest } from '../serialization.js';
 import { type MatchedForkOutcome, type PairedArmContrast, pairedArmContrast } from './experiment-kernel.js';
-import { canonicalJsonDigest } from './serialization.js';
 import { multiclassBrierScore, type OpponentModeProbability } from './strategic-task.js';
 
 export const BO3_ADAPTATION_PROTOCOL = {

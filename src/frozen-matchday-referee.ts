@@ -1,6 +1,4 @@
 import { createHash } from 'node:crypto';
-
-import { canonicalJsonDigest } from './eval/serialization.js';
 import {
   FROZEN_BATTLE_REFEREE_PROTOCOL_VERSION,
   type FrozenBattleObservation,
@@ -8,6 +6,7 @@ import {
   type FrozenBattleTerminalEvidence,
   type FrozenLegalActions,
 } from './frozen-battle-referee.js';
+import { canonicalJsonDigest } from './serialization.js';
 import { foldSeriesGames, seriesSeedSchedule } from './series.js';
 import { loadShowdown, showdownCommit } from './showdown.js';
 import { replayTeamBuildArtifact, type TeamBuildSubmissionValidation } from './teambuild.js';

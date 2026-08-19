@@ -2,13 +2,13 @@ import crypto from 'node:crypto';
 
 import type { Battle } from 'pokemon-showdown';
 
-import { BaseEngine } from '../battle-agent.js';
-import { buildMenus } from '../choices.js';
-import { defaultPsDir } from '../paths.js';
-import { loadShowdown } from '../showdown.js';
-import { routeUpdateLines } from '../sim.js';
-import type { BattleRequest, Pid } from '../types.js';
+import { BaseEngine } from './battle-agent.js';
+import { buildMenus } from './choices.js';
+import { defaultPsDir } from './paths.js';
 import { canonicalJson } from './serialization.js';
+import { loadShowdown } from './showdown.js';
+import { routeUpdateLines } from './sim.js';
+import type { BattleRequest, Pid } from './types.js';
 
 export interface GameSource {
   format: string;

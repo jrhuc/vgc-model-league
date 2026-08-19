@@ -1,3 +1,4 @@
+import { canonicalJsonDigest } from '../serialization.js';
 import {
   type ExhaustiveActionTable,
   type ExhaustivePanel,
@@ -10,7 +11,6 @@ import {
   type ReferenceSuiteResult,
   type ReferenceUtilitySample,
 } from './reference-suite.js';
-import { canonicalJsonDigest } from './serialization.js';
 
 export const LEGACY_POSITION_REFERENCE_PROTOCOL = {
   version: 1,

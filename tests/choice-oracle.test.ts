@@ -5,7 +5,7 @@ import test from 'node:test';
 import type { Battle, Side } from 'pokemon-showdown';
 
 import { buildMenus } from '../src/choices.js';
-import { acceptedBattleActionEntries } from '../src/eval/fork.js';
+import { acceptedBattleActionEntries } from '../src/fork.js';
 import { REPO_ROOT } from '../src/paths.js';
 import { loadShowdown } from '../src/showdown.js';
 import type { BattleRequest, Pid } from '../src/types.js';

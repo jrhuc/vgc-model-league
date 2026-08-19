@@ -1,8 +1,4 @@
 import type { Battle } from 'pokemon-showdown';
-
-import { defaultPsDir } from '../paths.js';
-import { type Rng, seededRng, shuffle } from '../random.js';
-import type { BattleRequest, Pid } from '../types.js';
 import {
   acceptedBattleActions,
   acceptedLegalActions,
@@ -11,8 +7,11 @@ import {
   pendingSides,
   playJoint,
   requestActionCandidateEntries,
-} from './fork.js';
-import { canonicalJsonDigest } from './serialization.js';
+} from '../fork.js';
+import { defaultPsDir } from '../paths.js';
+import { type Rng, seededRng, shuffle } from '../random.js';
+import { canonicalJsonDigest } from '../serialization.js';
+import type { BattleRequest, Pid } from '../types.js';
 
 export const COUNTERFACTUAL_PROTOCOL_VERSION = 5;
 

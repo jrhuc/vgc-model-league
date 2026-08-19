@@ -7,9 +7,9 @@ import test from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { counterfactualProtocol, EXHAUSTIVE_PANEL_PROTOCOL } from '../src/eval/counterfactual.js';
-import { ACTION_PROTOCOL } from '../src/eval/fork.js';
 import { POSITION_GRADE_SCHEMA_VERSION } from '../src/eval/positions.js';
 import { captureRuntimeProducerAuthority, PRODUCER_DIGEST_PROTOCOL, rawProducerDigest } from '../src/eval/producer.js';
+import { ACTION_PROTOCOL } from '../src/fork.js';
 
 test('raw producer framing separates path/content newlines and preserves invalid UTF-8 bytes', () => {
   assert.equal(PRODUCER_DIGEST_PROTOCOL, 'vgc-model-league-runtime-producer-digest-v2');

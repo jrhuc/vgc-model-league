@@ -13,7 +13,7 @@ import {
   POSITION_PANEL_ARTIFACT_SCHEMA_VERSION,
   validatePositionPanelArtifacts,
 } from '../src/eval/panel-artifact.js';
-import { canonicalJson, canonicalJsonDigest, canonicalJsonl } from '../src/eval/serialization.js';
+import { canonicalJson, canonicalJsonDigest, canonicalJsonl } from '../src/serialization.js';
 import type { BattleRequest, JsonObject } from '../src/types.js';
 import { requestActionCandidates } from './fixtures/eval.js';
 import { minimalPanelBattle } from './fixtures/position-panel.js';

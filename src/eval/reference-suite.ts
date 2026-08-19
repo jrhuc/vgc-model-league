@@ -1,4 +1,4 @@
-import { canonicalJsonDigest } from './serialization.js';
+import { canonicalJsonDigest } from '../serialization.js';
 
 export const REFERENCE_SUITE_PROTOCOL = {
   version: 1,

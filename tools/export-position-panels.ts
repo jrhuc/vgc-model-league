@@ -11,7 +11,6 @@ import {
   validateCounterfactualOptions,
 } from '../src/eval/counterfactual.js';
 import { POSITION_ELIGIBILITY_METRICS_VERSION, positionEligibilityMetrics } from '../src/eval/eligibility.js';
-import { ACTION_PROTOCOL, openPosition, positionDigest } from '../src/eval/fork.js';
 import {
   exactPublicPositionFingerprint,
   POSITION_PANEL_ARTIFACT_SCHEMA_VERSION,
@@ -34,14 +33,10 @@ import {
   selectPositions,
 } from '../src/eval/positions.js';
 import { boundShowdownRoot, captureRuntimeProducerAuthority } from '../src/eval/producer.js';
-import {
-  CANONICAL_JSON_PROTOCOL,
-  canonicalJson,
-  canonicalJsonDigest,
-  canonicalJsonl,
-} from '../src/eval/serialization.js';
 import { POSITION_TASK_PROTOCOL, renderPositionTask, validateTaskScoreJoin } from '../src/eval/task.js';
+import { ACTION_PROTOCOL, openPosition, positionDigest } from '../src/fork.js';
 import { DATA_DIR, defaultPsDir } from '../src/paths.js';
+import { CANONICAL_JSON_PROTOCOL, canonicalJson, canonicalJsonDigest, canonicalJsonl } from '../src/serialization.js';
 import { showdownCommit } from '../src/showdown.js';
 import type { JsonObject, Pid } from '../src/types.js';
 

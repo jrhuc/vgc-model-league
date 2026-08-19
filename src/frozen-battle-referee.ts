@@ -1,6 +1,6 @@
 import type { Battle } from 'pokemon-showdown';
-import { acceptedBattleActionEntries, type LegalActionEntry, pendingSides } from './eval/fork.js';
-import { canonicalJsonDigest } from './eval/serialization.js';
+import { acceptedBattleActionEntries, type LegalActionEntry, pendingSides } from './fork.js';
+import { canonicalJsonDigest } from './serialization.js';
 import { loadShowdown } from './showdown.js';
 import { finishUpdateRouting, routeUpdateLines } from './sim.js';
 import type { BattleRequest, Pid } from './types.js';

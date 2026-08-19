@@ -1,4 +1,4 @@
-import { acceptedBattleActionEntries, deterministicBattleSnapshot } from '../../src/eval/fork.js';
+import { acceptedBattleActionEntries, deterministicBattleSnapshot } from '../../src/fork.js';
 import { loadShowdown } from '../../src/showdown.js';
 import type { BattleRequest } from '../../src/types.js';
 

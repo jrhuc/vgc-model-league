@@ -1,4 +1,6 @@
+import { acceptedBattleActionEntries, pendingSides } from '../fork.js';
 import { defaultPsDir } from '../paths.js';
+import { canonicalJson, canonicalJsonDigest } from '../serialization.js';
 import { loadShowdown } from '../showdown.js';
 import type { BattleRequest, JsonObject, Pid } from '../types.js';
 import {
@@ -9,8 +11,6 @@ import {
   twoStageClusterEstimate,
 } from './counterfactual.js';
 import { POSITION_ELIGIBILITY_METRICS_VERSION, positionEligibilityMetrics } from './eligibility.js';
-import { acceptedBattleActionEntries, pendingSides } from './fork.js';
-import { canonicalJson, canonicalJsonDigest } from './serialization.js';
 import { validateTaskScoreJoin } from './task.js';
 
 const TASK_KEYS = ['actions', 'format', 'phase', 'prompt', 'response_schema', 'schema_version', 'task_id', 'turn'];

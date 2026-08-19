@@ -19,8 +19,8 @@ import {
   validateFrontierPilotSourceArtifact,
 } from '../src/eval/frontier-pilot.js';
 import { buildFrozenMatchdayBetweenGameCheckpoint } from '../src/eval/frozen-matchday-adapter.js';
-import { canonicalJson, canonicalJsonDigest } from '../src/eval/serialization.js';
 import { isReasoningLevel, nitroSpec, type ReasoningLevel } from '../src/providers.js';
+import { canonicalJson, canonicalJsonDigest } from '../src/serialization.js';
 import { loadPool } from '../src/teams.js';
 
 const HELP = `Usage: pnpm run strategic-pilot [--models <spec> ...]

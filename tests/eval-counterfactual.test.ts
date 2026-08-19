@@ -10,7 +10,7 @@ import {
   twoStageClusterEstimate,
   validateCounterfactualOptions,
 } from '../src/eval/counterfactual.js';
-import { type GameSource, newBattle, type Position, pendingSides, replayGame } from '../src/eval/fork.js';
+import { type GameSource, newBattle, type Position, pendingSides, replayGame } from '../src/fork.js';
 import { loadPool } from '../src/teams.js';
 import type { Pid } from '../src/types.js';
 import { omniscientLog, requestActionCandidates } from './fixtures/eval.js';

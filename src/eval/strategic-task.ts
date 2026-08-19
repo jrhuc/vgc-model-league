@@ -1,6 +1,6 @@
 import { seededRng, shuffle } from '../random.js';
+import { canonicalJsonDigest } from '../serialization.js';
 import { type ReferenceActionScore, type ReferenceSuiteResult, scoreReferenceAction } from './reference-suite.js';
-import { canonicalJsonDigest } from './serialization.js';
 
 export const STRATEGIC_CHOICE_TASK_PROTOCOL = {
   version: 2,

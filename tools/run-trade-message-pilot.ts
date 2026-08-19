@@ -15,9 +15,9 @@ import {
   selectFrozenCircuitTradeReceipts,
   type TradeForkHorizon,
 } from '../src/eval/frozen-circuit-trade-forks.js';
-import { canonicalJson, canonicalJsonDigest } from '../src/eval/serialization.js';
 import { FROZEN_CIRCUIT_SCENARIOS, type FrozenCircuitScenarioId } from '../src/frozen-circuit-model.js';
 import { isReasoningLevel, makeProvider, parseSpec, type ReasoningLevel } from '../src/providers.js';
+import { canonicalJson, canonicalJsonDigest } from '../src/serialization.js';
 import { parseTradeOffer, type TradeWindowState, tradeWindowOrder } from '../src/trade-window.js';
 
 const HELP = `Usage: pnpm run trade-message-pilot [options]

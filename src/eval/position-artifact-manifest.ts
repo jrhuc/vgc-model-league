@@ -1,10 +1,9 @@
 import { z } from 'zod';
-
+import { ACTION_PROTOCOL } from '../fork.js';
+import { CANONICAL_JSON_PROTOCOL, canonicalJson } from '../serialization.js';
 import { COUNTERFACTUAL_PROTOCOL_VERSION, EXHAUSTIVE_PANEL_PROTOCOL, REFERENCE } from './counterfactual.js';
 import { POSITION_ELIGIBILITY_METRICS_VERSION } from './eligibility.js';
-import { ACTION_PROTOCOL } from './fork.js';
 import { MIN_HELD_OUT_QUALIFICATION_SPAN } from './positions.js';
-import { CANONICAL_JSON_PROTOCOL, canonicalJson } from './serialization.js';
 import { POSITION_TASK_PROTOCOL } from './task.js';
 
 export const CANDIDATE_POSITION_MANIFEST_SCHEMA_VERSION = 2 as const;

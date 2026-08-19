@@ -1,4 +1,4 @@
-import { canonicalJsonDigest } from './serialization.js';
+import { canonicalJsonDigest } from '../serialization.js';
 
 export const EXPERIMENT_KERNEL_PROTOCOL = {
   version: 1,

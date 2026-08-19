@@ -1,4 +1,4 @@
-import { requestActionCandidateEntries } from '../../src/eval/fork.js';
+import { requestActionCandidateEntries } from '../../src/fork.js';
 import { routeUpdateLines } from '../../src/sim.js';
 import type { BattleRequest } from '../../src/types.js';
 
