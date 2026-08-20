@@ -121,10 +121,10 @@ not resume the same run concurrently.
 
 Drafts select ten roster entries within 100 points and then build six complete
 sets for each matchup. Round-robin builds cannot access other round-robin
-results. By default, the scheduler runs concurrency-limited blind batches: all
-scheduled series through the transaction week, then the barrier and window,
-then the remaining series. If you turn off the window, the round robin uses one
-batch. Use sequential weeks only as a labeled alternative.
+results. By default, the scheduler runs concurrency-limited blind batches: the
+series up to each transaction window, then that barrier and window, then the
+next batch. If you turn the windows off, the round robin uses one batch. Use
+sequential weeks only as a labeled alternative.
 
 Use these controls as needed:
 
@@ -134,7 +134,7 @@ pnpm run vgcleague draft --resume <run-dir>
 pnpm run vgcleague draft --models <specs...> --through-week <n>
 pnpm run vgcleague draft --models <specs...> --sequential-weeks
 pnpm run vgcleague draft --models <specs...> --closed-sheets
-pnpm run vgcleague draft --models <specs...> --trade-window off
+pnpm run vgcleague draft --models <specs...> --transactions off
 ```
 
 `--draft-only` records rosters and stops. Resume the run later to play the
@@ -142,15 +142,16 @@ season. `--through-week` implies sequential weeks and stops cleanly after the
 specified week. Champions Bo3 uses open team sheets by default and excludes
 hidden stat points. `--closed-sheets` is a separate condition.
 
-By default, one transaction window opens after week 3, or after the last
-round-robin week in a shorter league. Use `--trade-window <week>` to move it.
-Use `off` for the labeled locked-roster control. Each coach can make one
-one-for-one offer before submitting up to six atomic free-agent drop/add swaps.
-See [Trade window](trade-window.md) for the complete rules and evidence
-boundaries.
+By default, a transaction window opens after each of round-robin weeks 1, 2,
+and 3, and rosters lock after the last one. Use `--transactions <weeks>` with a
+comma-separated list to choose the windows, or `off` for the labeled
+locked-roster control. In each window a coach can make one one-for-one offer
+before submitting up to six atomic free-agent drop/add swaps. See [Trade
+window](trade-window.md) for the complete rules and evidence boundaries.
 
 Private notes are explicitly reinjected state, not a persistent provider
-conversation. A roster note persists through the draft and transaction window.
+conversation. A roster note persists through the draft and every transaction
+window.
 A matchup plan and battle notebook apply only to their series. Playoff coaches
 can receive their own earlier builds, results, and final notes. Franchise names
 are spectator metadata and do not enter competitive or review prompts. The

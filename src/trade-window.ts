@@ -24,7 +24,8 @@ import {
 import type { JsonObject, Provider, ProviderFailure, ProviderMessage } from './types.js';
 import { clip } from './value.js';
 
-export const DEFAULT_TRADE_WINDOW = { afterWeek: 3, tradesAllowed: 1 } as const;
+export const DEFAULT_TRANSACTION_WEEKS = [1, 2, 3] as const;
+export const DEFAULT_TRADES_ALLOWED = 1;
 export const MAX_TRADE_OFFERS = 3;
 export const MAX_TRADE_SWAPS = 6;
 
@@ -38,7 +39,7 @@ const TRADE_WINDOW_PROMPT_POLICY = {
     'You are {{model}}, a coach in a Pokémon VGC draft league played in the format {{format}}.',
     FORMAT_AUTHORITY_NOTICE,
     '',
-    'The league has reached its one mid-season free-agency window. This is a roster decision, not an instruction to change it.',
+    'The league has reached the free-agency phase of {{windowPosition}}. This is a roster decision, not an instruction to change it.',
     '- You may submit zero to {{maxSwaps}} swaps. Each swap pairs one Pokémon you drop with one undrafted Pokémon you add.',
     '- Adds use their board price and drops refund their full board price.',
     '- Your resulting roster must contain exactly {{picks}} Pokémon, cost no more than {{budget}} points, and contain only one entry from each base species.',
@@ -52,6 +53,7 @@ const TRADE_WINDOW_PROMPT_POLICY = {
   resultsHeading: 'YOUR ROUND-ROBIN RESULTS:',
   wordsHeading: 'YOUR PRIVATE WORDS:',
   rostersHeading: 'PUBLIC CURRENT ROSTERS:',
+  historyHeading: 'PUBLIC TRANSACTIONS FROM EARLIER WINDOWS:',
   freeAgentsHeading: 'UNDRAFTED FREE AGENTS (id | cost | name | types | base stats | abilities):',
   replyTemplate: [
     'Reply with one JSON object containing {"swaps":[{"drop":"<board-id>","add":"<board-id>"},...]}, where "swaps" may be [].',
@@ -76,7 +78,7 @@ const TRADE_OFFER_PROMPT_POLICY = {
     'You are {{model}}, a coach in a Pokemon VGC draft league played in the format {{format}}.',
     FORMAT_AUTHORITY_NOTICE,
     '',
-    'The league has reached its one mid-season coach-trade phase. This is a roster decision, not an instruction to trade.',
+    'The league has reached the coach-trade phase of {{windowPosition}}. This is a roster decision, not an instruction to trade.',
     '- You may offer one Pokemon you own for one Pokemon owned by one other coach, or make no offer.',
     '- Unequal board prices are legal, but both resulting rosters must cost no more than {{budget}} points.',
     '- Both resulting rosters must contain exactly {{picks}} Pokemon and only one entry from each base species.',
@@ -123,10 +125,57 @@ export interface TradeWindowConfig {
   tradesAllowed: number;
 }
 
+/** Ordered transaction windows; rosters lock after the last one. */
+export type TransactionSchedule = TradeWindowConfig[];
+
 export function validateTradesAllowed(value: number, context = 'trades allowed'): void {
   if (!Number.isSafeInteger(value) || value < 0 || value > MAX_TRADE_OFFERS) {
     throw new Error(`${context} must be an integer between 0 and ${MAX_TRADE_OFFERS}`);
   }
+}
+
+export function defaultTransactionSchedule(weeks: number): TransactionSchedule {
+  return DEFAULT_TRANSACTION_WEEKS.filter((week) => week <= weeks).map((afterWeek) => ({
+    afterWeek,
+    tradesAllowed: DEFAULT_TRADES_ALLOWED,
+  }));
+}
+
+export function validateTransactionSchedule(
+  schedule: TransactionSchedule,
+  weeks: number,
+  context = 'transaction schedule',
+): void {
+  let previous = 0;
+  for (const window of schedule) {
+    if (!Number.isSafeInteger(window.afterWeek) || window.afterWeek < 1 || window.afterWeek > weeks) {
+      throw new Error(`${context} window weeks must be integers between 1 and ${weeks}`);
+    }
+    if (window.afterWeek <= previous) throw new Error(`${context} windows must open in strictly increasing weeks`);
+    validateTradesAllowed(window.tradesAllowed, `${context} week ${window.afterWeek} trades allowed`);
+    previous = window.afterWeek;
+  }
+}
+
+/** Parses the operator form: comma-separated weeks, "off", or nothing for the default schedule. */
+export function parseTransactionWeeks(value: string | undefined, weeks: number): TransactionSchedule {
+  if (value === undefined) return defaultTransactionSchedule(weeks);
+  if (value === 'off') return [];
+  const schedule = value.split(',').map((part) => {
+    const afterWeek = Number(part.trim());
+    if (!/^\d+$/u.test(part.trim()) || !Number.isSafeInteger(afterWeek)) {
+      throw new Error(
+        `transaction weeks must be a comma-separated list of week numbers or "off", not ${JSON.stringify(value)}`,
+      );
+    }
+    return { afterWeek, tradesAllowed: DEFAULT_TRADES_ALLOWED };
+  });
+  validateTransactionSchedule(schedule, weeks, 'transaction weeks');
+  return schedule;
+}
+
+export function transactionEpochDir(runDir: string, afterWeek: number): string {
+  return path.join(runDir, 'transactions', `after-week-${afterWeek}`);
 }
 
 export interface TradeOffer {
@@ -205,6 +254,45 @@ export interface TradeWindowState {
   standings: DraftTableRow[];
   results: TradeWindowResult[][];
   reflections: string[][];
+  /** Public record of every move made in earlier windows this season. */
+  history: string[];
+}
+
+export interface TradeWindowPosition {
+  afterWeek: number;
+  index: number;
+  count: number;
+}
+
+export function describeWindowPosition(position: TradeWindowPosition): string {
+  const ordinalWindow = `transaction window ${position.index + 1} of ${position.count}, open after round-robin week ${position.afterWeek}`;
+  return position.index + 1 === position.count
+    ? `${ordinalWindow}. Rosters lock when this window closes`
+    : `${ordinalWindow}. ${position.count - position.index - 1 === 1 ? 'One more window follows' : `${position.count - position.index - 1} more windows follow`} later in the season`;
+}
+
+export function describeTransactionHistory(
+  windows: readonly TradeWindowArtifact[],
+  models: readonly string[],
+): string[] {
+  const lines: string[] = [];
+  for (const window of windows) {
+    for (const offer of window.offers) {
+      if (offer.accepted && offer.to !== null) {
+        lines.push(
+          `- After week ${window.after_week}: ${models[offer.from]} traded ${offer.give} to ${models[offer.to]} for ${offer.get}.`,
+        );
+      }
+    }
+    for (const decision of window.decisions) {
+      for (const swap of decision.swaps) {
+        lines.push(
+          `- After week ${window.after_week}: ${models[decision.entrant]} dropped ${swap.drop} and added ${swap.add}.`,
+        );
+      }
+    }
+  }
+  return lines;
 }
 
 /** The single authority for every complete league roster state entering or leaving the transaction phase. */
@@ -274,9 +362,9 @@ export function validateLeagueRosterState(state: TradeWindowState, context = 'tr
 }
 
 export interface RunTradeWindowOptions extends ModelReasoningConfig {
-  runDir: string;
+  epochDir: string;
   psDir: string;
-  afterWeek: number;
+  position: TradeWindowPosition;
   recovery?: RecoveryGate;
   signal?: AbortSignal;
   apiKeys?: Readonly<Record<string, string>>;
@@ -603,10 +691,11 @@ export function applyFreeAgency(
 function systemPrompt(
   state: TradeWindowState,
   entrant: number,
+  position: TradeWindowPosition,
   mechanicsTools: MechanicsToolAvailability = 'available',
 ): string {
   const rendered = renderTemplate(TRADE_WINDOW_PROMPT_POLICY.systemTemplate, {
-    ...promptValues(state, entrant),
+    ...promptValues(state, entrant, position),
     maxSwaps: String(MAX_TRADE_SWAPS),
   });
   return rendered.replace(
@@ -628,12 +717,13 @@ function userPrompt(state: TradeWindowState, entrant: number, psDir: string): st
   ].join('\n');
 }
 
-function promptValues(state: TradeWindowState, entrant: number): Record<string, string> {
+function promptValues(state: TradeWindowState, entrant: number, position: TradeWindowPosition): Record<string, string> {
   return {
     model: state.models[entrant]!,
     format: state.board.format,
     picks: String(state.board.picks),
     budget: String(state.board.budget),
+    windowPosition: describeWindowPosition(position),
   };
 }
 
@@ -648,9 +738,10 @@ function renderTemplate(lines: readonly string[], values: Readonly<Record<string
 function offerSystemPrompt(
   state: TradeWindowState,
   entrant: number,
+  position: TradeWindowPosition,
   mechanicsTools: MechanicsToolAvailability = 'available',
 ): string {
-  const rendered = renderTemplate(TRADE_OFFER_PROMPT_POLICY.systemTemplate, promptValues(state, entrant));
+  const rendered = renderTemplate(TRADE_OFFER_PROMPT_POLICY.systemTemplate, promptValues(state, entrant, position));
   return rendered.replace(
     TRADE_OFFER_AVAILABLE_MECHANICS_TOOLS,
     mechanicsToolNotice(mechanicsTools, TRADE_OFFER_AVAILABLE_MECHANICS_TOOLS),
@@ -660,9 +751,13 @@ function offerSystemPrompt(
 function responseSystemPrompt(
   state: TradeWindowState,
   entrant: number,
+  position: TradeWindowPosition,
   mechanicsTools: MechanicsToolAvailability = 'available',
 ): string {
-  const rendered = renderTemplate(TRADE_OFFER_PROMPT_POLICY.responseSystemTemplate, promptValues(state, entrant));
+  const rendered = renderTemplate(
+    TRADE_OFFER_PROMPT_POLICY.responseSystemTemplate,
+    promptValues(state, entrant, position),
+  );
   return mechanicsTools === 'available'
     ? rendered
     : `${rendered}\n\n${mechanicsToolNotice(mechanicsTools, TRADE_OFFER_AVAILABLE_MECHANICS_TOOLS)}`;
@@ -698,6 +793,7 @@ function seatDossier(state: TradeWindowState, entrant: number, psDir: string): s
   for (const [index, roster] of state.rosters.entries()) {
     lines.push(`- entrant ${index} | ${state.models[index]}: ${rosterLine(roster)}`);
   }
+  if (state.history.length) lines.push('', TRADE_WINDOW_PROMPT_POLICY.historyHeading, ...state.history);
   lines.push(
     '',
     draftBoardTable(state.board, psDir, available, TRADE_WINDOW_PROMPT_POLICY.freeAgentsHeading),
@@ -751,7 +847,10 @@ export function connectedTradeWindowPromptRevision(mechanicsTools: MechanicsTool
 
 export interface TradePromptRenderOptions {
   mechanicsTools?: MechanicsToolAvailability;
+  position?: TradeWindowPosition;
 }
+
+const RENDER_POSITION: TradeWindowPosition = { afterWeek: 3, index: 0, count: 1 };
 
 export function renderTradeOfferPrompt(
   state: TradeWindowState,
@@ -761,7 +860,7 @@ export function renderTradeOfferPrompt(
 ): string {
   validateLeagueRosterState(state);
   return [
-    offerSystemPrompt(state, entrant, options.mechanicsTools ?? 'available'),
+    offerSystemPrompt(state, entrant, options.position ?? RENDER_POSITION, options.mechanicsTools ?? 'available'),
     '',
     offerUserPrompt(state, entrant, psDir),
   ].join('\n');
@@ -778,7 +877,7 @@ export function renderTradeResponsePrompt(
   const error = validateOfferTerms(state, from, offer);
   if (error) throw new Error(`invalid trade offer: ${error}`);
   return [
-    responseSystemPrompt(state, offer.to, options.mechanicsTools ?? 'available'),
+    responseSystemPrompt(state, offer.to, options.position ?? RENDER_POSITION, options.mechanicsTools ?? 'available'),
     '',
     responseUserPrompt(state, offer, from, psDir),
   ].join('\n');
@@ -792,7 +891,7 @@ export function renderFreeAgencyPrompt(
 ): string {
   validateLeagueRosterState(state);
   return [
-    systemPrompt(state, entrant, options.mechanicsTools ?? 'available'),
+    systemPrompt(state, entrant, options.position ?? RENDER_POSITION, options.mechanicsTools ?? 'available'),
     '',
     userPrompt(state, entrant, psDir),
   ].join('\n');
@@ -830,21 +929,42 @@ interface PhysicalWindowRow {
 
 const TRANSACTION_PATH_ENTRIES = ['window.json', 'window.jsonl', 'window'] as const;
 
+function requireRegularEntry(file: string): boolean {
+  let stats: fs.Stats;
+  try {
+    stats = fs.lstatSync(file);
+  } catch (cause) {
+    if ((cause as NodeJS.ErrnoException).code === 'ENOENT') return false;
+    throw cause;
+  }
+  if (stats.isSymbolicLink()) throw new Error(`${file} must not be a symbolic link`);
+  return true;
+}
+
+function epochArtifactPaths(epochDir: string): string[] {
+  return TRANSACTION_PATH_ENTRIES.filter((entry) => requireRegularEntry(path.join(epochDir, entry)));
+}
+
+/** Every transaction artifact under a run, relative to the run: per-window directories under
+ * transactions/, plus the run-root files that protocol-9 leagues wrote for their single window. */
 export function transactionArtifactPaths(runDir: string): string[] {
-  const present: string[] = [];
-  for (const entry of TRANSACTION_PATH_ENTRIES) {
-    const file = path.join(runDir, entry);
-    let stats: fs.Stats;
-    try {
-      stats = fs.lstatSync(file);
-    } catch (cause) {
-      if ((cause as NodeJS.ErrnoException).code === 'ENOENT') continue;
-      throw cause;
-    }
-    if (stats.isSymbolicLink()) throw new Error(`${file} must not be a symbolic link`);
-    present.push(entry);
+  const present = epochArtifactPaths(runDir);
+  const root = path.join(runDir, 'transactions');
+  if (!requireRegularEntry(root)) return present;
+  for (const entry of fs.readdirSync(root).sort()) {
+    for (const file of epochArtifactPaths(path.join(root, entry))) present.push(path.join('transactions', entry, file));
   }
   return present;
+}
+
+function transactionEpochDirs(runDir: string): string[] {
+  const root = path.join(runDir, 'transactions');
+  if (!requireRegularEntry(root)) return epochArtifactPaths(runDir).length ? [runDir] : [];
+  return fs
+    .readdirSync(root)
+    .filter((entry) => /^after-week-\d+$/u.test(entry))
+    .sort((a, b) => Number(a.slice('after-week-'.length)) - Number(b.slice('after-week-'.length)))
+    .map((entry) => path.join(root, entry));
 }
 
 function windowLineError(file: string, line: number, message: string): Error {
@@ -1266,8 +1386,8 @@ function replayWindowLog(
   };
 }
 
-function readTradeWindowFile(runDir: string): TradeWindowArtifact | undefined {
-  const file = path.join(runDir, 'window.json');
+function readTradeWindowFile(epochDir: string): TradeWindowArtifact | undefined {
+  const file = path.join(epochDir, 'window.json');
   let parsed: unknown;
   try {
     parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
@@ -1321,20 +1441,20 @@ function requireCompletedReplay(
 }
 
 export function readValidatedTradeWindow(
-  runDir: string,
+  epochDir: string,
   initialState: TradeWindowState,
   options: { afterWeek: number; tradesAllowed: number },
 ): TradeWindowArtifact | undefined {
   validateTradesAllowed(options.tradesAllowed);
-  transactionArtifactPaths(runDir);
-  const artifact = readTradeWindowFile(runDir);
+  epochArtifactPaths(epochDir);
+  const artifact = readTradeWindowFile(epochDir);
   if (!artifact) return undefined;
   validateLeagueRosterState(initialState, 'initial roster for completed transaction overlay');
   const state = rosterStateCopy(initialState);
   const order = state.standings.map((row) => row.entrant).reverse();
-  const replay = replayWindowLog(path.join(runDir, 'window.jsonl'), order, state, options.tradesAllowed);
+  const replay = replayWindowLog(path.join(epochDir, 'window.jsonl'), order, state, options.tradesAllowed);
   const expected = replayArtifact(options.afterWeek, order, replay, state);
-  requireCompletedReplay(path.join(runDir, 'window.json'), artifact, expected, replay);
+  requireCompletedReplay(path.join(epochDir, 'window.json'), artifact, expected, replay);
   return artifact;
 }
 
@@ -1431,19 +1551,19 @@ export async function runTradeWindow(
   state: TradeWindowState,
   options: RunTradeWindowOptions,
 ): Promise<TradeWindowArtifact> {
-  const { tradesAllowed } = options;
+  const { tradesAllowed, position: windowPosition } = options;
   validateTradesAllowed(tradesAllowed);
-  transactionArtifactPaths(options.runDir);
+  epochArtifactPaths(options.epochDir);
   validateLeagueRosterState(state, 'initial roster before transaction-log replay');
   const liveState = rosterStateCopy(state);
   const order = liveState.standings.map((row) => row.entrant).reverse();
-  const transcript = path.join(options.runDir, 'window.jsonl');
-  const logDir = path.join(options.runDir, 'window');
+  const transcript = path.join(options.epochDir, 'window.jsonl');
+  const logDir = path.join(options.epochDir, 'window');
   const replay = replayWindowLog(transcript, order, liveState, tradesAllowed);
-  const completedArtifact = readTradeWindowFile(options.runDir);
+  const completedArtifact = readTradeWindowFile(options.epochDir);
   if (completedArtifact) {
-    const expected = replayArtifact(options.afterWeek, order, replay, liveState);
-    requireCompletedReplay(path.join(options.runDir, 'window.json'), completedArtifact, expected, replay);
+    const expected = replayArtifact(windowPosition.afterWeek, order, replay, liveState);
+    requireCompletedReplay(path.join(options.epochDir, 'window.json'), completedArtifact, expected, replay);
     commitRosterState(state, liveState);
     return completedArtifact;
   }
@@ -1481,7 +1601,7 @@ export async function runTradeWindow(
             provider,
             state: liveState,
             entrant,
-            system: offerSystemPrompt(liveState, entrant),
+            system: offerSystemPrompt(liveState, entrant, windowPosition),
             user: offerUserPrompt(liveState, entrant, options.psDir),
             phase: 'offer',
             seatLog,
@@ -1512,7 +1632,7 @@ export async function runTradeWindow(
               provider: responseProvider,
               state: liveState,
               entrant: responder,
-              system: responseSystemPrompt(liveState, responder),
+              system: responseSystemPrompt(liveState, responder, windowPosition),
               user: responseUserPrompt(liveState, parsed.offer, entrant, options.psDir),
               phase: 'response',
               seatLog: path.join(logDir, `seat-${responder}-${slug(liveState.models[responder]!)}.jsonl`),
@@ -1585,7 +1705,7 @@ export async function runTradeWindow(
     const provider = providers[entrant];
     let parsed: ParsedTradeDecision | undefined;
     let fallback = false;
-    const system = systemPrompt(liveState, entrant);
+    const system = systemPrompt(liveState, entrant, windowPosition);
     if (provider) {
       const messages: ProviderMessage[] = [{ role: 'user', content: userPrompt(liveState, entrant, options.psDir) }];
       const seatLog = path.join(logDir, `seat-${entrant}-${slug(liveState.models[entrant]!)}.jsonl`);
@@ -1690,13 +1810,13 @@ export async function runTradeWindow(
 
   validateLeagueRosterState(liveState, 'completed live transaction roster');
   const artifact: TradeWindowArtifact = {
-    after_week: options.afterWeek,
+    after_week: windowPosition.afterWeek,
     order,
     offers,
     decisions,
     rosters: rosterArtifact(liveState),
   };
-  const artifactFile = path.join(options.runDir, 'window.json');
+  const artifactFile = path.join(options.epochDir, 'window.json');
   const temporary = `${artifactFile}.${process.pid}.${randomUUID()}.tmp`;
   try {
     fs.writeFileSync(temporary, `${JSON.stringify(artifact, null, 2)}\n`, 'utf8');
@@ -1704,8 +1824,8 @@ export async function runTradeWindow(
   } finally {
     fs.rmSync(temporary, { force: true });
   }
-  const committed = readValidatedTradeWindow(options.runDir, state, {
-    afterWeek: options.afterWeek,
+  const committed = readValidatedTradeWindow(options.epochDir, state, {
+    afterWeek: windowPosition.afterWeek,
     tradesAllowed,
   });
   if (!committed) throw new Error(`${artifactFile} disappeared after its atomic rename`);
@@ -1713,11 +1833,11 @@ export async function runTradeWindow(
   return committed;
 }
 
-export function readTradeWindow(runDir: string): TradeWindowArtifact | undefined {
-  transactionArtifactPaths(runDir);
+export function readTradeWindow(epochDir: string): TradeWindowArtifact | undefined {
+  epochArtifactPaths(epochDir);
   let parsed: unknown;
   try {
-    parsed = JSON.parse(fs.readFileSync(path.join(runDir, 'window.json'), 'utf8'));
+    parsed = JSON.parse(fs.readFileSync(path.join(epochDir, 'window.json'), 'utf8'));
   } catch {
     return undefined;
   }
@@ -1731,9 +1851,31 @@ export function readTradeWindow(runDir: string): TradeWindowArtifact | undefined
     : undefined;
 }
 
+export interface TransactionEpochArtifacts {
+  afterWeek: number;
+  epochDir: string;
+  artifact: TradeWindowArtifact | undefined;
+  inProgress: boolean;
+}
+
+/** Every window a run has opened, in season order, whether or not it has closed. */
+export function readTransactionEpochs(runDir: string): TransactionEpochArtifacts[] {
+  return transactionEpochDirs(runDir).map((epochDir) => {
+    const artifact = readTradeWindow(epochDir);
+    const afterWeek = artifact?.after_week ?? (Number(path.basename(epochDir).slice('after-week-'.length)) || 0);
+    return {
+      afterWeek,
+      epochDir,
+      artifact,
+      inProgress: !artifact && requireRegularEntry(path.join(epochDir, 'window.jsonl')),
+    };
+  });
+}
+
 export function readCurrentRosterArtifact(runDir: string): unknown {
-  const window = readTradeWindow(runDir);
-  if (window) return window.rosters;
+  const windows = readTransactionEpochs(runDir).flatMap(({ artifact }) => (artifact ? [artifact] : []));
+  const latest = windows.at(-1);
+  if (latest) return latest.rosters;
   try {
     return JSON.parse(fs.readFileSync(path.join(runDir, 'rosters.json'), 'utf8')) as unknown;
   } catch {

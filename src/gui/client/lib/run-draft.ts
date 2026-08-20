@@ -18,7 +18,7 @@ export interface RunDraft {
   closedSheets: boolean;
   sequentialWeeks: boolean;
   draftOnly: boolean;
-  tradeWindow: string;
+  transactions: string;
   nitro: boolean;
   sharedReasoning: boolean;
   reasoning: string;
@@ -68,9 +68,9 @@ export function buildStartRunRequest(draft: RunDraft): StartRunRequest {
               ...(draft.closedSheets ? { closedSheets: true } : {}),
               ...(draft.sequentialWeeks ? { sequentialWeeks: true } : {}),
               ...(draft.draftOnly ? { draftOnly: true } : {}),
-              ...(draft.tradeWindow === 'default'
+              ...(draft.transactions === 'default'
                 ? {}
-                : { tradeWindow: draft.tradeWindow === 'off' ? null : { afterWeek: Number(draft.tradeWindow) } }),
+                : { transactions: draft.transactions === 'off' ? null : draft.transactions.split(',').map(Number) }),
             }
           : {
               pool: draft.pool,

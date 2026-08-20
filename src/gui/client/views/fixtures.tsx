@@ -134,7 +134,7 @@ export function FixturesView({ app, run, onStarted, onPools }: FixturesProps) {
   const [closedSheets, setClosedSheets] = useState(false);
   const [sequentialWeeks, setSequentialWeeks] = useState(false);
   const [draftOnly, setDraftOnly] = useState(false);
-  const [tradeWindow, setTradeWindow] = useState('default');
+  const [transactions, setTransactions] = useState('default');
   const [nitro, setNitro] = useState(false);
   const [timerScale, setTimerScale] = useState('off');
   const [seed, setSeed] = useState('');
@@ -198,24 +198,23 @@ export function FixturesView({ app, run, onStarted, onPools }: FixturesProps) {
   } = lineup;
   const draftTopology = draftLeagueTopology(models.length);
   const draftWeeks = models.length < 2 ? 7 : draftTopology.weekCount;
-  const tradeWindowOptions = [
+  const defaultWeeks = [1, 2, 3].filter((week) => week <= draftWeeks);
+  const transactionOptions = [
     {
       value: 'default',
-      label: 'Mid-season trade window (default)',
-      description: `Coach trades run before free agency after week ${Math.min(3, draftWeeks)}.`,
+      label: `Windows after weeks ${defaultWeeks.join(', ')} (default)`,
+      description: 'Coach trades run before free agency in each window; rosters lock after the last one.',
     },
     {
       value: 'off',
       label: 'Locked rosters',
       description: 'Keep draft-night rosters for the whole season.',
     },
-    ...Array.from({ length: draftWeeks }, (_, index) => index + 1)
-      .filter((week) => week !== 3)
-      .map((week) => ({
-        value: String(week),
-        label: `Trade window after week ${week}`,
-        description: 'Lowest seed chooses first; coach trades run before up to six free-agent swaps.',
-      })),
+    ...Array.from({ length: draftWeeks }, (_, index) => index + 1).map((week) => ({
+      value: String(week),
+      label: `One window after week ${week}`,
+      description: 'Lowest seed chooses first; coach trades run before up to six free-agent swaps.',
+    })),
   ];
   const teamsMode = mode === 'match' || (mode === 'tournament' && teamSource === 'custom');
 
@@ -259,7 +258,7 @@ export function FixturesView({ app, run, onStarted, onPools }: FixturesProps) {
       closedSheets,
       sequentialWeeks,
       draftOnly,
-      tradeWindow,
+      transactions,
       nitro,
       sharedReasoning,
       reasoning,
@@ -749,11 +748,11 @@ export function FixturesView({ app, run, onStarted, onPools }: FixturesProps) {
                       onChange={(value) => setSequentialWeeks(value === 'sequential')}
                     />
                     <Dropdown
-                      id="tradeWindow"
+                      id="transactions"
                       label="Roster changes"
-                      options={tradeWindowOptions}
-                      value={tradeWindow}
-                      onChange={setTradeWindow}
+                      options={transactionOptions}
+                      value={transactions}
+                      onChange={setTransactions}
                     />
                   </>
                 )}

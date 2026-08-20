@@ -1,24 +1,28 @@
-# Configure the transaction window
+# Configure the transaction windows
 
-By default, a draft league opens one transaction window after round-robin week
-3. If the league has fewer than three weeks, the window opens after the final
-round-robin week.
+By default, a draft league opens a transaction window after each of round-robin
+weeks 1, 2, and 3. A league with fewer weeks keeps only the windows that fit.
+Rosters lock when the last window closes and stay locked through the playoffs.
 
-Use `--trade-window <week>` to select another week. Use `--trade-window off` for
-the labeled locked-roster control. Results record the selected variant so that
-analyses do not combine conditions without labeling them.
+Use `--transactions <weeks>` with a comma-separated list, for example
+`--transactions 2,4`, to choose the windows. Use `--transactions off` for the
+labeled locked-roster control. Results record the schedule and the roster
+version each series was built on, so analyses do not combine conditions without
+labeling them.
 
 ## Scheduling
 
-The window acts as a barrier. No later matchup can build or start until every
-series through the configured week finishes. With the default schedule, the
-earlier round-robin series run as one blind, concurrency-limited batch, and the
-remaining series run as a later batch. Use `--sequential-weeks` only as a
-labeled alternative.
+Each window acts as a barrier. No later matchup can build or start until every
+series through that window's week finishes. Without sequential weeks, the
+round-robin series between two barriers run as one blind, concurrency-limited
+batch. With `--sequential-weeks`, each week is its own batch and the window
+opens as soon as its week ends.
 
-Coaches act in inverse standings order, using the standard playoff-seeding
-tiebreak. Earlier transactions are visible to later coaches. The complete trade
-offer phase runs before the free-agency phase.
+Coaches act in inverse standings order through that week, using the standard
+playoff-seeding tiebreak. Earlier transactions are visible to later coaches. The
+complete trade offer phase runs before the free-agency phase. Every coach sees
+the public record of accepted trades and swaps from earlier windows, and which
+window of the schedule is open.
 
 ## Coach actions
 
@@ -49,13 +53,14 @@ A coach completes a legal decision by making no offer, rejecting an offer, or
 submitting an empty swap list. Prompts must present action and inaction equally
 so that the phase measures diagnosis without encouraging roster changes. The
 protocol does not support counteroffers, multi-round negotiation, multi-Pokémon
-trades, transaction fees, or a second window.
+trades, or transaction fees.
 
 ## Prompt information
 
 Each acting or responding coach receives:
 
 - public standings and rosters;
+- the public transactions of earlier windows;
 - its own weekly results and opponents;
 - its own draft note and series reflections;
 - the remaining priced board and its roster and budget calculations;
@@ -109,14 +114,19 @@ not define an independent publication surface.
 
 ## Persistence and resume
 
-`window.jsonl` is the append-only decision and replay log. It includes
-no-offer, declined-offer, accepted-offer, and empty-swap decisions. Each physical
-line is a nonblank canonical JSON object, and the file ends with a newline.
-Resume does not normalize older or partial encodings.
+Each window writes into `transactions/after-week-<n>/`. Its `window.jsonl` is
+the append-only decision and replay log. It includes no-offer, declined-offer,
+accepted-offer, and empty-swap decisions. Each physical line is a nonblank
+canonical JSON object, and the file ends with a newline. Resume does not
+normalize older or partial encodings. Protocol-9 leagues hold one window at the
+run root; the archive still reads it.
 
 `window.json` materializes the completed order, transactions, private evidence,
 notes, and resulting rosters. `rosters.json` remains the draft-time snapshot.
-Later construction uses only a completed transaction overlay.
+Later construction uses only a completed transaction overlay. Each closed window
+increments the roster version; every build and series record binds the version
+it used, and resume replays the windows in order before adopting any evidence
+built on a later version.
 
 On resume, the league replays retained rows without provider calls and continues
 with unresolved coaches. After atomically renaming the final artifact, it reads

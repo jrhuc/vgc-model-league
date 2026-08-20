@@ -293,7 +293,7 @@ export class RunSupervisor {
           ...(run.config.board === undefined ? {} : { board: run.config.board }),
           ...(run.config.closedSheets === true ? { closedSheets: true } : {}),
           ...(run.config.sequentialWeeks === true ? { sequentialWeeks: true } : {}),
-          ...(run.config.tradeWindow === undefined ? {} : { tradeWindow: run.config.tradeWindow }),
+          ...(run.config.transactions === undefined ? {} : { transactions: run.config.transactions }),
           ...(run.config.draftOnly === true ? { draftOnly: true } : {}),
         });
       } else if (run.config.mode === 'tournament') {

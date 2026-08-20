@@ -273,7 +273,6 @@ export interface BuildPublicSeasonBundleOptions {
   board: readonly DraftBoardMonView[];
   /** Every completed game of every series the release boundary admits, keyed by series id. */
   games: ReadonlyMap<string, readonly PublicSeasonGameInput[]>;
-  tradeOrder: readonly number[] | null;
   title: string;
   /** Weeks beyond `totalWeeks` release playoff rounds: totalWeeks + 1 releases the semifinals, + 2 the final. */
   releasedThroughWeek: number;
@@ -512,12 +511,12 @@ export function buildPublicSeasonBundle(options: BuildPublicSeasonBundleOptions)
     };
   }
 
-  const tradeWindow = league.tradeWindow;
   const transactions: PublicSeasonBundle['transactions'] = [];
-  if (tradeWindow && tradeWindow.state === 'complete' && tradeWindow.afterWeek <= releasedThroughWeek) {
+  for (const tradeWindow of league.transactions) {
+    if (tradeWindow.state !== 'complete' || tradeWindow.afterWeek > releasedThroughWeek) continue;
     transactions.push({
       afterWeek: tradeWindow.afterWeek,
-      order: (options.tradeOrder ?? []).map(franchiseId),
+      order: tradeWindow.order.map(franchiseId),
       offers: tradeWindow.offers.map((offer) => ({
         from: franchiseId(offer.from),
         to: offer.to === null ? null : franchiseId(offer.to),
