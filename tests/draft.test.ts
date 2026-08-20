@@ -2107,6 +2107,7 @@ test('the real league window updates the outer roster used by later construction
     {
       board: BOARD,
       models: config.entrants,
+      stage: 'week',
       week: 1,
       weeks: 1,
       rosterVersion: 0,
@@ -2137,12 +2138,34 @@ test('the real league window updates the outer roster used by later construction
       timestamp: new Date(0).toISOString(),
     })}\n`,
   );
+  const preWindowRosters = rosters.map((roster) => [...roster]);
   await runTradeWindow(state, {
     epochDir,
     psDir: defaultPsDir(),
     position: { afterWeek: 1, index: 0, count: 1 },
     tradesAllowed: 0,
   });
+  await runWeeklyReview(
+    {
+      board: BOARD,
+      models: config.entrants,
+      stage: 'transactions',
+      week: 1,
+      weeks: 1,
+      rosterVersion: 1,
+      rosters,
+      previousRosters: preWindowRosters,
+      seats: [first],
+      notebooks: state.notebooks,
+      standings: config.entrants.map((_, entrant) => ({ entrant, w: 0, l: 0, gw: 0, gl: 0 })),
+      series: [],
+      period: [],
+      schedule: [],
+      transactions: [],
+      nextWindowWeek: null,
+    },
+    { runDir: directory, psDir: defaultPsDir() },
+  );
 
   const teambuildLog = path.join(directory, 'teambuild', 'teambuild.jsonl');
   const donor = structuredClone(
@@ -2958,6 +2981,20 @@ test('a league paused between two closed windows resumes on the right roster ver
     const reviews = readJsonlObjects(path.join(directory, 'reviews', `week-${week}.jsonl`));
     assert.equal(reviews.length, 4, `every coach reviews week ${week}`);
     assert.ok(reviews.every((row) => row.roster_version === Math.min(week - 1, 2)));
+  }
+  for (const week of [1, 2]) {
+    const windowFile = path.join(directory, 'transactions', `after-week-${week}`, 'window.json');
+    const window = JSON.parse(fs.readFileSync(windowFile, 'utf8')) as {
+      decisions: Array<{ entrant: number; swaps: unknown[] }>;
+    };
+    const changed = window.decisions.filter((decision) => decision.swaps.length).map((decision) => decision.entrant);
+    const reconciliations = readJsonlObjects(path.join(directory, 'reviews', `week-${week}-transactions.jsonl`));
+    assert.deepEqual(
+      reconciliations.map((row) => row.entrant).sort(),
+      [...changed].sort(),
+      `every coach whose roster changed after week ${week} reconciles its notebook`,
+    );
+    assert.ok(reconciliations.every((row) => row.roster_version === week && row.stage === 'transactions'));
   }
   const config = JSON.parse(fs.readFileSync(path.join(directory, 'config.json'), 'utf8')) as Record<string, unknown>;
   assert.deepEqual(config.review_weeks, [1, 2, 3], 'sequential weeks review after every week');

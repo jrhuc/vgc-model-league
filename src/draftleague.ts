@@ -49,13 +49,15 @@ import type { Pid } from './types.js';
 import { ordinal } from './value.js';
 import {
   notebookDigest,
+  type ReviewStage,
   readWeeklyReviews,
   runWeeklyReview,
+  type WeeklyReview,
   type WeeklyReviewSeries,
   weeklyReviewScaffoldRevision,
 } from './weekly-review.js';
 
-export const DRAFT_PROTOCOL_VERSION = 11;
+export const DRAFT_PROTOCOL_VERSION = 12;
 
 export type DraftLeagueEvent = TournamentEvent | { type: 'draft'; draft: DraftView };
 
@@ -910,6 +912,7 @@ export async function runDraftLeague(
       {
         board,
         models: entrants,
+        stage: 'week',
         week,
         weeks: weeks.length,
         rosterVersion: windowArtifacts.length,
@@ -939,6 +942,21 @@ export async function runDraftLeague(
     reviewedThrough = week;
     options.onEvent?.({ type: 'draft', draft: draftView(true) });
   };
+  const adoptReviewRows = (rows: WeeklyReview[], week: number, stage: ReviewStage): void => {
+    for (const row of rows) {
+      if (row.roster_version !== windowArtifacts.length) {
+        throw new Error(
+          `run ${runId} week ${week} ${stage} review for entrant ${row.entrant} binds roster version ${row.roster_version}`,
+        );
+      }
+      if (row.previous_digest !== notebookDigest(draftNotes[row.entrant] ?? '')) {
+        throw new Error(
+          `run ${runId} week ${week} ${stage} review for entrant ${row.entrant} does not continue its notebook`,
+        );
+      }
+      draftNotes[row.entrant] = row.notebook;
+    }
+  };
   const adoptStoredReview = (week: number): boolean => {
     const rows = readWeeklyReviews(runDir, week);
     if (rows.length < entrants.length) {
@@ -946,19 +964,71 @@ export async function runDraftLeague(
       return false;
     }
     requireWeekComplete(week, 'weekly review');
-    for (const row of rows) {
-      if (row.roster_version !== windowArtifacts.length) {
-        throw new Error(
-          `run ${runId} week ${week} review for entrant ${row.entrant} binds roster version ${row.roster_version}`,
-        );
-      }
-      if (row.previous_digest !== notebookDigest(draftNotes[row.entrant] ?? '')) {
-        throw new Error(`run ${runId} week ${week} review for entrant ${row.entrant} does not continue its notebook`);
-      }
-      draftNotes[row.entrant] = row.notebook;
-    }
+    adoptReviewRows(rows, week, 'week');
     reviewedThrough = week;
     return true;
+  };
+  const changedSeats = (index: number): number[] => {
+    const before = rosterHistory[index]!;
+    const after = rosterHistory[index + 1]!;
+    return entrants.flatMap((_, entrant) => {
+      const ids = new Set(before[entrant]!.map((mon) => mon.id));
+      const same = after[entrant]!.length === ids.size && after[entrant]!.every((mon) => ids.has(mon.id));
+      return same ? [] : [entrant];
+    });
+  };
+  const reconciled = new Set<number>();
+  const adoptStoredReconciliation = (index: number): boolean => {
+    const window = schedule[index]!;
+    const seats = changedSeats(index);
+    const rows = readWeeklyReviews(runDir, window.afterWeek, 'transactions');
+    if (seats.some((seat) => !rows.some((row) => row.entrant === seat))) return false;
+    adoptReviewRows(rows, window.afterWeek, 'transactions');
+    reconciled.add(index);
+    return true;
+  };
+  const reconcileWindow = async (index: number): Promise<void> => {
+    const window = schedule[index];
+    if (!window || reconciled.has(index) || windowArtifacts.length <= index) return;
+    const seats = changedSeats(index);
+    if (seats.length) {
+      const nextWindow = schedule[index + 1];
+      await runWeeklyReview(
+        {
+          board,
+          models: entrants,
+          stage: 'transactions',
+          week: window.afterWeek,
+          weeks: weeks.length,
+          rosterVersion: index + 1,
+          rosters,
+          previousRosters: rosterHistory[index]!,
+          seats,
+          notebooks: draftNotes,
+          standings: rankedTable(table),
+          series: [],
+          period: [],
+          schedule: plans.flatMap((plan) =>
+            plan.stage === 'roundrobin' && plan.entrants
+              ? [{ index: plan.index, week: plan.round, entrants: plan.entrants }]
+              : [],
+          ),
+          transactions: describeTransactionHistory(windowArtifacts, entrants),
+          nextWindowWeek: nextWindow ? nextWindow.afterWeek : null,
+        },
+        {
+          runDir,
+          psDir,
+          ...(options.reasoning === undefined ? {} : { reasoning: options.reasoning }),
+          ...(options.reasoningByModel === undefined ? {} : { reasoningByModel: options.reasoningByModel }),
+          ...(options.apiKeys === undefined ? {} : { apiKeys: options.apiKeys }),
+          ...(options.recovery === undefined ? {} : { recovery: options.recovery }),
+          ...(options.signal === undefined ? {} : { signal: options.signal }),
+        },
+      );
+    }
+    reconciled.add(index);
+    options.onEvent?.({ type: 'draft', draft: draftView(true) });
   };
 
   validateStoredRoundRobin(0);
@@ -1010,6 +1080,15 @@ export async function runDraftLeague(
         break;
       }
       adoptWindow(artifact);
+      if (!adoptStoredReconciliation(index)) {
+        const evidence = postWindowEvidence(runDir, storedRunRows, plans, window.afterWeek);
+        if (evidence.length) {
+          throw new Error(
+            `run ${runId} has evidence past its week-${window.afterWeek} transaction barrier but lacks the reconciliation review of every changed roster: ${evidence.join(', ')}`,
+          );
+        }
+        break;
+      }
       validateStoredRoundRobin(index + 1);
     }
   }
@@ -1207,7 +1286,10 @@ export async function runDraftLeague(
       }
       await reviewWeekFor(week);
       const windowIndex = schedule.findIndex((window) => window.afterWeek === week);
-      if (windowIndex !== -1) await openTradeWindow(windowIndex);
+      if (windowIndex !== -1) {
+        await openTradeWindow(windowIndex);
+        await reconcileWindow(windowIndex);
+      }
     }
   } else {
     let firstWeek = 1;
@@ -1226,6 +1308,7 @@ export async function runDraftLeague(
       if (options.signal?.aborted) return sorted(results);
       await reviewWeekFor(window.afterWeek);
       await openTradeWindow(index);
+      await reconcileWindow(index);
       firstWeek = window.afterWeek + 1;
     }
     week = weeks.length;

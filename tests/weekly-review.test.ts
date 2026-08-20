@@ -11,6 +11,7 @@ import { readJsonlObjects } from '../src/jsonl.js';
 import { defaultPsDir } from '../src/paths.js';
 import {
   notebookDigest,
+  readWeeklyReviews,
   renderWeeklyReviewPrompt,
   runWeeklyReview,
   type WeeklyReviewState,
@@ -80,6 +81,7 @@ function writeRun(): { runDir: string; state: WeeklyReviewState } {
   const state: WeeklyReviewState = {
     board: BOARD,
     models: ['test:alpha', 'random'],
+    stage: 'week',
     week: 1,
     weeks: 3,
     rosterVersion: 0,
@@ -156,6 +158,40 @@ test('the weekly review prompt states the barrier, the period, the schedule, and
   } finally {
     fs.rmSync(runDir, { recursive: true, force: true });
   }
+});
+
+test('a reconciliation reviews only the changed seats against both rosters', async (t) => {
+  const { runDir, state } = writeRun();
+  t.after(() => fs.rmSync(runDir, { recursive: true, force: true }));
+  const previousRosters = state.rosters.map((roster) => [...roster]);
+  const swapped = BOARD.mons[20]!;
+  state.rosters[0] = [...state.rosters[0]!.slice(1), swapped];
+  const reconcile: WeeklyReviewState = {
+    ...state,
+    stage: 'transactions',
+    rosterVersion: 1,
+    previousRosters,
+    seats: [0],
+    nextWindowWeek: 2,
+  };
+  const prompt = renderWeeklyReviewPrompt(reconcile, 0);
+  assert.match(prompt, /window after round-robin week 1 of 3 has closed and your roster changed/);
+  assert.match(prompt, new RegExp(`YOUR ROSTER BEFORE THE WINDOW: ${previousRosters[0]![0]!.name}`));
+  assert.match(prompt, new RegExp(`YOUR ROSTER NOW: .*${swapped.name}`));
+  assert.doesNotMatch(prompt, /YOUR SERIES THIS PERIOD/);
+  assert.match(prompt, /next transaction window opens after week 2/);
+  const script = scripted([reply('{"notebook":"Rebuilt around the new six."}')]);
+  const reviews = await runWeeklyReview(reconcile, {
+    runDir,
+    psDir: defaultPsDir(),
+    makeReviewModel: () => script.agentModel,
+  });
+  assert.equal(reviews.length, 1);
+  assert.equal(reviews[0]!.stage, 'transactions');
+  assert.equal(reviews[0]!.roster_version, 1);
+  assert.ok(fs.existsSync(path.join(runDir, 'reviews', 'week-1-transactions.jsonl')));
+  assert.deepEqual(readWeeklyReviews(runDir, 1), [], 'the week review file is untouched');
+  assert.equal(state.notebooks[0], 'Rebuilt around the new six.');
 });
 
 test('a coach reads a series through its tools, replaces its notebook, and the row replays without a model', async (t) => {
