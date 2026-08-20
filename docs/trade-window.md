@@ -123,8 +123,8 @@ canonical JSON object, and the file ends with a newline. Resume does not
 normalize older or partial encodings. Protocol-9 leagues hold one window at the
 run root; the archive still reads it.
 
-`window.json` materializes the completed order, transactions, private evidence,
-notes, and resulting rosters. `rosters.json` remains the draft-time snapshot.
+`window.json` materializes the completed order, transactions, rationales,
+resulting rosters, and the digest of each seat's memory as the window read it. `rosters.json` remains the draft-time snapshot.
 Later construction uses only a completed transaction overlay. Each closed window
 increments the roster version; every build and series record binds the version
 it used, and resume replays the windows in order before adopting any evidence

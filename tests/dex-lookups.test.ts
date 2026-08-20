@@ -221,3 +221,34 @@ test('unknown text tools are refused while final-round tool calls are ignored', 
   );
   assert.match(lookups[0]!.result, /Not executed: tool "change_result" was not offered/);
 });
+
+test('extra tools are offered beside the dex tools and dispatched to their own runner', async () => {
+  const reference = new ShowdownReference('gen9championsvgc2026regmb');
+  const calls: { messages: ProviderMessage[]; options?: CompleteOptions }[] = [];
+  const provider = scriptedProvider(
+    [
+      reply({ toolCalls: [{ id: 'c1', name: 'read_memory_page', arguments: { name: 'lessons' } }] }),
+      reply({ text: '{"sets": []}' }),
+    ],
+    calls,
+  );
+  const lookups: { name: string; result: string }[] = [];
+  const completion = await completeWithDexTools({
+    provider,
+    system: 'sys',
+    messages: [{ role: 'user', content: 'build' }],
+    spec: 'openrouter:thinkingmachines/inkling',
+    reference,
+    policy: POLICY,
+    extraTools: [
+      {
+        definition: { name: 'read_memory_page', description: 'page', parameters: { type: 'object' } },
+        run: (args) => `page ${String(args.name)}`,
+      },
+    ],
+    onLookup: (call) => lookups.push({ name: call.name, result: call.result }),
+  });
+  assert.equal(completion.text, '{"sets": []}');
+  assert.deepEqual(lookups, [{ name: 'read_memory_page', result: 'page lessons' }]);
+  assert.ok(calls[0]!.options?.tools?.some((tool) => tool.name === 'read_memory_page'));
+});

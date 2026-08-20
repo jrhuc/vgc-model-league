@@ -16,6 +16,17 @@ import { z } from 'zod';
 
 import { createBoardSearch } from './board-search.js';
 import type { DraftBoard, DraftBoardMon } from './draft.js';
+import {
+  cloneMemory,
+  type FranchiseMemory,
+  MEMORY_LIMITS,
+  MEMORY_TOOL_NOTICE,
+  memoryDigest,
+  parseMemoryReply,
+  READ_MEMORY_PAGE,
+  readMemoryPage,
+  renderMemory,
+} from './franchise-memory.js';
 import type { DraftTableRow, TeambuildView } from './gui/api.js';
 import { BattleLog } from './gui/battlelog.js';
 import { appendJsonlObject, readJsonlObjects } from './jsonl.js';
@@ -25,37 +36,33 @@ import { classifyProviderFailure, makeAgentModel, parseSpec, reasoningForModel }
 import type { RecoveryGate } from './recovery.js';
 import { DEX_TOOLS, ShowdownReference } from './reference.js';
 import { mapLimit } from './series.js';
-import {
-  type EvidenceSupplied,
-  normalizeStageEvidence,
-  noStageEvidence,
-  type StageEvidence,
-} from './stage-evidence.js';
 import type { JsonObject, ProviderFailure } from './types.js';
-import { isRecord } from './value.js';
+import { clip, isRecord } from './value.js';
+
+const MEMORY_NOTICE = `- Your memory is yours to organise: a notebook page that every later prompt of yours shows in full, plus up to ${MEMORY_LIMITS.pages - 1} named pages that later prompts list by name and that you or your later selves fetch with read_memory_page. Each page holds at most ${MEMORY_LIMITS.pageChars} characters, ${MEMORY_LIMITS.totalChars} in all. It is the only state that carries from week to week; nothing else you write here is kept.`;
 
 const WEEKLY_REVIEW_PROMPT_POLICY = {
   systemTemplate: [
     'You are {{model}}, a coach in a Pokémon VGC draft league played in the format {{format}}.',
     FORMAT_AUTHORITY_NOTICE,
     '',
-    'Round-robin week {{week}} of {{weeks}} is complete. This is your private weekly review: the one point where you revise the notebook that every later team build and transaction decision of yours reads.',
-    '- The notebook is yours to organise. It is the only state that carries from week to week; nothing else you write here is kept.',
+    'Round-robin week {{week}} of {{weeks}} is complete. This is your private weekly review: the one point where you revise the memory that every later team build and transaction decision of yours reads.',
+    MEMORY_NOTICE,
     '- Every coach builds a new six from its roster for every matchup. Sets, items, moves and spreads you saw this week were built for that one series and may not return.',
     '- Rosters change only in transaction windows. {{windowNotice}}',
     '',
-    'You have the Showdown dex tools and three league tools: read_public_series returns the spectator log of any completed series, read_own_series returns your own turn-by-turn choices with their stated reasons and your end-of-game notes, and read_own_build returns the six you registered and your plan. Use them to check anything you intend to write down.',
+    'You have the Showdown dex tools and five league tools: read_public_series returns the spectator log of any completed series, read_own_series returns your own turn-by-turn choices with their stated reasons and your end-of-game notes, read_own_build returns the six you registered and your plan, read_memory_page returns one of your pages in full, and read_memory_history returns your memory as it stood after an earlier review. Use them to check anything you intend to write down.',
   ],
   reconcileSystemTemplate: [
     'You are {{model}}, a coach in a Pokémon VGC draft league played in the format {{format}}.',
     FORMAT_AUTHORITY_NOTICE,
     '',
-    'The transaction window after round-robin week {{week}} of {{weeks}} has closed and your roster changed. This is your private reconciliation: revise the notebook that every later team build and transaction decision of yours reads so that it describes the roster you now own.',
-    '- The notebook is yours to organise. It is the only state that carries from week to week; nothing else you write here is kept.',
+    'The transaction window after round-robin week {{week}} of {{weeks}} has closed and your roster changed. This is your private reconciliation: revise the memory that every later team build and transaction decision of yours reads so that it describes the roster you now own.',
+    MEMORY_NOTICE,
     '- Every coach builds a new six from its roster for every matchup.',
     '- {{windowNotice}}',
     '',
-    'You have the Showdown dex tools and three league tools: read_public_series returns the spectator log of any completed series, read_own_series returns your own turn-by-turn choices with their stated reasons and your end-of-game notes, and read_own_build returns the six you registered and your plan.',
+    'You have the Showdown dex tools and five league tools: read_public_series returns the spectator log of any completed series, read_own_series returns your own turn-by-turn choices with their stated reasons and your end-of-game notes, read_own_build returns the six you registered and your plan, read_memory_page returns one of your pages in full, and read_memory_history returns your memory as it stood after an earlier review.',
   ],
   standingsHeading: 'LEAGUE STANDINGS AFTER WEEK {{week}} (rank | coach | W-L | games):',
   ownResultsHeading: 'YOUR SERIES THIS PERIOD:',
@@ -65,15 +72,13 @@ const WEEKLY_REVIEW_PROMPT_POLICY = {
   rosterHeading: 'YOUR ROSTER:',
   previousRosterHeading: 'YOUR ROSTER BEFORE THE WINDOW:',
   currentRosterHeading: 'YOUR ROSTER NOW:',
-  notebookHeading: 'YOUR CURRENT NOTEBOOK:',
   replyTemplate: [
-    'Reply with one JSON object {"notebook":"<complete replacement private notebook>"}. An optional "reasoning":"<concise private note on what changed and why>" field is recorded as evidence.',
-    'Returning the current notebook unchanged is a complete answer.',
+    'Reply with one JSON object {"notebook":"<complete replacement notebook>","pages":{"<name>":"<complete page text>",...}}. Omit "pages" to keep every other page as it is; when present it replaces all of them, so a page left out is deleted. An optional "reasoning":"<concise note on what changed and why>" field is recorded as evidence.',
+    'Returning the current memory unchanged is a complete answer.',
   ],
   rejectionTemplate: 'That review was rejected: {{error}} Reply again with only the JSON object.',
   truncatedTemplate:
     'Your previous reply used the whole {{budget}}-token budget before completing the JSON object. Reply now with only the JSON object.',
-  notebookLimit: 4_000,
   rationaleLimit: 2_000,
   toolOutputLimit: 24_000,
   maxTokens: 32_768,
@@ -104,7 +109,7 @@ export interface WeeklyReviewState {
   weeks: number;
   rosterVersion: number;
   rosters: DraftBoardMon[][];
-  notebooks: string[];
+  memories: FranchiseMemory[];
   standings: DraftTableRow[];
   series: WeeklyReviewSeries[];
   period: number[];
@@ -132,9 +137,8 @@ export interface WeeklyReview {
   stage: ReviewStage;
   week: number;
   roster_version: number;
-  notebook: string;
+  memory: FranchiseMemory;
   reasoning: string;
-  evidence_supplied: EvidenceSupplied;
   fallback: boolean;
   previous_digest: string;
   digest: string;
@@ -152,10 +156,6 @@ interface ReviewSeatLog {
 
 export function weeklyReviewScaffoldRevision(): string {
   return createHash('sha256').update(JSON.stringify(WEEKLY_REVIEW_PROMPT_POLICY)).digest('hex').slice(0, 12);
-}
-
-export function notebookDigest(notebook: string): string {
-  return createHash('sha256').update(notebook).digest('hex');
 }
 
 function slug(value: string): string {
@@ -180,7 +180,12 @@ export function reviewArtifactPaths(
   };
 }
 
-export function parseWeeklyReview(response: string, currentNotebook: string): StageEvidence | string {
+export interface ParsedWeeklyReview {
+  memory: FranchiseMemory;
+  reasoning: string;
+}
+
+export function parseWeeklyReview(response: string, current: FranchiseMemory): ParsedWeeklyReview | string {
   const match = /\{[\s\S]*\}/.exec(response);
   if (!match) return 'the reply contained no JSON object';
   let parsed: unknown;
@@ -190,14 +195,16 @@ export function parseWeeklyReview(response: string, currentNotebook: string): St
     return 'the JSON object did not parse';
   }
   if (!isRecord(parsed)) return 'the reply must be one JSON object';
-  if (typeof parsed.notebook !== 'string')
-    return '"notebook" must be a string holding the complete replacement notebook';
   if (parsed.reasoning !== undefined && typeof parsed.reasoning !== 'string') return '"reasoning" must be a string';
-  return normalizeStageEvidence(parsed.reasoning, parsed.notebook, {
-    currentNotebook,
-    rationaleLimit: WEEKLY_REVIEW_PROMPT_POLICY.rationaleLimit,
-    notebookLimit: WEEKLY_REVIEW_PROMPT_POLICY.notebookLimit,
-  });
+  const reply = parseMemoryReply(parsed, current);
+  if (typeof reply === 'string') return reply;
+  return {
+    memory: reply.memory,
+    reasoning:
+      typeof parsed.reasoning === 'string'
+        ? clip(parsed.reasoning.trim(), WEEKLY_REVIEW_PROMPT_POLICY.rationaleLimit)
+        : '',
+  };
 }
 
 function renderTemplate(lines: readonly string[], values: Readonly<Record<string, string>>): string {
@@ -286,8 +293,9 @@ function userPrompt(state: WeeklyReviewState, entrant: number): string {
   }
   lines.push(
     '',
-    WEEKLY_REVIEW_PROMPT_POLICY.notebookHeading,
-    state.notebooks[entrant] || '(empty)',
+    ...renderMemory(state.memories[entrant]!),
+    '',
+    MEMORY_TOOL_NOTICE,
     '',
     ...WEEKLY_REVIEW_PROMPT_POLICY.replyTemplate,
   );
@@ -429,6 +437,21 @@ function reviewTools(state: WeeklyReviewState, entrant: number, options: RunWeek
       return describeOwnBuild(series, entrant, state.board);
     },
   });
+  tools.read_memory_page = tool({
+    description: READ_MEMORY_PAGE.description,
+    inputSchema: z.object({ name: z.string() }),
+    execute: ({ name }) => readMemoryPage(state.memories[entrant]!, { name }),
+  });
+  tools.read_memory_history = tool({
+    description: 'Your memory as it stood after the review of an earlier week, page names included.',
+    inputSchema: z.object({ week: z.number().int().positive() }),
+    execute: ({ week }) => {
+      const rows = readWeeklyReviews(options.runDir, week).filter((row) => row.entrant === entrant);
+      const row = rows.at(-1);
+      if (!row || week >= state.week) return `You have no stored review for week ${week}.`;
+      return renderMemory(row.memory, 'full').join('\n');
+    },
+  });
   return tools;
 }
 
@@ -470,7 +493,6 @@ function lookupsOf(
 function replayReviews(file: string): WeeklyReview[] {
   return readJsonlObjects(file).map((row, index) => {
     const { timestamp, ...review } = row;
-    const supplied = review.evidence_supplied;
     const valid =
       Number.isSafeInteger(review.entrant) &&
       Number(review.entrant) >= 0 &&
@@ -478,14 +500,12 @@ function replayReviews(file: string): WeeklyReview[] {
       (review.stage === 'week' || review.stage === 'transactions') &&
       Number.isSafeInteger(review.week) &&
       Number.isSafeInteger(review.roster_version) &&
-      typeof review.notebook === 'string' &&
+      isRecord(review.memory) &&
+      Object.values(review.memory).every((page) => typeof page === 'string') &&
       typeof review.reasoning === 'string' &&
-      isRecord(supplied) &&
-      typeof supplied.rationale === 'boolean' &&
-      typeof supplied.notebookUpdate === 'boolean' &&
       typeof review.fallback === 'boolean' &&
       typeof review.previous_digest === 'string' &&
-      review.digest === notebookDigest(review.notebook) &&
+      review.digest === memoryDigest(review.memory as FranchiseMemory) &&
       (timestamp === undefined || typeof timestamp === 'string');
     if (!valid) throw new Error(`invalid weekly review row ${index + 1} in ${file}`);
     return review as unknown as WeeklyReview;
@@ -506,10 +526,10 @@ export async function runWeeklyReview(
     if (review.stage !== state.stage || review.week !== state.week || review.roster_version !== state.rosterVersion) {
       throw new Error(`${transcript} holds a review for week ${review.week} roster version ${review.roster_version}`);
     }
-    if (review.previous_digest !== notebookDigest(state.notebooks[review.entrant] ?? '')) {
-      throw new Error(`${transcript} entrant ${review.entrant} review does not continue the current notebook`);
+    if (review.previous_digest !== memoryDigest(state.memories[review.entrant]!)) {
+      throw new Error(`${transcript} entrant ${review.entrant} review does not continue the current memory`);
     }
-    state.notebooks[review.entrant] = review.notebook;
+    state.memories[review.entrant] = cloneMemory(review.memory);
   }
   const pending = (state.seats ?? state.models.map((_, entrant) => entrant)).filter(
     (entrant) => !reviews.some((r) => r.entrant === entrant),
@@ -525,7 +545,7 @@ export async function runWeeklyReview(
     async (entrant, signal) => {
       signal.throwIfAborted();
       const model = state.models[entrant]!;
-      const current = state.notebooks[entrant] ?? '';
+      const current = cloneMemory(state.memories[entrant]!);
       const make =
         options.makeReviewModel ??
         ((spec: string, apiKey: string | undefined, reasoning: ReasoningLevel | undefined) =>
@@ -535,7 +555,7 @@ export async function runWeeklyReview(
           }));
       const agentModel =
         model === 'random' ? undefined : make(model, options.apiKeys?.[model], reasoningForModel(model, options));
-      let evidence: StageEvidence | undefined;
+      let parsedReview: ParsedWeeklyReview | undefined;
       let fallback = false;
       if (agentModel) {
         const system = systemPrompt(state, entrant);
@@ -553,7 +573,7 @@ export async function runWeeklyReview(
         });
         const messages: ModelMessage[] = [{ role: 'user', content: userPrompt(state, entrant) }];
         const seatLog = path.join(logDir, `seat-${entrant}-${slug(model)}.jsonl`);
-        for (let attempt = 1; attempt <= WEEKLY_REVIEW_PROMPT_POLICY.attempts && !evidence; attempt += 1) {
+        for (let attempt = 1; attempt <= WEEKLY_REVIEW_PROMPT_POLICY.attempts && !parsedReview; attempt += 1) {
           const last = messages[messages.length - 1]!;
           const promptForAttempt = typeof last.content === 'string' ? last.content : JSON.stringify(last.content);
           let response = '';
@@ -589,7 +609,7 @@ export async function runWeeklyReview(
                   : WEEKLY_REVIEW_PROMPT_POLICY.rejectionTemplate.replace('{{error}}', candidate),
               });
             } else {
-              evidence = candidate;
+              parsedReview = candidate;
             }
           } catch (cause) {
             const failure = classifyProviderFailure(agentModel.redact(cause), model);
@@ -616,24 +636,23 @@ export async function runWeeklyReview(
             attempt -= 1;
           }
         }
-        fallback = evidence === undefined;
+        fallback = parsedReview === undefined;
       }
-      evidence ??= noStageEvidence(current);
+      parsedReview ??= { memory: current, reasoning: '' };
       const review: WeeklyReview = {
         entrant,
         model,
         stage: state.stage,
         week: state.week,
         roster_version: state.rosterVersion,
-        notebook: evidence.notebook,
-        reasoning: evidence.rationale,
-        evidence_supplied: evidence.supplied,
+        memory: parsedReview.memory,
+        reasoning: parsedReview.reasoning,
         fallback,
-        previous_digest: notebookDigest(current),
-        digest: notebookDigest(evidence.notebook),
+        previous_digest: memoryDigest(current),
+        digest: memoryDigest(parsedReview.memory),
       };
       appendJsonlObject(transcript, { ...review, timestamp: new Date().toISOString() });
-      state.notebooks[entrant] = review.notebook;
+      state.memories[entrant] = cloneMemory(review.memory);
       options.onReview?.(review);
       return review;
     },

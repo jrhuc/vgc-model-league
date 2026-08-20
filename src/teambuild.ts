@@ -5,6 +5,13 @@ import { isDeepStrictEqual } from 'node:util';
 
 import { z } from 'zod';
 import { completeWithDexTools } from './dex-lookups.js';
+import {
+  type FranchiseMemory,
+  MEMORY_TOOL_NOTICE,
+  memoryDigest,
+  memoryPageTool,
+  renderMemory,
+} from './franchise-memory.js';
 import type { TeambuildSetView, TeambuildView } from './gui/api.js';
 import { defaultPsDir } from './paths.js';
 import { type MechanicsToolAvailability, mechanicsToolNotice } from './prompt-capabilities.js';
@@ -39,7 +46,7 @@ const TEAMBUILD_PROMPT_POLICY = {
     FORMAT_AUTHORITY_NOTICE,
     '',
     'You drafted a roster of {{picks}} Pokémon and keep it all season. Before every match you choose exactly 6 of them',
-    'and build each set from scratch. Your current private roster notebook is supplied as context, not a constraint.',
+    'and build each set from scratch. Your memory is supplied as context, not a constraint; read_memory_page returns one of its pages in full.',
     '',
     'FORMAT RULES',
     '{{teamSheetRule}}',
@@ -69,7 +76,6 @@ const TEAMBUILD_PROMPT_POLICY = {
   ],
   rosterHeading: 'YOUR ROSTER (board id | name | types | base stats | abilities | legal moves):',
   opponentHeading: 'OPPONENT ROSTER — {{model}} (they pick 6 of these):',
-  draftNoteHeading: 'YOUR CURRENT PRIVATE ROSTER NOTE:',
   priorContextHeading: 'YOUR SEASON SO FAR (your results, what you registered, and your notes against this coach):',
   priorContextNotice:
     'Every coach builds a new six for every matchup; sets, items, moves and spreads seen earlier were built for that series and may not return.',
@@ -94,7 +100,7 @@ const GENERAL_TEAMBUILD_PROMPT_POLICY = {
     '',
     'Choose exactly {{teamSize}} entries from the explicit frozen candidate pool supplied below and build every set from scratch.',
     'No particular opponent is specified. Build for robust play across the format; do not assume an opponent roster.',
-    'The current private notebook may be replaced with the optional response field; it is context, not a constraint.',
+    'Your memory, when supplied, is context, not a constraint.',
     '',
     'FORMAT RULES',
     '{{teamSheetRule}}',
@@ -114,12 +120,10 @@ const GENERAL_TEAMBUILD_PROMPT_POLICY = {
     '{"team_plan": "<2-5 sentences on the team and its modes>",',
     ' "sets": [{"id": "<candidate-id>", "item": "<item>", "ability": "<ability>", "nature": "<nature>",',
     '           "moves": ["<up to 4 moves>"], "evs": {"hp": 0, "atk": 0, "def": 0, "spa": 0, "spd": 0, "spe": 0},',
-    '           "note": "<one line on this set\'s job>"}],',
-    ' "notebook": "<optional complete replacement private plan>"}',
+    '           "note": "<one line on this set\'s job>"}]}',
     'Exactly {{teamSize}} entries in "sets", each one a candidate id from the frozen pool below.',
   ],
   candidateHeading: 'FROZEN CANDIDATE POOL (id | name | types | base stats | abilities | legal moves):',
-  notebookHeading: 'CURRENT PRIVATE NOTEBOOK:',
   briefHeading: 'TASK BRIEF:',
 } as const;
 
@@ -228,6 +232,7 @@ export interface TeamBuildTaskProvenance {
   seriesIndex?: number;
   entrant?: number;
   opponent?: number;
+  memoryDigest?: string;
 }
 
 export interface TeamBuildTask {
@@ -300,6 +305,7 @@ export interface TeamBuildOptions extends ModelReasoningConfig {
   signal?: AbortSignal;
   recovery?: RecoveryGate;
   makeTeambuildProvider?: (spec: string, apiKey: string | undefined, reasoning: ReasoningLevel | undefined) => Provider;
+  memory?: FranchiseMemory;
 }
 
 export type TeambuildOptions = TeamBuildOptions;
@@ -314,7 +320,7 @@ export interface TeambuildRequest {
   franchiseName: string;
   roster: TeamBuildCandidate[];
   opponentRoster: TeamBuildCandidate[];
-  draftNote: string;
+  memory: FranchiseMemory;
   playoffContext: string[];
   format: string;
   sheetPolicy?: TeamBuildSheetPolicy;
@@ -362,6 +368,7 @@ const provenanceSchema = z.strictObject({
   seriesIndex: z.number().optional(),
   entrant: z.number().optional(),
   opponent: z.number().optional(),
+  memoryDigest: z.string().optional(),
 });
 const taskSchema = z.strictObject({
   id: z.string(),
@@ -679,13 +686,13 @@ function userPrompt(task: TeamBuildTask, dex: DexLike): string {
   if (task.objective.kind === 'general') {
     const lines: string[] = [GENERAL_TEAMBUILD_PROMPT_POLICY.candidateHeading];
     lines.push(...rosterBlock(dex, [...task.constraint.candidates], true));
-    if (task.notebook) lines.push('', GENERAL_TEAMBUILD_PROMPT_POLICY.notebookHeading, task.notebook);
+    if (task.notebook) lines.push('', task.notebook);
     if (task.objective.brief) lines.push('', GENERAL_TEAMBUILD_PROMPT_POLICY.briefHeading, task.objective.brief);
     return lines.join('\n');
   }
   const lines: string[] = [TEAMBUILD_PROMPT_POLICY.rosterHeading];
   lines.push(...rosterBlock(dex, [...task.constraint.candidates], true));
-  if (task.notebook) lines.push('', TEAMBUILD_PROMPT_POLICY.draftNoteHeading, task.notebook);
+  if (task.notebook) lines.push('', task.notebook);
   lines.push('', TEAMBUILD_PROMPT_POLICY.opponentHeading.replace('{{model}}', task.objective.opponent.model));
   lines.push(...rosterBlock(dex, [...task.objective.opponent.candidates], false));
   if (task.objective.priorContext.length) {
@@ -1383,6 +1390,7 @@ async function runLeagueTeamBuild(task: TeamBuildTask, options: TeamBuildOptions
         messages,
         spec: task.model,
         reference,
+        ...(options.memory ? { extraTools: [memoryPageTool(() => options.memory!)] } : {}),
         policy: TEAMBUILD_PROMPT_POLICY,
         ...(options.recovery === undefined ? {} : { recovery: options.recovery }),
         ...(options.signal === undefined ? {} : { signal: options.signal }),
@@ -1575,15 +1583,16 @@ export async function runTeambuild(request: TeambuildRequest, options: Teambuild
       opponent: { model: request.opponentModel, candidates: request.opponentRoster },
       priorContext: request.playoffContext,
     },
-    notebook: request.draftNote,
+    notebook: [...renderMemory(request.memory), '', MEMORY_TOOL_NOTICE].join('\n'),
     provenance: {
       source: 'draft-league',
       seriesIndex: request.seriesIndex,
       entrant: request.entrant,
       opponent: request.opponent,
+      memoryDigest: memoryDigest(request.memory),
     },
   };
-  const result = await runLeagueTeamBuild(task, options);
+  const result = await runLeagueTeamBuild(task, { ...options, memory: request.memory });
   const action = result.artifact.action;
   if (!result.packed || !action || result.artifact.status !== 'valid') {
     throw new Error('league-resilient team building ended without a valid team');

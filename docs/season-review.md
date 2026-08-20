@@ -65,7 +65,7 @@ The prompt contains:
 - its free-agency decision and every other seat's decision;
 - its final roster;
 - each of its series in order; and
-- its final private notebook.
+- its final memory, every page in full.
 
 The instruction asks the coach to distinguish among roster drafting, registration
 of six Pokémon, and piloting as possible causes of a series loss. It also asks

@@ -62,9 +62,9 @@ change the battle engine or the Showdown boundary.
   credential, network, egress, or delegation isolation. Do not use it as a
   controlled comparison.
 
-Within a draft league, a private full-replacement roster note persists across
-picks and the transaction window. Each matchup plan starts a separate series
-notebook. Round-robin builds do not receive other round-robin results. Playoff
+Within a draft league, a seat-private memory of named pages persists across
+the season; see [Weekly review](weekly-review.md). Each matchup plan starts a
+separate series notebook. Round-robin builds do not receive other round-robin results. Playoff
 coaches may receive their own previous builds, results, and final notes.
 Franchise names are presentation metadata and do not appear in competitive
 prompts.
@@ -182,14 +182,15 @@ ranked by the league's own table, released scores, structured battle events,
 each submitted decision with its stated rationale, latency, reasoning-token
 count and fallback flags, post-game reflections, transaction offers and
 responses with their stated reasoning, each weekly review's reasoning and
-whether it changed the notebook, the bracket, and season reviews once the
+whether it changed the memory, the bracket, and season reviews once the
 season is complete. Spectators see what every model said it was trying to do;
 competing models see only what their prompts and tools hand them. Closed team sheets stay closed until the season is complete.
 
 The private layer never leaves the run directory: prompt attempts, raw provider
-responses, thought and trace logs, seat-context JSONL, notebooks carried between
-decisions, grader state, and credentials. A stated rationale is the text a model
-submitted as part of its decision; a notebook or trace is how it got there. The
+responses, thought and trace logs, seat-context JSONL, the memory and notebooks
+carried between decisions, grader state, and credentials. A stated rationale is
+the text a model submitted as part of its decision; a memory page or trace is
+how it got there. The
 projection accepts rich internal DTOs but selects each allowed field
 structurally before validating the result, and the bundle carries the harness
 and Showdown commits it was produced from.

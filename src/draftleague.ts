@@ -6,6 +6,7 @@ import { isDeepStrictEqual } from 'node:util';
 import type { DraftBoard, DraftBoardMon } from './draft.js';
 import { draftScaffoldRevision, loadBoard, runDraft, snakeOrder } from './draft.js';
 import { draftLeagueTopology, roundRobinWeeks } from './draftleague-topology.js';
+import { cloneMemory, emptyMemory, type FranchiseMemory, memoryDigest, renderMemory } from './franchise-memory.js';
 import type { BracketView, DraftPickView, DraftTableRow, DraftView, TeambuildView } from './gui/api.js';
 import { appendJsonlObject, readJsonlObjects } from './jsonl.js';
 import { scaffoldComponents, scaffoldRevision } from './llm-engine.js';
@@ -48,7 +49,6 @@ import {
 import type { Pid } from './types.js';
 import { ordinal } from './value.js';
 import {
-  notebookDigest,
   type ReviewStage,
   readWeeklyReviews,
   runWeeklyReview,
@@ -57,7 +57,7 @@ import {
   weeklyReviewScaffoldRevision,
 } from './weekly-review.js';
 
-export const DRAFT_PROTOCOL_VERSION = 12;
+export const DRAFT_PROTOCOL_VERSION = 13;
 
 export type DraftLeagueEvent = TournamentEvent | { type: 'draft'; draft: DraftView };
 
@@ -326,6 +326,7 @@ export async function runDraftLeague(
       if (typeof row.notebook === 'string') reflectionNotes[entrant]!.set(seriesIndex, row.notebook);
     }
   }
+  let memories: FranchiseMemory[] = entrants.map(() => emptyMemory());
   let draftNotes: string[] = entrants.map(() => '');
   let phase: DraftView['phase'] = 'draft';
   let week = 0;
@@ -418,6 +419,7 @@ export async function runDraftLeague(
     budgets = rosters.map((roster) => board.budget - roster.reduce((sum, mon) => sum + mon.cost, 0));
     teamNames = stored.teamNames;
     draftNotes = stored.draftNotes;
+    memories = draftNotes.map((note) => emptyMemory(note));
   } else {
     writeConfig();
     const outcome = await runDraft(entrants, board, {
@@ -447,6 +449,7 @@ export async function runDraftLeague(
     budgets = outcome.budgets;
     teamNames = outcome.teamNames;
     draftNotes = outcome.notebooks;
+    memories = draftNotes.map((note) => emptyMemory(note));
   }
   const initialRosters = rosters.map((roster) => [...roster]);
   if (stored) {
@@ -457,7 +460,7 @@ export async function runDraftLeague(
         teamNames,
         rosters,
         budgets,
-        notebooks: draftNotes,
+        memories,
         standings: rankedTable(table),
         results: entrants.map(() => []),
         reflections: entrants.map(() => []),
@@ -673,7 +676,7 @@ export async function runDraftLeague(
         franchiseName: teamNames[entrant]!,
         roster: rosters[entrant]!,
         opponentRoster: rosters[opponent]!,
-        draftNote: draftNotes[entrant]!,
+        memory: memories[entrant]!,
         playoffContext: priorContextFor(entrant, opponent),
         format: board.format,
         sheetPolicy,
@@ -862,7 +865,6 @@ export async function runDraftLeague(
     const monById = new Map(board.mons.map((mon) => [mon.id, mon] as const));
     rosters = artifact.rosters.map(({ roster }) => roster.map(({ id }) => monById.get(id)!));
     budgets = artifact.rosters.map(({ budget_left }) => budget_left);
-    for (const decision of artifact.decisions) draftNotes[decision.entrant] = decision.notebook;
     windowArtifacts.push(artifact);
     rosterHistory.push(rosters.map((roster) => [...roster]));
   };
@@ -917,7 +919,7 @@ export async function runDraftLeague(
         weeks: weeks.length,
         rosterVersion: windowArtifacts.length,
         rosters,
-        notebooks: draftNotes,
+        memories,
         standings: rankedTable(table),
         series,
         period: series.filter((entry) => entry.week > reviewedThrough).map((entry) => entry.index),
@@ -949,12 +951,12 @@ export async function runDraftLeague(
           `run ${runId} week ${week} ${stage} review for entrant ${row.entrant} binds roster version ${row.roster_version}`,
         );
       }
-      if (row.previous_digest !== notebookDigest(draftNotes[row.entrant] ?? '')) {
+      if (row.previous_digest !== memoryDigest(memories[row.entrant]!)) {
         throw new Error(
-          `run ${runId} week ${week} ${stage} review for entrant ${row.entrant} does not continue its notebook`,
+          `run ${runId} week ${week} ${stage} review for entrant ${row.entrant} does not continue its memory`,
         );
       }
-      draftNotes[row.entrant] = row.notebook;
+      memories[row.entrant] = cloneMemory(row.memory);
     }
   };
   const adoptStoredReview = (week: number): boolean => {
@@ -1004,7 +1006,7 @@ export async function runDraftLeague(
           rosters,
           previousRosters: rosterHistory[index]!,
           seats,
-          notebooks: draftNotes,
+          memories,
           standings: rankedTable(table),
           series: [],
           period: [],
@@ -1062,7 +1064,7 @@ export async function runDraftLeague(
           teamNames,
           rosters,
           budgets,
-          notebooks: draftNotes,
+          memories,
           standings: standingsThrough(window.afterWeek),
           results: entrants.map(() => []),
           reflections: entrants.map(() => []),
@@ -1195,7 +1197,7 @@ export async function runDraftLeague(
         teamNames,
         rosters,
         budgets,
-        notebooks: draftNotes,
+        memories,
         standings: rankedTable(table),
         results: windowResults,
         reflections: reflectionNotes.map((notes) =>
@@ -1236,7 +1238,7 @@ export async function runDraftLeague(
         series: playoffContext.map((context) =>
           [...context.entries()].sort(([a], [b]) => a - b).map(([, entry]) => entry),
         ),
-        notebooks: draftNotes,
+        notebooks: memories.map((memory) => renderMemory(memory, 'full').join('\n')),
       },
       {
         runDir,

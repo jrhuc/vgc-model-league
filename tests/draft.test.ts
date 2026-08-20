@@ -23,6 +23,7 @@ import {
 import type { DraftLeagueEvent } from '../src/draftleague.js';
 import { DRAFT_PROTOCOL_VERSION, runDraftLeague } from '../src/draftleague.js';
 import { draftLeagueTopology, roundRobinWeeks } from '../src/draftleague-topology.js';
+import { emptyMemory } from '../src/franchise-memory.js';
 import { readJsonlObjects } from '../src/jsonl.js';
 import { defaultPsDir } from '../src/paths.js';
 import { FORMAT_AUTHORITY_NOTICE } from '../src/prompts.js';
@@ -94,7 +95,7 @@ function transactionState(entrants = 2): TradeWindowState {
     teamNames: Array.from({ length: entrants }, (_, entrant) => `Team ${entrant + 1}`),
     rosters,
     budgets: rosters.map((roster) => BOARD.budget - roster.reduce((sum, mon) => sum + mon.cost, 0)),
-    notebooks: Array.from({ length: entrants }, () => ''),
+    memories: Array.from({ length: entrants }, () => emptyMemory()),
     standings: Array.from({ length: entrants }, (_, entrant) => ({ entrant, w: 0, l: 0, gw: 0, gl: 0 })),
     results: Array.from({ length: entrants }, () => []),
     reflections: Array.from({ length: entrants }, () => []),
@@ -297,7 +298,7 @@ test('trade-window swaps are atomic and may upgrade a base entry to its Mega', (
     teamNames: ['Opus', 'Rival'],
     rosters: [roster, []],
     budgets: [0, spent],
-    notebooks: ['Tyranitar is the endgame.', ''],
+    memories: [emptyMemory('Tyranitar is the endgame.'), emptyMemory()],
     standings: [
       { entrant: 1, w: 2, l: 0, gw: 4, gl: 1 },
       { entrant: 0, w: 0, l: 2, gw: 1, gl: 4 },
@@ -311,7 +312,6 @@ test('trade-window swaps are atomic and may upgrade a base entry to its Mega', (
     JSON.stringify({
       swaps: [{ drop: tyranitar.id, add: megaTyranitar.id }],
       reasoning: 'Upgrade Tyranitar.',
-      notebook: 'Mega Tyranitar is the endgame.',
     }),
     state,
     0,
@@ -319,7 +319,7 @@ test('trade-window swaps are atomic and may upgrade a base entry to its Mega', (
   assert.match(String(overBudget), /above the .* budget/);
   const beforeRejected = structuredClone(state);
   assert.throws(
-    () => applyFreeAgency(state, 0, [{ drop: tyranitar.id, add: megaTyranitar.id }], 'Mega Tyranitar is the endgame.'),
+    () => applyFreeAgency(state, 0, [{ drop: tyranitar.id, add: megaTyranitar.id }]),
     /above the .* budget/,
   );
   assert.deepEqual(state, beforeRejected, 'a rejected list mutates nothing');
@@ -331,18 +331,16 @@ test('trade-window swaps are atomic and may upgrade a base entry to its Mega', (
         { drop: mrRime.id, add: absol.id },
       ],
       reasoning: 'Trade depth for the Mega upgrade.',
-      notebook: 'Mega Tyranitar is now the endgame.',
     }),
     state,
     0,
   );
   assert.notEqual(typeof parsed, 'string', String(parsed));
   if (typeof parsed === 'string') return;
-  const accepted = applyFreeAgency(state, 0, parsed.swaps, parsed.notebook);
+  const accepted = applyFreeAgency(state, 0, parsed.swaps);
   assert.deepEqual(state, beforeRejected, 'an accepted transition does not mutate its prior state');
   assert.equal(accepted.rosters[0]!.length, BOARD.picks);
   assert.equal(accepted.budgets[0], 0);
-  assert.equal(accepted.notebooks[0], 'Mega Tyranitar is now the endgame.');
   assert.ok(accepted.rosters[0]!.some((entry) => entry.id === megaTyranitar.id));
   assert.ok(accepted.rosters[0]!.some((entry) => entry.id === absol.id));
   assert.ok(!accepted.rosters[0]!.some((entry) => entry.id === tyranitar.id || entry.id === mrRime.id));
@@ -358,7 +356,7 @@ test('coach trades validate both rosters and apply an accepted exchange atomical
       [mon('tyranitar'), mon('mr-rime')],
     ],
     budgets: [79, 83],
-    notebooks: ['', ''],
+    memories: [emptyMemory(), emptyMemory()],
     standings: [],
     results: [[], []],
     reflections: [[], []],
@@ -368,7 +366,6 @@ test('coach trades validate both rosters and apply an accepted exchange atomical
     JSON.stringify({
       offer: { to: 1, give: 'charizard-mega-y', get: 'tyranitar', message: 'A direct exchange.' },
       reasoning: 'Private valuation.',
-      notebook: 'Plan around Tyranitar.',
     }),
     state,
     0,
@@ -384,36 +381,12 @@ test('coach trades validate both rosters and apply an accepted exchange atomical
     /entrant index/,
   );
   assert.notEqual(typeof parsed, 'string', String(parsed));
-  assert.deepEqual(parseTradeResponse('{"accept":true,"reasoning":"Worth it.","notebook":"Plan around Charizard."}'), {
+  assert.deepEqual(parseTradeResponse('{"accept":true,"reasoning":"Worth it."}'), {
     accept: true,
     reasoning: 'Worth it.',
-    notebook: 'Plan around Charizard.',
-    evidence: {
-      rationale: 'Worth it.',
-      notebook: 'Plan around Charizard.',
-      supplied: { rationale: true, notebookUpdate: true },
-    },
   });
-  assert.deepEqual(parseTradeResponse('{"accept":true}', 'Keep the old plan.'), {
-    accept: true,
-    reasoning: '',
-    notebook: 'Keep the old plan.',
-    evidence: {
-      rationale: '',
-      notebook: 'Keep the old plan.',
-      supplied: { rationale: false, notebookUpdate: false },
-    },
-  });
-  assert.deepEqual(parseTradeResponse('{"accept":false,"notebook":""}', 'Clear this plan.'), {
-    accept: false,
-    reasoning: '',
-    notebook: '',
-    evidence: {
-      rationale: '',
-      notebook: '',
-      supplied: { rationale: false, notebookUpdate: true },
-    },
-  });
+  assert.deepEqual(parseTradeResponse('{"accept":true}'), { accept: true, reasoning: '' });
+  assert.deepEqual(parseTradeResponse('{"accept":false,"notebook":"ignored"}'), { accept: false, reasoning: '' });
   if (typeof parsed === 'string' || !parsed.offer) return;
   const offered = parsed.offer;
   const before = structuredClone(state);
@@ -425,8 +398,6 @@ test('coach trades validate both rosters and apply an accepted exchange atomical
         give: offered.give,
         get: 'garchomp',
         accepted: true,
-        notebook: parsed.notebook,
-        responseNotebook: 'Plan around Charizard.',
       }),
     /is not on test:b's current roster/,
   );
@@ -438,8 +409,6 @@ test('coach trades validate both rosters and apply an accepted exchange atomical
     give: offered.give,
     get: offered.get,
     accepted: true,
-    notebook: parsed.notebook,
-    responseNotebook: 'Plan around Charizard.',
   });
   assert.deepEqual(state, before, 'an accepted offer does not mutate its prior state');
   assert.deepEqual(
@@ -452,7 +421,6 @@ test('coach trades validate both rosters and apply an accepted exchange atomical
   );
   assert.equal(accepted.budgets[0], 85);
   assert.equal(accepted.budgets[1], 77);
-  assert.deepEqual(accepted.notebooks, ['Plan around Tyranitar.', 'Plan around Charizard.']);
 });
 
 test('coach offers resolve before free agency and replay without model calls', async (t) => {
@@ -474,7 +442,7 @@ test('coach offers resolve before free agency and replay without model calls', a
     teamNames: ['Best', 'Worst'],
     rosters: [cheap.slice(0, 10), cheap.slice(10, 20)],
     budgets: [90, 90],
-    notebooks: ['best', 'worst'],
+    memories: [emptyMemory('best'), emptyMemory('worst')],
     standings: [
       { entrant: 0, w: 1, l: 0, gw: 2, gl: 0 },
       { entrant: 1, w: 0, l: 1, gw: 0, gl: 2 },
@@ -726,7 +694,7 @@ test('the trade window runs lowest seed first and replays completed seats', asyn
     teamNames: ['Best', 'Middle', 'Worst'],
     rosters: initial.map((roster) => [...roster]),
     budgets: [90, 90, 90],
-    notebooks: ['best plan', 'middle plan', 'worst plan'],
+    memories: [emptyMemory('best plan'), emptyMemory('middle plan'), emptyMemory('worst plan')],
     standings: [
       { entrant: 0, w: 2, l: 0, gw: 4, gl: 0 },
       { entrant: 1, w: 1, l: 1, gw: 2, gl: 2 },
@@ -1484,7 +1452,7 @@ function teambuildRequest(overrides: Record<string, unknown> = {}) {
     franchiseName: 'Test Tauros',
     roster: TEAMBUILD_ROSTER,
     opponentRoster: TEAMBUILD_ROSTER.slice(0, 10),
-    draftNote: 'Flexible Ground offense with two speed-control modes.',
+    memory: emptyMemory('Flexible Ground offense with two speed-control modes.'),
     playoffContext: [],
     format: BOARD.format,
     ...overrides,
@@ -2066,27 +2034,19 @@ test('the real league window updates the outer roster used by later construction
     teamNames: config.team_names,
     rosters,
     budgets: rosters.map((roster) => BOARD.budget - roster.reduce((sum, candidate) => sum + candidate.cost, 0)),
-    notebooks: config.draft_notes,
+    memories: config.draft_notes.map((note) => emptyMemory(note)),
     standings: table,
     results: models.map(() => []),
     reflections: models.map(() => []),
     history: [],
   };
   const owned = new Set(rosters.flatMap((roster) => roster.map((candidate) => candidate.id)));
-  let replayed:
-    | {
-        drop: string;
-        add: string;
-        notebook: string;
-        reasoning: string;
-        supplied: { rationale: boolean; notebookUpdate: boolean };
-      }
-    | undefined;
+  let replayed: { drop: string; add: string; reasoning: string } | undefined;
   for (const drop of rosters[first]!) {
     for (const add of BOARD.mons) {
       if (owned.has(add.id)) continue;
       const parsed = parseTradeDecision(
-        JSON.stringify({ swaps: [{ drop: drop.id, add: add.id }], notebook: 'replayed roster plan' }),
+        JSON.stringify({ swaps: [{ drop: drop.id, add: add.id }], reasoning: 'replayed roster plan' }),
         state,
         first,
       );
@@ -2094,9 +2054,7 @@ test('the real league window updates the outer roster used by later construction
       replayed = {
         drop: parsed.swaps[0]!.drop,
         add: parsed.swaps[0]!.add,
-        notebook: parsed.notebook,
         reasoning: parsed.reasoning,
-        supplied: parsed.evidence.supplied,
       };
       break;
     }
@@ -2112,7 +2070,7 @@ test('the real league window updates the outer roster used by later construction
       weeks: 1,
       rosterVersion: 0,
       rosters,
-      notebooks: [...config.draft_notes],
+      memories: config.draft_notes.map((note) => emptyMemory(note)),
       standings: config.entrants.map((_, entrant) => ({ entrant, w: 0, l: 0, gw: 0, gl: 0 })),
       series: [],
       period: [],
@@ -2132,8 +2090,6 @@ test('the real league window updates the outer roster used by later construction
       model: config.entrants[first],
       swaps: [{ drop: replayed.drop, add: replayed.add }],
       reasoning: replayed.reasoning,
-      notebook: replayed.notebook,
-      evidenceSupplied: replayed.supplied,
       fallback: false,
       timestamp: new Date(0).toISOString(),
     })}\n`,
@@ -2156,7 +2112,7 @@ test('the real league window updates the outer roster used by later construction
       rosters,
       previousRosters: preWindowRosters,
       seats: [first],
-      notebooks: state.notebooks,
+      memories: [...state.memories],
       standings: config.entrants.map((_, entrant) => ({ entrant, w: 0, l: 0, gw: 0, gl: 0 })),
       series: [],
       period: [],
@@ -2204,7 +2160,6 @@ test('durable journal and atomic final-artifact faults retry provider-free and c
   const before = JSON.stringify(state);
   const rosterReference = state.rosters;
   const budgetReference = state.budgets;
-  const notebookReference = state.notebooks;
   const owned = new Set(state.rosters.flatMap((roster) => roster.map((candidate) => candidate.id)));
   let swap: { drop: string; add: string } | undefined;
   for (const drop of state.rosters[1]!) {
@@ -2307,10 +2262,8 @@ test('durable journal and atomic final-artifact faults retry provider-free and c
   assert.equal(fs.readFileSync(transcript, 'utf8'), journal, 'retry does not append committed decisions twice');
   assert.strictEqual(state.rosters, rosterReference);
   assert.strictEqual(state.budgets, budgetReference);
-  assert.strictEqual(state.notebooks, notebookReference);
   assert.equal(state.rosters[1]!.filter((candidate) => candidate.id === swap.add).length, 1);
   assert.ok(!state.rosters[1]!.some((candidate) => candidate.id === swap.drop));
-  assert.deepEqual(state.notebooks, ['', 'durable plan']);
   assert.deepEqual(readValidatedTradeWindow(directory, initial, { afterWeek: 1, tradesAllowed: 0 }), artifact);
 });
 
@@ -2695,15 +2648,15 @@ test('season reviews are written once per coach and replayed on resume', async (
       {
         after_week: 3,
         order: [1, 0],
+        memory_digests: [],
         offers: [],
         decisions: [
-          { entrant: 1, model: models[1]!, swaps: [], reasoning: 'Kept it.', notebook: '', fallback: false },
+          { entrant: 1, model: models[1]!, swaps: [], reasoning: 'Kept it.', fallback: false },
           {
             entrant: 0,
             model: models[0]!,
             swaps: [{ drop: mon('venusaur').id, add: mon('absol').id }],
             reasoning: 'Traded up.',
-            notebook: '',
             fallback: false,
           },
         ],
@@ -2904,6 +2857,7 @@ test('window prompts name their place in the schedule and the public moves of ea
           {
             after_week: 1,
             order: [1, 0],
+            memory_digests: [],
             offers: [
               {
                 from: 1,
@@ -2924,7 +2878,6 @@ test('window prompts name their place in the schedule and the public moves of ea
                 model: 'random',
                 swaps: [{ drop: 'c', add: 'd' }],
                 reasoning: '',
-                notebook: '',
                 fallback: false,
               },
             ],

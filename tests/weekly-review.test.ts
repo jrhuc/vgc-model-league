@@ -7,10 +7,10 @@ import { test } from 'node:test';
 import { MockLanguageModelV4 } from 'ai/test';
 
 import { loadBoard } from '../src/draft.js';
+import { emptyMemory, memoryDigest } from '../src/franchise-memory.js';
 import { readJsonlObjects } from '../src/jsonl.js';
 import { defaultPsDir } from '../src/paths.js';
 import {
-  notebookDigest,
   readWeeklyReviews,
   renderWeeklyReviewPrompt,
   runWeeklyReview,
@@ -86,7 +86,7 @@ function writeRun(): { runDir: string; state: WeeklyReviewState } {
     weeks: 3,
     rosterVersion: 0,
     rosters,
-    notebooks: ['Start with Garchomp.', ''],
+    memories: [emptyMemory('Start with Garchomp.'), emptyMemory()],
     standings: [
       { entrant: 0, w: 1, l: 0, gw: 2, gl: 0 },
       { entrant: 1, w: 0, l: 1, gw: 0, gl: 2 },
@@ -149,7 +149,7 @@ test('the weekly review prompt states the barrier, the period, the schedule, and
     assert.match(prompt, /A transaction window opens as soon as this review closes/);
     assert.match(prompt, /YOUR SERIES THIS PERIOD:\n- Series 0, week 1: Round-robin week 1: beat random 2-0/);
     assert.match(prompt, /YOUR REMAINING SCHEDULE[^\n]*\n- Week 2 \| random \|/);
-    assert.match(prompt, /YOUR CURRENT NOTEBOOK:\nStart with Garchomp\./);
+    assert.match(prompt, /YOUR NOTEBOOK:\nStart with Garchomp\./);
     assert.match(renderWeeklyReviewPrompt({ ...state, nextWindowWeek: null }, 0), /Rosters are now locked/);
     assert.match(
       renderWeeklyReviewPrompt({ ...state, nextWindowWeek: 3 }, 0),
@@ -191,7 +191,52 @@ test('a reconciliation reviews only the changed seats against both rosters', asy
   assert.equal(reviews[0]!.roster_version, 1);
   assert.ok(fs.existsSync(path.join(runDir, 'reviews', 'week-1-transactions.jsonl')));
   assert.deepEqual(readWeeklyReviews(runDir, 1), [], 'the week review file is untouched');
-  assert.equal(state.notebooks[0], 'Rebuilt around the new six.');
+  assert.equal(state.memories[0]!.notebook, 'Rebuilt around the new six.');
+});
+
+test('a coach keeps named pages, reads them back, and is refused an over-limit page with the reason', async (t) => {
+  const { runDir, state } = writeRun();
+  t.after(() => fs.rmSync(runDir, { recursive: true, force: true }));
+  const week1 = scripted([
+    reply(
+      '{"notebook":"Lead Garchomp.","pages":{"opp.random":"Random brings nothing.","lessons":"' +
+        'x'.repeat(9_000) +
+        '"}}',
+    ),
+    reply('{"notebook":"Lead Garchomp.","pages":{"opp.random":"Random brings nothing."}}'),
+  ]);
+  await runWeeklyReview(state, { runDir, psDir: defaultPsDir(), makeReviewModel: () => week1.agentModel });
+  assert.equal(week1.calls.length, 2);
+  assert.match(
+    JSON.stringify(week1.calls[1]!.prompt.at(-1)!.content),
+    /page \\"lessons\\" is 9000 characters; the limit is 8000/,
+  );
+  assert.deepEqual(state.memories[0], { notebook: 'Lead Garchomp.', 'opp.random': 'Random brings nothing.' });
+  const stored = readWeeklyReviews(runDir, 1).find((row) => row.entrant === 0)!;
+  assert.deepEqual(stored.memory, state.memories[0]);
+  assert.equal(stored.digest, memoryDigest(state.memories[0]!));
+
+  const week2State: WeeklyReviewState = { ...state, week: 2, period: [], nextWindowWeek: null };
+  const prompt = renderWeeklyReviewPrompt(week2State, 0);
+  assert.match(
+    prompt,
+    /YOUR NOTEBOOK:\nLead Garchomp\.\n\nYOUR MEMORY PAGES \(name \| characters \| first line\):\n- opp\.random \| 22 \| Random brings nothing\./,
+  );
+  const week2 = scripted([
+    toolCall('read_memory_page', { name: 'opp.random' }),
+    toolCall('read_memory_history', { week: 1 }),
+    reply('{"notebook":"Lead Garchomp.","reasoning":"Nothing new."}'),
+  ]);
+  await runWeeklyReview(week2State, { runDir, psDir: defaultPsDir(), makeReviewModel: () => week2.agentModel });
+  const seatLog = readJsonlObjects(path.join(runDir, 'reviews', 'week-2', 'seat-0-test-alpha.jsonl'));
+  const lookups = seatLog[0]!.tool_lookups as Array<{ name: string; result: string }>;
+  assert.equal(lookups[0]!.result, 'Random brings nothing.');
+  assert.match(lookups[1]!.result, /YOUR MEMORY PAGE opp\.random:\nRandom brings nothing\./);
+  assert.deepEqual(
+    state.memories[0],
+    { notebook: 'Lead Garchomp.', 'opp.random': 'Random brings nothing.' },
+    'omitting pages keeps them',
+  );
 });
 
 test('a coach reads a series through its tools, replaces its notebook, and the row replays without a model', async (t) => {
@@ -210,16 +255,15 @@ test('a coach reads a series through its tools, replaces its notebook, and the r
   assert.equal(script.calls.length, 3, 'two tool steps then the answer');
   assert.equal(reviews.length, 2);
   const alpha = reviews.find((review) => review.entrant === 0)!;
-  assert.equal(alpha.notebook, 'Garchomp leads work; keep it.');
+  assert.equal(alpha.memory.notebook, 'Garchomp leads work; keep it.');
   assert.equal(alpha.reasoning, 'Won cleanly.');
-  assert.deepEqual(alpha.evidence_supplied, { rationale: true, notebookUpdate: true });
-  assert.equal(alpha.previous_digest, notebookDigest('Start with Garchomp.'));
-  assert.equal(alpha.digest, notebookDigest(alpha.notebook));
+  assert.equal(alpha.previous_digest, memoryDigest(emptyMemory('Start with Garchomp.')));
+  assert.equal(alpha.digest, memoryDigest(alpha.memory));
   assert.equal(alpha.fallback, false);
   const random = reviews.find((review) => review.entrant === 1)!;
-  assert.equal(random.notebook, '');
+  assert.equal(random.memory.notebook, '');
   assert.equal(random.fallback, false, 'a random seat files no review and is not a fallback');
-  assert.deepEqual(state.notebooks, ['Garchomp leads work; keep it.', '']);
+  assert.deepEqual(state.memories, [emptyMemory('Garchomp leads work; keep it.'), emptyMemory()]);
 
   const seatLog = readJsonlObjects(path.join(runDir, 'reviews', 'week-1', 'seat-0-test-alpha.jsonl'));
   assert.equal(seatLog.length, 1);
@@ -236,7 +280,7 @@ test('a coach reads a series through its tools, replaces its notebook, and the r
   assert.deepEqual(seatLog[0]!.usage, { input_tokens: 30, output_tokens: 15 });
 
   const replayed = await runWeeklyReview(
-    { ...state, notebooks: ['Start with Garchomp.', ''] },
+    { ...state, memories: [emptyMemory('Start with Garchomp.'), emptyMemory()] },
     { runDir, psDir: defaultPsDir(), makeReviewModel: () => scripted([]).agentModel },
   );
   assert.deepEqual(replayed, reviews, 'a completed review replays from its rows');
@@ -255,7 +299,7 @@ test('a rejected reply is re-prompted with the reason and the attempt is logged'
   assert.equal(seatLog.length, 2);
   assert.equal(seatLog[0]!.error, 'the reply contained no JSON object');
   assert.equal(seatLog[1]!.error, undefined);
-  assert.equal(state.notebooks[0], 'Keep the plan.');
+  assert.equal(state.memories[0]!.notebook, 'Keep the plan.');
 });
 
 test('a stored review must continue the notebook the league holds', async (t) => {
@@ -268,9 +312,9 @@ test('a stored review must continue the notebook the league holds', async (t) =>
   });
   await assert.rejects(
     runWeeklyReview(
-      { ...state, notebooks: ['A different notebook.', ''] },
+      { ...state, memories: [emptyMemory('A different notebook.'), emptyMemory()] },
       { runDir, psDir: defaultPsDir(), makeReviewModel: () => scripted([]).agentModel },
     ),
-    /does not continue the current notebook/,
+    /does not continue the current memory/,
   );
 });

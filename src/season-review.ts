@@ -244,7 +244,9 @@ function userPrompt(state: SeasonReviewState, entrant: number, outcome: string):
   lines.push(
     '',
     SEASON_REVIEW_PROMPT_POLICY.wordsHeading,
-    `- Final private roster notebook: ${state.notebooks[entrant] || '(empty)'}`,
+    '- Your final memory follows.',
+    '',
+    state.notebooks[entrant] || '(empty)',
     '',
     ...SEASON_REVIEW_PROMPT_POLICY.replyTemplate,
   );

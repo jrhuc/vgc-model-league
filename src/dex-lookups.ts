@@ -3,7 +3,7 @@ import { assistantToolMessage, classifyProviderFailure, toolResultMessage, uniqu
 import type { RecoveryGate } from './recovery.js';
 import type { ShowdownReference } from './reference.js';
 import { DEX_TOOLS } from './reference.js';
-import type { Completion, JsonObject, Provider, ProviderMessage } from './types.js';
+import type { Completion, JsonObject, Provider, ProviderMessage, ToolDefinition } from './types.js';
 import { isRecord } from './value.js';
 
 export const TOOL_BUDGET_NOTICE =
@@ -32,6 +32,11 @@ export interface DexToolPolicy {
   retryBaseMs: number;
 }
 
+export interface ExtraTool {
+  definition: ToolDefinition;
+  run: (args: JsonObject) => string;
+}
+
 export interface DexToolRequest {
   provider: Provider;
   system: string;
@@ -40,6 +45,7 @@ export interface DexToolRequest {
   reference: ShowdownReference;
   policy: DexToolPolicy;
   boardSearch?: BoardSearch;
+  extraTools?: ExtraTool[];
   recovery?: RecoveryGate;
   signal?: AbortSignal;
   sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
@@ -59,6 +65,14 @@ const delay = (ms: number, signal?: AbortSignal): Promise<void> =>
     signal?.addEventListener('abort', abort, { once: true });
   });
 
+function offeredTools(request: DexToolRequest): ToolDefinition[] {
+  return [
+    ...DEX_TOOLS,
+    ...(request.boardSearch ? [request.boardSearch.definition] : []),
+    ...(request.extraTools ?? []).map((tool) => tool.definition),
+  ];
+}
+
 async function completeOnce(request: DexToolRequest, options: { tools: boolean; final: boolean }): Promise<Completion> {
   for (let attempt = 0; ; attempt += 1) {
     await request.recovery?.wait(request.spec, request.signal);
@@ -68,7 +82,7 @@ async function completeOnce(request: DexToolRequest, options: { tools: boolean; 
         timeout: request.policy.timeoutSeconds,
         ...(options.tools
           ? {
-              tools: request.boardSearch ? [...DEX_TOOLS, request.boardSearch.definition] : DEX_TOOLS,
+              tools: offeredTools(request),
               toolChoice: options.final ? 'none' : 'auto',
             }
           : {}),
@@ -91,8 +105,8 @@ export interface DexToolCompletion extends Completion {
 export async function completeWithDexTools(request: DexToolRequest): Promise<DexToolCompletion> {
   const usage: Record<string, number> = {};
   const seenToolResults = new Map<string, string>();
-  const offeredTools = request.boardSearch ? [...DEX_TOOLS, request.boardSearch.definition] : DEX_TOOLS;
-  const offeredNames = new Set(offeredTools.map((tool) => tool.name));
+  const offeredNames = new Set(offeredTools(request).map((tool) => tool.name));
+  const extra = new Map((request.extraTools ?? []).map((tool) => [tool.definition.name, tool.run] as const));
   const lookup = (name: string, args: JsonObject): string => {
     const seenKey = `${name} ${JSON.stringify(args)}`;
     const cached = seenToolResults.get(seenKey);
@@ -101,7 +115,7 @@ export async function completeWithDexTools(request: DexToolRequest): Promise<Dex
       ? `Not executed: tool ${JSON.stringify(name)} was not offered in this stage.`
       : request.boardSearch && name === request.boardSearch.definition.name
         ? request.boardSearch.run(args)
-        : request.reference.lookup(name, args);
+        : (extra.get(name)?.(args) ?? request.reference.lookup(name, args));
     seenToolResults.set(seenKey, result);
     return result;
   };
