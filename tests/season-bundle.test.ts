@@ -99,7 +99,7 @@ function fixture(): { league: LeagueResponse; plans: DraftLeagueSeriesPlan[] } {
       draftOnly: false,
       lifecycle: 'complete',
       liveSeries: [],
-      tradeWindow: null,
+      transactions: [],
       seasonReviews: [
         {
           entrant: 0,

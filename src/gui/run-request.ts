@@ -8,7 +8,7 @@ import type { Team } from '../teams.js';
 import { parseTimerScale } from '../timer.js';
 import type { ProvenanceMode } from '../tournament.js';
 import { TOURNAMENT_PROTOCOL_VERSION } from '../tournament.js';
-import { DEFAULT_TRADE_WINDOW, MAX_TRADE_OFFERS, type TradeWindowConfig } from '../trade-window.js';
+import { defaultTransactionSchedule, type TransactionSchedule, validateTransactionSchedule } from '../trade-window.js';
 import type { ExperimentMode, TimerScale } from '../types.js';
 import { isRecord } from '../value.js';
 
@@ -26,7 +26,7 @@ export interface RunConfig extends ModelReasoningConfig {
   timerScale?: TimerScale;
   closedSheets?: boolean;
   sequentialWeeks?: boolean;
-  tradeWindow?: TradeWindowConfig | null;
+  transactions?: TransactionSchedule | null;
   draftOnly?: boolean;
   provenance?: ProvenanceMode;
 }
@@ -185,28 +185,22 @@ export function parseRunRequest(
     invalid(error instanceof Error ? error.message : String(error));
   }
 
-  let tradeWindow: TradeWindowConfig | null | undefined;
+  let transactions: TransactionSchedule | undefined;
   if (mode === 'draft') {
     const weeks = draftLeagueTopology(models.length).weekCount;
-    if (body.tradeWindow === undefined) {
-      tradeWindow = { afterWeek: Math.min(3, weeks), tradesAllowed: DEFAULT_TRADE_WINDOW.tradesAllowed };
-    } else if (body.tradeWindow === null) {
-      tradeWindow = null;
-    } else if (isRecord(body.tradeWindow)) {
-      const afterWeek = Number(body.tradeWindow.afterWeek);
-      if (!Number.isSafeInteger(afterWeek) || afterWeek < 1 || afterWeek > weeks) {
-        invalid(`trade window week must be between 1 and ${weeks}`);
+    if (body.transactions === undefined) {
+      transactions = defaultTransactionSchedule(weeks);
+    } else if (body.transactions === null) {
+      transactions = [];
+    } else if (Array.isArray(body.transactions)) {
+      transactions = body.transactions.map((week) => ({ afterWeek: Number(week), tradesAllowed: 1 }));
+      try {
+        validateTransactionSchedule(transactions, weeks, 'transactions');
+      } catch (error) {
+        invalid(error instanceof Error ? error.message : String(error));
       }
-      const tradesAllowed =
-        body.tradeWindow.tradesAllowed === undefined
-          ? DEFAULT_TRADE_WINDOW.tradesAllowed
-          : Number(body.tradeWindow.tradesAllowed);
-      if (!Number.isSafeInteger(tradesAllowed) || tradesAllowed < 0 || tradesAllowed > MAX_TRADE_OFFERS) {
-        invalid(`trade window tradesAllowed must be an integer between 0 and ${MAX_TRADE_OFFERS}`);
-      }
-      tradeWindow = { afterWeek, tradesAllowed };
     } else {
-      invalid('tradeWindow must be null or an object with afterWeek');
+      invalid('transactions must be null or an array of week numbers');
     }
   }
 
@@ -232,7 +226,7 @@ export function parseRunRequest(
       ...(timerScale === undefined ? {} : { timerScale }),
       ...(mode === 'draft' && body.closedSheets === true ? { closedSheets: true } : {}),
       ...(mode === 'draft' && body.sequentialWeeks === true ? { sequentialWeeks: true } : {}),
-      ...(mode === 'draft' ? { tradeWindow: tradeWindow! } : {}),
+      ...(mode === 'draft' ? { transactions: transactions! } : {}),
       ...(mode === 'draft' && body.draftOnly === true ? { draftOnly: true } : {}),
       ...(mode === 'tournament' && body.provenance === 'blind' ? { provenance: 'blind' as const } : {}),
     },

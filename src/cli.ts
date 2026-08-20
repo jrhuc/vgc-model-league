@@ -57,7 +57,7 @@ Commands:
       each coach drafts 10 within a 100-point budget, then picks 6 and builds every set before each match
       [--board <name>] [--seed <n>] [--concurrency <n>] [--reasoning <level>] [--timer-scale <n|off>]
       [--nitro] [--through-week <n>] [--resume <run-dir>] [--sequential-weeks] [--closed-sheets]
-      [--trade-window <week|off>] [--draft-only]
+      [--transactions <weeks|off>] [--draft-only]
       --draft-only stops once rosters are drafted and plays no games; resume the run to play the season
       --through-week stops cleanly after that round-robin week; --resume continues a stored league
       round-robin series run concurrently with blind teambuilds; --sequential-weeks restores
@@ -332,12 +332,13 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
         resume: { type: 'string' },
         'sequential-weeks': { type: 'boolean', default: false },
         'closed-sheets': { type: 'boolean', default: false },
-        'trade-window': { type: 'string' },
+        transactions: { type: 'string' },
         'draft-only': { type: 'boolean', default: false },
       },
     });
     const { runDraftLeague } = await import('./draftleague.js');
     const { draftLeagueTopology } = await import('./draftleague-topology.js');
+    const { parseTransactionWeeks } = await import('./trade-window.js');
     const resumeDir = values.resume ? path.resolve(values.resume) : undefined;
     const storedConfig = resumeDir
       ? (JSON.parse(fs.readFileSync(path.join(resumeDir, 'config.json'), 'utf8')) as {
@@ -350,7 +351,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
           sequential_weeks?: boolean;
           closed_sheets?: boolean;
           draft_only?: boolean;
-          trade_window?: { after_week?: number; trades_allowed?: number } | null;
+          transactions?: Array<{ after_week: number; trades_allowed: number }> | null;
         })
       : undefined;
     const models = storedConfig
@@ -371,27 +372,18 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
     }
     const throughWeek =
       values['through-week'] === undefined ? undefined : positiveInteger('through-week', values['through-week']);
-    const storedWindow =
+    const storedSchedule =
       storedConfig && storedConfig.draft_only !== true
-        ? storedConfig.trade_window === undefined || storedConfig.trade_window === null
-          ? null
-          : {
-              afterWeek: positiveInteger('trade-window', String(storedConfig.trade_window.after_week)),
-              tradesAllowed:
-                Number.isSafeInteger(storedConfig.trade_window.trades_allowed) &&
-                Number(storedConfig.trade_window.trades_allowed) >= 0
-                  ? Number(storedConfig.trade_window.trades_allowed)
-                  : 0,
-            }
+        ? (storedConfig.transactions ?? []).map((window) => ({
+            afterWeek: window.after_week,
+            tradesAllowed: window.trades_allowed,
+          }))
         : undefined;
-    const tradeWindowValue =
-      storedWindow !== undefined
-        ? storedWindow
-        : values['trade-window'] === undefined
-          ? undefined
-          : values['trade-window'] === 'off'
-            ? null
-            : { afterWeek: positiveInteger('trade-window', values['trade-window']), tradesAllowed: 1 };
+    const transactions =
+      storedSchedule ??
+      (values.transactions === undefined
+        ? undefined
+        : parseTransactionWeeks(values.transactions, draftLeagueTopology(models.length).weekCount));
     const runDir = resumeDir ?? makeRunDirectory();
     let lastTeambuilds = 0;
     const rows = await withRunStatus(runDir, () =>
@@ -406,7 +398,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
         ...((storedConfig ? storedConfig.closed_sheets === true : values['closed-sheets'])
           ? { closedSheets: true }
           : {}),
-        ...(tradeWindowValue === undefined ? {} : { tradeWindow: tradeWindowValue }),
+        ...(transactions === undefined ? {} : { transactions }),
         ...(values['draft-only'] ? { draftOnly: true } : {}),
         ...execution,
         onEvent: (event) => {

@@ -111,9 +111,9 @@ function LeagueCard({ card, onOpen }: { card: LeagueCardView; onOpen: () => void
         {card.draftOnly
           ? 'draft only'
           : `${card.seriesCount} series recorded · ${
-              card.tradeWindowAfterWeek === null
+              card.transactionWeeks.length === 0
                 ? 'locked rosters'
-                : `trade window after week ${card.tradeWindowAfterWeek}`
+                : `windows after ${card.transactionWeeks.length === 1 ? 'week' : 'weeks'} ${card.transactionWeeks.join(', ')}`
             }`}
       </span>
     </button>
@@ -574,10 +574,6 @@ function TeamPage({
   const picks = [...franchise.draftRoster].sort((a, b) => (a.pick ?? 99) - (b.pick ?? 99));
   const name = (entrant: number) => franchiseLabel(league, entrant);
   const liveSeries = league.liveSeries.filter((entry) => entry.sides?.includes(franchise.entrant));
-  const windowDecision = league.tradeWindow?.decisions.find((entry) => entry.entrant === franchise.entrant);
-  const tradeOffers = (league.tradeWindow?.offers ?? []).filter(
-    (entry) => entry.from === franchise.entrant || entry.to === franchise.entrant,
-  );
   const seasonReview = league.seasonReviews?.find((entry) => entry.entrant === franchise.entrant);
   const rosterNames = new Map(
     league.franchises.flatMap((entry) =>
@@ -650,73 +646,79 @@ function TeamPage({
           {picks.length === 0 ? <p class="muted">No stored draft for this roster.</p> : null}
         </div>
       </section>
-      {league.tradeWindow ? (
-        <section class="panel">
-          <div class="section-head">
-            <div>
-              <h2>Mid-season trade window</h2>
-              <p>
-                {league.tradeWindow.state === 'scheduled'
-                  ? `Scheduled after week ${league.tradeWindow.afterWeek}. The lowest seed will choose first, with coach offers before free agency.`
-                  : league.tradeWindow.state === 'in-progress'
-                    ? `Open after week ${league.tradeWindow.afterWeek}. The lowest seed chooses first, with coach offers before free agency.`
-                    : `After week ${league.tradeWindow.afterWeek}, the lowest seed chose first. Coach offers resolved before free agency.`}
-              </p>
-            </div>
-          </div>
-          <div class="draft-feed">
-            {tradeOffers.map((offer, index) => (
-              <div class="draft-feed-item" key={`${offer.from}:${offer.to}:${offer.give}:${offer.get}:${index}`}>
-                <span class="draft-feed-head">
-                  {offer.to === null
-                    ? `${name(offer.from)} made no trade offer`
-                    : `${name(offer.from)} offered ${rosterNames.get(offer.give ?? '') ?? offer.give} for ${
-                        rosterNames.get(offer.get ?? '') ?? offer.get
-                      } from ${name(offer.to)} · ${offer.accepted ? 'accepted' : 'declined'}`}
-                </span>
-                {offer.message ? <p>“{offer.message}”</p> : null}
-                {offer.offerReasoning ? <p>Offer reasoning: {offer.offerReasoning}</p> : null}
-                {offer.responseReasoning ? <p>Response reasoning: {offer.responseReasoning}</p> : null}
+      {league.transactions.map((window) => {
+        const windowDecision = window.decisions.find((entry) => entry.entrant === franchise.entrant);
+        const tradeOffers = window.offers.filter(
+          (entry) => entry.from === franchise.entrant || entry.to === franchise.entrant,
+        );
+        return (
+          <section class="panel" key={window.afterWeek}>
+            <div class="section-head">
+              <div>
+                <h2>Transaction window after week {window.afterWeek}</h2>
+                <p>
+                  {window.state === 'scheduled'
+                    ? `Scheduled after week ${window.afterWeek}. The lowest seed will choose first, with coach offers before free agency.`
+                    : window.state === 'in-progress'
+                      ? `Open after week ${window.afterWeek}. The lowest seed chooses first, with coach offers before free agency.`
+                      : `After week ${window.afterWeek}, the lowest seed chose first. Coach offers resolved before free agency.`}
+                </p>
               </div>
-            ))}
-            {windowDecision ? (
-              <>
-                <div class="draft-feed-item">
+            </div>
+            <div class="draft-feed">
+              {tradeOffers.map((offer, index) => (
+                <div class="draft-feed-item" key={`${offer.from}:${offer.to}:${offer.give}:${offer.get}:${index}`}>
                   <span class="draft-feed-head">
-                    {windowDecision.swaps.length
-                      ? `${windowDecision.swaps.length} roster swap${windowDecision.swaps.length === 1 ? '' : 's'}`
-                      : 'Roster kept'}
-                    {windowDecision.fallback ? ' · fallback' : ''}
+                    {offer.to === null
+                      ? `${name(offer.from)} made no trade offer`
+                      : `${name(offer.from)} offered ${rosterNames.get(offer.give ?? '') ?? offer.give} for ${
+                          rosterNames.get(offer.get ?? '') ?? offer.get
+                        } from ${name(offer.to)} · ${offer.accepted ? 'accepted' : 'declined'}`}
                   </span>
-                  <p>{windowDecision.reasoning || 'No stored rationale.'}</p>
-                  {windowDecision.swaps.length ? (
-                    <ul class="build-changes">
-                      {windowDecision.swaps.map((swap) => (
-                        <li key={`${swap.drop}:${swap.add}`}>
-                          Dropped {rosterNames.get(swap.drop) ?? swap.drop} · added{' '}
-                          {rosterNames.get(swap.add) ?? swap.add}
-                        </li>
-                      ))}
-                    </ul>
-                  ) : null}
+                  {offer.message ? <p>“{offer.message}”</p> : null}
+                  {offer.offerReasoning ? <p>Offer reasoning: {offer.offerReasoning}</p> : null}
+                  {offer.responseReasoning ? <p>Response reasoning: {offer.responseReasoning}</p> : null}
                 </div>
-                <div class="draft-feed-item">
-                  <span class="draft-feed-head">Post-window roster · {franchise.spent} pts</span>
-                  <p>{franchise.roster.map((mon) => mon.name).join(', ')}</p>
-                </div>
-              </>
-            ) : (
-              <p class="muted">
-                {league.tradeWindow.state === 'complete'
-                  ? 'No stored free-agency decision.'
-                  : league.tradeWindow.state === 'in-progress'
-                    ? 'This coach has not chosen yet.'
-                    : 'The roster window has not opened yet.'}
-              </p>
-            )}
-          </div>
-        </section>
-      ) : null}
+              ))}
+              {windowDecision ? (
+                <>
+                  <div class="draft-feed-item">
+                    <span class="draft-feed-head">
+                      {windowDecision.swaps.length
+                        ? `${windowDecision.swaps.length} roster swap${windowDecision.swaps.length === 1 ? '' : 's'}`
+                        : 'Roster kept'}
+                      {windowDecision.fallback ? ' · fallback' : ''}
+                    </span>
+                    <p>{windowDecision.reasoning || 'No stored rationale.'}</p>
+                    {windowDecision.swaps.length ? (
+                      <ul class="build-changes">
+                        {windowDecision.swaps.map((swap) => (
+                          <li key={`${swap.drop}:${swap.add}`}>
+                            Dropped {rosterNames.get(swap.drop) ?? swap.drop} · added{' '}
+                            {rosterNames.get(swap.add) ?? swap.add}
+                          </li>
+                        ))}
+                      </ul>
+                    ) : null}
+                  </div>
+                  <div class="draft-feed-item">
+                    <span class="draft-feed-head">Post-window roster · {franchise.spent} pts</span>
+                    <p>{franchise.roster.map((mon) => mon.name).join(', ')}</p>
+                  </div>
+                </>
+              ) : (
+                <p class="muted">
+                  {window.state === 'complete'
+                    ? 'No stored free-agency decision.'
+                    : window.state === 'in-progress'
+                      ? 'This coach has not chosen yet.'
+                      : 'The roster window has not opened yet.'}
+                </p>
+              )}
+            </div>
+          </section>
+        );
+      })}
 
       {seasonReview ? (
         <section class="panel">
@@ -1006,13 +1008,11 @@ function LeaguePage({
           budget{league.format ? `, ${league.format}` : ''}.{' '}
           {league.draftOnly
             ? 'The draft is the whole run: no games were played.'
-            : league.tradeWindow?.state === 'complete'
-              ? `Free agency opened after week ${league.tradeWindow.afterWeek}.`
-              : league.tradeWindow?.state === 'in-progress'
-                ? `Free agency is open after week ${league.tradeWindow.afterWeek}.`
-                : league.tradeWindow
-                  ? `Free agency ${league.lifecycle === 'live' ? 'is' : 'was'} scheduled after week ${league.tradeWindow.afterWeek}.`
-                  : 'Rosters stayed locked after the draft.'}
+            : league.transactions.length
+              ? `Transaction windows after ${league.transactions.length === 1 ? 'week' : 'weeks'} ${league.transactions
+                  .map((window) => window.afterWeek)
+                  .join(', ')}.`
+              : 'Rosters stayed locked after the draft.'}
         </p>
       </header>
 

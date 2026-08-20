@@ -14,7 +14,6 @@ import {
   publicSeasonBundleJsonSchema,
 } from './public/season-bundle.js';
 import { loadSeriesRecords } from './records.js';
-import { readTradeWindow } from './trade-window.js';
 
 export interface ExportSeasonOptions {
   out: string;
@@ -91,7 +90,6 @@ export function exportSeasonBundle(options: ExportSeasonOptions): PublicSeasonBu
     plans: schedule.plans,
     board: boardView,
     games,
-    tradeOrder: readTradeWindow(path.join(options.runsDir, options.runId))?.order ?? null,
     title: options.title,
     releasedThroughWeek: options.releasedThroughWeek,
     closedSheets: config.closedSheets,

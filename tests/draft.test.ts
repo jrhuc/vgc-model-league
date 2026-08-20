@@ -38,11 +38,14 @@ import { runTeambuild, teambuildScaffoldRevision } from '../src/teambuild.js';
 import {
   applyFreeAgency,
   applyTradeOffer,
+  describeTransactionHistory,
   MAX_TRADE_OFFERS,
   parseTradeDecision,
   parseTradeOffer,
   parseTradeResponse,
   readValidatedTradeWindow,
+  renderFreeAgencyPrompt,
+  renderTradeOfferPrompt,
   runTradeWindow,
   type TradeWindowState,
   tradeWindowScaffoldRevision,
@@ -94,6 +97,7 @@ function transactionState(entrants = 2): TradeWindowState {
     standings: Array.from({ length: entrants }, (_, entrant) => ({ entrant, w: 0, l: 0, gw: 0, gl: 0 })),
     results: Array.from({ length: entrants }, () => []),
     reflections: Array.from({ length: entrants }, () => []),
+    history: [],
   };
 }
 
@@ -299,6 +303,7 @@ test('trade-window swaps are atomic and may upgrade a base entry to its Mega', (
     ],
     results: [[], []],
     reflections: [[], []],
+    history: [],
   };
 
   const overBudget = parseTradeDecision(
@@ -356,6 +361,7 @@ test('coach trades validate both rosters and apply an accepted exchange atomical
     standings: [],
     results: [[], []],
     reflections: [[], []],
+    history: [],
   } satisfies TradeWindowState;
   const parsed = parseTradeOffer(
     JSON.stringify({
@@ -474,6 +480,7 @@ test('coach offers resolve before free agency and replay without model calls', a
     ],
     results: [[], []],
     reflections: [[], []],
+    history: [],
   });
   const queues = new Map<string, string[]>([
     [
@@ -508,9 +515,9 @@ test('coach offers resolve before free agency and replay without model calls', a
   const systems: string[] = [];
   const liveState = createState();
   const artifact = await runTradeWindow(liveState, {
-    runDir: directory,
+    epochDir: directory,
     psDir: defaultPsDir(),
-    afterWeek: 1,
+    position: { afterWeek: 1, index: 0, count: 1 },
     tradesAllowed: 2,
     makeTradeProvider: (spec) => ({
       complete(system: string, messages: ProviderMessage[]): Promise<Completion> {
@@ -554,9 +561,9 @@ test('coach offers resolve before free agency and replay without model calls', a
   let replayCalls = 0;
   const replayState = createState();
   const replayed = await runTradeWindow(replayState, {
-    runDir: directory,
+    epochDir: directory,
     psDir: defaultPsDir(),
-    afterWeek: 1,
+    position: { afterWeek: 1, index: 0, count: 1 },
     tradesAllowed: 2,
     makeTradeProvider: () => ({
       complete(): Promise<Completion> {
@@ -586,9 +593,9 @@ test('offer artifacts distinguish exhausted parsing from deliberate and random d
   assert.notEqual(typeof parseTradeOffer(JSON.stringify(offer), state, 1), 'string');
   const calls = new Map<string, number>();
   const artifact = await runTradeWindow(state, {
-    runDir: directory,
+    epochDir: directory,
     psDir: defaultPsDir(),
-    afterWeek: 1,
+    position: { afterWeek: 1, index: 0, count: 1 },
     tradesAllowed: 1,
     makeTradeProvider: (spec) => ({
       complete(): Promise<Completion> {
@@ -634,9 +641,9 @@ test('trade-offer caps are enforced by direct, fresh-league, and stored-resume i
   const invalid = MAX_TRADE_OFFERS + 1;
   await assert.rejects(
     runTradeWindow(transactionState(), {
-      runDir: directDir,
+      epochDir: directDir,
       psDir: defaultPsDir(),
-      afterWeek: 1,
+      position: { afterWeek: 1, index: 0, count: 1 },
       tradesAllowed: invalid,
     }),
     /between 0 and 3/,
@@ -649,7 +656,7 @@ test('trade-offer caps are enforced by direct, fresh-league, and stored-resume i
     runDraftLeague(['random', 'random'], leagueDir, {
       recordsPath: path.join(leagueDir, 'results.jsonl'),
       seed: 7,
-      tradeWindow: { afterWeek: 1, tradesAllowed: invalid },
+      transactions: [{ afterWeek: 1, tradesAllowed: invalid }],
     }),
     /between 0 and 3/,
   );
@@ -662,7 +669,7 @@ test('trade-offer caps are enforced by direct, fresh-league, and stored-resume i
   const configFile = path.join(leagueDir, 'config.json');
   const config = JSON.parse(fs.readFileSync(configFile, 'utf8')) as Record<string, unknown>;
   config.draft_only = false;
-  config.trade_window = { after_week: 1, trades_allowed: invalid };
+  config.transactions = [{ after_week: 1, trades_allowed: invalid }];
   fs.writeFileSync(
     configFile,
     `${JSON.stringify(config)}
@@ -674,7 +681,7 @@ test('trade-offer caps are enforced by direct, fresh-league, and stored-resume i
       seed: 7,
       resume: true,
     }),
-    /invalid trade window/,
+    /invalid transaction window/,
   );
 });
 
@@ -726,14 +733,15 @@ test('the trade window runs lowest seed first and replays completed seats', asyn
     ],
     results: [[], [], []],
     reflections: [[], [], []],
+    history: [],
   });
   const calls: string[] = [];
   const prompts = new Map<string, string>();
   const firstState = createState();
   const artifact = await runTradeWindow(firstState, {
-    runDir: directory,
+    epochDir: directory,
     psDir: defaultPsDir(),
-    afterWeek: 2,
+    position: { afterWeek: 2, index: 0, count: 1 },
     tradesAllowed: 0,
     makeTradeProvider: (spec) => ({
       complete(system: string, messages: ProviderMessage[]): Promise<Completion> {
@@ -754,9 +762,9 @@ test('the trade window runs lowest seed first and replays completed seats', asyn
 
   let replayCalls = 0;
   const replayed = await runTradeWindow(createState(), {
-    runDir: directory,
+    epochDir: directory,
     psDir: defaultPsDir(),
-    afterWeek: 2,
+    position: { afterWeek: 2, index: 0, count: 1 },
     tradesAllowed: 0,
     makeTradeProvider: () => ({
       complete(): Promise<Completion> {
@@ -1791,7 +1799,16 @@ test('a full draft league drafts, plays weekly rounds, and crowns a champion', a
     assert.equal(row.draft_scaffold, draftScaffoldRevision());
     assert.equal(row.teambuild_scaffold, teambuildScaffoldRevision());
     assert.equal(row.window_scaffold, tradeWindowScaffoldRevision());
-    assert.deepEqual(row.trade_window, { after_week: 3, trades_allowed: 1 });
+    assert.deepEqual(row.transactions, [
+      { after_week: 1, trades_allowed: 1 },
+      { after_week: 2, trades_allowed: 1 },
+      { after_week: 3, trades_allowed: 1 },
+    ]);
+    assert.equal(
+      row.roster_version,
+      row.stage === 'playoff' ? 3 : Number(row.round) - 1,
+      'each series binds the roster version it was built on',
+    );
   }
 
   const config = JSON.parse(fs.readFileSync(path.join(directory, 'config.json'), 'utf8')) as Record<string, unknown>;
@@ -1800,9 +1817,13 @@ test('a full draft league drafts, plays weekly rounds, and crowns a champion', a
   assert.equal(config.sequential_weeks, false, 'round-robin series run concurrently by default');
   assert.equal(config.closed_sheets, false, 'the stock format keeps its open team sheets by default');
   assert.deepEqual(
-    config.trade_window,
-    { after_week: 3, trades_allowed: 1 },
-    'coach trades and free agency are the default',
+    config.transactions,
+    [
+      { after_week: 1, trades_allowed: 1 },
+      { after_week: 2, trades_allowed: 1 },
+      { after_week: 3, trades_allowed: 1 },
+    ],
+    'a window after each of the first three weeks is the default',
   );
   assert.deepEqual(config.draft_notes, ['', '', '', '']);
   const rosters = config.rosters as string[][];
@@ -1818,7 +1839,9 @@ test('a full draft league drafts, plays weekly rounds, and crowns a champion', a
     [0, 1, 2, 3],
   );
   for (const entry of stored) assert.ok((entry.spent as number) <= 100, 'no coach overspends');
-  const window = JSON.parse(fs.readFileSync(path.join(directory, 'window.json'), 'utf8')) as {
+  const window = JSON.parse(
+    fs.readFileSync(path.join(directory, 'transactions', 'after-week-3', 'window.json'), 'utf8'),
+  ) as {
     after_week: number;
     order: number[];
     offers: Array<{ to: number | null; proposerFallback: boolean; responderFallback: boolean | null }>;
@@ -1905,7 +1928,7 @@ test('a four-seed draft playoff advances and replays the same exact bracket', as
     recordsPath,
     seed: 17,
     concurrency: 4,
-    tradeWindow: null,
+    transactions: null,
     onEvent: (event) => liveEvents.push(event),
   });
   assert.equal(rows.filter((row) => row.stage === 'playoff').length, 3);
@@ -1923,7 +1946,7 @@ test('a four-seed draft playoff advances and replays the same exact bracket', as
     recordsPath,
     seed: 17,
     concurrency: 4,
-    tradeWindow: null,
+    transactions: null,
     resume: true,
     onEvent: (event) => replayEvents.push(event),
   });
@@ -1946,7 +1969,7 @@ test('a draft league checkpoints after a week and resumes to a champion', async 
   });
   assert.equal(first.length, 2, 'week one is two series');
   assert.ok(first.every((row) => row.stage === 'roundrobin' && row.round === 1));
-  assert.ok(!fs.existsSync(path.join(directory, 'window.jsonl')), 'pausing before the barrier does not open it');
+  assert.ok(!fs.existsSync(path.join(directory, 'transactions')), 'pausing before the barrier does not open it');
 
   const resumed = await runDraftLeague(models, directory, {
     recordsPath,
@@ -1960,7 +1983,12 @@ test('a draft league checkpoints after a week and resumes to a champion', async 
   const final = resumed[resumed.length - 1]!;
   assert.equal(final.stage, 'playoff');
   assert.ok(final.advanced, 'the resumed league crowns a champion');
-  assert.ok(fs.existsSync(path.join(directory, 'window.json')), 'resume completes the default trade window');
+  for (const week of [1, 2, 3]) {
+    assert.ok(
+      fs.existsSync(path.join(directory, 'transactions', `after-week-${week}`, 'window.json')),
+      `resume completes the week-${week} window`,
+    );
+  }
 });
 
 test('the real league window updates the outer roster used by later construction', async (t) => {
@@ -1973,7 +2001,7 @@ test('the real league window updates the outer roster used by later construction
     seed: 41,
     concurrency: 1,
     throughWeek: 1,
-    tradeWindow: { afterWeek: 1, tradesAllowed: 0 },
+    transactions: [{ afterWeek: 1, tradesAllowed: 0 }],
   });
 
   const config = JSON.parse(fs.readFileSync(path.join(directory, 'config.json'), 'utf8')) as {
@@ -2019,6 +2047,7 @@ test('the real league window updates the outer roster used by later construction
     standings: table,
     results: models.map(() => []),
     reflections: models.map(() => []),
+    history: [],
   };
   const owned = new Set(rosters.flatMap((roster) => roster.map((candidate) => candidate.id)));
   let replayed:
@@ -2051,8 +2080,10 @@ test('the real league window updates the outer roster used by later construction
     if (replayed) break;
   }
   assert.ok(replayed, 'the board must offer one legal post-draft swap');
+  const epochDir = path.join(directory, 'transactions', 'after-week-1');
+  fs.mkdirSync(epochDir, { recursive: true });
   fs.writeFileSync(
-    path.join(directory, 'window.jsonl'),
+    path.join(epochDir, 'window.jsonl'),
     `${canonicalJson({
       kind: 'free_agency',
       entrant: first,
@@ -2066,9 +2097,9 @@ test('the real league window updates the outer roster used by later construction
     })}\n`,
   );
   await runTradeWindow(state, {
-    runDir: directory,
+    epochDir,
     psDir: defaultPsDir(),
-    afterWeek: 1,
+    position: { afterWeek: 1, index: 0, count: 1 },
     tradesAllowed: 0,
   });
 
@@ -2139,9 +2170,9 @@ test('durable journal and atomic final-artifact faults retry provider-free and c
   try {
     await assert.rejects(
       runTradeWindow(state, {
-        runDir: directory,
+        epochDir: directory,
         psDir: defaultPsDir(),
-        afterWeek: 1,
+        position: { afterWeek: 1, index: 0, count: 1 },
         tradesAllowed: 0,
         makeTradeProvider: () => ({
           complete(): Promise<Completion> {
@@ -2173,9 +2204,9 @@ test('durable journal and atomic final-artifact faults retry provider-free and c
   try {
     await assert.rejects(
       runTradeWindow(state, {
-        runDir: directory,
+        epochDir: directory,
         psDir: defaultPsDir(),
-        afterWeek: 1,
+        position: { afterWeek: 1, index: 0, count: 1 },
         tradesAllowed: 0,
         makeTradeProvider: () => ({
           complete(): Promise<Completion> {
@@ -2197,9 +2228,9 @@ test('durable journal and atomic final-artifact faults retry provider-free and c
   assert.equal(completions, 1, 'the durable prefix was replayed');
 
   const artifact = await runTradeWindow(state, {
-    runDir: directory,
+    epochDir: directory,
     psDir: defaultPsDir(),
-    afterWeek: 1,
+    position: { afterWeek: 1, index: 0, count: 1 },
     tradesAllowed: 0,
     makeTradeProvider: () => ({
       complete(): Promise<Completion> {
@@ -2241,7 +2272,7 @@ test('current teambuild provenance counts as post-window transaction-barrier evi
 
   await assert.rejects(
     runDraftLeague(models, directory, { recordsPath, seed: 79, concurrency: 1, resume: true }),
-    /evidence past its transaction barrier but lacks authoritative window artifacts/,
+    /transaction barrier but lacks authoritative window artifacts/,
   );
 });
 
@@ -2250,7 +2281,7 @@ test('committed overlays fail closed when tampered or missing past the transacti
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
   const recordsPath = path.join(directory, 'results.jsonl');
   await runDraftLeague(['random', 'random'], directory, { recordsPath, seed: 73, concurrency: 1 });
-  const artifactFile = path.join(directory, 'window.json');
+  const artifactFile = path.join(directory, 'transactions', 'after-week-1', 'window.json');
   const original = fs.readFileSync(artifactFile, 'utf8');
   const artifact = JSON.parse(original) as { rosters: Array<{ spent: number }> };
   artifact.rosters[0]!.spent += 1;
@@ -2264,7 +2295,7 @@ test('committed overlays fail closed when tampered or missing past the transacti
   fs.rmSync(artifactFile);
   await assert.rejects(
     runDraftLeague(['random', 'random'], directory, { recordsPath, seed: 73, concurrency: 1, resume: true }),
-    /evidence past its transaction barrier but lacks authoritative window artifacts/,
+    /transaction barrier but lacks authoritative window artifacts/,
   );
   assert.ok(!fs.existsSync(artifactFile), 'resume does not regenerate a missing committed overlay');
 });
@@ -2273,9 +2304,9 @@ test('transaction replay enforces one current schema, privacy shape, and phase o
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-window-schema-'));
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
   await runTradeWindow(transactionState(), {
-    runDir: directory,
+    epochDir: directory,
     psDir: defaultPsDir(),
-    afterWeek: 1,
+    position: { afterWeek: 1, index: 0, count: 1 },
     tradesAllowed: 1,
   });
   const transcript = path.join(directory, 'window.jsonl');
@@ -2466,9 +2497,9 @@ test('a two-coach league plays one week and a single final', async (t) => {
   assert.equal(config.sequential_weeks, true);
   assert.equal(config.closed_sheets, true);
   assert.deepEqual(
-    config.trade_window,
-    { after_week: 1, trades_allowed: 1 },
-    'short leagues clamp the default to their final week',
+    config.transactions,
+    [{ after_week: 1, trades_allowed: 1 }],
+    'short leagues keep only the default windows that fit their round robin',
   );
   for (const row of rows) assert.equal(row.closed_sheets, true, 'series records carry the sheet rule');
   const builds = readJsonlObjects(path.join(directory, 'teambuild', 'teambuild.jsonl'));
@@ -2498,7 +2529,7 @@ test('a draft-only league stops at the rosters and resumes into a full season', 
 
   const config = JSON.parse(fs.readFileSync(path.join(directory, 'config.json'), 'utf8')) as Record<string, unknown>;
   assert.equal(config.draft_only, true);
-  assert.equal(config.trade_window, null, 'a league that plays no games holds no free-agency window');
+  assert.equal(config.transactions, null, 'a league that plays no games holds no transaction window');
   const rosters = JSON.parse(fs.readFileSync(path.join(directory, 'rosters.json'), 'utf8')) as Array<
     Record<string, unknown>
   >;
@@ -2515,12 +2546,15 @@ test('a draft-only league stops at the rosters and resumes into a full season', 
   assert.deepEqual(promoted.rosters, config.rosters, 'the drafted rosters carry into the season');
   assert.equal(promoted.draft_only, false, 'a resumed draft-only run is a season');
   assert.deepEqual(
-    promoted.trade_window,
-    { after_week: 1, trades_allowed: 1 },
-    'the resumed season chooses a window like a fresh one',
+    promoted.transactions,
+    [{ after_week: 1, trades_allowed: 1 }],
+    'the resumed season chooses a schedule like a fresh one',
   );
   assert.equal(promoted.draft_scaffold, config.draft_scaffold, 'a resume keeps the draft it already ran on record');
-  assert.ok(fs.existsSync(path.join(directory, 'window.json')), 'the chosen window opens');
+  assert.ok(
+    fs.existsSync(path.join(directory, 'transactions', 'after-week-1', 'window.json')),
+    'the chosen window opens',
+  );
   assert.equal(played[0]!.stage, 'roundrobin');
   assert.equal(played[1]!.stage, 'playoff');
 
@@ -2593,23 +2627,25 @@ test('season reviews are written once per coach and replayed on resume', async (
       { pick: 1, entrant: 1, mon: mon('tyranitar').id, rationale: 'Sand anchor.', fallback: false },
     ],
     rosters: [[mon('charizard-mega-y')], [mon('tyranitar')]],
-    window: {
-      after_week: 3,
-      order: [1, 0],
-      offers: [],
-      decisions: [
-        { entrant: 1, model: models[1]!, swaps: [], reasoning: 'Kept it.', notebook: '', fallback: false },
-        {
-          entrant: 0,
-          model: models[0]!,
-          swaps: [{ drop: mon('venusaur').id, add: mon('absol').id }],
-          reasoning: 'Traded up.',
-          notebook: '',
-          fallback: false,
-        },
-      ],
-      rosters: [],
-    },
+    windows: [
+      {
+        after_week: 3,
+        order: [1, 0],
+        offers: [],
+        decisions: [
+          { entrant: 1, model: models[1]!, swaps: [], reasoning: 'Kept it.', notebook: '', fallback: false },
+          {
+            entrant: 0,
+            model: models[0]!,
+            swaps: [{ drop: mon('venusaur').id, add: mon('absol').id }],
+            reasoning: 'Traded up.',
+            notebook: '',
+            fallback: false,
+          },
+        ],
+        rosters: [],
+      },
+    ],
     standings: [
       { entrant: 0, w: 1, l: 0, gw: 2, gl: 0 },
       { entrant: 1, w: 0, l: 1, gw: 0, gl: 2 },
@@ -2787,4 +2823,102 @@ test('search_board sorts by price by default and reaches entries the board burie
       .slice(1)
       .map((line) => line.slice(2).split(' | ')[0]!);
   }
+});
+
+test('window prompts name their place in the schedule and the public moves of earlier windows', () => {
+  const state = transactionState();
+  const first = { afterWeek: 1, index: 0, count: 3 };
+  const last = { afterWeek: 3, index: 2, count: 3 };
+  const opening = renderTradeOfferPrompt(state, 0, defaultPsDir(), { position: first });
+  assert.match(opening, /transaction window 1 of 3, open after round-robin week 1\. 2 more windows follow/);
+  assert.ok(!opening.includes('PUBLIC TRANSACTIONS FROM EARLIER WINDOWS'), 'the first window has no history');
+  const closing = renderFreeAgencyPrompt(
+    {
+      ...state,
+      history: describeTransactionHistory(
+        [
+          {
+            after_week: 1,
+            order: [1, 0],
+            offers: [
+              {
+                from: 1,
+                to: 0,
+                give: 'a',
+                get: 'b',
+                message: 'swap?',
+                accepted: true,
+                proposerFallback: false,
+                responderFallback: false,
+                offerReasoning: '',
+                responseReasoning: '',
+              },
+            ],
+            decisions: [
+              {
+                entrant: 0,
+                model: 'random',
+                swaps: [{ drop: 'c', add: 'd' }],
+                reasoning: '',
+                notebook: '',
+                fallback: false,
+              },
+            ],
+            rosters: [],
+          },
+        ],
+        state.models,
+      ),
+    },
+    0,
+    defaultPsDir(),
+    { position: last },
+  );
+  assert.match(
+    closing,
+    /transaction window 3 of 3, open after round-robin week 3\. Rosters lock when this window closes/,
+  );
+  assert.match(
+    closing,
+    /PUBLIC TRANSACTIONS FROM EARLIER WINDOWS:\n- After week 1: random traded a to random for b\.\n- After week 1: random dropped c and added d\./,
+  );
+});
+
+test('a league paused between two closed windows resumes on the right roster version', async (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-draft-league-epochs-'));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const recordsPath = path.join(directory, 'results.jsonl');
+  const models = ['random', 'random', 'random', 'random'];
+  const first = await runDraftLeague(models, directory, {
+    recordsPath,
+    seed: 23,
+    concurrency: 2,
+    throughWeek: 2,
+    transactions: [
+      { afterWeek: 1, tradesAllowed: 0 },
+      { afterWeek: 2, tradesAllowed: 0 },
+    ],
+  });
+  assert.equal(first.length, 4, 'two weeks of a four-coach league are four series');
+  assert.ok(fs.existsSync(path.join(directory, 'transactions', 'after-week-1', 'window.json')));
+  assert.ok(
+    !fs.existsSync(path.join(directory, 'transactions', 'after-week-2')),
+    'pausing after week 2 stops before its window opens',
+  );
+  const resumed = await runDraftLeague(models, directory, { recordsPath, seed: 23, concurrency: 2, resume: true });
+  assert.equal(resumed.length, 7);
+  assert.ok(fs.existsSync(path.join(directory, 'transactions', 'after-week-2', 'window.json')));
+  for (const row of resumed) {
+    assert.deepEqual(row.transactions, [
+      { after_week: 1, trades_allowed: 0 },
+      { after_week: 2, trades_allowed: 0 },
+    ]);
+    assert.equal(row.roster_version, row.stage === 'playoff' ? 2 : Math.min(Number(row.round) - 1, 2));
+  }
+  const replayed = await runDraftLeague(models, directory, { recordsPath, seed: 23, concurrency: 2, resume: true });
+  assert.deepEqual(
+    replayed.map((row) => row.series_id),
+    resumed.map((row) => row.series_id),
+    'a complete league replays without new series',
+  );
 });

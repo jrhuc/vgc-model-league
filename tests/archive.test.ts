@@ -420,7 +420,7 @@ test('buildLeagues lists a stored league with its champion', () => {
   assert.equal(card.week, 1);
   assert.equal(card.champion?.team, 'Beta Bandits');
   assert.equal(card.seriesCount, 2);
-  assert.equal(card.tradeWindowAfterWeek, null);
+  assert.deepEqual(card.transactionWeeks, []);
   fs.rmSync(runsDir, { recursive: true, force: true });
 });
 
@@ -447,7 +447,7 @@ test('buildLeague joins config, rosters, draft, teambuilds, results, and spend',
   );
   assert.equal(league.franchises[1]!.roster[0]!.fallback, true);
   assert.equal(alpha.draftRoster[0]!.id, 'pikachu');
-  assert.equal(league.tradeWindow, null);
+  assert.deepEqual(league.transactions, []);
   assert.equal(league.series.length, 2);
   const final = league.series[1]!;
   assert.deepEqual(final.sides, [1, 0], 'team labels map sides to entrants');
@@ -552,26 +552,22 @@ test('archived leagues overlay post-window rosters without rewriting the draft',
     writeLeagueFixture(runsDir);
     const runDir = path.join(runsDir, RUN_ID);
     const config = JSON.parse(fs.readFileSync(path.join(runDir, 'config.json'), 'utf8')) as Record<string, unknown>;
-    config.trade_window = { after_week: 1, trades_allowed: 0 };
+    config.transactions = [{ after_week: 1, trades_allowed: 0 }];
     fs.writeFileSync(path.join(runDir, 'config.json'), JSON.stringify(config));
-    assert.deepEqual(buildLeague(LEAGUE_ROWS, runsDir, RUN_ID)?.tradeWindow, {
-      afterWeek: 1,
-      state: 'scheduled',
-      offers: [],
-      decisions: [],
-    });
+    assert.deepEqual(buildLeague(LEAGUE_ROWS, runsDir, RUN_ID)?.transactions, [
+      { afterWeek: 1, state: 'scheduled', order: [], offers: [], decisions: [] },
+    ]);
+    const epochDir = path.join(runDir, 'transactions', 'after-week-1');
+    fs.mkdirSync(epochDir, { recursive: true });
     fs.writeFileSync(
-      path.join(runDir, 'window.jsonl'),
+      path.join(epochDir, 'window.jsonl'),
       `${JSON.stringify({ kind: 'offer', from: 0, to: 1, give: 'pikachu', get: 'eevee' })}\n`,
     );
-    assert.deepEqual(buildLeague(LEAGUE_ROWS, runsDir, RUN_ID)?.tradeWindow, {
-      afterWeek: 1,
-      state: 'in-progress',
-      offers: [],
-      decisions: [],
-    });
+    assert.deepEqual(buildLeague(LEAGUE_ROWS, runsDir, RUN_ID)?.transactions, [
+      { afterWeek: 1, state: 'in-progress', order: [], offers: [], decisions: [] },
+    ]);
     fs.writeFileSync(
-      path.join(runDir, 'window.json'),
+      path.join(epochDir, 'window.json'),
       JSON.stringify({
         after_week: 1,
         order: [0, 1],
@@ -616,11 +612,12 @@ test('archived leagues overlay post-window rosters without rewriting the draft',
     );
 
     const card = buildLeagues(LEAGUE_ROWS, runsDir).leagues[0]!;
-    assert.equal(card.tradeWindowAfterWeek, 1);
+    assert.deepEqual(card.transactionWeeks, [1]);
     const league = buildLeague(LEAGUE_ROWS, runsDir, RUN_ID)!;
-    assert.equal(league.tradeWindow?.afterWeek, 1);
-    assert.equal(league.tradeWindow?.state, 'complete');
-    assert.deepEqual(league.tradeWindow?.decisions[0]?.swaps, [{ drop: 'pikachu', add: 'raichu' }]);
+    assert.equal(league.transactions[0]?.afterWeek, 1);
+    assert.equal(league.transactions[0]?.state, 'complete');
+    assert.deepEqual(league.transactions[0]?.order, [0, 1]);
+    assert.deepEqual(league.transactions[0]?.decisions[0]?.swaps, [{ drop: 'pikachu', add: 'raichu' }]);
     assert.equal(league.franchises[0]!.draftRoster[0]!.id, 'pikachu');
     assert.equal(league.franchises[0]!.roster[0]!.id, 'raichu');
     assert.equal(league.franchises[0]!.spent, 80);

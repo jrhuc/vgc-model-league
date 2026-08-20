@@ -33,7 +33,7 @@ const SEASON_REVIEW_PROMPT_POLICY = {
   outcomeHeading: 'HOW YOUR SEASON ENDED:',
   standingsHeading: 'FINAL LEAGUE STANDINGS (rank | coach | W-L | games):',
   draftHeading: 'YOUR DRAFT (pick | name | cost | your reasoning at the time):',
-  windowHeading: 'YOUR MID-SEASON TRADE WINDOW:',
+  windowHeading: 'YOUR TRANSACTION WINDOWS:',
   rosterHeading: 'YOUR FINAL ROSTER:',
   seasonHeading: 'YOUR SERIES, IN ORDER:',
   wordsHeading: 'YOUR PRIVATE WORDS:',
@@ -69,7 +69,7 @@ export interface SeasonReviewState {
   models: string[];
   picks: DraftPickView[];
   rosters: DraftBoardMon[][];
-  window: TradeWindowArtifact | undefined;
+  windows: TradeWindowArtifact[];
   standings: DraftTableRow[];
   series: string[][];
   notebooks: string[];
@@ -184,14 +184,13 @@ function userPrompt(state: SeasonReviewState, entrant: number, outcome: string):
   }
 
   lines.push('', SEASON_REVIEW_PROMPT_POLICY.windowHeading);
-  if (!state.window) {
-    lines.push('- This league locked rosters after the draft; there was no free-agency window.');
-  } else {
-    const decision = state.window.decisions.find((entry) => entry.entrant === entrant);
-    lines.push(
-      `- The window opened after week ${state.window.after_week}, with coaches choosing in inverse standings order.`,
-    );
-    for (const offer of state.window.offers) {
+  if (!state.windows.length) {
+    lines.push('- This league locked rosters after the draft; there was no transaction window.');
+  }
+  for (const window of state.windows) {
+    const decision = window.decisions.find((entry) => entry.entrant === entrant);
+    lines.push(`- A window opened after week ${window.after_week}, with coaches choosing in inverse standings order.`);
+    for (const offer of window.offers) {
       if (offer.from === entrant) {
         if (offer.to === null || offer.give === null || offer.get === null) {
           lines.push(`- You made no coach-trade offer. Your reasoning: ${offer.offerReasoning || '(none recorded)'}`);
@@ -221,7 +220,7 @@ function userPrompt(state: SeasonReviewState, entrant: number, outcome: string):
       );
       lines.push(`- Your reasoning at the time: ${decision.reasoning || '(none recorded)'}`);
     }
-    for (const other of state.window.decisions) {
+    for (const other of window.decisions) {
       if (other.entrant === entrant) continue;
       const team = state.models[other.entrant];
       lines.push(

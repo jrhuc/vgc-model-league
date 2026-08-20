@@ -38,7 +38,7 @@ import {
   spriteIdFor,
 } from './run-artifacts.js';
 import { decodeArchivedTeamBuildJournalRow } from './teambuild.js';
-import { readCurrentRosterArtifact, readTradeWindow } from './trade-window.js';
+import { readCurrentRosterArtifact, readTransactionEpochs } from './trade-window.js';
 import type { Pid } from './types.js';
 import { ordinal, text } from './value.js';
 
@@ -302,12 +302,7 @@ function leaguePhase(
   progress: LeagueProgress,
   liveSeries: LeagueLiveSeriesView[],
 ): 'drafting' | 'building' | 'roundrobin' | 'window' | 'playoffs' | 'complete' {
-  if (
-    fs.existsSync(path.join(runsDir, runId, 'window.jsonl')) &&
-    !fs.existsSync(path.join(runsDir, runId, 'window.json'))
-  ) {
-    return 'window';
-  }
+  if (readTransactionEpochs(path.join(runsDir, runId)).some((epoch) => epoch.inProgress)) return 'window';
   if (liveSeries.some((series) => series.stage === 'playoff')) return 'playoffs';
   if (rows.length > 0) return progress.phase;
   /** A draft-only run ends at a full board of picks, so it is complete rather than mid-draft. */
@@ -336,12 +331,17 @@ function leagueLifecycle(runsDir: string, runId: string, champion: LeagueChampio
   return 'incomplete';
 }
 
-function tradeWindowAfterWeek(runsDir: string, runId: string): number | null {
+/** Protocol-9 leagues recorded one trade_window object; later leagues record an ordered transactions array. */
+function transactionWeeks(runsDir: string, runId: string): number[] {
   const config = readRunJson(runsDir, runId, 'config.json') as Record<string, unknown> | null;
-  const window = config?.trade_window;
-  if (typeof window !== 'object' || window === null || Array.isArray(window)) return null;
-  const afterWeek = Number((window as Record<string, unknown>).after_week);
-  return Number.isSafeInteger(afterWeek) && afterWeek > 0 ? afterWeek : null;
+  const windows = Array.isArray(config?.transactions)
+    ? config.transactions
+    : typeof config?.trade_window === 'object' && config.trade_window !== null
+      ? [config.trade_window]
+      : [];
+  return windows
+    .map((window) => Number((window as Record<string, unknown>).after_week))
+    .filter((afterWeek) => Number.isSafeInteger(afterWeek) && afterWeek > 0);
 }
 
 function seasonReviewViews(runsDir: string, runId: string): LeagueSeasonReviewView[] {
@@ -356,39 +356,42 @@ function seasonReviewViews(runsDir: string, runId: string): LeagueSeasonReviewVi
   }));
 }
 
-function tradeWindowView(runsDir: string, runId: string): LeagueTradeWindowView | null {
-  const afterWeek = tradeWindowAfterWeek(runsDir, runId);
-  if (afterWeek === null) return null;
-  const runDir = path.join(runsDir, runId);
-  const artifact = readTradeWindow(runDir);
-  if (!artifact) {
+function transactionViews(runsDir: string, runId: string): LeagueTradeWindowView[] {
+  const epochs = readTransactionEpochs(path.join(runsDir, runId));
+  return transactionWeeks(runsDir, runId).map((afterWeek) => {
+    const epoch = epochs.find((candidate) => candidate.afterWeek === afterWeek);
+    const artifact = epoch?.artifact;
+    if (!artifact) {
+      return {
+        afterWeek,
+        state: epoch?.inProgress ? 'in-progress' : 'scheduled',
+        order: [],
+        offers: [],
+        decisions: [],
+      };
+    }
     return {
       afterWeek,
-      state: fs.existsSync(path.join(runDir, 'window.jsonl')) ? 'in-progress' : 'scheduled',
-      offers: [],
-      decisions: [],
+      state: 'complete',
+      order: [...artifact.order],
+      offers: artifact.offers.map((offer) => ({
+        from: offer.from,
+        to: offer.to,
+        give: offer.give,
+        get: offer.get,
+        message: offer.message,
+        accepted: offer.accepted,
+        offerReasoning: offer.offerReasoning,
+        responseReasoning: offer.responseReasoning,
+      })),
+      decisions: artifact.decisions.map((decision) => ({
+        entrant: decision.entrant,
+        swaps: decision.swaps.map(({ drop, add }) => ({ drop, add })),
+        reasoning: decision.reasoning,
+        fallback: decision.fallback,
+      })),
     };
-  }
-  return {
-    afterWeek,
-    state: 'complete',
-    offers: artifact.offers.map((offer) => ({
-      from: offer.from,
-      to: offer.to,
-      give: offer.give,
-      get: offer.get,
-      message: offer.message,
-      accepted: offer.accepted,
-      offerReasoning: offer.offerReasoning,
-      responseReasoning: offer.responseReasoning,
-    })),
-    decisions: artifact.decisions.map((decision) => ({
-      entrant: decision.entrant,
-      swaps: decision.swaps.map(({ drop, add }) => ({ drop, add })),
-      reasoning: decision.reasoning,
-      fallback: decision.fallback,
-    })),
-  };
+  });
 }
 
 export function buildLeagues(allRows: SeriesRecord[], runsDir: string): LeaguesResponse {
@@ -422,7 +425,7 @@ export function buildLeagues(allRows: SeriesRecord[], runsDir: string): LeaguesR
       phase,
       week: progress.week,
       champion: progress.champion,
-      tradeWindowAfterWeek: tradeWindowAfterWeek(runsDir, runId),
+      transactionWeeks: transactionWeeks(runsDir, runId),
       draftOnly: isDraftOnly(runsDir, runId) && rows.length === 0,
       lifecycle: leagueLifecycle(runsDir, runId, progress.champion),
       picks: phase === 'drafting' ? readRunLines(runsDir, runId, 'draft', 'draft.jsonl').length : null,
@@ -449,8 +452,12 @@ function readRosters(runsDir: string, runId: string, identity: LeagueIdentity, c
   for (const pick of picks) pickByMon.set(`${modelKey(String(pick.model ?? ''))}:${pick.mon}`, pick);
   const windowAdds = new Map<number, Set<string>>();
   if (current) {
-    for (const decision of readTradeWindow(path.join(runsDir, runId))?.decisions ?? []) {
-      windowAdds.set(decision.entrant, new Set(decision.swaps.map((swap) => swap.add)));
+    for (const { artifact } of readTransactionEpochs(path.join(runsDir, runId))) {
+      for (const decision of artifact?.decisions ?? []) {
+        const adds = windowAdds.get(decision.entrant) ?? new Set<string>();
+        for (const swap of decision.swaps) adds.add(swap.add);
+        windowAdds.set(decision.entrant, adds);
+      }
     }
   }
   const entries: RosterEntry[] = [];
@@ -818,7 +825,7 @@ export function buildLeague(allRows: SeriesRecord[], runsDir: string, runId: str
     draftOnly: isDraftOnly(runsDir, runId) && rows.length === 0,
     lifecycle: leagueLifecycle(runsDir, runId, progress.champion),
     liveSeries,
-    tradeWindow: tradeWindowView(runsDir, runId),
+    transactions: transactionViews(runsDir, runId),
     seasonReviews: seasonReviewViews(runsDir, runId),
     franchises,
     series,

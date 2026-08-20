@@ -384,7 +384,7 @@ export interface LeagueCardView {
   phase: LeaguePhase;
   week: number;
   champion: LeagueChampionView | null;
-  tradeWindowAfterWeek: number | null;
+  transactionWeeks: number[];
   draftOnly: boolean;
   lifecycle: LeagueLifecycle;
   picks: number | null;
@@ -585,6 +585,7 @@ export interface LeagueTradeOfferView {
 export interface LeagueTradeWindowView {
   afterWeek: number;
   state: 'scheduled' | 'in-progress' | 'complete';
+  order: number[];
   offers: LeagueTradeOfferView[];
   decisions: LeagueTradeWindowDecisionView[];
 }
@@ -615,7 +616,7 @@ export interface LeagueResponse {
   draftOnly: boolean;
   lifecycle: LeagueLifecycle;
   liveSeries: LeagueLiveSeriesView[];
-  tradeWindow: LeagueTradeWindowView | null;
+  transactions: LeagueTradeWindowView[];
   seasonReviews: LeagueSeasonReviewView[];
   franchises: LeagueFranchiseView[];
   series: LeagueSeriesView[];

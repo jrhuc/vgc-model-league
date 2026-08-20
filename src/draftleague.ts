@@ -30,23 +30,25 @@ import { validateTeam } from './teams.js';
 import { DEFAULT_TIMER_SCALE } from './timer.js';
 import { applyBracketOutcome, type BracketMatch, type TournamentEvent } from './tournament.js';
 import {
-  DEFAULT_TRADE_WINDOW,
+  defaultTransactionSchedule,
+  describeTransactionHistory,
   MAX_TRADE_OFFERS,
   MAX_TRADE_SWAPS,
   readValidatedTradeWindow,
   runTradeWindow,
   type TradeWindowArtifact,
-  type TradeWindowConfig,
   type TradeWindowResult,
+  type TransactionSchedule,
   tradeWindowScaffoldRevision,
   transactionArtifactPaths,
+  transactionEpochDir,
   validateLeagueRosterState,
-  validateTradesAllowed,
+  validateTransactionSchedule,
 } from './trade-window.js';
 import type { Pid } from './types.js';
 import { ordinal } from './value.js';
 
-export const DRAFT_PROTOCOL_VERSION = 9;
+export const DRAFT_PROTOCOL_VERSION = 10;
 
 export type DraftLeagueEvent = TournamentEvent | { type: 'draft'; draft: DraftView };
 
@@ -57,7 +59,7 @@ export interface DraftLeagueOptions extends ExperimentOptions {
   throughWeek?: number;
   resume?: boolean;
   sequentialWeeks?: boolean;
-  tradeWindow?: TradeWindowConfig | null;
+  transactions?: TransactionSchedule | null;
   draftOnly?: boolean;
 }
 
@@ -169,6 +171,22 @@ export function buildDraftLeagueSchedule(entrants: number, seed: number) {
   return { weeks, playoffRounds, plans };
 }
 
+function transactionPolicyLine(schedule: TransactionSchedule): string {
+  if (!schedule.length) {
+    return '- After the draft this roster is locked for the whole season: a round robin of best-of-three matches, then playoffs.';
+  }
+  const weeksList = schedule.map((window) => window.afterWeek).join(', ');
+  const offers = [...new Set(schedule.map((window) => window.tradesAllowed))];
+  const offerText =
+    offers.length === 1
+      ? `up to ${offers[0]} one-for-one coach-trade ${offers[0] === 1 ? 'offer' : 'offers'}`
+      : `a window-specific number of one-for-one coach-trade offers (${schedule.map((window) => `${window.tradesAllowed} after week ${window.afterWeek}`).join(', ')})`;
+  return (
+    `- Transaction windows open after round-robin ${schedule.length === 1 ? 'week' : 'weeks'} ${weeksList}. In each window every coach may make ${offerText}, then up to ${MAX_TRADE_SWAPS} free-agent swaps. ` +
+    `Rosters lock after the ${schedule.length === 1 ? 'window' : 'last window'} for the rest of the season, including playoffs.`
+  );
+}
+
 export async function runDraftLeague(
   models: string[],
   runDir: string,
@@ -210,43 +228,39 @@ export async function runDraftLeague(
     });
   }
   const draftOnly = options.draftOnly === true;
-  /** A draft-only run never held a window, so its resume chooses one like a fresh league. */
-  const storedWindow = stored ? stored.tradeWindow : undefined;
+  /** A draft-only run never held a window, so its resume chooses a schedule like a fresh league. */
+  const storedSchedule = stored ? stored.transactions : undefined;
   const storedTransactionArtifacts = stored ? transactionArtifactPaths(runDir) : [];
-  if (storedWindow === null && storedTransactionArtifacts.length) {
+  if (storedSchedule?.length === 0 && storedTransactionArtifacts.length) {
     throw new Error(
-      `run ${path.basename(runDir)} configures no trade window but holds transaction artifacts: ${storedTransactionArtifacts.join(', ')}`,
+      `run ${path.basename(runDir)} configures no transaction windows but holds transaction artifacts: ${storedTransactionArtifacts.join(', ')}`,
     );
   }
-  if (storedWindow === undefined && stored && storedTransactionArtifacts.length) {
+  if (storedSchedule === undefined && stored && storedTransactionArtifacts.length) {
     throw new Error(
       `draft-only run ${path.basename(runDir)} cannot be promoted while transaction artifacts exist: ${storedTransactionArtifacts.join(', ')}`,
     );
   }
-  /** A window is chosen on standings, so a league that plays no games cannot hold one. */
-  let tradeWindow = draftOnly
-    ? null
-    : storedWindow !== undefined
-      ? storedWindow
-      : options.tradeWindow === undefined
-        ? { ...DEFAULT_TRADE_WINDOW }
-        : options.tradeWindow;
-  if (tradeWindow && (!Number.isSafeInteger(tradeWindow.afterWeek) || tradeWindow.afterWeek < 1)) {
-    throw new Error('trade window week must be a positive integer');
-  }
-  if (tradeWindow) validateTradesAllowed(tradeWindow.tradesAllowed, 'trade window trades allowed');
   const entrants = stored ? stored.entrants : shuffle(models, random);
   const { weeks, playoffRounds, plans } = buildDraftLeagueSchedule(entrants.length, seed);
-  if (tradeWindow && tradeWindow.afterWeek > weeks.length) {
-    if (storedWindow === undefined && options.tradeWindow === undefined) {
-      tradeWindow = { afterWeek: weeks.length, tradesAllowed: DEFAULT_TRADE_WINDOW.tradesAllowed };
-    } else throw new Error(`trade window week must be between 1 and ${weeks.length}`);
-  }
+  /** Windows open on standings, so a league that plays no games cannot hold one. */
+  const schedule: TransactionSchedule = draftOnly
+    ? []
+    : (storedSchedule ??
+      (options.transactions === undefined ? defaultTransactionSchedule(weeks.length) : (options.transactions ?? [])));
+  validateTransactionSchedule(schedule, weeks.length);
+  const configuredTransactions = schedule.map((window) => ({
+    after_week: window.afterWeek,
+    trades_allowed: window.tradesAllowed,
+  }));
+  /** Roster versions count the windows closed before a series; playoffs always use the final roster. */
+  const rosterVersionFor = (plan: DraftLeagueSeriesPlan): number =>
+    plan.stage === 'playoff' ? schedule.length : schedule.filter((window) => window.afterWeek < plan.round).length;
   const sequentialWeeks = stored
     ? stored.sequentialWeeks
     : options.sequentialWeeks === true || options.throughWeek !== undefined;
   const runId = path.basename(runDir);
-  if (stored && storedWindow === undefined) {
+  if (stored && storedSchedule === undefined) {
     const storedRows = loadSeriesRecords(recordsPath).filter((row) => row.run_id === runId);
     const evidence = draftOnlyPromotionEvidence(runDir, storedRows);
     if (evidence.length) {
@@ -283,8 +297,6 @@ export async function runDraftLeague(
       storedRunRows.push(row);
     }
   }
-  const storedPostWindowEvidence =
-    stored && tradeWindow ? postWindowEvidence(runDir, storedRunRows, plans, tradeWindow.afterWeek) : [];
   const table: DraftTableRow[] = entrants.map((_, entrant) => ({ entrant, w: 0, l: 0, gw: 0, gl: 0 }));
   const teambuilds: TeambuildView[] = [];
   const coachingPath = path.join(runDir, 'coaching.jsonl');
@@ -368,9 +380,7 @@ export async function runDraftLeague(
           sequential_weeks: sequentialWeeks,
           closed_sheets: options.closedSheets === true,
           draft_only: draftOnly,
-          trade_window: tradeWindow
-            ? { after_week: tradeWindow.afterWeek, trades_allowed: tradeWindow.tradesAllowed }
-            : null,
+          transactions: draftOnly ? null : configuredTransactions,
           entrants,
           team_names: teamNames,
           weeks: weeks.length,
@@ -401,9 +411,7 @@ export async function runDraftLeague(
       psDir,
       logDir: path.join(runDir, 'draft'),
       rng: random,
-      rosterPolicy: tradeWindow
-        ? `- A mid-season transaction window opens after round-robin week ${tradeWindow.afterWeek}. Each coach may make up to ${tradeWindow.tradesAllowed} one-for-one coach-trade ${tradeWindow.tradesAllowed === 1 ? 'offer' : 'offers'}, then may make up to ${MAX_TRADE_SWAPS} free-agent swaps; the resulting roster is used for the rest of the season.`
-        : '- After the draft this roster is locked for the whole season: a round robin of best-of-three matches, then playoffs.',
+      rosterPolicy: transactionPolicyLine(schedule),
       ...(options.reasoning === undefined ? {} : { reasoning: options.reasoning }),
       ...(options.reasoningByModel === undefined ? {} : { reasoningByModel: options.reasoningByModel }),
       ...(options.apiKeys === undefined ? {} : { apiKeys: options.apiKeys }),
@@ -440,11 +448,22 @@ export async function runDraftLeague(
         standings: rankedTable(table),
         results: entrants.map(() => []),
         reflections: entrants.map(() => []),
+        history: [],
       },
       `resumed initial roster for run ${runId}`,
     );
   }
-  let windowArtifact: TradeWindowArtifact | undefined;
+  const windowArtifacts: TradeWindowArtifact[] = [];
+  const rosterHistory: DraftBoardMon[][][] = [initialRosters];
+  const rosterStateFor = (plan: DraftLeagueSeriesPlan): readonly DraftBoardMon[][] => {
+    const state = rosterHistory[rosterVersionFor(plan)];
+    if (!state) {
+      throw new Error(
+        `run ${runId} series ${plan.index} needs roster version ${rosterVersionFor(plan)}, which has not been reached`,
+      );
+    }
+    return state;
+  };
 
   if (!stored) {
     fs.writeFileSync(
@@ -563,9 +582,6 @@ export async function runDraftLeague(
       reasoning: row.reasoning,
       ...(row.reasoning_by_player === undefined ? {} : { reasoning_by_player: row.reasoning_by_player }),
     };
-    const expectedTradeWindow = tradeWindow
-      ? { after_week: tradeWindow.afterWeek, trades_allowed: tradeWindow.tradesAllowed }
-      : null;
     if (
       row.schema_version !== 1 ||
       row.mode !== 'draft' ||
@@ -577,7 +593,8 @@ export async function runDraftLeague(
       row.season_scaffold !== seasonScaffold ||
       row.ps_commit !== showdownCommit(psDir) ||
       row.series_index !== plan.index ||
-      !isDeepStrictEqual(row.trade_window, expectedTradeWindow)
+      row.roster_version !== rosterVersionFor(plan) ||
+      !isDeepStrictEqual(row.transactions, configuredTransactions)
     ) {
       throw new Error(`run ${runId} series ${plan.index} is not bound to its current construction and policies`);
     }
@@ -711,9 +728,8 @@ export async function runDraftLeague(
       round: plan.round,
       ...(plan.stage === 'playoff' ? { advanced: entrants[winnerSide === 'p1' ? a : b]! } : {}),
       board: board.id,
-      trade_window: tradeWindow
-        ? { after_week: tradeWindow.afterWeek, trades_allowed: tradeWindow.tradesAllowed }
-        : null,
+      transactions: configuredTransactions,
+      roster_version: rosterVersionFor(plan),
       ...(options.contributor === undefined ? {} : { contributor: options.contributor }),
       run_seed: seed,
       ps_commit: showdownCommit(psDir),
@@ -776,12 +792,12 @@ export async function runDraftLeague(
     }
   };
 
-  const validateStoredRoundRobin = (include: (plan: DraftLeagueSeriesPlan) => boolean): void => {
+  const validateStoredRoundRobin = (version: number): void => {
     for (const [seriesIndex, row] of storedRoundRobinRows) {
       const plan = plans[seriesIndex]!;
-      if (completed.has(plan.index) || !include(plan)) continue;
+      if (completed.has(plan.index) || rosterVersionFor(plan) !== version) continue;
       const pair = plan.entrants!;
-      const rosterState = tradeWindow && plan.round > tradeWindow.afterWeek ? rosters : initialRosters;
+      const rosterState = rosterStateFor(plan);
       const builds = {
         p1: storedBuildFor(plan, pair[0], pair[1], rosterState),
         p2: storedBuildFor(plan, pair[1], pair[0], rosterState),
@@ -792,61 +808,72 @@ export async function runDraftLeague(
       completed.set(plan.index, row);
     }
   };
-
-  validateStoredRoundRobin((plan) => !tradeWindow || plan.round <= tradeWindow.afterWeek);
-  if (stored && !tradeWindow && storedTransactionArtifacts.length) {
-    throw new Error(`run ${runId} has transaction artifacts but no configured trade window`);
-  }
-  if (stored && tradeWindow) {
-    if (storedTransactionArtifacts.length) {
-      requireTransactionResultPrefix(runId, storedRunRows, plans, tradeWindow.afterWeek);
-    }
-    const windowTable: DraftTableRow[] = entrants.map((_, entrant) => ({ entrant, w: 0, l: 0, gw: 0, gl: 0 }));
+  const standingsThrough = (afterWeek: number): DraftTableRow[] => {
+    const rows: DraftTableRow[] = entrants.map((_, entrant) => ({ entrant, w: 0, l: 0, gw: 0, gl: 0 }));
     for (const plan of plans) {
-      if (plan.stage !== 'roundrobin' || plan.round > tradeWindow.afterWeek || !plan.entrants) continue;
+      if (plan.stage !== 'roundrobin' || plan.round > afterWeek || !plan.entrants) continue;
+      const row = completed.get(plan.index);
+      if (!row) continue;
       const storedOutcome = storedOutcomes.get(plan.index);
-      if (!storedOutcome) continue;
+      const score = storedOutcome?.score ?? (row.score as Record<Pid, number>);
+      const winner = storedOutcome?.winnerSide ?? ((row.winner_side ?? undefined) as Pid | undefined);
       const [a, b] = plan.entrants;
-      const score = storedOutcome.score;
-      const winner = storedOutcome.winnerSide;
-      windowTable[a]!.gw += score.p1;
-      windowTable[a]!.gl += score.p2;
-      windowTable[b]!.gw += score.p2;
-      windowTable[b]!.gl += score.p1;
+      rows[a]!.gw += score.p1;
+      rows[a]!.gl += score.p2;
+      rows[b]!.gw += score.p2;
+      rows[b]!.gl += score.p1;
       if (winner) {
-        windowTable[winner === 'p1' ? a : b]!.w += 1;
-        windowTable[winner === 'p1' ? b : a]!.l += 1;
+        rows[winner === 'p1' ? a : b]!.w += 1;
+        rows[winner === 'p1' ? b : a]!.l += 1;
       }
     }
-    windowArtifact = readValidatedTradeWindow(
-      runDir,
-      {
-        board,
-        models: entrants,
-        teamNames,
-        rosters,
-        budgets,
-        notebooks: draftNotes,
-        standings: rankedTable(windowTable),
-        results: entrants.map(() => []),
-        reflections: entrants.map(() => []),
-      },
-      { afterWeek: tradeWindow.afterWeek, tradesAllowed: tradeWindow.tradesAllowed },
-    );
-    if (!windowArtifact && storedPostWindowEvidence.length) {
-      throw new Error(
-        `run ${runId} has evidence past its transaction barrier but lacks authoritative window artifacts: ${storedPostWindowEvidence.join(', ')}`,
+    return rankedTable(rows);
+  };
+  const adoptWindow = (artifact: TradeWindowArtifact): void => {
+    const monById = new Map(board.mons.map((mon) => [mon.id, mon] as const));
+    rosters = artifact.rosters.map(({ roster }) => roster.map(({ id }) => monById.get(id)!));
+    budgets = artifact.rosters.map(({ budget_left }) => budget_left);
+    for (const decision of artifact.decisions) draftNotes[decision.entrant] = decision.notebook;
+    windowArtifacts.push(artifact);
+    rosterHistory.push(rosters.map((roster) => [...roster]));
+  };
+
+  validateStoredRoundRobin(0);
+  if (stored) {
+    for (const [index, window] of schedule.entries()) {
+      const epochDir = transactionEpochDir(runDir, window.afterWeek);
+      if (transactionArtifactPaths(epochDir).length) {
+        requireTransactionResultPrefix(runId, storedRunRows, plans, window.afterWeek);
+      }
+      const artifact = readValidatedTradeWindow(
+        epochDir,
+        {
+          board,
+          models: entrants,
+          teamNames,
+          rosters,
+          budgets,
+          notebooks: draftNotes,
+          standings: standingsThrough(window.afterWeek),
+          results: entrants.map(() => []),
+          reflections: entrants.map(() => []),
+          history: describeTransactionHistory(windowArtifacts, entrants),
+        },
+        window,
       );
-    }
-    if (windowArtifact) {
-      const monById = new Map(board.mons.map((mon) => [mon.id, mon] as const));
-      rosters = windowArtifact.rosters.map(({ roster }) => roster.map(({ id }) => monById.get(id)!));
-      budgets = windowArtifact.rosters.map(({ budget_left }) => budget_left);
-      for (const decision of windowArtifact.decisions) draftNotes[decision.entrant] = decision.notebook;
+      if (!artifact) {
+        const evidence = postWindowEvidence(runDir, storedRunRows, plans, window.afterWeek);
+        if (evidence.length) {
+          throw new Error(
+            `run ${runId} has evidence past its week-${window.afterWeek} transaction barrier but lacks authoritative window artifacts: ${evidence.join(', ')}`,
+          );
+        }
+        break;
+      }
+      adoptWindow(artifact);
+      validateStoredRoundRobin(index + 1);
     }
   }
-
-  validateStoredRoundRobin(() => true);
 
   for (const plan of plans) {
     if (plan.stage !== 'roundrobin') continue;
@@ -909,18 +936,19 @@ export async function runDraftLeague(
     }
   }
 
-  if (stored && storedWindow === undefined) promoteDraftOnlyConfig(runDir, stored, tradeWindow);
+  if (stored && storedSchedule === undefined) promoteDraftOnlyConfig(runDir, stored, configuredTransactions);
 
   const stopWeek = options.throughWeek;
-  const openTradeWindow = async (): Promise<void> => {
-    if (!tradeWindow || windowArtifact) return;
+  const openTradeWindow = async (index: number): Promise<void> => {
+    const window = schedule[index];
+    if (!window || windowArtifacts.length > index) return;
     phase = 'window';
-    week = tradeWindow.afterWeek;
+    week = window.afterWeek;
     options.onEvent?.({ type: 'draft', draft: draftView(true) });
     const preWindowRosters = rosters.map((roster) => [...roster]);
     const windowResults: TradeWindowResult[][] = entrants.map(() => []);
     for (const plan of plans) {
-      if (plan.stage !== 'roundrobin' || plan.round > tradeWindow.afterWeek || !plan.entrants) continue;
+      if (plan.stage !== 'roundrobin' || plan.round > window.afterWeek || !plan.entrants) continue;
       const row = completed.get(plan.index);
       if (!row) continue;
       const [a, b] = plan.entrants;
@@ -942,7 +970,7 @@ export async function runDraftLeague(
         });
       }
     }
-    windowArtifact = await runTradeWindow(
+    const artifact = await runTradeWindow(
       {
         board,
         models: entrants,
@@ -955,12 +983,13 @@ export async function runDraftLeague(
         reflections: reflectionNotes.map((notes) =>
           [...notes.entries()].sort(([a], [b]) => a - b).map(([, note]) => note),
         ),
+        history: describeTransactionHistory(windowArtifacts, entrants),
       },
       {
-        runDir,
+        epochDir: transactionEpochDir(runDir, window.afterWeek),
         psDir,
-        afterWeek: tradeWindow.afterWeek,
-        tradesAllowed: tradeWindow.tradesAllowed,
+        position: { afterWeek: window.afterWeek, index, count: schedule.length },
+        tradesAllowed: window.tradesAllowed,
         ...(options.reasoning === undefined ? {} : { reasoning: options.reasoning }),
         ...(options.reasoningByModel === undefined ? {} : { reasoningByModel: options.reasoningByModel }),
         ...(options.apiKeys === undefined ? {} : { apiKeys: options.apiKeys }),
@@ -968,6 +997,8 @@ export async function runDraftLeague(
         ...(options.signal === undefined ? {} : { signal: options.signal }),
       },
     );
+    windowArtifacts.push(artifact);
+    rosterHistory.push(rosters.map((roster) => [...roster]));
     phase = 'roundrobin';
     options.onEvent?.({ type: 'draft', draft: draftView(true) });
   };
@@ -982,7 +1013,7 @@ export async function runDraftLeague(
         models: entrants,
         picks,
         rosters,
-        window: windowArtifact,
+        windows: windowArtifacts,
         standings: rankedTable(table),
         series: playoffContext.map((context) =>
           [...context.entries()].sort(([a], [b]) => a - b).map(([, entry]) => entry),
@@ -1035,30 +1066,32 @@ export async function runDraftLeague(
         options.onEvent?.({ type: 'draft', draft: draftView(true) });
         return sorted(results);
       }
-      if (tradeWindow?.afterWeek === week) await openTradeWindow();
+      const windowIndex = schedule.findIndex((window) => window.afterWeek === week);
+      if (windowIndex !== -1) await openTradeWindow(windowIndex);
     }
-    if (tradeWindow && tradeWindow.afterWeek >= weeks.length) await openTradeWindow();
-  } else if (tradeWindow) {
-    week = tradeWindow.afterWeek;
-    options.onEvent?.({ type: 'draft', draft: draftView(true) });
-    await scheduleRoundRobin(
-      plans.filter(
-        (plan) => plan.stage === 'roundrobin' && plan.round <= tradeWindow.afterWeek && !completed.has(plan.index),
-      ),
-    );
-    if (options.signal?.aborted) return sorted(results);
-    await openTradeWindow();
-    week = weeks.length;
-    options.onEvent?.({ type: 'draft', draft: draftView(true) });
-    await scheduleRoundRobin(
-      plans.filter(
-        (plan) => plan.stage === 'roundrobin' && plan.round > tradeWindow.afterWeek && !completed.has(plan.index),
-      ),
-    );
   } else {
+    let firstWeek = 1;
+    for (const [index, window] of schedule.entries()) {
+      week = window.afterWeek;
+      options.onEvent?.({ type: 'draft', draft: draftView(true) });
+      await scheduleRoundRobin(
+        plans.filter(
+          (plan) =>
+            plan.stage === 'roundrobin' &&
+            plan.round >= firstWeek &&
+            plan.round <= window.afterWeek &&
+            !completed.has(plan.index),
+        ),
+      );
+      if (options.signal?.aborted) return sorted(results);
+      await openTradeWindow(index);
+      firstWeek = window.afterWeek + 1;
+    }
     week = weeks.length;
     options.onEvent?.({ type: 'draft', draft: draftView(true) });
-    await scheduleRoundRobin(plans.filter((plan) => plan.stage === 'roundrobin' && !completed.has(plan.index)));
+    await scheduleRoundRobin(
+      plans.filter((plan) => plan.stage === 'roundrobin' && plan.round >= firstWeek && !completed.has(plan.index)),
+    );
   }
   if (options.signal?.aborted) return sorted(results);
 
@@ -1279,7 +1312,7 @@ interface StoredLeague {
   rosterIds: string[][];
   draftNotes: string[];
   sequentialWeeks: boolean;
-  tradeWindow: TradeWindowConfig | null | undefined;
+  transactions: TransactionSchedule | undefined;
 }
 
 function validateStoredLeagueConfig(
@@ -1311,7 +1344,11 @@ function validateStoredLeagueConfig(
   }
 }
 
-function promoteDraftOnlyConfig(runDir: string, stored: StoredLeague, tradeWindow: TradeWindowConfig | null): void {
+function promoteDraftOnlyConfig(
+  runDir: string,
+  stored: StoredLeague,
+  transactions: Array<{ after_week: number; trades_allowed: number }>,
+): void {
   const configPath = path.join(runDir, 'config.json');
   if (fs.readFileSync(configPath, 'utf8') !== stored.configBytes) {
     throw new Error(`${configPath} changed while its draft-only promotion was being validated`);
@@ -1319,7 +1356,7 @@ function promoteDraftOnlyConfig(runDir: string, stored: StoredLeague, tradeWindo
   const nextConfig = {
     ...stored.config,
     draft_only: false,
-    trade_window: tradeWindow ? { after_week: tradeWindow.afterWeek, trades_allowed: tradeWindow.tradesAllowed } : null,
+    transactions,
   };
   const temporary = `${configPath}.${process.pid}.${randomUUID()}.tmp`;
   try {
@@ -1436,30 +1473,31 @@ function loadStoredLeague(runDir: string): StoredLeague | undefined {
   ) {
     throw new Error(`${runDir} is not a structurally complete drafted-league config`);
   }
-  let tradeWindow: TradeWindowConfig | null | undefined;
+  let transactions: TransactionSchedule | undefined;
   if (config.draft_only) {
-    if (config.trade_window !== null) {
-      throw new Error(`${runDir} draft-only config must record a null trade window`);
+    if (config.transactions !== null) {
+      throw new Error(`${runDir} draft-only config must record null transactions`);
     }
-    tradeWindow = undefined;
-  } else if (config.trade_window === null) {
-    tradeWindow = null;
+    transactions = undefined;
   } else {
-    const window = config.trade_window;
-    if (typeof window !== 'object' || window === null || Array.isArray(window)) {
-      throw new Error(`${runDir} season config has an invalid trade window`);
-    }
-    const record = window as Record<string, unknown>;
-    if (
-      !Number.isSafeInteger(record.after_week) ||
-      Number(record.after_week) < 1 ||
-      !Number.isSafeInteger(record.trades_allowed) ||
-      Number(record.trades_allowed) < 0 ||
-      Number(record.trades_allowed) > MAX_TRADE_OFFERS
-    ) {
-      throw new Error(`${runDir} season config has an invalid trade window`);
-    }
-    tradeWindow = { afterWeek: Number(record.after_week), tradesAllowed: Number(record.trades_allowed) };
+    if (!Array.isArray(config.transactions))
+      throw new Error(`${runDir} season config has an invalid transaction schedule`);
+    transactions = config.transactions.map((window) => {
+      if (typeof window !== 'object' || window === null || Array.isArray(window)) {
+        throw new Error(`${runDir} season config has an invalid transaction window`);
+      }
+      const record = window as Record<string, unknown>;
+      if (
+        !Number.isSafeInteger(record.after_week) ||
+        Number(record.after_week) < 1 ||
+        !Number.isSafeInteger(record.trades_allowed) ||
+        Number(record.trades_allowed) < 0 ||
+        Number(record.trades_allowed) > MAX_TRADE_OFFERS
+      ) {
+        throw new Error(`${runDir} season config has an invalid transaction window`);
+      }
+      return { afterWeek: Number(record.after_week), tradesAllowed: Number(record.trades_allowed) };
+    });
   }
   return {
     config,
@@ -1469,7 +1507,7 @@ function loadStoredLeague(runDir: string): StoredLeague | undefined {
     rosterIds: config.rosters as string[][],
     draftNotes: config.draft_notes as string[],
     sequentialWeeks: config.sequential_weeks,
-    tradeWindow,
+    transactions,
   };
 }
 

@@ -1025,7 +1025,7 @@ test('gui starts draft runs, validates the board, and mirrors draft state', asyn
         board?: string;
         closedSheets?: boolean;
         sequentialWeeks?: boolean;
-        tradeWindow?: { afterWeek: number; tradesAllowed: number } | null;
+        transactions?: Array<{ afterWeek: number; tradesAllowed: number }> | null;
       }
     | undefined;
   const gui = new GuiServer({
@@ -1035,7 +1035,7 @@ test('gui starts draft runs, validates the board, and mirrors draft state', asyn
         ...(options.board ? { board: options.board } : {}),
         ...(options.closedSheets === true ? { closedSheets: true } : {}),
         ...(options.sequentialWeeks === true ? { sequentialWeeks: true } : {}),
-        ...(options.tradeWindow === undefined ? {} : { tradeWindow: options.tradeWindow }),
+        ...(options.transactions === undefined ? {} : { transactions: options.transactions }),
       };
       options.onEvent?.({
         type: 'draft',
@@ -1092,7 +1092,7 @@ test('gui starts draft runs, validates the board, and mirrors draft state', asyn
       mode: 'draft',
       models: ['random', 'random'],
       board: 'regmb-202607',
-      tradeWindow: { afterWeek: 2 },
+      transactions: [2],
     });
     assert.equal(invalidWindow.status, 400);
     assert.match(String(invalidWindow.data.error), /between 1 and 1/);
@@ -1100,10 +1100,10 @@ test('gui starts draft runs, validates the board, and mirrors draft state', asyn
       mode: 'draft',
       models: ['random', 'random'],
       board: 'regmb-202607',
-      tradeWindow: { afterWeek: 1, tradesAllowed: 4 },
+      transactions: [1, 1],
     });
     assert.equal(invalidOfferCap.status, 400);
-    assert.match(String(invalidOfferCap.data.error), /between 0 and 3/);
+    assert.match(String(invalidOfferCap.data.error), /strictly increasing/);
 
     const started = await apiJson(`${base}api/run`, {
       mode: 'draft',
@@ -1125,9 +1125,9 @@ test('gui starts draft runs, validates the board, and mirrors draft state', asyn
     assert.equal(received?.closedSheets, true, 'closed team sheets reach the draft runner');
     assert.equal(received?.sequentialWeeks, true, 'sequential weeks reach the draft runner');
     assert.deepEqual(
-      received?.tradeWindow,
-      { afterWeek: 1, tradesAllowed: 1 },
-      'free agency defaults to the final week in a short league',
+      received?.transactions,
+      [{ afterWeek: 1, tradesAllowed: 1 }],
+      'a short league keeps only the default windows that fit its round robin',
     );
     const draft = run.draft as Record<string, unknown>;
     assert.equal(draft.phase, 'draft');
