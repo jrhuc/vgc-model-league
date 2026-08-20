@@ -1,55 +1,59 @@
-# Deploy the public site
+# Deploy documentation and season bundles
 
-The public site uses a static GitHub Pages deployment. It has no hosted server,
-database, authentication, or import API. The build reads every required
-read-only API response from committed JSON files exported from local records.
+The repository publishes two different outputs with separate responsibilities.
 
-## Publish the site
+- GitHub Pages serves this technical documentation.
+- `export-season` writes a validated, public-only bundle for the spectator
+  product.
 
-1. Run `vgcleague export-site`. By default, this command exports terminal,
-   non-test runs from the local archive to `artifacts/public/site/`. Use
-   `--run`, `--pool`, or `--include-test` to curate the export. The command
-   replaces the output directory, so the committed tree represents exactly one
-   export.
-2. Merge `artifacts/public/site` into `main` through a pull request. The `main`
-   ruleset rejects direct pushes.
-3. Let `.github/workflows/pages.yml` build the client with
-   `vite build --mode static`, copy the committed data to `data/`, and deploy
-   the result to GitHub Pages.
+The local operator GUI is not deployed.
 
-Run all three steps with:
+## GitHub Pages
+
+In **Settings → Pages**, set **Source** to **GitHub Actions**.
+`.github/workflows/pages.yml` runs when `docs/`, the package lock, or the
+workflow changes. It renders the canonical Markdown files as zero-runtime HTML
+and deploys `dist/docs`.
+
+Build the same output locally with:
 
 ```sh
-pnpm run publish:site
+pnpm run build:docs
 ```
 
-## Configure the repository
+The output contains the documentation theme and text only. League archives,
+replays, sprites, model logos, provider controls, and local operator routes do
+not enter the Pages artifact.
 
-In **Settings > Pages**, set **Source** to **GitHub Actions**. The workflow runs
-on pushes that change the site data or client. You can also run it manually from
-the **Actions** tab.
+## Spectator bundle
 
-## Static build behavior
+Build the harness, then export one explicit release boundary:
 
-The `--mode static` build selects static capability and loader modules. This
-mode:
+```sh
+pnpm run build
+pnpm run export:season \
+  --run <run-id> \
+  --through-week 1 \
+  --title "AI Draft League"
+```
 
-- maps API routes to exported files, such as `/api/league?run=X` to
-  `data/league/X.json`;
-- disables the live event stream;
-- omits **Live** and **New run** from navigation and route resolution; and
-- marks the remaining research and archive views as read-only.
+The default output is
+`artifacts/public/seasons/<run-id>/season-bundle.json`, with
+`season-bundle-v2.schema.json` written beside it. Pass `--out <file>` to write
+directly into a checked-out spectator repository's `public/` directory.
 
-The static build is an archive-only client. Its build-time capability and loader
-selection excludes the operational Live and New run module graph instead of
-shipping inactive controls. The remaining research and archive views share
-their implementation with the local console.
+`--through-week` is required. Publication never advances merely because more
+private results exist locally. A released week must contain every completed
+series and verified replay for that week or export fails. Values past the last
+regular-season week release playoff rounds one at a time; releasing the final
+round also releases season reviews and opens closed team sheets.
 
-Live runs appear only in the loopback-only local operator console started by
-`vgcleague gui`. To publish a live run, finish it and export the site again.
+The bundle carries the public evidence layer defined in
+[Architecture](architecture.md#public-publication): stated rationales for
+picks, builds, decisions, offers and responses; structured battle events;
+reflections; transactions; the bracket; and provenance. It never carries
+notebooks, traces, prompts, provider responses, or future results.
 
-## Storage limits
-
-The current export contains about 15 MB of JSON and 2 MB of sprites and other
-assets. GitHub Pages allows 1 GB per site. If the archive exceeds this limit,
-move `data/` to object storage and preserve the same relative paths.
+The spectator deployment owns release timing and presentation. It validates the
+bundle against the emitted schema, and must not clone the harness, run
+Showdown, or recompute standings and outcomes.

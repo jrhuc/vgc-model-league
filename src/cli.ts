@@ -3,8 +3,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
+import { exportSeasonBundle } from './export-season.js';
 import { GuiServer } from './gui/server.js';
-import { makeRunDirectory, prepareDataDirectories, RESULTS_PATH, RUNS_DIR, TEAMS_DIR } from './paths.js';
+import { makeRunDirectory, prepareDataDirectories, RESULTS_PATH, RUNS_DIR } from './paths.js';
 import type { ReasoningLevel } from './providers.js';
 import { isReasoningLevel, nitroSpec } from './providers.js';
 import type { SeriesRecord } from './records.js';
@@ -67,15 +68,18 @@ Commands:
   exhibition --opponent <spec>        host one bo3 where a terminal agent plays a seat over a local bridge
       [--seat p1|p2] [--name <label>] [--pool <name>] [--seed <n>] [--port <n>] [--reasoning <level>]
       [--agent-dir <path>]
-      opponent specs: openrouter:<model-id>, prime:<model-id>, gateway:<model-id>, or random
+      opponent specs: openrouter:<model-id>, prime:<model-id>, gateway:<model-id>, opencode-go:<model-id>, opencode-zen:<model-id>, or random
   outcomes [--pool <name>]            print contextual per-series outcomes without an aggregate ranking
   report [--out <path>] [--pool <name>]  write an HTML report
-  export-site [--out <dir>] [--run <id>]... [--pool <name>] [--include-test]
-      write the public archive as static JSON for the GitHub Pages site
+  export-season --run <id> --through-week <n> [--title <text>] [--out <file>]
+      write one validated public season bundle (season-bundle-v2) plus its JSON Schema;
+      n past the last regular-season week releases playoff rounds
 
-Model specs are exactly openrouter:<model-id>, prime:<model-id>, gateway:<model-id>, or random.
-CLI calls read OPENROUTER_API_KEY or PRIME_API_KEY for the selected provider.
-Prime model IDs are entered manually; OpenRouter model discovery is available in the GUI.
+Model specs are exactly openrouter:<model-id>, prime:<model-id>, gateway:<model-id>,
+opencode-go:<model-id>, opencode-zen:<model-id>, or random.
+CLI calls read OPENROUTER_API_KEY, PRIME_API_KEY, AI_GATEWAY_API_KEY, or OPENCODE_API_KEY
+for the selected provider. Prime and gateway model IDs are entered manually; OpenRouter
+and OpenCode model discovery is available in the GUI.
 
 Runs stay alive through transient provider failures (rate limits, upstream
 outages, exhausted quotas): the affected seat pauses, then retries with backoff
@@ -92,6 +96,12 @@ and are never aggregated into a ranking.`;
 function positiveInteger(name: string, value: string): number {
   const parsed = Number(value);
   if (!Number.isSafeInteger(parsed) || parsed < 1) throw new Error(`--${name} must be an integer of at least 1`);
+  return parsed;
+}
+
+function nonnegativeInteger(name: string, value: string): number {
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < 0) throw new Error(`--${name} must be a nonnegative integer`);
   return parsed;
 }
 
@@ -482,29 +492,36 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
     printResults([row]);
     return 0;
   }
-  if (command === 'export-site') {
+  if (command === 'export-season') {
     const { values } = parseArgs({
       args: rest,
       options: {
-        out: { type: 'string', default: path.join('artifacts', 'public', 'site') },
-        run: { type: 'string', multiple: true },
-        pool: { type: 'string' },
-        'include-test': { type: 'boolean', default: false },
+        out: { type: 'string' },
+        run: { type: 'string' },
+        title: { type: 'string', default: 'AI Draft League' },
+        'through-week': { type: 'string' },
       },
     });
-    const { exportSite } = await import('./export-site.js');
-    const summary = exportSite({
-      out: path.resolve(values.out),
+    if (!values.run) throw new Error('export-season requires --run <id>');
+    if (values['through-week'] === undefined) {
+      throw new Error('export-season requires --through-week <n> so publication never advances implicitly');
+    }
+    const releasedThroughWeek = nonnegativeInteger('through-week', values['through-week']);
+    const out = path.resolve(
+      values.out ?? path.join('artifacts', 'public', 'seasons', values.run, 'season-bundle.json'),
+    );
+    const bundle = exportSeasonBundle({
+      out,
       recordsPath: RESULTS_PATH,
       runsDir: RUNS_DIR,
-      teamsDir: TEAMS_DIR,
-      ...(values.run === undefined ? {} : { runs: values.run }),
-      ...(values.pool === undefined ? {} : { pool: values.pool }),
-      includeTest: values['include-test'],
-      log: (line) => console.log(line),
+      runId: values.run,
+      title: values.title,
+      releasedThroughWeek,
     });
     console.log(
-      `${summary.leagues} leagues and ${summary.tournaments} tournaments exported (${summary.files} files) to ${path.resolve(values.out)}`,
+      `${bundle.season.title} exported through week ${bundle.season.releasedThroughWeek}` +
+        (bundle.season.releasedPlayoffRounds > 0 ? ` + ${bundle.season.releasedPlayoffRounds} playoff round(s)` : '') +
+        ` to ${out}`,
     );
     return 0;
   }

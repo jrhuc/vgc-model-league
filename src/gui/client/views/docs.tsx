@@ -1,23 +1,27 @@
 const REPOSITORY_ROOT = 'https://github.com/jrhuc/vgc-model-league';
+const EVALS_ROOT = 'https://github.com/jrhuc/vgc-evals';
 
 const DOCUMENTS = [
   {
     index: '01',
     title: 'Measurement',
     path: 'docs/measurement.md',
+    href: `${REPOSITORY_ROOT}/blob/main/docs/measurement.md`,
     description:
       'What battle outcomes, counterfactual diagnostics, and cross-stage evidence may mean—and what models may see.',
   },
   {
     index: '02',
     title: 'Evaluation plan',
-    path: 'docs/evaluation-plan.md',
+    path: 'vgc-evals/docs/evaluation-plan.md',
+    href: `${EVALS_ROOT}/blob/main/docs/evaluation-plan.md`,
     description: 'Current artifact status, release gates, and the work still needed before a public evaluation.',
   },
   {
     index: '03',
     title: 'Architecture',
     path: 'docs/architecture.md',
+    href: `${REPOSITORY_ROOT}/blob/main/docs/architecture.md`,
     description:
       'Showdown authority, state and evidence boundaries, and the division between TypeScript, verifiers, and the GUI.',
   },
@@ -25,6 +29,7 @@ const DOCUMENTS = [
     index: '04',
     title: 'Usage',
     path: 'docs/usage.md',
+    href: `${REPOSITORY_ROOT}/blob/main/docs/usage.md`,
     description:
       'Current operator commands and workflows for local runs, archives, position artifacts, and publication.',
   },
@@ -67,7 +72,7 @@ export function DocsView() {
               </div>
               <a
                 class="document-link"
-                href={`${REPOSITORY_ROOT}/blob/main/${document.path}`}
+                href={document.href}
                 target="_blank"
                 rel="noreferrer"
                 aria-label={`Open ${document.title} in the repository`}

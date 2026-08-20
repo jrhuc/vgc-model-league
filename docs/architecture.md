@@ -20,15 +20,14 @@ and **Docs**, plus the **Workspace** routes **Draft leagues**, **Live**,
 projection of the hash-bound selected artifact. Draft leagues provides an
 exploratory season archive. It is not a connected evaluation circuit.
 
-The static GitHub Pages build is an archive-only view. Its navigation retains
-the research and archive routes but omits **Live** and **New run**, and those
-hashes resolve to Home. Build-time capability and loader selection also excludes
-the operational module graph. This is not a hidden or disabled control.
+GitHub Pages is a separate zero-runtime documentation build. It does not compile
+the Preact client or copy GUI assets and run archives. The local GUI remains an
+operator/debug surface only.
 
-The browser API does not serve private position scores, snapshots, opponent
-requests, or sealed panels. Raw run evidence stays in the trusted local
-workspace. Published archives use the facts-only projection defined in
-[State, evidence, and trust](#state-evidence-and-trust).
+Public league presentation belongs to
+[ai-draft-league](https://github.com/jrhuc/ai-draft-league). That application
+accepts only the versioned public projection described in
+[Public publication](#public-publication).
 
 ## Local experiment protocols
 
@@ -167,26 +166,39 @@ baseline. Browser-supplied `OPENROUTER_API_KEY` and `PRIME_API_KEY` values remai
 in server memory for the run. The server does not write them to state or
 evidence.
 
-The public deployment is a static export, not a server. `vgcleague export-site`
-uses the same DTO builders as the console to project terminal, non-test archives
-and writes the output as committed JSON. Historical team-build projection uses
-`decodeArchivedTeamBuildJournalRow` from `src/teambuild.ts`; current resume uses
-the strict `{artifact}` journal decoder from the same module. Archive projection
-is not a second resume authority. GitHub Pages serves these files
-unchanged. A live run appears only in the local console. It enters the public
-export only after it finishes and an operator exports the site again. Therefore,
-publication is an explicit operator action on terminal evidence, not a side
-effect of play.
+## Public publication
 
-The exported archive contains result rows, game logs, decision rationales,
-notebooks, reflections, season reviews, and league support assets. These files
-form the recorded evidence layer. The export does not contain prompt-attempt
-logs, raw provider responses, thought or trace logs, seat-context JSONL, grader
-state, or API credentials. Export builders read named, bounded artifact files
-that also contain private fields and structurally project their output. This is
-a response boundary; it does not mean that the exporter never reads the source
-bytes. A separately reviewed immutable bundle, the selected GUI trace, is a
-distinct publication artifact and does not change this rule.
+`vgcleague export-season` projects one explicit release boundary into a
+validated `season-bundle-v2` file and writes its JSON Schema beside it. `--run`
+and `--through-week` are required. A value past the last regular-season week
+releases playoff rounds. The exporter rejects an incomplete released week or a
+completed match without verified replay evidence.
+
+The public layer is the recorded evidence a spectator of the league would see:
+draft order with each pick's stated rationale, the board, rosters with how each
+Pokémon was acquired, matchup builds with their stated rationale, standings
+ranked by the league's own table, released scores, structured battle events,
+each submitted decision with its stated rationale, latency, reasoning-token
+count and fallback flags, post-game reflections, transaction offers and
+responses with their stated reasoning, the bracket, and season reviews once the
+season is complete. Closed team sheets stay closed until the season is complete.
+
+The private layer never leaves the run directory: prompt attempts, raw provider
+responses, thought and trace logs, seat-context JSONL, notebooks carried between
+decisions, grader state, and credentials. A stated rationale is the text a model
+submitted as part of its decision; a notebook or trace is how it got there. The
+projection accepts rich internal DTOs but selects each allowed field
+structurally before validating the result, and the bundle carries the harness
+and Showdown commits it was produced from.
+
+GitHub Pages never serves the bundle. Operators pass it to the independent
+spectator repository, which owns layout, release timing, and presentation. The
+spectator does not run Showdown and cannot calculate legal actions, standings,
+winners, or revealed information.
+
+Publication remains an explicit operator action on terminal evidence, not a
+side effect of play. See [Deployment](deployment.md) for the command and release
+boundary.
 
 See [Deployment](deployment.md) for the static-site pipeline and
 [Usage](usage.md) for operator commands.

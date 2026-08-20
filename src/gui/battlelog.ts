@@ -1,12 +1,33 @@
 import type { Pid } from '../types.js';
 import { afterColon } from '../value.js';
 
-export type BattleLogKind = 'turn' | 'move' | 'switch' | 'faint' | 'status' | 'field' | 'win' | 'timer' | 'detail';
+export type BattleLogKind =
+  | 'turn'
+  | 'move'
+  | 'switch'
+  | 'faint'
+  | 'status'
+  | 'field'
+  | 'win'
+  | 'timer'
+  | 'detail'
+  | 'preview';
 
+export interface BattleSlotRef {
+  side: 0 | 1;
+  slot: number;
+}
+
+/** Structured fields let a viewer rebuild field state (who is out, at what HP) without parsing the text. */
 export interface BattleLogEntry {
   turn: number;
   kind: BattleLogKind;
   text: string;
+  actor?: BattleSlotRef;
+  target?: BattleSlotRef;
+  species?: string;
+  hp?: number;
+  status?: string | null;
 }
 
 const MAX_ENTRIES = 400;
@@ -38,12 +59,28 @@ function species(details: string): string {
   return details.split(',', 1)[0]!.trim();
 }
 
-function hpPercent(hp: string): string {
+function hpNumber(hp: string): number | null {
   const [value] = hp.trim().split(/\s+/);
-  if (!value || value === '0' || value.endsWith('fnt')) return '0%';
+  if (!value || value === '0' || value.endsWith('fnt')) return 0;
   const match = /^(\d+)\/(\d+)/.exec(value);
-  if (!match || !Number(match[2])) return value;
-  return `${Math.max(0, Math.min(100, Math.round((Number(match[1]) * 100) / Number(match[2]))))}%`;
+  if (!match || !Number(match[2])) return null;
+  return Math.max(0, Math.min(100, Math.round((Number(match[1]) * 100) / Number(match[2]))));
+}
+
+function hpPercent(hp: string): string {
+  const value = hpNumber(hp);
+  return value === null ? hp.trim().split(/\s+/)[0]! : `${value}%`;
+}
+
+function slotRef(ident: string): BattleSlotRef | undefined {
+  const match = /^p([12])([a-d])?/.exec(ident.trim());
+  if (!match) return undefined;
+  return { side: match[1] === '2' ? 1 : 0, slot: match[2] ? match[2].charCodeAt(0) - 97 : 0 };
+}
+
+function statusOf(hp: string): string | null {
+  const [, status] = hp.trim().split(/\s+/);
+  return status && status !== 'fnt' ? status : null;
 }
 
 function prettyEffect(value: string): string {
@@ -73,8 +110,12 @@ export class BattleLog {
     }
   }
 
-  private push(kind: BattleLogKind, text: string): void {
-    this.entries.push({ turn: this.turn, kind, text });
+  private push(kind: BattleLogKind, text: string, extra: Partial<Record<keyof BattleLogEntry, unknown>> = {}): void {
+    const entry: BattleLogEntry = { turn: this.turn, kind, text };
+    for (const [key, value] of Object.entries(extra)) {
+      if (value !== undefined) (entry as unknown as Record<string, unknown>)[key] = value;
+    }
+    this.entries.push(entry);
     if (this.entries.length > this.maxEntries) this.entries.splice(0, this.entries.length - this.maxEntries);
   }
 
@@ -83,28 +124,65 @@ export class BattleLog {
     if (kind === 'turn' && args[0]) {
       this.turn = Number(args[0]);
       this.push('turn', `Turn ${this.turn}`);
+    } else if (kind === 'poke' && args.length >= 2) {
+      this.push('preview', `${sideTag(args[0]!)} registers ${species(args[1]!)}`, {
+        actor: slotRef(args[0]!),
+        species: species(args[1]!),
+      });
     } else if (kind === 'move' && args.length >= 2) {
       const target = args[2] && args[2] !== 'null' ? ` → ${name(args[2])}` : '';
-      this.push('move', `${name(args[0]!)} used ${args[1]}${target}`);
+      this.push('move', `${name(args[0]!)} used ${args[1]}${target}`, {
+        actor: slotRef(args[0]!),
+        target: args[2] && args[2] !== 'null' ? slotRef(args[2]) : undefined,
+      });
     } else if (kind === 'switch' && args.length >= 2) {
-      this.push('switch', `${sideTag(args[0]!)} sent out ${species(args[1]!)}`);
+      this.push('switch', `${sideTag(args[0]!)} sent out ${species(args[1]!)}`, {
+        actor: slotRef(args[0]!),
+        species: species(args[1]!),
+        hp: args[2] ? (hpNumber(args[2]) ?? undefined) : undefined,
+        status: args[2] ? statusOf(args[2]) : undefined,
+      });
     } else if (kind === 'drag' && args.length >= 2) {
-      this.push('switch', `${species(args[1]!)} was dragged in (${sideTag(args[0]!)})`);
+      this.push('switch', `${species(args[1]!)} was dragged in (${sideTag(args[0]!)})`, {
+        actor: slotRef(args[0]!),
+        species: species(args[1]!),
+        hp: args[2] ? (hpNumber(args[2]) ?? undefined) : undefined,
+        status: args[2] ? statusOf(args[2]) : undefined,
+      });
     } else if (kind === 'replace' && args.length >= 2) {
-      this.push('switch', `${name(args[0]!)} revealed as ${species(args[1]!)}`);
+      this.push('switch', `${name(args[0]!)} revealed as ${species(args[1]!)}`, {
+        actor: slotRef(args[0]!),
+        species: species(args[1]!),
+      });
+    } else if ((kind === 'detailschange' || kind === '-formechange') && args.length >= 2) {
+      this.push('detail', `${name(args[0]!)} became ${species(args[1]!)}`, {
+        actor: slotRef(args[0]!),
+        species: species(args[1]!),
+      });
     } else if (kind === 'faint' && args[0]) {
-      this.push('faint', `${name(args[0])} fainted`);
+      this.push('faint', `${name(args[0])} fainted`, { actor: slotRef(args[0]), hp: 0 });
     } else if (kind === 'cant' && args[0]) {
       const reason = args[1] ? ` (${afterColon(args[1]) || args[1]})` : '';
       this.push('detail', `${name(args[0])} can't move${reason}`);
     } else if (kind === '-damage' && args.length >= 2) {
-      this.push('detail', `${name(args[0]!)} → ${hpPercent(args[1]!)}${fromSource(args)}`);
+      this.push('detail', `${name(args[0]!)} → ${hpPercent(args[1]!)}${fromSource(args)}`, {
+        actor: slotRef(args[0]!),
+        hp: hpNumber(args[1]!) ?? undefined,
+        status: statusOf(args[1]!),
+      });
     } else if (kind === '-heal' && args.length >= 2) {
-      this.push('detail', `${name(args[0]!)} healed → ${hpPercent(args[1]!)}${fromSource(args)}`);
+      this.push('detail', `${name(args[0]!)} healed → ${hpPercent(args[1]!)}${fromSource(args)}`, {
+        actor: slotRef(args[0]!),
+        hp: hpNumber(args[1]!) ?? undefined,
+        status: statusOf(args[1]!),
+      });
     } else if (kind === '-status' && args.length >= 2) {
-      this.push('status', `${name(args[0]!)} ${STATUS_TEXT[args[1]!] ?? args[1]}`);
+      this.push('status', `${name(args[0]!)} ${STATUS_TEXT[args[1]!] ?? args[1]}`, {
+        actor: slotRef(args[0]!),
+        status: args[1],
+      });
     } else if (kind === '-curestatus' && args.length >= 2) {
-      this.push('detail', `${name(args[0]!)} recovered from ${args[1]}`);
+      this.push('detail', `${name(args[0]!)} recovered from ${args[1]}`, { actor: slotRef(args[0]!), status: null });
     } else if ((kind === '-boost' || kind === '-unboost') && args.length >= 3) {
       const amount = Number(args[2]) * (kind === '-boost' ? 1 : -1);
       this.push('detail', `${name(args[0]!)} ${args[1]} ${amount > 0 ? '+' : ''}${amount}`);

@@ -4,7 +4,7 @@ import test from 'node:test';
 import { discoverModels } from '../src/model-catalog.js';
 import { PROVIDER_OPTIONS, providerOption } from '../src/provider-registry.js';
 
-test('provider registry is exactly OpenRouter, Prime Inference, the Vercel AI Gateway, and random', () => {
+test('provider registry is exactly OpenRouter, Prime Inference, the Vercel AI Gateway, OpenCode, and random', () => {
   assert.deepEqual(
     PROVIDER_OPTIONS.map(({ id, baseUrl, envKey, discovery, requiresKey }) => ({
       id,
@@ -33,6 +33,20 @@ test('provider registry is exactly OpenRouter, Prime Inference, the Vercel AI Ga
         baseUrl: 'https://ai-gateway.vercel.sh/v1',
         envKey: 'AI_GATEWAY_API_KEY',
         discovery: 'manual',
+        requiresKey: true,
+      },
+      {
+        id: 'opencode-go',
+        baseUrl: 'https://opencode.ai/zen/go/v1',
+        envKey: 'OPENCODE_API_KEY',
+        discovery: 'list',
+        requiresKey: true,
+      },
+      {
+        id: 'opencode-zen',
+        baseUrl: 'https://opencode.ai/zen/v1',
+        envKey: 'OPENCODE_API_KEY',
+        discovery: 'list',
         requiresKey: true,
       },
       {
@@ -95,8 +109,29 @@ test('model discovery requires the OpenRouter key and Prime remains manual witho
     throw new Error('must not fetch');
   }) as typeof globalThis.fetch;
   await assert.rejects(discoverModels(providerOption('openrouter')!, undefined, { fetch: fakeFetch }), /OPENROUTER/);
+  await assert.rejects(discoverModels(providerOption('opencode-go')!, undefined, { fetch: fakeFetch }), /OPENCODE/);
   await assert.rejects(discoverModels(providerOption('prime')!, 'prime-key', { fetch: fakeFetch }), /manual model IDs/);
   assert.equal(fetched, false);
+});
+
+test('OpenCode discovery reads its plain OpenAI-style catalog and filters non-generative ids', async () => {
+  const models = await discoverModels(providerOption('opencode-zen')!, 'opencode-secret', {
+    fetch: (async (input, init) => {
+      assert.equal(String(input), 'https://opencode.ai/zen/v1/models');
+      assert.equal(new Headers(init?.headers).get('authorization'), 'Bearer opencode-secret');
+      return new Response(
+        JSON.stringify({
+          data: [
+            { id: 'claude-fable-5', object: 'model' },
+            { id: 'text-embedding-mini', object: 'model' },
+            { id: 'grok-code', object: 'model' },
+          ],
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    }) as typeof globalThis.fetch,
+  });
+  assert.deepEqual(models, [{ id: 'claude-fable-5' }, { id: 'grok-code' }]);
 });
 
 test('catalog failures redact the request key', async () => {
