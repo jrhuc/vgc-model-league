@@ -1,8 +1,9 @@
 # Weekly review
 
-A coach's notebook is the only private state that carries across a season. The
-draft writes it, the weekly review revises it, every team build and transaction
-decision reads it, and the season review sees its final form.
+A coach's notebook is the only seat-private state that carries across a season.
+The draft writes it, the weekly review and the post-window reconciliation
+revise it, every team build and transaction decision reads it, and the season
+review sees its final form. No other stage writes it.
 
 ## When it runs
 
@@ -15,6 +16,14 @@ the week it stops at.
 
 `review_weeks` in `config.json` records the schedule. Playoffs run on the final
 round-robin review.
+
+### Reconciliation after a window
+
+When a transaction window closes, every coach whose roster changed runs a
+reconciliation before any later build: the same tools and reply shape, with
+the roster before and after the window in place of the period's results.
+Coaches whose roster did not change are not called. Rows live in
+`reviews/week-<n>-transactions.jsonl` and bind the new roster version.
 
 ## What the coach sees
 
@@ -47,8 +56,10 @@ against the same opponent comes along only when the matchup repeats.
 ## Response data
 
 The coach replies with one JSON object holding the complete replacement
-notebook and an optional private `reasoning` field. Returning the current
-notebook unchanged is a complete answer. The harness does not suggest what to
+notebook and an optional `reasoning` field. Returning the current notebook
+unchanged is a complete answer. The reasoning is competition-private: no other
+coach sees it, and the season bundle releases it to spectators with its week.
+The notebook itself stays in the run directory. The harness does not suggest what to
 keep or change, and it imposes no structure on the notebook.
 
 ## Persistence and resume
@@ -60,9 +71,10 @@ transcripts, including every tool call and result, are under
 `reviews/week-<n>/`.
 
 Rows replay without provider calls. A stored row must continue the digest chain
-from the notebook the league holds when it is replayed, and a stored window must
-follow a complete review of its week. Resume stops when it finds a window or
-later evidence without the review that should precede it.
+from the notebook the league holds when it is replayed, a stored window must
+follow a complete review of its week, and evidence after a window must follow
+the reconciliation of every roster that window changed. Resume stops when it
+finds a window or later evidence without the review that should precede it.
 
 The review prompt policy has its own scaffold hash, `review_scaffold`, recorded
 in `config.json` and in every series record.

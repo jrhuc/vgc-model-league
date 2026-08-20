@@ -590,6 +590,16 @@ export interface LeagueTradeWindowView {
   decisions: LeagueTradeWindowDecisionView[];
 }
 
+export interface LeagueWeeklyReviewView {
+  week: number;
+  stage: 'week' | 'transactions';
+  entrant: number;
+  rosterVersion: number;
+  reasoning: string;
+  notebookChanged: boolean;
+  fallback: boolean;
+}
+
 export interface LeagueSeasonReviewView {
   entrant: number;
   outcome: string;
@@ -617,6 +627,7 @@ export interface LeagueResponse {
   lifecycle: LeagueLifecycle;
   liveSeries: LeagueLiveSeriesView[];
   transactions: LeagueTradeWindowView[];
+  weeklyReviews: LeagueWeeklyReviewView[];
   seasonReviews: LeagueSeasonReviewView[];
   franchises: LeagueFranchiseView[];
   series: LeagueSeriesView[];

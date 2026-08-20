@@ -217,6 +217,17 @@ export const publicSeasonBundleSchema = z.strictObject({
       ),
     }),
   ),
+  weeklyReviews: z.array(
+    z.strictObject({
+      week: z.number().int().positive(),
+      stage: z.enum(['week', 'transactions']),
+      franchiseId: franchiseRef,
+      rosterVersion: z.number().int().nonnegative(),
+      reasoning: z.string(),
+      notebookChanged: z.boolean(),
+      fallback: z.boolean(),
+    }),
+  ),
   playoffs: z
     .strictObject({
       rounds: z.array(
@@ -535,6 +546,17 @@ export function buildPublicSeasonBundle(options: BuildPublicSeasonBundleOptions)
       })),
     });
   }
+  const weeklyReviews: PublicSeasonBundle['weeklyReviews'] = league.weeklyReviews
+    .filter((review) => review.week <= releasedThroughWeek)
+    .map((review) => ({
+      week: review.week,
+      stage: review.stage,
+      franchiseId: franchiseId(review.entrant),
+      rosterVersion: review.rosterVersion,
+      reasoning: review.reasoning,
+      notebookChanged: review.notebookChanged,
+      fallback: review.fallback,
+    }));
   const tradedIn = new Set<string>();
   for (const window of transactions) {
     for (const offer of window.offers) {
@@ -648,6 +670,7 @@ export function buildPublicSeasonBundle(options: BuildPublicSeasonBundleOptions)
     standings,
     weeks,
     transactions,
+    weeklyReviews,
     playoffs,
     replays,
     reviews: seasonReleased

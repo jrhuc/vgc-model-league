@@ -19,6 +19,7 @@ import type {
   LeagueTeambuildView,
   LeagueTradeWindowView,
   LeagueUsageView,
+  LeagueWeeklyReviewView,
   QuartileView,
 } from './gui/api.js';
 import { SAFE_SEGMENT } from './path-safety.js';
@@ -341,6 +342,33 @@ function transactionWeeks(runsDir: string, runId: string): number[] {
   return windows
     .map((window) => Number((window as Record<string, unknown>).after_week))
     .filter((afterWeek) => Number.isSafeInteger(afterWeek) && afterWeek > 0);
+}
+
+function weeklyReviewViews(runsDir: string, runId: string): LeagueWeeklyReviewView[] {
+  const root = path.join(runsDir, runId, 'reviews');
+  let files: string[] = [];
+  try {
+    files = fs.readdirSync(root);
+  } catch (cause) {
+    if ((cause as NodeJS.ErrnoException).code !== 'ENOENT') throw cause;
+  }
+  const views: LeagueWeeklyReviewView[] = [];
+  for (const file of files.sort()) {
+    const match = /^week-(\d+)(-transactions)?\.jsonl$/.exec(file);
+    if (!match) continue;
+    for (const row of readRunLines(runsDir, runId, 'reviews', file)) {
+      views.push({
+        week: Number(match[1]),
+        stage: match[2] ? 'transactions' : 'week',
+        entrant: count(row.entrant),
+        rosterVersion: count(row.roster_version),
+        reasoning: text(row.reasoning),
+        notebookChanged: row.previous_digest !== row.digest,
+        fallback: row.fallback === true,
+      });
+    }
+  }
+  return views.sort((a, b) => a.week - b.week || a.stage.localeCompare(b.stage) || a.entrant - b.entrant);
 }
 
 function seasonReviewViews(runsDir: string, runId: string): LeagueSeasonReviewView[] {
@@ -825,6 +853,7 @@ export function buildLeague(allRows: SeriesRecord[], runsDir: string, runId: str
     lifecycle: leagueLifecycle(runsDir, runId, progress.champion),
     liveSeries,
     transactions: transactionViews(runsDir, runId),
+    weeklyReviews: weeklyReviewViews(runsDir, runId),
     seasonReviews: seasonReviewViews(runsDir, runId),
     franchises,
     series,

@@ -80,9 +80,10 @@ An offer contains:
 - one entry owned by the recipient to receive; and
 - a public message.
 
-The acting coach also returns a private rationale and a full-replacement
-notebook. The responder returns an accept or reject decision, a private
-rationale, and its own full-replacement notebook.
+The acting coach also returns a competition-private rationale. The responder
+returns an accept or reject decision and its own rationale. Neither reply
+rewrites the coach's notebook; a coach whose roster changed revises it in the
+reconciliation that follows the window (see [Weekly review](weekly-review.md)).
 
 Offer evidence records `proposerFallback` and `responderFallback`. The value is
 `null` when no offer exists. The applicable flag is set only after all parse
@@ -90,9 +91,10 @@ attempts fail. An explicit no-offer or rejection does not set it, and neither
 does a random coach's deterministic inaction. A fallback does not create a
 rationale.
 
-A free-agency response contains an atomic swap list, a private rationale, and a
-notebook. A supplied notebook becomes that coach's plan for later builds. Other
-coaches cannot access it.
+A free-agency response contains an atomic swap list and a rationale.
+
+Rationales are competition-private: no other coach can read them, and the
+public season bundle releases them to spectators once the window is complete.
 
 ## Interpret the evidence
 
@@ -100,7 +102,7 @@ Keep these evidence layers separate:
 
 - the observable public message;
 - mechanically computed terms, legality, prices, and roster changes; and
-- each coach's private stated rationale.
+- each coach's competition-private stated rationale.
 
 Use these layers for descriptions and consistency checks. Do not use them to
 claim belief, honesty, deception, enjoyment, or exploitability. Semantic labels

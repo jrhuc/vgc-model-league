@@ -100,6 +100,26 @@ function fixture(): { league: LeagueResponse; plans: DraftLeagueSeriesPlan[] } {
       lifecycle: 'complete',
       liveSeries: [],
       transactions: [],
+      weeklyReviews: [
+        {
+          week: 1,
+          stage: 'week',
+          entrant: 0,
+          rosterVersion: 0,
+          reasoning: 'PUBLIC_WEEKLY_REVIEW',
+          notebookChanged: true,
+          fallback: false,
+        },
+        {
+          week: 2,
+          stage: 'week',
+          entrant: 0,
+          rosterVersion: 0,
+          reasoning: PRIVATE_SENTINEL,
+          notebookChanged: false,
+          fallback: false,
+        },
+      ],
       seasonReviews: [
         {
           entrant: 0,
@@ -220,6 +240,11 @@ test('season-bundle-v2 publishes one complete week with its public evidence and 
   assert.equal(bundle.weeks[0]?.matches[0]?.builds[0]?.rationale, 'PUBLIC_BUILD_RATIONALE');
   assert.equal(bundle.replays[released[0]!.seriesId]?.games[0]?.events[0]?.hp, 100);
   assert.equal(bundle.reviews.length, 0);
+  assert.deepEqual(
+    bundle.weeklyReviews.map((review) => [review.week, review.reasoning]),
+    [[1, 'PUBLIC_WEEKLY_REVIEW']],
+    'weekly reviews release with their week',
+  );
   assert.equal(bundle.playoffs, null);
 });
 

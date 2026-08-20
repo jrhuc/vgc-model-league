@@ -181,8 +181,10 @@ Pokémon was acquired, matchup builds with their stated rationale, standings
 ranked by the league's own table, released scores, structured battle events,
 each submitted decision with its stated rationale, latency, reasoning-token
 count and fallback flags, post-game reflections, transaction offers and
-responses with their stated reasoning, the bracket, and season reviews once the
-season is complete. Closed team sheets stay closed until the season is complete.
+responses with their stated reasoning, each weekly review's reasoning and
+whether it changed the notebook, the bracket, and season reviews once the
+season is complete. Spectators see what every model said it was trying to do;
+competing models see only what their prompts and tools hand them. Closed team sheets stay closed until the season is complete.
 
 The private layer never leaves the run directory: prompt attempts, raw provider
 responses, thought and trace logs, seat-context JSONL, notebooks carried between

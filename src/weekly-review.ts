@@ -46,12 +46,25 @@ const WEEKLY_REVIEW_PROMPT_POLICY = {
     '',
     'You have the Showdown dex tools and three league tools: read_public_series returns the spectator log of any completed series, read_own_series returns your own turn-by-turn choices with their stated reasons and your end-of-game notes, and read_own_build returns the six you registered and your plan. Use them to check anything you intend to write down.',
   ],
+  reconcileSystemTemplate: [
+    'You are {{model}}, a coach in a Pokémon VGC draft league played in the format {{format}}.',
+    FORMAT_AUTHORITY_NOTICE,
+    '',
+    'The transaction window after round-robin week {{week}} of {{weeks}} has closed and your roster changed. This is your private reconciliation: revise the notebook that every later team build and transaction decision of yours reads so that it describes the roster you now own.',
+    '- The notebook is yours to organise. It is the only state that carries from week to week; nothing else you write here is kept.',
+    '- Every coach builds a new six from its roster for every matchup.',
+    '- {{windowNotice}}',
+    '',
+    'You have the Showdown dex tools and three league tools: read_public_series returns the spectator log of any completed series, read_own_series returns your own turn-by-turn choices with their stated reasons and your end-of-game notes, and read_own_build returns the six you registered and your plan.',
+  ],
   standingsHeading: 'LEAGUE STANDINGS AFTER WEEK {{week}} (rank | coach | W-L | games):',
   ownResultsHeading: 'YOUR SERIES THIS PERIOD:',
   publicResultsHeading: 'OTHER RESULTS THIS PERIOD (series index | result):',
   scheduleHeading: 'YOUR REMAINING SCHEDULE (week | opponent | their current roster):',
   transactionsHeading: 'PUBLIC TRANSACTIONS SO FAR:',
   rosterHeading: 'YOUR ROSTER:',
+  previousRosterHeading: 'YOUR ROSTER BEFORE THE WINDOW:',
+  currentRosterHeading: 'YOUR ROSTER NOW:',
   notebookHeading: 'YOUR CURRENT NOTEBOOK:',
   replyTemplate: [
     'Reply with one JSON object {"notebook":"<complete replacement private notebook>"}. An optional "reasoning":"<concise private note on what changed and why>" field is recorded as evidence.',
@@ -81,9 +94,12 @@ export interface WeeklyReviewSeries {
   builds: Record<number, TeambuildView | undefined>;
 }
 
+export type ReviewStage = 'week' | 'transactions';
+
 export interface WeeklyReviewState {
   board: DraftBoard;
   models: string[];
+  stage: ReviewStage;
   week: number;
   weeks: number;
   rosterVersion: number;
@@ -95,6 +111,8 @@ export interface WeeklyReviewState {
   schedule: Array<{ index: number; week: number; entrants: [number, number] }>;
   transactions: string[];
   nextWindowWeek: number | null;
+  previousRosters?: DraftBoardMon[][];
+  seats?: number[];
 }
 
 export interface RunWeeklyReviewOptions extends ModelReasoningConfig {
@@ -111,6 +129,7 @@ export interface RunWeeklyReviewOptions extends ModelReasoningConfig {
 export interface WeeklyReview {
   entrant: number;
   model: string;
+  stage: ReviewStage;
   week: number;
   roster_version: number;
   notebook: string;
@@ -149,10 +168,15 @@ function slug(value: string): string {
   );
 }
 
-export function reviewArtifactPaths(runDir: string, week: number): { transcript: string; logDir: string } {
+export function reviewArtifactPaths(
+  runDir: string,
+  week: number,
+  stage: ReviewStage = 'week',
+): { transcript: string; logDir: string } {
+  const name = stage === 'week' ? `week-${week}` : `week-${week}-transactions`;
   return {
-    transcript: path.join(runDir, 'reviews', `week-${week}.jsonl`),
-    logDir: path.join(runDir, 'reviews', `week-${week}`),
+    transcript: path.join(runDir, 'reviews', `${name}.jsonl`),
+    logDir: path.join(runDir, 'reviews', name),
   };
 }
 
@@ -186,14 +210,18 @@ function renderTemplate(lines: readonly string[], values: Readonly<Record<string
 
 function windowNotice(state: WeeklyReviewState): string {
   if (state.nextWindowWeek === null) return 'Rosters are now locked for the rest of the season.';
-  if (state.nextWindowWeek === state.week) {
+  if (state.nextWindowWeek === state.week && state.stage === 'week') {
     return 'A transaction window opens as soon as this review closes; your notebook is what you take into it.';
   }
   return `The next transaction window opens after week ${state.nextWindowWeek}.`;
 }
 
 function systemPrompt(state: WeeklyReviewState, entrant: number): string {
-  return renderTemplate(WEEKLY_REVIEW_PROMPT_POLICY.systemTemplate, {
+  const template =
+    state.stage === 'week'
+      ? WEEKLY_REVIEW_PROMPT_POLICY.systemTemplate
+      : WEEKLY_REVIEW_PROMPT_POLICY.reconcileSystemTemplate;
+  return renderTemplate(template, {
     model: state.models[entrant]!,
     format: state.board.format,
     week: String(state.week),
@@ -221,20 +249,22 @@ function userPrompt(state: WeeklyReviewState, entrant: number): string {
       `${rank + 1}. entrant ${row.entrant} | ${state.models[row.entrant]} | ${row.w}-${row.l} | ${row.gw}-${row.gl}`,
     );
   }
-  const period = new Set(state.period);
-  lines.push('', WEEKLY_REVIEW_PROMPT_POLICY.ownResultsHeading);
-  const own = state.series.filter((series) => period.has(series.index) && series.entrants.includes(entrant));
-  if (!own.length) lines.push('- (none)');
-  for (const series of own) {
-    lines.push(
-      `- Series ${series.index}, week ${series.week}: ${series.context[entrant] ?? resultLine(series, state.models)}`,
-    );
+  if (state.stage === 'week') {
+    const period = new Set(state.period);
+    lines.push('', WEEKLY_REVIEW_PROMPT_POLICY.ownResultsHeading);
+    const own = state.series.filter((series) => period.has(series.index) && series.entrants.includes(entrant));
+    if (!own.length) lines.push('- (none)');
+    for (const series of own) {
+      lines.push(
+        `- Series ${series.index}, week ${series.week}: ${series.context[entrant] ?? resultLine(series, state.models)}`,
+      );
+    }
+    lines.push('', WEEKLY_REVIEW_PROMPT_POLICY.publicResultsHeading);
+    const others = state.series.filter((series) => period.has(series.index) && !series.entrants.includes(entrant));
+    if (!others.length) lines.push('- (none)');
+    for (const series of others)
+      lines.push(`- Series ${series.index}, week ${series.week}: ${resultLine(series, state.models)}`);
   }
-  lines.push('', WEEKLY_REVIEW_PROMPT_POLICY.publicResultsHeading);
-  const others = state.series.filter((series) => period.has(series.index) && !series.entrants.includes(entrant));
-  if (!others.length) lines.push('- (none)');
-  for (const series of others)
-    lines.push(`- Series ${series.index}, week ${series.week}: ${resultLine(series, state.models)}`);
   lines.push('', WEEKLY_REVIEW_PROMPT_POLICY.scheduleHeading);
   const ahead = state.schedule.filter((plan) => plan.week > state.week && plan.entrants.includes(entrant));
   if (!ahead.length) lines.push('- (the round robin is complete; playoffs seed from the standings)');
@@ -245,9 +275,16 @@ function userPrompt(state: WeeklyReviewState, entrant: number): string {
   lines.push('', WEEKLY_REVIEW_PROMPT_POLICY.transactionsHeading);
   if (!state.transactions.length) lines.push('- (none yet)');
   lines.push(...state.transactions);
+  if (state.stage === 'week') {
+    lines.push('', `${WEEKLY_REVIEW_PROMPT_POLICY.rosterHeading} ${rosterLine(state.rosters[entrant]!)}`);
+  } else {
+    lines.push(
+      '',
+      `${WEEKLY_REVIEW_PROMPT_POLICY.previousRosterHeading} ${rosterLine(state.previousRosters![entrant]!)}`,
+      `${WEEKLY_REVIEW_PROMPT_POLICY.currentRosterHeading} ${rosterLine(state.rosters[entrant]!)}`,
+    );
+  }
   lines.push(
-    '',
-    `${WEEKLY_REVIEW_PROMPT_POLICY.rosterHeading} ${rosterLine(state.rosters[entrant]!)}`,
     '',
     WEEKLY_REVIEW_PROMPT_POLICY.notebookHeading,
     state.notebooks[entrant] || '(empty)',
@@ -438,6 +475,7 @@ function replayReviews(file: string): WeeklyReview[] {
       Number.isSafeInteger(review.entrant) &&
       Number(review.entrant) >= 0 &&
       typeof review.model === 'string' &&
+      (review.stage === 'week' || review.stage === 'transactions') &&
       Number.isSafeInteger(review.week) &&
       Number.isSafeInteger(review.roster_version) &&
       typeof review.notebook === 'string' &&
@@ -454,18 +492,18 @@ function replayReviews(file: string): WeeklyReview[] {
   });
 }
 
-export function readWeeklyReviews(runDir: string, week: number): WeeklyReview[] {
-  return replayReviews(reviewArtifactPaths(runDir, week).transcript);
+export function readWeeklyReviews(runDir: string, week: number, stage: ReviewStage = 'week'): WeeklyReview[] {
+  return replayReviews(reviewArtifactPaths(runDir, week, stage).transcript);
 }
 
 export async function runWeeklyReview(
   state: WeeklyReviewState,
   options: RunWeeklyReviewOptions,
 ): Promise<WeeklyReview[]> {
-  const { transcript, logDir } = reviewArtifactPaths(options.runDir, state.week);
+  const { transcript, logDir } = reviewArtifactPaths(options.runDir, state.week, state.stage);
   const reviews = replayReviews(transcript);
   for (const review of reviews) {
-    if (review.week !== state.week || review.roster_version !== state.rosterVersion) {
+    if (review.stage !== state.stage || review.week !== state.week || review.roster_version !== state.rosterVersion) {
       throw new Error(`${transcript} holds a review for week ${review.week} roster version ${review.roster_version}`);
     }
     if (review.previous_digest !== notebookDigest(state.notebooks[review.entrant] ?? '')) {
@@ -473,9 +511,9 @@ export async function runWeeklyReview(
     }
     state.notebooks[review.entrant] = review.notebook;
   }
-  const pending = state.models
-    .map((_, entrant) => entrant)
-    .filter((entrant) => !reviews.some((r) => r.entrant === entrant));
+  const pending = (state.seats ?? state.models.map((_, entrant) => entrant)).filter(
+    (entrant) => !reviews.some((r) => r.entrant === entrant),
+  );
   const byEntrant = (a: WeeklyReview, b: WeeklyReview) => a.entrant - b.entrant;
   if (!pending.length) return reviews.sort(byEntrant);
   fs.mkdirSync(logDir, { recursive: true });
@@ -584,6 +622,7 @@ export async function runWeeklyReview(
       const review: WeeklyReview = {
         entrant,
         model,
+        stage: state.stage,
         week: state.week,
         roster_version: state.rosterVersion,
         notebook: evidence.notebook,
