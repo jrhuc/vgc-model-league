@@ -331,7 +331,6 @@ function leagueLifecycle(runsDir: string, runId: string, champion: LeagueChampio
   return 'incomplete';
 }
 
-/** Protocol-9 leagues recorded one trade_window object; later leagues record an ordered transactions array. */
 function transactionWeeks(runsDir: string, runId: string): number[] {
   const config = readRunJson(runsDir, runId, 'config.json') as Record<string, unknown> | null;
   const windows = Array.isArray(config?.transactions)

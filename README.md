@@ -54,6 +54,7 @@ technical site; the local operator GUI remains available through `pnpm start`.
 - [Architecture](docs/architecture.md)
 - [Usage](docs/usage.md)
 - [Deployment](docs/deployment.md)
+- [Weekly review](docs/weekly-review.md)
 - [Trade window](docs/trade-window.md)
 - [Season review](docs/season-review.md)
 

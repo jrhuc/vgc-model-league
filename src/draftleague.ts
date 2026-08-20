@@ -47,8 +47,15 @@ import {
 } from './trade-window.js';
 import type { Pid } from './types.js';
 import { ordinal } from './value.js';
+import {
+  notebookDigest,
+  readWeeklyReviews,
+  runWeeklyReview,
+  type WeeklyReviewSeries,
+  weeklyReviewScaffoldRevision,
+} from './weekly-review.js';
 
-export const DRAFT_PROTOCOL_VERSION = 10;
+export const DRAFT_PROTOCOL_VERSION = 11;
 
 export type DraftLeagueEvent = TournamentEvent | { type: 'draft'; draft: DraftView };
 
@@ -216,6 +223,7 @@ export async function runDraftLeague(
   const teambuildScaffold = teambuildScaffoldRevision(sheetPolicy);
   const windowScaffold = tradeWindowScaffoldRevision();
   const seasonScaffold = seasonReviewScaffoldRevision();
+  const reviewScaffold = weeklyReviewScaffoldRevision();
 
   const stored = options.resume ? loadStoredLeague(runDir) : undefined;
   if (stored) {
@@ -228,7 +236,6 @@ export async function runDraftLeague(
     });
   }
   const draftOnly = options.draftOnly === true;
-  /** A draft-only run never held a window, so its resume chooses a schedule like a fresh league. */
   const storedSchedule = stored ? stored.transactions : undefined;
   const storedTransactionArtifacts = stored ? transactionArtifactPaths(runDir) : [];
   if (storedSchedule?.length === 0 && storedTransactionArtifacts.length) {
@@ -243,7 +250,6 @@ export async function runDraftLeague(
   }
   const entrants = stored ? stored.entrants : shuffle(models, random);
   const { weeks, playoffRounds, plans } = buildDraftLeagueSchedule(entrants.length, seed);
-  /** Windows open on standings, so a league that plays no games cannot hold one. */
   const schedule: TransactionSchedule = draftOnly
     ? []
     : (storedSchedule ??
@@ -253,12 +259,14 @@ export async function runDraftLeague(
     after_week: window.afterWeek,
     trades_allowed: window.tradesAllowed,
   }));
-  /** Roster versions count the windows closed before a series; playoffs always use the final roster. */
   const rosterVersionFor = (plan: DraftLeagueSeriesPlan): number =>
     plan.stage === 'playoff' ? schedule.length : schedule.filter((window) => window.afterWeek < plan.round).length;
   const sequentialWeeks = stored
     ? stored.sequentialWeeks
     : options.sequentialWeeks === true || options.throughWeek !== undefined;
+  const reviewWeeks = sequentialWeeks
+    ? weeks.map((_, index) => index + 1)
+    : [...new Set([...schedule.map((window) => window.afterWeek), weeks.length])].sort((a, b) => a - b);
   const runId = path.basename(runDir);
   if (stored && storedSchedule === undefined) {
     const storedRows = loadSeriesRecords(recordsPath).filter((row) => row.run_id === runId);
@@ -302,6 +310,7 @@ export async function runDraftLeague(
   const coachingPath = path.join(runDir, 'coaching.jsonl');
   const playoffContext = entrants.map(() => new Map<number, string>());
   const reflectionNotes = entrants.map(() => new Map<number, string>());
+  const resultSummaries = entrants.map(() => new Map<number, string>());
   for (const row of readJsonlObjects(coachingPath)) {
     const entrant = Number(row.entrant);
     const seriesIndex = Number(row.series_index);
@@ -369,6 +378,7 @@ export async function runDraftLeague(
           teambuild_scaffold: teambuildScaffold,
           window_scaffold: windowScaffold,
           season_scaffold: seasonScaffold,
+          review_scaffold: reviewScaffold,
           models,
           seed,
           concurrency: options.concurrency ?? 2,
@@ -381,6 +391,7 @@ export async function runDraftLeague(
           closed_sheets: options.closedSheets === true,
           draft_only: draftOnly,
           transactions: draftOnly ? null : configuredTransactions,
+          review_weeks: draftOnly ? null : reviewWeeks,
           entrants,
           team_names: teamNames,
           weeks: weeks.length,
@@ -591,6 +602,7 @@ export async function runDraftLeague(
       row.teambuild_scaffold !== teambuildScaffold ||
       row.window_scaffold !== windowScaffold ||
       row.season_scaffold !== seasonScaffold ||
+      row.review_scaffold !== reviewScaffold ||
       row.ps_commit !== showdownCommit(psDir) ||
       row.series_index !== plan.index ||
       row.roster_version !== rosterVersionFor(plan) ||
@@ -602,6 +614,22 @@ export async function runDraftLeague(
       throw new Error(`run ${runId} series ${plan.index} does not match its canonical completed series evidence`);
     }
     return { score: canonical.fields.score, winnerSide: canonical.winnerSide };
+  };
+
+  const monName = (id: string): string => board.mons.find((mon) => mon.id === id)?.name ?? id;
+  const priorContextFor = (entrant: number, opponent: number): string[] => {
+    const lines: string[] = [];
+    for (const plan of plans) {
+      if (!plan.entrants?.includes(entrant) || !completed.has(plan.index)) continue;
+      const summary = resultSummaries[entrant]!.get(plan.index);
+      if (summary === undefined) continue;
+      const build = teambuilds.find((view) => view.seriesIndex === plan.index && view.entrant === entrant);
+      const registered = build ? `; registered ${build.brought.map(monName).join(', ')}` : '';
+      lines.push(`${summary}${registered}`);
+      const context = playoffContext[entrant]!.get(plan.index);
+      if (plan.entrants.includes(opponent) && context) lines.push(`Against this coach: ${context}`);
+    }
+    return lines;
   };
 
   const teambuildFor = async (plan: DraftLeagueSeriesPlan, entrant: number, opponent: number, signal: AbortSignal) => {
@@ -644,10 +672,7 @@ export async function runDraftLeague(
         roster: rosters[entrant]!,
         opponentRoster: rosters[opponent]!,
         draftNote: draftNotes[entrant]!,
-        playoffContext:
-          plan.stage === 'playoff'
-            ? [...playoffContext[entrant]!.entries()].sort(([a], [b]) => a - b).map(([, context]) => context)
-            : [],
+        playoffContext: priorContextFor(entrant, opponent),
         format: board.format,
         sheetPolicy,
       },
@@ -723,6 +748,7 @@ export async function runDraftLeague(
       teambuild_scaffold: teambuildScaffold,
       window_scaffold: windowScaffold,
       season_scaffold: seasonScaffold,
+      review_scaffold: reviewScaffold,
       series_index: plan.index,
       stage: plan.stage,
       round: plan.round,
@@ -766,6 +792,7 @@ export async function runDraftLeague(
       const context = coaching
         ? draftLeaguePlayoffReview(summary, coaching[side].build, coaching[side].notebook)
         : summary;
+      resultSummaries[entrant]!.set(plan.index, summary);
       if (coaching || !playoffContext[entrant]!.has(plan.index)) {
         playoffContext[entrant]!.set(plan.index, context);
       }
@@ -838,9 +865,121 @@ export async function runDraftLeague(
     rosterHistory.push(rosters.map((roster) => [...roster]));
   };
 
+  let reviewedThrough = 0;
+  const reviewSeries = (throughWeek: number): WeeklyReviewSeries[] => {
+    const list: WeeklyReviewSeries[] = [];
+    for (const plan of plans) {
+      if (plan.stage !== 'roundrobin' || plan.round > throughWeek || !plan.entrants) continue;
+      const row = completed.get(plan.index);
+      if (!row) continue;
+      const storedOutcome = storedOutcomes.get(plan.index);
+      const score = storedOutcome?.score ?? (row.score as Record<Pid, number>);
+      const winnerSide = storedOutcome?.winnerSide ?? ((row.winner_side ?? undefined) as Pid | undefined);
+      const [a, b] = plan.entrants;
+      list.push({
+        index: plan.index,
+        week: plan.round,
+        seriesId: String(row.series_id),
+        entrants: [a, b],
+        score: [score.p1, score.p2],
+        winner: winnerSide === undefined ? null : winnerSide === 'p1' ? a : b,
+        context: {
+          [a]: playoffContext[a]!.get(plan.index) ?? '',
+          [b]: playoffContext[b]!.get(plan.index) ?? '',
+        },
+        builds: {
+          [a]: teambuilds.find((view) => view.seriesIndex === plan.index && view.entrant === a),
+          [b]: teambuilds.find((view) => view.seriesIndex === plan.index && view.entrant === b),
+        },
+      });
+    }
+    return list;
+  };
+  const requireWeekComplete = (week: number, context: string): void => {
+    const missing = plans.find(
+      (plan) => plan.stage === 'roundrobin' && plan.round <= week && !completed.has(plan.index),
+    );
+    if (missing) throw new Error(`run ${runId} ${context} for week ${week} precedes scheduled series ${missing.index}`);
+  };
+  const reviewWeekFor = async (week: number): Promise<void> => {
+    if (!reviewWeeks.includes(week) || reviewedThrough >= week) return;
+    requireWeekComplete(week, 'weekly review');
+    const series = reviewSeries(week);
+    const nextWindow = schedule.find((window) => window.afterWeek >= week);
+    await runWeeklyReview(
+      {
+        board,
+        models: entrants,
+        week,
+        weeks: weeks.length,
+        rosterVersion: windowArtifacts.length,
+        rosters,
+        notebooks: draftNotes,
+        standings: rankedTable(table),
+        series,
+        period: series.filter((entry) => entry.week > reviewedThrough).map((entry) => entry.index),
+        schedule: plans.flatMap((plan) =>
+          plan.stage === 'roundrobin' && plan.entrants
+            ? [{ index: plan.index, week: plan.round, entrants: plan.entrants }]
+            : [],
+        ),
+        transactions: describeTransactionHistory(windowArtifacts, entrants),
+        nextWindowWeek: nextWindow ? nextWindow.afterWeek : null,
+      },
+      {
+        runDir,
+        psDir,
+        ...(options.reasoning === undefined ? {} : { reasoning: options.reasoning }),
+        ...(options.reasoningByModel === undefined ? {} : { reasoningByModel: options.reasoningByModel }),
+        ...(options.apiKeys === undefined ? {} : { apiKeys: options.apiKeys }),
+        ...(options.recovery === undefined ? {} : { recovery: options.recovery }),
+        ...(options.signal === undefined ? {} : { signal: options.signal }),
+      },
+    );
+    reviewedThrough = week;
+    options.onEvent?.({ type: 'draft', draft: draftView(true) });
+  };
+  const adoptStoredReview = (week: number): boolean => {
+    const rows = readWeeklyReviews(runDir, week);
+    if (rows.length < entrants.length) {
+      if (rows.length) requireWeekComplete(week, 'weekly review');
+      return false;
+    }
+    requireWeekComplete(week, 'weekly review');
+    for (const row of rows) {
+      if (row.roster_version !== windowArtifacts.length) {
+        throw new Error(
+          `run ${runId} week ${week} review for entrant ${row.entrant} binds roster version ${row.roster_version}`,
+        );
+      }
+      if (row.previous_digest !== notebookDigest(draftNotes[row.entrant] ?? '')) {
+        throw new Error(`run ${runId} week ${week} review for entrant ${row.entrant} does not continue its notebook`);
+      }
+      draftNotes[row.entrant] = row.notebook;
+    }
+    reviewedThrough = week;
+    return true;
+  };
+
   validateStoredRoundRobin(0);
   if (stored) {
-    for (const [index, window] of schedule.entries()) {
+    for (const week of reviewWeeks) {
+      if (!adoptStoredReview(week)) {
+        const epoch = schedule.find((window) => window.afterWeek === week);
+        const evidence = [
+          ...(epoch ? transactionArtifactPaths(transactionEpochDir(runDir, week)) : []),
+          ...postWindowEvidence(runDir, storedRunRows, plans, week),
+        ];
+        if (evidence.length) {
+          throw new Error(
+            `run ${runId} has evidence past its week-${week} review barrier but lacks a complete review: ${evidence.join(', ')}`,
+          );
+        }
+        break;
+      }
+      const index = schedule.findIndex((window) => window.afterWeek === week);
+      if (index === -1) continue;
+      const window = schedule[index]!;
       const epochDir = transactionEpochDir(runDir, window.afterWeek);
       if (transactionArtifactPaths(epochDir).length) {
         requireTransactionResultPrefix(runId, storedRunRows, plans, window.afterWeek);
@@ -1066,6 +1205,7 @@ export async function runDraftLeague(
         options.onEvent?.({ type: 'draft', draft: draftView(true) });
         return sorted(results);
       }
+      await reviewWeekFor(week);
       const windowIndex = schedule.findIndex((window) => window.afterWeek === week);
       if (windowIndex !== -1) await openTradeWindow(windowIndex);
     }
@@ -1084,6 +1224,7 @@ export async function runDraftLeague(
         ),
       );
       if (options.signal?.aborted) return sorted(results);
+      await reviewWeekFor(window.afterWeek);
       await openTradeWindow(index);
       firstWeek = window.afterWeek + 1;
     }
@@ -1092,6 +1233,8 @@ export async function runDraftLeague(
     await scheduleRoundRobin(
       plans.filter((plan) => plan.stage === 'roundrobin' && plan.round >= firstWeek && !completed.has(plan.index)),
     );
+    if (options.signal?.aborted) return sorted(results);
+    await reviewWeekFor(weeks.length);
   }
   if (options.signal?.aborted) return sorted(results);
 
@@ -1213,10 +1356,12 @@ function draftOnlyPromotionEvidence(runDir: string, rows: readonly SeriesRecord[
       if ((cause as NodeJS.ErrnoException).code !== 'ENOENT') throw cause;
     }
   }
-  try {
-    if (fs.readdirSync(path.join(runDir, 'series')).length) evidence.push('series/');
-  } catch (cause) {
-    if ((cause as NodeJS.ErrnoException).code !== 'ENOENT') throw cause;
+  for (const directory of ['series', 'reviews']) {
+    try {
+      if (fs.readdirSync(path.join(runDir, directory)).length) evidence.push(`${directory}/`);
+    } catch (cause) {
+      if ((cause as NodeJS.ErrnoException).code !== 'ENOENT') throw cause;
+    }
   }
   return evidence;
 }
@@ -1272,6 +1417,18 @@ function postWindowEvidence(
     if (typeof seriesIndex === 'number' && pastBarrier.has(seriesIndex)) evidence.push(`series/${directory}`);
   }
   if (readJsonlObjects(path.join(runDir, 'season.jsonl')).length) evidence.push('season.jsonl');
+  let reviewFiles: string[] = [];
+  try {
+    reviewFiles = fs.readdirSync(path.join(runDir, 'reviews'));
+  } catch (cause) {
+    if ((cause as NodeJS.ErrnoException).code !== 'ENOENT') throw cause;
+  }
+  for (const file of reviewFiles) {
+    const match = /^week-(\d+)\.jsonl$/u.exec(file);
+    if (match && Number(match[1]) > afterWeek && readJsonlObjects(path.join(runDir, 'reviews', file)).length) {
+      evidence.push(`reviews/${file}`);
+    }
+  }
   return [...new Set(evidence)];
 }
 

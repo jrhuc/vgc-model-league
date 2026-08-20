@@ -435,6 +435,16 @@ class SdkProvider implements Provider {
     return apiKey;
   }
 
+  agentModel(): { model: LanguageModel; reasoning: ReasoningLevel | undefined; redact: (error: unknown) => Error } {
+    const apiKey = this.key();
+    const secrets = this.secrets(apiKey);
+    return {
+      model: this.languageModel(apiKey),
+      reasoning: this.reasoning,
+      redact: (error) => this.redactedError(error, secrets),
+    };
+  }
+
   private languageModel(apiKey: string): LanguageModel {
     const option = providerOption(this.spec.provider);
     if (!option?.baseUrl) throw new Error(USAGE);
@@ -611,4 +621,19 @@ export function makeProvider(
   validateReasoning(spec, options.reasoning);
   if (spec.provider === 'random') throw new Error('random provider is handled separately');
   return new SdkProvider(spec, options);
+}
+
+export type AgentModel = ReturnType<SdkProvider['agentModel']>;
+
+export function makeAgentModel(
+  spec: ProviderSpec,
+  options: {
+    apiKey?: string | undefined;
+    reasoning?: ReasoningLevel | undefined;
+    fetch?: typeof fetch | undefined;
+  } = {},
+): AgentModel {
+  validateReasoning(spec, options.reasoning);
+  if (spec.provider === 'random') throw new Error('random provider is handled separately');
+  return new SdkProvider(spec, options).agentModel();
 }

@@ -13,6 +13,7 @@ const pages = [
   ['architecture', 'Architecture'],
   ['usage', 'Usage'],
   ['deployment', 'Deployment'],
+  ['weekly-review', 'Weekly review'],
   ['trade-window', 'Trade window'],
   ['season-review', 'Season review'],
 ];
