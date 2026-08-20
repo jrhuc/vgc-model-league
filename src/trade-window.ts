@@ -125,7 +125,6 @@ export interface TradeWindowConfig {
   tradesAllowed: number;
 }
 
-/** Ordered transaction windows; rosters lock after the last one. */
 export type TransactionSchedule = TradeWindowConfig[];
 
 export function validateTradesAllowed(value: number, context = 'trades allowed'): void {
@@ -157,7 +156,6 @@ export function validateTransactionSchedule(
   }
 }
 
-/** Parses the operator form: comma-separated weeks, "off", or nothing for the default schedule. */
 export function parseTransactionWeeks(value: string | undefined, weeks: number): TransactionSchedule {
   if (value === undefined) return defaultTransactionSchedule(weeks);
   if (value === 'off') return [];
@@ -254,7 +252,6 @@ export interface TradeWindowState {
   standings: DraftTableRow[];
   results: TradeWindowResult[][];
   reflections: string[][];
-  /** Public record of every move made in earlier windows this season. */
   history: string[];
 }
 
@@ -945,8 +942,6 @@ function epochArtifactPaths(epochDir: string): string[] {
   return TRANSACTION_PATH_ENTRIES.filter((entry) => requireRegularEntry(path.join(epochDir, entry)));
 }
 
-/** Every transaction artifact under a run, relative to the run: per-window directories under
- * transactions/, plus the run-root files that protocol-9 leagues wrote for their single window. */
 export function transactionArtifactPaths(runDir: string): string[] {
   const present = epochArtifactPaths(runDir);
   const root = path.join(runDir, 'transactions');
@@ -1858,7 +1853,6 @@ export interface TransactionEpochArtifacts {
   inProgress: boolean;
 }
 
-/** Every window a run has opened, in season order, whether or not it has closed. */
 export function readTransactionEpochs(runDir: string): TransactionEpochArtifacts[] {
   return transactionEpochDirs(runDir).map((epochDir) => {
     const artifact = readTradeWindow(epochDir);

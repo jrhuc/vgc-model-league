@@ -52,9 +52,10 @@ change the battle engine or the Showdown boundary.
   species or formes under exclusivity, Species Clause, roster-size, and point
   constraints. Before each series, a coach selects six roster members and
   builds complete sets. Showdown validates format legality. League rules enforce
-  draft-specific constraints such as Mega locks. The protocol includes a
-  schedule of transaction windows and terminal season reviews. See [Trade
-  window](trade-window.md) and [Season review](season-review.md).
+  draft-specific constraints such as Mega locks. The protocol includes weekly
+  reviews, a schedule of transaction windows, and terminal season reviews. See
+  [Weekly review](weekly-review.md), [Trade window](trade-window.md), and
+  [Season review](season-review.md).
 - **Exhibition** (`src/seat.ts`) exposes one seat through a loopback bearer-token
   bridge. Its owner-only workspace modes protect tokens from other users, but
   not from processes under the same UID. It provides no filesystem, process,

@@ -1,0 +1,68 @@
+# Weekly review
+
+A coach's notebook is the only private state that carries across a season. The
+draft writes it, the weekly review revises it, every team build and transaction
+decision reads it, and the season review sees its final form.
+
+## When it runs
+
+A review runs at each barrier the league exposes. With `--sequential-weeks`,
+that is the end of every round-robin week. With the default blind batches, it is
+the end of each transaction-window week and the end of the round robin. The
+review precedes the transaction window that opens in the same week, so the
+window reads the revised notebook. `--through-week` stops before the review of
+the week it stops at.
+
+`review_weeks` in `config.json` records the schedule. Playoffs run on the final
+round-robin review.
+
+## What the coach sees
+
+Each coach receives, for its own seat only:
+
+- standings through the week;
+- its own series since the previous review: result, registered sets, and its
+  final battle note;
+- the public results of every other series in the same period;
+- its remaining schedule with each opponent's current roster;
+- the public transactions of the season so far;
+- its roster and its current notebook;
+- which window opens next, or that rosters are locked.
+
+It has the draft dex and board tools and three league tools:
+
+- `read_public_series` returns the spectator log of any completed series.
+  Closed sheets never publish `|showteam|`, so the tool returns exactly what a
+  viewer saw.
+- `read_own_series` returns the coach's own turn-by-turn choices with the
+  reasons it gave at the time and its end-of-game notes.
+- `read_own_build` returns the six the coach registered and its plan.
+
+A coach cannot read another coach's decisions, builds, or notebook. The prompt
+states that every coach builds a new six for each matchup and that sets seen in
+one series may not return. Later team builds repeat that notice and list the
+coach's own results with what it registered; the full context of a series
+against the same opponent comes along only when the matchup repeats.
+
+## Response data
+
+The coach replies with one JSON object holding the complete replacement
+notebook and an optional private `reasoning` field. Returning the current
+notebook unchanged is a complete answer. The harness does not suggest what to
+keep or change, and it imposes no structure on the notebook.
+
+## Persistence and resume
+
+`reviews/week-<n>.jsonl` holds one row per coach: the replacement notebook, the
+reasoning, which evidence fields the coach supplied, the roster version it was
+written against, and the digests of the notebook before and after. Seat
+transcripts, including every tool call and result, are under
+`reviews/week-<n>/`.
+
+Rows replay without provider calls. A stored row must continue the digest chain
+from the notebook the league holds when it is replayed, and a stored window must
+follow a complete review of its week. Resume stops when it finds a window or
+later evidence without the review that should precede it.
+
+The review prompt policy has its own scaffold hash, `review_scaffold`, recorded
+in `config.json` and in every series record.

@@ -70,7 +70,9 @@ const TEAMBUILD_PROMPT_POLICY = {
   rosterHeading: 'YOUR ROSTER (board id | name | types | base stats | abilities | legal moves):',
   opponentHeading: 'OPPONENT ROSTER — {{model}} (they pick 6 of these):',
   draftNoteHeading: 'YOUR CURRENT PRIVATE ROSTER NOTE:',
-  playoffContextHeading: 'YOUR PRIVATE CONTEXT FROM EARLIER LEAGUE MATCHES:',
+  priorContextHeading: 'YOUR SEASON SO FAR (your results, what you registered, and your notes against this coach):',
+  priorContextNotice:
+    'Every coach builds a new six for every matchup; sets, items, moves and spreads seen earlier were built for that series and may not return.',
   lockedItem: 'MUST hold {{item}}',
   noMega: 'cannot hold a Mega Stone',
   rejectionTemplate: 'That team was rejected:\n{{error}}\nReply again with only the JSON object.',
@@ -686,11 +688,12 @@ function userPrompt(task: TeamBuildTask, dex: DexLike): string {
   if (task.notebook) lines.push('', TEAMBUILD_PROMPT_POLICY.draftNoteHeading, task.notebook);
   lines.push('', TEAMBUILD_PROMPT_POLICY.opponentHeading.replace('{{model}}', task.objective.opponent.model));
   lines.push(...rosterBlock(dex, [...task.objective.opponent.candidates], false));
-  if (task.objective.stage === 'playoff' && task.objective.priorContext.length) {
+  if (task.objective.priorContext.length) {
     lines.push(
       '',
-      TEAMBUILD_PROMPT_POLICY.playoffContextHeading,
+      TEAMBUILD_PROMPT_POLICY.priorContextHeading,
       ...task.objective.priorContext.map((entry) => `- ${entry}`),
+      TEAMBUILD_PROMPT_POLICY.priorContextNotice,
     );
   }
   return lines.join('\n');

@@ -13,6 +13,7 @@ export interface SeriesRecord extends JsonObject {
   teambuild_scaffold?: string | undefined;
   window_scaffold?: string | undefined;
   season_scaffold?: string | undefined;
+  review_scaffold?: string | undefined;
   run_id?: string | undefined;
   series_index?: number | undefined;
   pool?: string | undefined;
@@ -53,6 +54,7 @@ const seriesRecordSchema = z.strictObject({
   teambuild_scaffold: z.string().min(1).optional(),
   window_scaffold: z.string().min(1).optional(),
   season_scaffold: z.string().min(1).optional(),
+  review_scaffold: z.string().min(1).optional(),
   timestamp: z.string().min(1),
   run_id: z.string().min(1),
   series_id: z.string().min(1),

@@ -150,8 +150,8 @@ before submitting up to six atomic free-agent drop/add swaps. See [Trade
 window](trade-window.md) for the complete rules and evidence boundaries.
 
 Private notes are explicitly reinjected state, not a persistent provider
-conversation. A roster note persists through the draft and every transaction
-window.
+conversation. A roster note persists through the draft, every [weekly
+review](weekly-review.md), and every transaction window.
 A matchup plan and battle notebook apply only to their series. Playoff coaches
 can receive their own earlier builds, results, and final notes. Franchise names
 are spectator metadata and do not enter competitive or review prompts. The

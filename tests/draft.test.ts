@@ -51,6 +51,7 @@ import {
   tradeWindowScaffoldRevision,
 } from '../src/trade-window.js';
 import type { Completion, Provider, ProviderMessage } from '../src/types.js';
+import { runWeeklyReview } from '../src/weekly-review.js';
 import { legalTeamResponse } from './fixtures/team-build.js';
 
 const BOARD = loadBoard('regmb-202607');
@@ -1641,19 +1642,33 @@ test('closed-sheet teambuilding states and binds the hidden-information policy',
   assert.notEqual(teambuildScaffoldRevision('closed'), teambuildScaffoldRevision('open'));
 });
 
-test('round-robin teambuilds do not receive other round-robin match context', async (t) => {
-  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-teambuild-blind-round-robin-'));
+test('round-robin teambuilds receive the coach’s season so far and the rebuild notice', async (t) => {
+  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vgc-teambuild-season-context-'));
   t.after(() => fs.rmSync(logDir, { recursive: true, force: true }));
   let prompt = '';
-  await runTeambuild(teambuildRequest({ playoffContext: ['Prior round-robin scouting that must stay blind'] }), {
+  await runTeambuild(
+    teambuildRequest({ playoffContext: ['Round-robin week 1: beat fake:other 2-1; registered Garchomp'] }),
+    {
+      logDir,
+      rng: seededRng(1),
+      makeTeambuildProvider: () =>
+        scriptedProvider([GOOD_TEAM], (messages) => {
+          prompt = messages[0]!.content ?? '';
+        }),
+    },
+  );
+  assert.match(prompt, /YOUR SEASON SO FAR[^\n]*\n- Round-robin week 1: beat fake:other 2-1; registered Garchomp/);
+  assert.match(prompt, /Every coach builds a new six for every matchup/);
+  let blank = '';
+  await runTeambuild(teambuildRequest(), {
     logDir,
-    rng: seededRng(1),
+    rng: seededRng(2),
     makeTeambuildProvider: () =>
       scriptedProvider([GOOD_TEAM], (messages) => {
-        prompt = messages[0]!.content ?? '';
+        blank = messages[0]!.content ?? '';
       }),
   });
-  assert.doesNotMatch(prompt, /Prior round-robin scouting/);
+  assert.doesNotMatch(blank, /YOUR SEASON SO FAR/, 'a first build has no season to show');
 });
 
 test('the system prompt lists the Champions item list, which Gen 9 knowledge gets wrong', async (t) => {
@@ -1792,6 +1807,14 @@ test('a full draft league drafts, plays weekly rounds, and crowns a champion', a
   });
 
   assert.equal(rows.length, 6 + 1, 'a four-coach round robin is six series, plus a top-two final');
+  assert.deepEqual(
+    fs
+      .readdirSync(path.join(directory, 'reviews'))
+      .filter((file) => file.endsWith('.jsonl'))
+      .sort(),
+    ['week-1.jsonl', 'week-2.jsonl', 'week-3.jsonl'],
+    'a parallel league reviews at each window and the end of the round robin',
+  );
   for (const row of rows) {
     assert.equal(row.mode, 'draft');
     assert.equal(row.protocol_version, DRAFT_PROTOCOL_VERSION);
@@ -2080,6 +2103,24 @@ test('the real league window updates the outer roster used by later construction
     if (replayed) break;
   }
   assert.ok(replayed, 'the board must offer one legal post-draft swap');
+  await runWeeklyReview(
+    {
+      board: BOARD,
+      models: config.entrants,
+      week: 1,
+      weeks: 1,
+      rosterVersion: 0,
+      rosters,
+      notebooks: [...config.draft_notes],
+      standings: config.entrants.map((_, entrant) => ({ entrant, w: 0, l: 0, gw: 0, gl: 0 })),
+      series: [],
+      period: [],
+      schedule: [],
+      transactions: [],
+      nextWindowWeek: 1,
+    },
+    { runDir: directory, psDir: defaultPsDir() },
+  );
   const epochDir = path.join(directory, 'transactions', 'after-week-1');
   fs.mkdirSync(epochDir, { recursive: true });
   fs.writeFileSync(
@@ -2272,7 +2313,7 @@ test('current teambuild provenance counts as post-window transaction-barrier evi
 
   await assert.rejects(
     runDraftLeague(models, directory, { recordsPath, seed: 79, concurrency: 1, resume: true }),
-    /transaction barrier but lacks authoritative window artifacts/,
+    /review barrier but lacks a complete review: teambuild\/teambuild.jsonl series 1/,
   );
 });
 
@@ -2905,9 +2946,21 @@ test('a league paused between two closed windows resumes on the right roster ver
     !fs.existsSync(path.join(directory, 'transactions', 'after-week-2')),
     'pausing after week 2 stops before its window opens',
   );
+  assert.ok(fs.existsSync(path.join(directory, 'reviews', 'week-1.jsonl')), 'week 1 was reviewed before its window');
+  assert.ok(
+    !fs.existsSync(path.join(directory, 'reviews', 'week-2.jsonl')),
+    'pausing after week 2 stops before its review',
+  );
   const resumed = await runDraftLeague(models, directory, { recordsPath, seed: 23, concurrency: 2, resume: true });
   assert.equal(resumed.length, 7);
   assert.ok(fs.existsSync(path.join(directory, 'transactions', 'after-week-2', 'window.json')));
+  for (const week of [1, 2, 3]) {
+    const reviews = readJsonlObjects(path.join(directory, 'reviews', `week-${week}.jsonl`));
+    assert.equal(reviews.length, 4, `every coach reviews week ${week}`);
+    assert.ok(reviews.every((row) => row.roster_version === Math.min(week - 1, 2)));
+  }
+  const config = JSON.parse(fs.readFileSync(path.join(directory, 'config.json'), 'utf8')) as Record<string, unknown>;
+  assert.deepEqual(config.review_weeks, [1, 2, 3], 'sequential weeks review after every week');
   for (const row of resumed) {
     assert.deepEqual(row.transactions, [
       { after_week: 1, trades_allowed: 0 },
