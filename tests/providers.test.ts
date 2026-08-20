@@ -30,7 +30,7 @@ function chatStream(text: string, final: Record<string, unknown> = {}): Response
   ]);
 }
 
-test('provider specs are exactly OpenRouter, Prime Inference, the Vercel AI Gateway, and random', () => {
+test('provider specs are exactly OpenRouter, Prime Inference, the Vercel AI Gateway, OpenCode, and random', () => {
   assert.deepEqual(parseSpec('openrouter:anthropic/claude-sonnet-4:nitro'), {
     provider: 'openrouter',
     model: 'anthropic/claude-sonnet-4:nitro',
@@ -42,6 +42,14 @@ test('provider specs are exactly OpenRouter, Prime Inference, the Vercel AI Gate
   assert.deepEqual(parseSpec('gateway:anthropic/claude-sonnet-4.5'), {
     provider: 'gateway',
     model: 'anthropic/claude-sonnet-4.5',
+  });
+  assert.deepEqual(parseSpec('opencode-go:grok-code'), {
+    provider: 'opencode-go',
+    model: 'grok-code',
+  });
+  assert.deepEqual(parseSpec('opencode-zen:claude-fable-5'), {
+    provider: 'opencode-zen',
+    model: 'claude-fable-5',
   });
   assert.deepEqual(parseSpec('random'), { provider: 'random', model: 'random' });
   assert.throws(() => validateReasoning(parseSpec('prime:model'), 'high'), /no advertised configurable reasoning/);
@@ -55,6 +63,8 @@ test('provider specs are exactly OpenRouter, Prime Inference, the Vercel AI Gate
     'prime:-model',
     'gateway:',
     'gateway:-model',
+    'opencode-go:',
+    'opencode-zen:-model',
     'openrouter:model name',
     'unknown:model',
     'random:anything',

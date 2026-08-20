@@ -104,7 +104,7 @@ test('gui serves the built app shell and setup state', async () => {
     const providers = data.providers as Array<Record<string, unknown>>;
     assert.deepEqual(
       providers.map((provider) => provider.id),
-      ['openrouter', 'prime', 'gateway', 'random'],
+      ['openrouter', 'prime', 'gateway', 'opencode-go', 'opencode-zen', 'random'],
     );
     assert.ok(providers.every((provider) => !('envKey' in provider) && !('keyPresent' in provider)));
     assert.ok(providers.every((provider) => !('models' in provider)));
@@ -365,7 +365,10 @@ test('gui requires browser credentials and never exposes server keys', async () 
       apiKeys: { 'anthropic:test-model': 'browser-run-secret' },
     });
     assert.equal(removed.status, 400);
-    assert.match(String(removed.data.error), /openrouter:<model-id>, prime:<model-id>, gateway:<model-id>, or random/);
+    assert.match(
+      String(removed.data.error),
+      /openrouter:<model-id>, prime:<model-id>, gateway:<model-id>, opencode-go:<model-id>, opencode-zen:<model-id>, or random/,
+    );
 
     const missing = await apiJson(`${base}api/run`, {
       models: ['prime:test-model', 'random'],

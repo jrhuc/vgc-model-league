@@ -1,4 +1,5 @@
 import type { ExperimentMode, Pid } from '../types.js';
+import type { BattleLogEntry } from './battlelog.js';
 
 export interface ModelInfo {
   id: string;
@@ -252,11 +253,7 @@ export interface SideView {
   mons: MonView[];
 }
 
-export interface BattleLogEntryView {
-  turn: number;
-  kind: string;
-  text: string;
-}
+export type BattleLogEntryView = BattleLogEntry;
 
 export interface SideTimerView {
   /** Remaining time bank in seconds as of snapshot generation; null in untimed play. */

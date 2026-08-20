@@ -53,15 +53,16 @@ export function validateModelExecution(
   }
 }
 
-const USAGE = 'Usage: openrouter:<model-id>, prime:<model-id>, gateway:<model-id>, or random';
+const USAGE =
+  'Usage: openrouter:<model-id>, prime:<model-id>, gateway:<model-id>, opencode-go:<model-id>, opencode-zen:<model-id>, or random';
 interface ProviderSpec {
-  provider: 'openrouter' | 'prime' | 'gateway' | 'random';
+  provider: 'openrouter' | 'prime' | 'gateway' | 'opencode-go' | 'opencode-zen' | 'random';
   model: string;
 }
 
 export function parseSpec(value: string): ProviderSpec {
   if (value === 'random') return { provider: 'random', model: 'random' };
-  for (const provider of ['openrouter', 'prime', 'gateway'] as const) {
+  for (const provider of ['openrouter', 'prime', 'gateway', 'opencode-go', 'opencode-zen'] as const) {
     const prefix = `${provider}:`;
     if (!value.startsWith(prefix)) continue;
     const model = value.slice(prefix.length);
@@ -164,9 +165,15 @@ export function classifyProviderFailure(error: unknown, spec = 'provider'): Prov
   const status = error instanceof ApiError ? error.status : Number(/\b([45]\d\d)\b/.exec(message)?.[1] ?? 0);
   const provider = spec.split(':', 1)[0] || 'provider';
   const label =
-    ({ openrouter: 'OpenRouter', prime: 'Prime Inference', gateway: 'Vercel AI Gateway' } as Record<string, string>)[
-      provider
-    ] ?? provider.charAt(0).toUpperCase() + provider.slice(1);
+    (
+      {
+        openrouter: 'OpenRouter',
+        prime: 'Prime Inference',
+        gateway: 'Vercel AI Gateway',
+        'opencode-go': 'OpenCode Go',
+        'opencode-zen': 'OpenCode Zen',
+      } as Record<string, string>
+    )[provider] ?? provider.charAt(0).toUpperCase() + provider.slice(1);
   const suffix = status ? ` (${status})` : '';
   if (
     /Connect error (?:unauthenticated|unavailable|resource[_ -]?exhausted|internal|aborted|deadline[_ -]?exceeded)/i.test(
@@ -446,6 +453,7 @@ class SdkProvider implements Provider {
       process.env.OPENROUTER_API_KEY ?? '',
       process.env.PRIME_API_KEY ?? '',
       process.env.AI_GATEWAY_API_KEY ?? '',
+      process.env.OPENCODE_API_KEY ?? '',
     ];
   }
 

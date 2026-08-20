@@ -17,6 +17,8 @@ continuation.
 - [vgc-evals](https://github.com/jrhuc/vgc-evals) builds experimental
   evaluations and environments on this harness, consumed read-only at a
   pinned revision.
+- [ai-draft-league](https://github.com/jrhuc/ai-draft-league) consumes
+  validated public season bundles and owns the spectator experience.
 - [poke-env](https://github.com/hsahovic/poke-env),
   [VGC-Bench](https://arxiv.org/abs/2506.10326), and compatible systems are
   external baselines.
@@ -29,10 +31,11 @@ one of these exact forms:
 - `openrouter:<model-id>`
 - `prime:<model-id>`
 - `gateway:<model-id>` (Vercel AI Gateway)
+- `opencode-go:<model-id>` / `opencode-zen:<model-id>` (OpenCode)
 - `random`
 
-Set `OPENROUTER_API_KEY`, `PRIME_API_KEY`, or `AI_GATEWAY_API_KEY` for CLI runs that use the
-corresponding provider. For GUI runs, enter the same credentials as run-only
+Set `OPENROUTER_API_KEY`, `PRIME_API_KEY`, `AI_GATEWAY_API_KEY`, or `OPENCODE_API_KEY` for CLI
+runs that use the corresponding provider. For GUI runs, enter the same credentials as run-only
 browser input.
 
 ```sh
@@ -42,7 +45,8 @@ pnpm test
 pnpm run vgcleague --help
 ```
 
-See [Usage](docs/usage.md) for commands.
+See [Usage](docs/usage.md) for commands. Run `pnpm run build:docs` for the
+technical site; the local operator GUI remains available through `pnpm start`.
 
 ## Documentation
 
@@ -53,11 +57,7 @@ See [Usage](docs/usage.md) for commands.
 - [Trade window](docs/trade-window.md)
 - [Season review](docs/season-review.md)
 
-## License and attribution
+## License
 
-The code uses the [MIT License](LICENSE). Pokémon sprites and item icons in
-`src/gui/client/public/` are mirrored from
-[Pokémon Showdown](https://play.pokemonshowdown.com/) for GUI display. Pokémon
-and all respective names are trademarks of Nintendo, Creatures Inc., and GAME
-FREAK inc. Provider logos use the
-[models.dev MIT license](src/gui/client/public/logos/LICENSE.models-dev.txt).
+The code uses the [MIT License](LICENSE). Pokémon and all respective names are
+trademarks of Nintendo, Creatures Inc., and GAME FREAK inc.

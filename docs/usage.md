@@ -36,6 +36,8 @@ Use one of these exact executable model spec formats:
 - `openrouter:<model-id>`
 - `prime:<model-id>`
 - `gateway:<model-id>`
+- `opencode-go:<model-id>`
+- `opencode-zen:<model-id>`
 - `random`, the legal-action baseline
 
 OpenRouter uses `OPENROUTER_API_KEY` and the fixed
@@ -44,7 +46,10 @@ IDs. Prime Inference uses `PRIME_API_KEY` and the fixed
 `https://api.pinference.ai/api/v1` endpoint; enter its model ID manually. The
 Vercel AI Gateway uses `AI_GATEWAY_API_KEY` and the fixed
 `https://ai-gateway.vercel.sh/v1` endpoint; enter its `creator/model` ID
-manually. Model specs do not accept a base URL. GUI credentials entered in the browser remain
+manually. OpenCode uses `OPENCODE_API_KEY` for both of its fixed endpoints:
+`https://opencode.ai/zen/go/v1` (`opencode-go`) and `https://opencode.ai/zen/v1`
+(`opencode-zen`); both list current model IDs in the GUI catalog. Model specs do
+not accept a base URL. GUI credentials entered in the browser remain
 in server memory only for that run.
 
 Run the GUI, a self-check, or an experiment:
@@ -224,34 +229,40 @@ The command writes to `$VGC_RUN_ARCHIVE_DIR` or `~/vgc-run-archive`. Use
 operator-managed tooling to copy the archive offsite. You can then remove source
 runs manually.
 
-Publish completed result rows and allowed support evidence to the public static
-site:
+Build the technical documentation:
 
 ```sh
-pnpm run publish:site
+pnpm run build:docs
 ```
 
-This command builds the project, re-exports `artifacts/public/site` from local
-records, and lands the commit on `main` through a self-merged pull request. The
-`main` ruleset rejects direct pushes. The Pages workflow then redeploys the
-site. To control the selection first, run the exporter and inspect its output
-before committing:
+GitHub Actions deploys that output to Pages when documentation changes. The
+documentation artifact contains no run data or GUI assets.
+
+Export one spectator release after building the harness:
 
 ```sh
-pnpm run export-site
-pnpm run export-site -- --pool regmb-202607
-pnpm run export-site -- --run <run-id>
+pnpm run export:season \
+  --run <run-id> \
+  --through-week 1 \
+  --title "AI Draft League"
 ```
 
-Without filters, the export excludes `test`. Use `--include-test` to include it.
-Repeat `--run` to select exact runs. The export contains result rows, decision
-and game logs, and league support assets already defined as public archive
-evidence. It does not contain prompt-attempt logs, raw provider responses, trace
-logs, or seat-context JSONL.
+The release boundary is mandatory; export never infers it from the newest local
+result. Use `--through-week 0` to publish a completed draft before any match
+result, a value past the last regular-season week to release playoff rounds,
+or `--out <file>` to choose the bundle destination.
 
-Exporting does not release traces. The
-[Architecture](architecture.md#state-evidence-and-trust) defines the exact
-public boundaries. [Deployment](deployment.md) defines site deployment.
+The command fails if a named released week is incomplete or lacks verified
+replay evidence. Its `season-bundle-v2` output contains the public evidence
+layer: draft picks and their stated rationales, the board, rosters and how each
+Pokémon was acquired, builds and their rationales, standings, results,
+structured battle events, submitted decisions with rationale and latency,
+reflections, transactions, the bracket, and season reviews at season end.
+Notebooks, traces, prompts, provider responses, and future results are absent.
+
+The [Architecture](architecture.md#public-publication) defines the authority
+boundary. [Deployment](deployment.md) separates Pages documentation from the
+spectator release.
 
 ## Use the Exhibition seat
 

@@ -8,6 +8,7 @@ interface MethodViewProps {
 }
 
 const REPOSITORY_ROOT = 'https://github.com/jrhuc/vgc-model-league';
+const EVALS_ROOT = 'https://github.com/jrhuc/vgc-evals';
 
 const POSITION_STEPS = [
   {
@@ -112,11 +113,7 @@ function ConstructBoundary() {
           tournament bracket. It connects eight separately configured player runtimes to the TypeScript referee and
           pinned simulator. The internal package exists, but it has not been published or hosted-validated.
         </p>
-        <a
-          href={`${REPOSITORY_ROOT}/blob/main/docs/evaluation-plan.md#vgc-circuit-v1`}
-          target="_blank"
-          rel="noreferrer"
-        >
+        <a href={`${EVALS_ROOT}/blob/main/docs/evaluation-plan.md#vgc-circuit-v1`} target="_blank" rel="noreferrer">
           VGC Circuit status <span aria-hidden="true">↗</span>
         </a>
       </aside>
@@ -162,7 +159,7 @@ function StaticPositionMethod() {
       <aside class="method-status">
         <p>The position task is still a prototype. It is not a released evaluation.</p>
         <a
-          href={`${REPOSITORY_ROOT}/blob/main/docs/evaluation-plan.md#vgc-positions-v1`}
+          href={`${EVALS_ROOT}/blob/main/docs/evaluation-plan.md#legacy-diagnostic-vgc-positions-v1`}
           target="_blank"
           rel="noreferrer"
         >
@@ -311,19 +308,19 @@ function Sources({ onOpenDocs }: { onOpenDocs: () => void }) {
       <header class="editorial-section-heading compact">
         <p class="eyebrow">Sources</p>
         <h2 id="sources-title">Canonical contracts and prior work</h2>
-        <p>The project documents carry the details; the related-work page sets the context.</p>
+        <p>The project documents carry the details; the evaluation repo’s related-work page sets the context.</p>
       </header>
       <nav class="canonical-links" aria-label="Method sources">
         <a href={`${REPOSITORY_ROOT}/blob/main/docs/measurement.md`} target="_blank" rel="noreferrer">
           Measurement
         </a>
-        <a href={`${REPOSITORY_ROOT}/blob/main/docs/evaluation-plan.md`} target="_blank" rel="noreferrer">
+        <a href={`${EVALS_ROOT}/blob/main/docs/evaluation-plan.md`} target="_blank" rel="noreferrer">
           Evaluation plan
         </a>
         <a href={`${REPOSITORY_ROOT}/blob/main/docs/architecture.md`} target="_blank" rel="noreferrer">
           Architecture
         </a>
-        <a href={`${REPOSITORY_ROOT}/blob/main/docs/related-work.md`} target="_blank" rel="noreferrer">
+        <a href={`${EVALS_ROOT}/blob/main/docs/related-work.md`} target="_blank" rel="noreferrer">
           Related work
         </a>
         <button type="button" class="button" onClick={onOpenDocs}>

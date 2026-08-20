@@ -11,8 +11,8 @@ export async function discoverModels(
     throw new Error(`${provider.label} uses manual model IDs`);
   }
   if (provider.discovery === 'none') throw new Error(`${provider.label} does not have a model catalog`);
-  if (provider.id !== 'openrouter' || !provider.baseUrl) throw new Error('unsupported model catalog provider');
-  if (!apiKey) throw new Error('Missing OPENROUTER_API_KEY for OpenRouter model discovery');
+  if (!provider.baseUrl) throw new Error('unsupported model catalog provider');
+  if (!apiKey) throw new Error(`Missing ${provider.envKey ?? 'API key'} for ${provider.label} model discovery`);
 
   const request = options.fetch ?? fetch;
   const signal = options.signal ?? AbortSignal.timeout(20_000);
@@ -24,7 +24,7 @@ export async function discoverModels(
   const body = await responseBody(response, provider.label, apiKey);
   const models: DiscoveredModel[] = [];
   for (const entry of recordArray(body, 'data', provider.label)) {
-    if (!isOpenRouterTextModel(entry)) continue;
+    if (!isTextModel(entry)) continue;
     const model = modelFromRecord(entry);
     if (model) models.push(model);
   }
@@ -97,7 +97,8 @@ function normalizeModels(models: readonly DiscoveredModel[]): DiscoveredModel[] 
   return [...unique.values()].sort((left, right) => left.id.localeCompare(right.id));
 }
 
-function isOpenRouterTextModel(record: UnknownRecord): boolean {
+/** OpenRouter entries carry an architecture block; plain OpenAI-style catalogs fall back to id filtering. */
+function isTextModel(record: UnknownRecord): boolean {
   const architecture = record.architecture;
   if (!isRecord(architecture)) return isGenerativeModel(record);
   const outputs = asStrings(architecture.output_modalities).map((value) => value.toLowerCase());

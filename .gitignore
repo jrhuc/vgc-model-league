@@ -9,6 +9,7 @@ pokemon-showdown/
 boards/sources/
 *.sqlite
 *.sqlite-*
+artifacts/public/seasons/
 
 .env
 .env.*
